@@ -9,7 +9,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
-use dbdesk_core::{ConnectionConfig, DataSource, DataSourceId, Password, SqliteConfig};
+use std::str::FromStr;
+
+use dbdesk_core::{
+    ConnectionConfig, DataSource, DataSourceId, Password, PostgresConfig, SqliteConfig,
+};
 use dbdesk_engine::{Command, EngineConfig, EngineHandle, Event, Repaint, SessionState};
 use dbdesk_store::{ConsoleFiles, DataSourceFile, HistoryFile, SecretError, SecretStore};
 
@@ -122,5 +126,42 @@ pub fn sqlite_data_source(path: PathBuf) -> DataSource {
             path,
             read_only: false,
         }),
+    }
+}
+
+/// The server named by `DBDESK_TEST_POSTGRES_URL`, like the Postgres driver tests use, or
+/// `None` (with a note) when it is unset, so tests that need it skip.
+pub fn postgres_test_server() -> Option<ParsedUrl> {
+    let Ok(url) = std::env::var("DBDESK_TEST_POSTGRES_URL") else {
+        eprintln!("skipping: DBDESK_TEST_POSTGRES_URL is not set");
+        return None;
+    };
+    Some(parse_test_url(&url))
+}
+
+pub struct ParsedUrl {
+    pub config: PostgresConfig,
+    pub password: Password,
+}
+
+/// Parses `postgres://user:password@host:port/database` without pulling tokio-postgres
+/// into this crate's dev-dependencies just for its URL parser.
+fn parse_test_url(url: &str) -> ParsedUrl {
+    let rest = url
+        .strip_prefix("postgres://")
+        .or_else(|| url.strip_prefix("postgresql://"))
+        .expect("postgres:// URL");
+    let (credentials, rest) = rest.split_once('@').expect("user:password@ in URL");
+    let (user, password) = credentials.split_once(':').expect("password in URL");
+    let (host_port, database) = rest.split_once('/').expect("/database in URL");
+    let (host, port) = host_port.split_once(':').unwrap_or((host_port, "5432"));
+    ParsedUrl {
+        config: PostgresConfig {
+            host: host.to_owned(),
+            port: u16::from_str(port).expect("numeric port"),
+            database: database.to_owned(),
+            user: user.to_owned(),
+        },
+        password: Password::new(password),
     }
 }

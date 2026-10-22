@@ -19,6 +19,6 @@ mod session;
 pub use handle::{EngineConfig, EngineError, EngineHandle};
 pub use protocol::{
     Command, ConsoleId, Event, PasswordUpdate, RunId, RunOutcome, SessionState, StatementFailure,
-    StatementSummary,
+    StatementSummary, TransactionEnd, TransactionMode,
 };
 pub use repaint::Repaint;

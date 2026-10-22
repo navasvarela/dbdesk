@@ -13,6 +13,7 @@ use crate::delete_dialog::{DeleteChoice, DeleteConfirmation};
 use crate::explorer::{ExplorerAction, ExplorerOptions};
 use crate::history_window::{HistoryAction, HistoryWindow};
 use crate::log_console::{LogConsole, LogFeed};
+use crate::rollback_dialog::{Closing, RollbackChoice, RollbackConfirmation};
 use crate::state::{AppState, EngineStatus};
 use crate::workspace::{self, Panels, Tab};
 
@@ -29,6 +30,9 @@ pub struct DbDeskApp {
     delete_confirmation: Option<DeleteConfirmation>,
     definition_window: Option<DefinitionWindow>,
     history_window: Option<HistoryWindow>,
+    rollback_confirmation: Option<RollbackConfirmation>,
+    /// Set once quitting may roll back open transactions, so the close isn't asked again.
+    quit_confirmed: bool,
     consoles: Consoles,
 }
 
@@ -54,6 +58,8 @@ impl DbDeskApp {
             delete_confirmation: None,
             definition_window: None,
             history_window: None,
+            rollback_confirmation: None,
+            quit_confirmed: false,
             consoles: Consoles::default(),
         })
     }
@@ -159,7 +165,7 @@ impl DbDeskApp {
         self.state.engine_status = EngineStatus::Stopped;
     }
 
-    fn handle_explorer_action(&mut self, action: ExplorerAction) {
+    fn handle_explorer_action(&mut self, action: ExplorerAction, ctx: &egui::Context) {
         match action {
             ExplorerAction::New(driver) => {
                 self.data_source_dialog = Some(DataSourceDialog::create(driver));
@@ -175,7 +181,7 @@ impl DbDeskApp {
                 }
             }
             ExplorerAction::Connect(id) => self.send(Command::Connect(id)),
-            ExplorerAction::Disconnect(id) => self.send(Command::Disconnect(id)),
+            ExplorerAction::Disconnect(id) => self.close_connections(Closing::Disconnect(id), ctx),
             ExplorerAction::Expand(id, path) => {
                 let needs_loading = self
                     .state
@@ -268,6 +274,60 @@ impl DbDeskApp {
         }
     }
 
+    /// Does what `closing` asks, first asking whether to roll back the open transactions it
+    /// would end, if there are any.
+    fn close_connections(&mut self, closing: Closing, ctx: &egui::Context) {
+        let rolled_back = self.consoles.rolled_back_by(&closing);
+        if rolled_back.is_empty() {
+            self.finish_closing(closing, ctx);
+        } else if self.rollback_confirmation.is_none() {
+            self.rollback_confirmation = Some(RollbackConfirmation::new(closing, rolled_back));
+        }
+    }
+
+    fn finish_closing(&mut self, closing: Closing, ctx: &egui::Context) {
+        match closing {
+            Closing::Console(key) => {
+                let commands = self.consoles.close(&key);
+                self.send_all(commands);
+                workspace::close_console_tab(&mut self.dock, &key);
+            }
+            Closing::Disconnect(id) => self.send(Command::Disconnect(id)),
+            Closing::Quit => {
+                self.quit_confirmed = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        }
+    }
+
+    /// Holds the window open while quitting would roll back transactions the user hasn't
+    /// agreed to lose.
+    fn confirm_quit(&mut self, ctx: &egui::Context) {
+        if !ctx.input(|input| input.viewport().close_requested()) || self.quit_confirmed {
+            return;
+        }
+        if !self.consoles.rolled_back_by(&Closing::Quit).is_empty() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.close_connections(Closing::Quit, ctx);
+        }
+    }
+
+    fn show_rollback_confirmation(&mut self, ctx: &egui::Context) {
+        let Some(choice) = self
+            .rollback_confirmation
+            .as_ref()
+            .and_then(|confirmation| confirmation.show(ctx))
+        else {
+            return;
+        };
+        let Some(confirmation) = self.rollback_confirmation.take() else {
+            return;
+        };
+        if let RollbackChoice::Proceed = choice {
+            self.finish_closing(confirmation.closing, ctx);
+        }
+    }
+
     fn open_history(&mut self, console: ConsoleKey) {
         let Some(entry) = self.state.data_source(console.data_source) else {
             return;
@@ -326,7 +386,7 @@ impl eframe::App for DbDeskApp {
 
         let mut explorer_actions = Vec::new();
         let mut console_actions = Vec::new();
-        let mut closed_consoles = Vec::new();
+        let mut close_requests = Vec::new();
         let (open_consoles, saved_consoles) = self.consoles.open_and_saved_mut();
         DockArea::new(&mut self.dock)
             .style(Style::from_egui(ui.style()))
@@ -340,11 +400,12 @@ impl eframe::App for DbDeskApp {
                     explorer_actions: &mut explorer_actions,
                     consoles: open_consoles,
                     console_actions: &mut console_actions,
-                    closed_consoles: &mut closed_consoles,
+                    close_requests: &mut close_requests,
                 },
             );
+        let ctx = ui.ctx().clone();
         for action in explorer_actions {
-            self.handle_explorer_action(action);
+            self.handle_explorer_action(action, &ctx);
         }
         for (console, action) in console_actions {
             if action == ConsoleAction::ShowHistory {
@@ -354,12 +415,12 @@ impl eframe::App for DbDeskApp {
                 self.send_if(command);
             }
         }
-        for console in closed_consoles {
-            let commands = self.consoles.close(&console);
-            self.send_all(commands);
+        for console in close_requests {
+            self.close_connections(Closing::Console(console), &ctx);
         }
+        self.confirm_quit(&ctx);
+        self.show_rollback_confirmation(&ctx);
 
-        let ctx = ui.ctx().clone();
         self.save_consoles(&ctx);
         let confirmed = self.consoles.show_hazard_confirmation(&ctx);
         self.send_if(confirmed);
@@ -672,5 +733,68 @@ mod tests {
 
         let query = "SELECT * FROM main.orders;\n";
         harness.get_by_value(&query.repeat(2));
+    }
+
+    fn count_orders(dir: &Path) -> i64 {
+        rusqlite::Connection::open(dir.join("shop.db"))
+            .unwrap()
+            .query_row("SELECT count(*) FROM orders", [], |row| row.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn manual_commit_mode_holds_changes_until_rolled_back_and_warns_before_closing() {
+        let dir = tempfile::tempdir().unwrap();
+        save_shop(dir.path(), "CREATE TABLE orders (id INTEGER PRIMARY KEY)");
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "Expand shop");
+        harness.get_by_label("shop").click_secondary();
+        harness.run();
+        harness.get_by_label("New query console").click();
+        harness.run();
+        harness
+            .get_by(|node| {
+                node.role() == Role::ComboBox && node.value().as_deref() == Some("Auto-commit")
+            })
+            .click();
+        harness.run();
+        harness.get_by_label("Manual commit").click();
+        harness.run();
+        let editor = harness.get_by_role(Role::MultilineTextInput);
+        editor.focus();
+        harness.run();
+        harness
+            .get_by_role(Role::MultilineTextInput)
+            .type_text("INSERT INTO orders VALUES (1)");
+        harness.run();
+
+        let run_and_wait_for_transaction = |harness: &mut Harness<'_, DbDeskApp>| {
+            harness.get_by_label("Run").click();
+            step_until_visible(harness, "Transaction open");
+        };
+        run_and_wait_for_transaction(&mut harness);
+        harness.get_by_label("Rollback").click();
+        step_until_visible(&mut harness, "Rolled back");
+        assert_eq!(count_orders(dir.path()), 0);
+
+        run_and_wait_for_transaction(&mut harness);
+        let key = workspace::console_tabs(&harness.state().dock)[0].clone();
+        let ctx = harness.ctx.clone();
+        harness
+            .state_mut()
+            .close_connections(Closing::Console(key), &ctx);
+        step_until_visible(&mut harness, "Roll back open transactions?");
+        // The modal is measured on its first frame and placed on the next; a click aimed at
+        // the first frame's button lands outside it and dismisses the modal.
+        harness.run();
+        assert_eq!(workspace::console_tabs(&harness.state().dock).len(), 1);
+        harness.get_by_label("Roll back and close").click();
+        harness.run();
+
+        assert!(workspace::console_tabs(&harness.state().dock).is_empty());
+        step_until(&mut harness, "the connection closing", |_| {
+            count_orders(dir.path()) == 0
+        });
     }
 }

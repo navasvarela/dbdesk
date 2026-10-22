@@ -19,6 +19,9 @@ use crate::state::DataSources;
 const UPPER_AREA_SHARE: f32 = 0.72;
 /// Share of the upper area's width for query consoles; the explorer gets the rest.
 const CONSOLES_SHARE_OF_UPPER_AREA: f32 = 0.8;
+/// egui_dock's split `fraction` is the share of the first (left or top) node, whatever its
+/// docs say about "the old node", so consoles to the right of the explorer take the rest.
+const EXPLORER_SHARE_OF_UPPER_AREA: f32 = 1.0 - CONSOLES_SHARE_OF_UPPER_AREA;
 
 /// Every kind of tab the dock can hold.
 ///
@@ -71,7 +74,7 @@ pub fn open_console_tab(layout: &mut DockState<Tab>, key: ConsoleKey) {
         None => {
             tree.split_right(
                 NodeIndex::root(),
-                CONSOLES_SHARE_OF_UPPER_AREA,
+                EXPLORER_SHARE_OF_UPPER_AREA,
                 vec![tab.clone()],
             );
         }
@@ -89,7 +92,7 @@ pub fn default_layout() -> DockState<Tab> {
         tree.split_below(NodeIndex::root(), UPPER_AREA_SHARE, vec![Tab::LogConsole]);
     tree.split_left(
         upper_area,
-        CONSOLES_SHARE_OF_UPPER_AREA,
+        EXPLORER_SHARE_OF_UPPER_AREA,
         vec![Tab::Explorer],
     );
     dock
@@ -106,8 +109,9 @@ pub struct Panels<'a> {
     pub consoles: &'a mut BTreeMap<ConsoleKey, QueryConsole>,
     /// What the user asked of each console this frame.
     pub console_actions: &'a mut Vec<(ConsoleKey, ConsoleAction)>,
-    /// Consoles whose tabs were closed this frame.
-    pub closed_consoles: &'a mut Vec<ConsoleKey>,
+    /// Consoles whose tabs the user asked to close this frame. The tabs stay until the app
+    /// closes them, which may first ask about rolling back an open transaction.
+    pub close_requests: &'a mut Vec<ConsoleKey>,
 }
 
 impl TabViewer for Panels<'_> {
@@ -164,10 +168,13 @@ impl TabViewer for Panels<'_> {
     }
 
     fn on_close(&mut self, tab: &mut Tab) -> OnCloseResponse {
-        if let Tab::QueryConsole(key) = tab {
-            self.closed_consoles.push(key.clone());
+        match tab {
+            Tab::QueryConsole(key) => {
+                self.close_requests.push(key.clone());
+                OnCloseResponse::Ignore
+            }
+            _ => OnCloseResponse::Close,
         }
-        OnCloseResponse::Close
     }
 }
 

@@ -10,6 +10,7 @@ publish.workspace = true
 dbdesk-core.workspace = true
 dbdesk-driver-postgres.workspace = true
 dbdesk-driver-sqlite.workspace = true
+dbdesk-sql.workspace = true
 dbdesk-store.workspace = true
 jiff.workspace = true
 thiserror.workspace = true

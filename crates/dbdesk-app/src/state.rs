@@ -95,6 +95,8 @@ impl AppState {
             Event::DataSourceSaveFailed { .. }
             | Event::ConsolesLoaded(_)
             | Event::HistoryFound { .. }
+            | Event::TransactionChanged { .. }
+            | Event::TransactionEnded { .. }
             | Event::ConsoleSaveFailed { .. }
             | Event::ConnectionTested { .. }
             | Event::DefinitionLoaded { .. }

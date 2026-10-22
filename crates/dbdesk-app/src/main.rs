@@ -12,6 +12,7 @@ mod explorer;
 mod hazard_dialog;
 mod history_window;
 mod log_console;
+mod rollback_dialog;
 mod state;
 mod telemetry;
 mod theme;

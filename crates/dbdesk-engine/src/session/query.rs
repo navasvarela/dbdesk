@@ -11,7 +11,9 @@ use dbdesk_core::{CancelHandle, DriverError, ResultCursor, describe_error};
 use dbdesk_store::{HistoryEntry, HistoryOutcome};
 use jiff::Timestamp;
 
-use super::{Disconnected, SessionContext, Worker, cancel_running_statement};
+use dbdesk_sql::controls_transactions;
+
+use super::{Disconnected, Script, SessionContext, Worker, cancel_running_statement, transaction};
 use crate::{Event, RunId, RunOutcome, StatementFailure, StatementSummary};
 
 /// Rows per page: DataGrip's default. Plenty to look at, few enough to arrive at once.
@@ -50,27 +52,42 @@ enum StatementEnd {
 
 pub(super) async fn run_script(
     worker: &mut Worker<'_>,
-    run: RunId,
-    statements: &[String],
+    script: &Script,
 ) -> Result<Option<Parked>, Disconnected> {
+    let run = script.run;
     let started = Instant::now();
-    let last = statements.len().saturating_sub(1);
+    let last = script.statements.len().saturating_sub(1);
     let mut outcome = RunOutcome::Completed;
     let mut parked = None;
-    for (index, sql) in statements.iter().enumerate() {
+    for (index, sql) in script.statements.iter().enumerate() {
         // A cancel that arrives between statements stops the script before the next one.
         if worker.signals.is_cancelled(run) {
             outcome = RunOutcome::Cancelled;
             break;
         }
-        tracing::info!(data_source = %worker.context.name(), "running {}", preview(sql));
         let statement = StatementRef {
             run,
             index,
             sql: sql.clone(),
             started_at: Timestamp::now(),
         };
-        match run_statement(worker, statement, index == last).await? {
+        if let Err(error) =
+            transaction::begin_if_needed(worker, script.transactions, run, sql).await?
+        {
+            report_failure(worker, &statement, Duration::ZERO, &error);
+            outcome = RunOutcome::Failed;
+            break;
+        }
+        tracing::info!(data_source = %worker.context.name(), "running {}", preview(sql));
+        let end = run_statement(worker, statement, index == last).await?;
+        // A parked statement still holds the connection, so it can't be asked. Only the last
+        // statement parks, and one that returns rows hardly ever controls transactions.
+        let failed = matches!(end, StatementEnd::Failed);
+        let controls = controls_transactions(sql, worker.context.dialect());
+        if (failed || controls) && !matches!(end, StatementEnd::Parked(_)) {
+            transaction::refresh(worker).await?;
+        }
+        match end {
             StatementEnd::Completed => {}
             StatementEnd::Parked(statement) => parked = Some(statement),
             StatementEnd::Failed if worker.signals.is_cancelled(run) => {

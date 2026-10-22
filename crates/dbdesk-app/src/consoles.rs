@@ -10,6 +10,7 @@ use dbdesk_store::{ConsoleKey, ConsoleName};
 
 use crate::console::{self, ConsoleAction, QueryConsole, RunScope, SubmittedStatement};
 use crate::hazard_dialog::{self, HazardChoice, HazardConfirmation, Review};
+use crate::rollback_dialog::Closing;
 
 /// How long a console's text stays unsaved after an edit. Long enough that typing doesn't
 /// write a file per keystroke, short enough that a crash loses at most a second of typing.
@@ -150,6 +151,15 @@ impl Consoles {
             .collect()
     }
 
+    /// The titles of the consoles with an open transaction that `closing` would roll back.
+    pub fn rolled_back_by(&self, closing: &Closing) -> Vec<String> {
+        self.open
+            .iter()
+            .filter(|(key, console)| closing.affects(key) && console.has_open_transaction())
+            .map(|(_, console)| console.title().to_owned())
+            .collect()
+    }
+
     /// Puts a statement at the console's cursor, if the console is still open.
     pub fn insert_statement(&mut self, key: &ConsoleKey, sql: &str) {
         if let Some(console) = self.open.get_mut(key) {
@@ -177,6 +187,9 @@ impl Consoles {
             ConsoleAction::Run(statements) => self.submit(key, statements),
             ConsoleAction::FetchMore(run) => Some(Command::FetchMore { console: id, run }),
             ConsoleAction::Cancel(run) => Some(Command::Cancel { console: id, run }),
+            ConsoleAction::EndTransaction(end) => {
+                Some(Command::EndTransaction { console: id, end })
+            }
             // The app opens the history window; there is nothing to send yet.
             ConsoleAction::ShowHistory => None,
         }
@@ -208,6 +221,7 @@ impl Consoles {
             console: console.id(),
             data_source: console.data_source(),
             run,
+            transactions: console.transaction_mode(),
             statements: statements
                 .into_iter()
                 .map(|statement| statement.sql)

@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use dbdesk_core::{
     BoxError, CancelHandle, CatalogNode, CatalogPath, Connection, DriverError, ResultCursor,
-    ServerInfo, SqliteConfig,
+    ServerInfo, SqliteConfig, TransactionStatus,
 };
 use rusqlite::OpenFlags;
 
@@ -123,6 +123,17 @@ impl Connection for SqliteConnection {
 
     async fn execute(&mut self, sql: &str) -> Result<Box<dyn ResultCursor>, DriverError> {
         execution::execute(&self.connection, &self.cancel, sql).await
+    }
+
+    async fn transaction_status(&mut self) -> Result<TransactionStatus, DriverError> {
+        self.run_blocking(|connection| {
+            Ok(if connection.is_autocommit() {
+                TransactionStatus::Idle
+            } else {
+                TransactionStatus::InTransaction
+            })
+        })
+        .await
     }
 
     fn cancel_handle(&self) -> Arc<dyn CancelHandle> {
@@ -298,6 +309,7 @@ mod tests {
         .unwrap();
 
         conformance::check_execution(&mut connection).await;
+        conformance::check_transactions(&mut connection).await;
         // Counts an endless sequence: only an interrupt stops it.
         conformance::check_cancel(
             &mut connection,

@@ -5,14 +5,17 @@
 
 mod catalog;
 mod query;
+mod transaction;
 
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Instant;
 
 use dbdesk_core::{
-    CancelHandle, CatalogPath, Connection, DataSource, DataSourceId, describe_error,
+    CancelHandle, CatalogPath, Connection, DataSource, DataSourceId, DriverKind, TransactionStatus,
+    describe_error,
 };
+use dbdesk_sql::Dialect;
 use dbdesk_store::{HistoryEntry, SecretStore};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::{oneshot, watch};
@@ -21,15 +24,26 @@ use tokio::task::JoinHandle;
 use crate::events::EventSink;
 use crate::history::HistoryLog;
 use crate::open::open;
-use crate::{ConsoleId, Event, PasswordUpdate, RunId, SessionState};
+use crate::{
+    ConsoleId, Event, PasswordUpdate, RunId, SessionState, TransactionEnd, TransactionMode,
+};
 
 /// Work for a session's connection. Answered with events, in the order received.
 #[derive(Debug)]
 pub(crate) enum SessionRequest {
     Children(CatalogPath),
     Definition(CatalogPath),
-    Execute { run: RunId, statements: Vec<String> },
+    Execute(Script),
     FetchMore(RunId),
+    EndTransaction(TransactionEnd),
+}
+
+/// Statements to run in a console, in order.
+#[derive(Debug)]
+pub(crate) struct Script {
+    pub(crate) run: RunId,
+    pub(crate) statements: Vec<String>,
+    pub(crate) transactions: TransactionMode,
 }
 
 /// Who a session works for, which decides how its state changes are reported.
@@ -141,6 +155,21 @@ impl SessionContext {
         }
     }
 
+    /// The dialect of the SQL this session runs, for reading statements' first words.
+    fn dialect(&self) -> Dialect {
+        match self.data_source.config.driver() {
+            DriverKind::Postgres => Dialect::Postgres,
+            DriverKind::Sqlite => Dialect::Sqlite,
+        }
+    }
+
+    /// Tells a console about its connection's transaction. The explorer never opens one.
+    fn notify_transaction(&self, status: TransactionStatus) {
+        if let SessionOwner::Console(console) = self.owner {
+            self.send(Event::TransactionChanged { console, status });
+        }
+    }
+
     fn notify(&self, state: SessionState) {
         self.send(match self.owner {
             SessionOwner::Explorer(id) => Event::SessionChanged { id, state },
@@ -220,6 +249,7 @@ async fn run(
         cancel_handle: cancel_handle.as_ref(),
         signals: &mut signals,
         parked: None,
+        transaction: TransactionStatus::Idle,
     };
     worker.serve(&mut requests).await;
     if let Some(parked) = worker.parked.take() {
@@ -279,6 +309,8 @@ struct Worker<'a> {
     signals: &'a mut Signals,
     /// The last run's final statement, with rows still unread.
     parked: Option<query::Parked>,
+    /// The connection's transaction status as last reported to the UI.
+    transaction: TransactionStatus,
 }
 
 impl Worker<'_> {
@@ -331,10 +363,11 @@ impl Worker<'_> {
                 let work = catalog::definition(self.context, &mut *self.connection, path);
                 self.signals.guard(work, None, self.cancel_handle).await
             }
-            SessionRequest::Execute { run, statements } => {
-                self.parked = query::run_script(self, run, &statements).await?;
+            SessionRequest::Execute(script) => {
+                self.parked = query::run_script(self, &script).await?;
                 Ok(())
             }
+            SessionRequest::EndTransaction(end) => transaction::end(self, end).await,
             SessionRequest::FetchMore(_) => Ok(()),
         }
     }

@@ -11,8 +11,8 @@ use crate::events::EventSink;
 use crate::history::HistoryLog;
 use crate::open::test_connection;
 use crate::registry::{Registry, RegistryError};
-use crate::session::{Services, Session, SessionOwner, SessionRequest};
-use crate::{Command, ConsoleId, EngineConfig, Event, PasswordUpdate, RunId, RunOutcome};
+use crate::session::{Script, Services, Session, SessionOwner, SessionRequest};
+use crate::{Command, ConsoleId, EngineConfig, Event, PasswordUpdate, RunOutcome};
 
 #[derive(Debug, thiserror::Error)]
 enum SaveError {
@@ -113,7 +113,21 @@ impl Engine {
                 data_source,
                 run,
                 statements,
-            } => self.execute(console, data_source, run, statements),
+                transactions,
+            } => self.execute(
+                console,
+                data_source,
+                Script {
+                    run,
+                    statements,
+                    transactions,
+                },
+            ),
+            Command::EndTransaction { console, end } => {
+                if let Some(console) = self.consoles.get(&console) {
+                    console.session.request(SessionRequest::EndTransaction(end));
+                }
+            }
             Command::FetchMore { console, run } => {
                 if let Some(console) = self.consoles.get(&console) {
                     console.session.request(SessionRequest::FetchMore(run));
@@ -174,15 +188,6 @@ impl Engine {
 
     async fn delete(&mut self, id: DataSourceId) {
         self.disconnect(id);
-        let consoles: Vec<ConsoleId> = self
-            .consoles
-            .iter()
-            .filter(|(_, console)| console.data_source == id)
-            .map(|(console, _)| *console)
-            .collect();
-        for console in consoles {
-            self.close_console(console);
-        }
         match self.registry.remove(id).await {
             Ok(true) => {
                 self.delete_password(id).await;
@@ -231,13 +236,7 @@ impl Engine {
 
     /// Queues a run on the console's session, (re)connecting it if it isn't connected to
     /// `data_source`.
-    fn execute(
-        &mut self,
-        console: ConsoleId,
-        data_source: DataSourceId,
-        run: RunId,
-        statements: Vec<String>,
-    ) {
+    fn execute(&mut self, console: ConsoleId, data_source: DataSourceId, script: Script) {
         let reusable = self.consoles.get(&console).is_some_and(|existing| {
             existing.data_source == data_source && !existing.session.is_finished()
         });
@@ -246,7 +245,7 @@ impl Engine {
             let Some(config) = self.registry.get(data_source) else {
                 tracing::warn!(%data_source, "run requested for an unknown data source");
                 self.events.send(Event::RunFinished {
-                    run,
+                    run: script.run,
                     outcome: RunOutcome::Failed,
                     elapsed: std::time::Duration::ZERO,
                 });
@@ -266,9 +265,7 @@ impl Engine {
             );
         }
         if let Some(console) = self.consoles.get(&console) {
-            console
-                .session
-                .request(SessionRequest::Execute { run, statements });
+            console.session.request(SessionRequest::Execute(script));
         }
     }
 
@@ -298,6 +295,15 @@ impl Engine {
     fn disconnect(&mut self, id: DataSourceId) {
         if let Some(session) = self.sessions.remove(&id) {
             self.closing.spawn(session.stop());
+        }
+        let consoles: Vec<ConsoleId> = self
+            .consoles
+            .iter()
+            .filter(|(_, console)| console.data_source == id)
+            .map(|(console, _)| *console)
+            .collect();
+        for console in consoles {
+            self.close_console(console);
         }
     }
 

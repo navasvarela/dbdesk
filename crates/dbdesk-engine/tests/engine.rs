@@ -6,10 +6,11 @@
 
 mod common;
 
-use std::str::FromStr;
 use std::sync::Arc;
 
-use common::{MemorySecrets, TestEngine, sqlite_data_source, sqlite_database};
+use common::{
+    MemorySecrets, TestEngine, postgres_test_server, sqlite_data_source, sqlite_database,
+};
 use dbdesk_core::{
     CatalogPath, ConnectionConfig, DataSource, DataSourceId, FolderKind, NodeKind, Password,
     PostgresConfig,
@@ -232,11 +233,9 @@ fn loading_children_connects_first_and_answers_catalog_requests() {
 /// Needs `DBDESK_TEST_POSTGRES_URL`, like the Postgres driver tests; skipped without it.
 #[test]
 fn connects_to_postgres_with_the_saved_password() {
-    let Ok(url) = std::env::var("DBDESK_TEST_POSTGRES_URL") else {
-        eprintln!("skipping: DBDESK_TEST_POSTGRES_URL is not set");
+    let Some(parsed) = postgres_test_server() else {
         return;
     };
-    let parsed = parse_test_url(&url);
     let dir = tempfile::tempdir().unwrap();
     let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
     engine.expect_started(vec![]);
@@ -260,31 +259,4 @@ fn connects_to_postgres_with_the_saved_password() {
         matches!(&state, SessionState::Connected(server) if server.product == "PostgreSQL"),
         "{state:?}"
     );
-}
-
-struct ParsedUrl {
-    config: PostgresConfig,
-    password: Password,
-}
-
-/// Parses `postgres://user:password@host:port/database` without pulling tokio-postgres
-/// into this crate's dev-dependencies just for its URL parser.
-fn parse_test_url(url: &str) -> ParsedUrl {
-    let rest = url
-        .strip_prefix("postgres://")
-        .or_else(|| url.strip_prefix("postgresql://"))
-        .expect("postgres:// URL");
-    let (credentials, rest) = rest.split_once('@').expect("user:password@ in URL");
-    let (user, password) = credentials.split_once(':').expect("password in URL");
-    let (host_port, database) = rest.split_once('/').expect("/database in URL");
-    let (host, port) = host_port.split_once(':').unwrap_or((host_port, "5432"));
-    ParsedUrl {
-        config: PostgresConfig {
-            host: host.to_owned(),
-            port: u16::from_str(port).expect("numeric port"),
-            database: database.to_owned(),
-            user: user.to_owned(),
-        },
-        password: Password::new(password),
-    }
 }

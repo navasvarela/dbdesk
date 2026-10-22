@@ -19,5 +19,5 @@ pub use data_source::{
     ConnectionConfig, DataSource, DataSourceId, DriverKind, PostgresConfig, SqliteConfig,
 };
 pub use error::{BoxError, DriverError, describe_error};
-pub use execution::{CancelHandle, Cell, ColumnInfo, ResultCursor, Row};
+pub use execution::{CancelHandle, Cell, ColumnInfo, ResultCursor, Row, TransactionStatus};
 pub use password::Password;

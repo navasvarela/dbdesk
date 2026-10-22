@@ -896,6 +896,7 @@ dependencies = [
  "dbdesk-core",
  "dbdesk-driver-postgres",
  "dbdesk-driver-sqlite",
+ "dbdesk-sql",
  "dbdesk-store",
  "jiff",
  "rusqlite",

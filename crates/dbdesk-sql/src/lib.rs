@@ -13,8 +13,10 @@ mod keywords;
 mod lexer;
 mod safety;
 mod split;
+mod transaction;
 
 pub use keywords::is_keyword;
 pub use lexer::{Dialect, Token, TokenKind, first_word, tokenize};
 pub use safety::{Hazard, hazard};
 pub use split::{split_statements, statement_at};
+pub use transaction::controls_transactions;

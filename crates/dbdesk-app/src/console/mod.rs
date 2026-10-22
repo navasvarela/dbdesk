@@ -10,9 +10,10 @@ mod view;
 use std::ops::Range;
 use std::time::{Duration, Instant};
 
-use dbdesk_core::{ColumnInfo, DataSourceId, DriverKind, Row};
+use dbdesk_core::{ColumnInfo, DataSourceId, DriverKind, Row, TransactionStatus};
 use dbdesk_engine::{
     Command, ConsoleId, Event, RunId, RunOutcome, SessionState, StatementFailure, StatementSummary,
+    TransactionEnd, TransactionMode,
 };
 use dbdesk_sql::{Dialect, split_statements, statement_at};
 use dbdesk_store::ConsoleKey;
@@ -55,6 +56,10 @@ pub struct QueryConsole {
     selection: Range<usize>,
     /// The state of the console's own connection.
     session: SessionState,
+    transactions: TransactionMode,
+    transaction: TransactionStatus,
+    /// How the last Commit or Rollback went, until the next run.
+    transaction_ended: Option<Result<TransactionEnd, String>>,
     run: Option<RunView>,
     /// Where the last failure points in `text`; underlined until the text changes.
     error_marker: Option<Range<usize>>,
@@ -121,6 +126,9 @@ impl QueryConsole {
             text,
             selection: 0..0,
             session: SessionState::Disconnected,
+            transactions: TransactionMode::Auto,
+            transaction: TransactionStatus::Idle,
+            transaction_ended: None,
             run: None,
             error_marker: None,
             pending_cursor: None,
@@ -220,6 +228,16 @@ impl QueryConsole {
         self.dialect
     }
 
+    pub fn transaction_mode(&self) -> TransactionMode {
+        self.transactions
+    }
+
+    /// Whether the console's connection has uncommitted work that closing it would roll
+    /// back.
+    pub fn has_open_transaction(&self) -> bool {
+        self.transaction != TransactionStatus::Idle
+    }
+
     pub fn is_running(&self) -> bool {
         self.run
             .as_ref()
@@ -255,6 +273,7 @@ impl QueryConsole {
 
     pub fn begin_run(&mut self, run: RunId, statements: &[SubmittedStatement]) {
         self.error_marker = None;
+        self.transaction_ended = None;
         self.run = Some(RunView {
             id: run,
             statements: statements
@@ -297,6 +316,12 @@ impl QueryConsole {
         match event {
             Event::ConsoleSessionChanged { console, state } if *console == self.id => {
                 self.session_changed(state);
+            }
+            Event::TransactionChanged { console, status } if *console == self.id => {
+                self.transaction = *status;
+            }
+            Event::TransactionEnded { console, result } if *console == self.id => {
+                self.transaction_ended = Some(result.clone());
             }
             Event::ConsoleSaveFailed { key, error } if *key == self.key => {
                 // Shown until the next save is sent; that one writes the whole text again.
@@ -385,6 +410,10 @@ impl QueryConsole {
     /// A connection that fails or closes ends whatever the console was doing with it.
     fn session_changed(&mut self, state: &SessionState) {
         self.session = state.clone();
+        if matches!(state, SessionState::Disconnected | SessionState::Failed(_)) {
+            // The database rolls back whatever a closed connection left uncommitted.
+            self.transaction = TransactionStatus::Idle;
+        }
         let failure = match state {
             SessionState::Failed(error) => error.clone(),
             SessionState::Disconnected => "the connection closed".to_owned(),
