@@ -91,10 +91,15 @@ impl AppState {
                     catalog.loaded(path, result);
                 }
             }
-            // Only the dialogs and the definition window care about these.
+            // The dialogs, the definition window and the consoles track these themselves.
             Event::DataSourceSaveFailed { .. }
             | Event::ConnectionTested { .. }
-            | Event::DefinitionLoaded { .. } => {}
+            | Event::DefinitionLoaded { .. }
+            | Event::ConsoleSessionChanged { .. }
+            | Event::StatementStarted { .. }
+            | Event::RowsFetched { .. }
+            | Event::StatementFinished { .. }
+            | Event::RunFinished { .. } => {}
         }
     }
 

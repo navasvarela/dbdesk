@@ -2,6 +2,7 @@ use dbdesk_core::{CatalogPath, DataSourceId};
 use dbdesk_engine::{Command, EngineConfig, EngineError, EngineHandle, Event, Repaint};
 use egui_dock::{DockArea, DockState, Style};
 
+use crate::consoles::Consoles;
 use crate::data_source_dialog::{DataSourceDialog, DialogAction};
 use crate::definition_window::DefinitionWindow;
 use crate::delete_dialog::{DeleteChoice, DeleteConfirmation};
@@ -22,6 +23,7 @@ pub struct DbDeskApp {
     data_source_dialog: Option<DataSourceDialog>,
     delete_confirmation: Option<DeleteConfirmation>,
     definition_window: Option<DefinitionWindow>,
+    consoles: Consoles,
 }
 
 impl DbDeskApp {
@@ -33,7 +35,7 @@ impl DbDeskApp {
         let dock = cc
             .storage
             .and_then(|storage| eframe::get_value(storage, LAYOUT_STORAGE_KEY))
-            .unwrap_or_else(workspace::default_layout);
+            .map_or_else(workspace::default_layout, workspace::without_consoles);
         let engine = EngineHandle::start(engine_config, EguiRepaint(cc.egui_ctx.clone()))?;
 
         Ok(Self {
@@ -45,6 +47,7 @@ impl DbDeskApp {
             data_source_dialog: None,
             delete_confirmation: None,
             definition_window: None,
+            consoles: Consoles::default(),
         })
     }
 
@@ -76,6 +79,13 @@ impl DbDeskApp {
         }
         if let Some(window) = &mut self.definition_window {
             window.apply(event);
+        }
+        self.consoles.apply(event);
+    }
+
+    fn send_if(&self, command: Option<Command>) {
+        if let Some(command) = command {
+            self.send(command);
         }
     }
 
@@ -137,6 +147,22 @@ impl DbDeskApp {
             ExplorerAction::ShowDefinition { id, path, title } => {
                 self.definition_window = Some(DefinitionWindow::new(id, path.clone(), title));
                 self.send(Command::LoadDefinition { id, path });
+            }
+            ExplorerAction::NewConsole(id) => {
+                if let Some(entry) = self.state.data_source(id) {
+                    let console = self.consoles.open(entry, String::new());
+                    workspace::open_console_tab(&mut self.dock, console);
+                }
+            }
+            ExplorerAction::OpenData(id, path) => {
+                let opened = self
+                    .state
+                    .data_source(id)
+                    .and_then(|entry| self.consoles.open_data(entry, &path));
+                if let Some((console, command)) = opened {
+                    workspace::open_console_tab(&mut self.dock, console);
+                    self.send(command);
+                }
             }
         }
     }
@@ -213,6 +239,8 @@ impl eframe::App for DbDeskApp {
         egui::Panel::bottom("status_bar").show(ui, |ui| self.status_bar(ui));
 
         let mut explorer_actions = Vec::new();
+        let mut console_actions = Vec::new();
+        let mut closed_consoles = Vec::new();
         DockArea::new(&mut self.dock)
             .style(Style::from_egui(ui.style()))
             .show_inside(
@@ -222,13 +250,26 @@ impl eframe::App for DbDeskApp {
                     data_sources: &self.state.data_sources,
                     explorer_options: &mut self.explorer_options,
                     explorer_actions: &mut explorer_actions,
+                    consoles: self.consoles.open_mut(),
+                    console_actions: &mut console_actions,
+                    closed_consoles: &mut closed_consoles,
                 },
             );
         for action in explorer_actions {
             self.handle_explorer_action(action);
         }
+        for (console, action) in console_actions {
+            let command = self.consoles.handle(console, action);
+            self.send_if(command);
+        }
+        for console in closed_consoles {
+            let command = self.consoles.close(console);
+            self.send(command);
+        }
 
         let ctx = ui.ctx().clone();
+        let confirmed = self.consoles.show_hazard_confirmation(&ctx);
+        self.send_if(confirmed);
         self.show_data_source_dialog(&ctx);
         self.show_delete_confirmation(&ctx);
         if self
@@ -332,7 +373,7 @@ mod tests {
         step_until_visible(&mut harness, "No data sources yet.");
 
         // egui_dock doesn't expose tab titles to accessibility, so check each panel's content.
-        harness.get_by_label("Query consoles will open here.");
+        harness.get_by_label_contains("Query consoles open here");
         harness.get_by_label_contains("logged before the window opened");
     }
 
@@ -400,5 +441,44 @@ mod tests {
         }
         harness.get_by_label("text, not null");
         step_until_visible(&mut harness, "1 connected");
+    }
+
+    #[test]
+    fn opens_table_data_in_a_console_and_loads_more_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let database = dir.path().join("shop.db");
+        rusqlite::Connection::open(&database)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE orders (id INTEGER PRIMARY KEY);
+                 WITH RECURSIVE s(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM s WHERE n < 600)
+                 INSERT INTO orders SELECT n FROM s;",
+            )
+            .unwrap();
+        DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .save(&[dbdesk_core::DataSource {
+                id: DataSourceId::generate(),
+                name: "shop".to_owned(),
+                config: dbdesk_core::ConnectionConfig::Sqlite(dbdesk_core::SqliteConfig {
+                    path: database,
+                    read_only: true,
+                }),
+            }])
+            .unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        for expand in ["Expand shop", "Expand main", "Expand tables"] {
+            step_until_visible(&mut harness, expand);
+            harness.get_by_label(expand).click();
+        }
+        step_until_visible(&mut harness, "Expand orders");
+
+        harness.get_by_label("orders").click_secondary();
+        harness.run();
+        harness.get_by_label("Open data").click();
+
+        step_until_visible(&mut harness, "500 rows, more available");
+        harness.get_by_label("Load more rows").click();
+        step_until_visible(&mut harness, "600 rows ·");
     }
 }

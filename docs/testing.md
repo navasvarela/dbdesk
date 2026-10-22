@@ -15,9 +15,15 @@ Implemented:
   test can assert on its own fixture: a schema with one object of every kind.
 - `check_invalid_path` (M2): nonsense paths are `DriverError::InvalidPath`, without touching the
   server. (This caught the Postgres driver trying to connect to a "database" named in a bogus path.)
+- `check_execution` (M3): DDL, a 1200-row insert with its count, paging through it in pages
+  of at most 500, `NULL` vs empty text, abandoning a cursor halfway, and a syntax error's byte
+  position. Uses SQL both engines accept and a temporary table.
+- `check_cancel` (M3): a statement that would run far longer than 10 s (`pg_sleep(60)`, an
+  endless recursive CTE) stops within 10 s of a cancel from another task, and the connection
+  stays usable.
 
-Planned as the trait grows: execute DDL/DML, stream more rows than one page, cancel a long
-query, map each value type, report error positions.
+Races hide in cancellation, so after changing it, run the cancel tests in a loop. A one-off
+pass proved nothing in M3: the console's cancel test hung 2 runs in 5 before its fix.
 
 Each driver crate runs the suite against its own backend:
 
@@ -32,8 +38,8 @@ well under the sleep time.
 
 ## Engine
 
-The engine is tested headless (`dbdesk-engine/tests/engine.rs`): send `Command`s, collect
-`Event`s, assert on the sequence. It uses a temp directory for `data_sources.toml` and an
+The engine is tested headless (`dbdesk-engine/tests/engine.rs` and `console.rs`, sharing
+`tests/common`): send `Command`s, collect `Event`s, assert on the sequence. It uses a temp directory for `data_sources.toml` and an
 in-memory `SecretStore`. Planned: a fake driver (in-memory, scripted responses) covers ordering cases that are hard to trigger
 against a real server, such as a cancel arriving after the last row.
 

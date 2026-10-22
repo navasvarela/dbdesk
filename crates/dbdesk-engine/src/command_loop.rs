@@ -9,8 +9,8 @@ use tokio::task::{JoinError, JoinSet};
 use crate::events::EventSink;
 use crate::open::test_connection;
 use crate::registry::{Registry, RegistryError};
-use crate::session::{Session, SessionRequest};
-use crate::{Command, EngineConfig, Event, PasswordUpdate};
+use crate::session::{Session, SessionOwner, SessionRequest};
+use crate::{Command, ConsoleId, EngineConfig, Event, PasswordUpdate, RunId, RunOutcome};
 
 #[derive(Debug, thiserror::Error)]
 enum SaveError {
@@ -38,6 +38,7 @@ pub(crate) async fn run(
         secrets: config.secrets,
         events,
         sessions: HashMap::new(),
+        consoles: HashMap::new(),
         closing: JoinSet::new(),
     };
     while let Some(command) = commands.recv().await {
@@ -47,11 +48,19 @@ pub(crate) async fn run(
     tracing::info!("engine stopped");
 }
 
+struct ConsoleSession {
+    data_source: DataSourceId,
+    session: Session,
+}
+
 struct Engine {
     registry: Registry,
     secrets: Arc<dyn SecretStore>,
     events: EventSink,
+    /// The explorer's sessions, one per data source.
     sessions: HashMap<DataSourceId, Session>,
+    /// Each query console's own session.
+    consoles: HashMap<ConsoleId, ConsoleSession>,
     /// Sessions that were asked to disconnect and are still closing their connection.
     closing: JoinSet<()>,
 }
@@ -85,6 +94,23 @@ impl Engine {
             Command::LoadDefinition { id, path } => {
                 self.request(id, SessionRequest::Definition(path));
             }
+            Command::Execute {
+                console,
+                data_source,
+                run,
+                statements,
+            } => self.execute(console, data_source, run, statements),
+            Command::FetchMore { console, run } => {
+                if let Some(console) = self.consoles.get(&console) {
+                    console.session.request(SessionRequest::FetchMore(run));
+                }
+            }
+            Command::Cancel { console, run } => {
+                if let Some(console) = self.consoles.get(&console) {
+                    console.session.cancel(run);
+                }
+            }
+            Command::CloseConsole(console) => self.close_console(console),
         }
     }
 
@@ -123,6 +149,15 @@ impl Engine {
 
     async fn delete(&mut self, id: DataSourceId) {
         self.disconnect(id);
+        let consoles: Vec<ConsoleId> = self
+            .consoles
+            .iter()
+            .filter(|(_, console)| console.data_source == id)
+            .map(|(console, _)| *console)
+            .collect();
+        for console in consoles {
+            self.close_console(console);
+        }
         match self.registry.remove(id).await {
             Ok(true) => {
                 self.delete_password(id).await;
@@ -163,10 +198,61 @@ impl Engine {
         };
         let session = Session::start(
             data_source.clone(),
+            SessionOwner::Explorer(id),
             Arc::clone(&self.secrets),
             self.events.clone(),
         );
         self.sessions.insert(id, session);
+    }
+
+    /// Queues a run on the console's session, (re)connecting it if it isn't connected to
+    /// `data_source`.
+    fn execute(
+        &mut self,
+        console: ConsoleId,
+        data_source: DataSourceId,
+        run: RunId,
+        statements: Vec<String>,
+    ) {
+        let reusable = self.consoles.get(&console).is_some_and(|existing| {
+            existing.data_source == data_source && !existing.session.is_finished()
+        });
+        if !reusable {
+            self.close_console(console);
+            let Some(config) = self.registry.get(data_source) else {
+                tracing::warn!(%data_source, "run requested for an unknown data source");
+                self.events.send(Event::RunFinished {
+                    run,
+                    outcome: RunOutcome::Failed,
+                    elapsed: std::time::Duration::ZERO,
+                });
+                return;
+            };
+            let session = Session::start(
+                config.clone(),
+                SessionOwner::Console(console),
+                Arc::clone(&self.secrets),
+                self.events.clone(),
+            );
+            self.consoles.insert(
+                console,
+                ConsoleSession {
+                    data_source,
+                    session,
+                },
+            );
+        }
+        if let Some(console) = self.consoles.get(&console) {
+            console
+                .session
+                .request(SessionRequest::Execute { run, statements });
+        }
+    }
+
+    fn close_console(&mut self, console: ConsoleId) {
+        if let Some(console) = self.consoles.remove(&console) {
+            self.closing.spawn(console.session.stop());
+        }
     }
 
     /// Queues work on the data source's session, starting one if it isn't connected, so
@@ -187,6 +273,9 @@ impl Engine {
     async fn shut_down(mut self) {
         for (_, session) in self.sessions.drain() {
             self.closing.spawn(session.stop());
+        }
+        for (_, console) in self.consoles.drain() {
+            self.closing.spawn(console.session.stop());
         }
         while let Some(result) = self.closing.join_next().await {
             if let Err(error) = result {

@@ -27,12 +27,12 @@ flowchart LR
 | Crate | Responsibility | Depends on |
 | --- | --- | --- |
 | `dbdesk-core` | Domain types (`DataSource`, `ConnectionConfig`, `Password`, …) and the `Connection` trait. No I/O. | — |
-| `dbdesk-sql` | Statement splitting, statement-under-cursor, later completion. Wraps `sqlparser`. | core |
+| `dbdesk-sql` | A forgiving SQL lexer: statement splitting, statement at the cursor, highlighting tokens, the UPDATE/DELETE-without-WHERE check. | — |
 | `dbdesk-driver-postgres` | `tokio-postgres` implementation of `Connection`. | core |
 | `dbdesk-driver-sqlite` | `rusqlite` implementation, run on `spawn_blocking`. | core |
 | `dbdesk-engine` | Session lifecycle, command handling, cancellation, event emission. | core, sql, store, drivers |
 | `dbdesk-store` | Data source file (TOML), secrets (`SecretStore`, OS keychain via `keyring`), later query history. | core |
-| `dbdesk-app` | `eframe` binary: panels, widgets, app state, keymap. | core, engine |
+| `dbdesk-app` | `eframe` binary: panels, widgets, app state, keymap. | core, engine, sql, store |
 
 `dbdesk-app` depends on the engine only through its public `EngineHandle` (a command sender
 and an event receiver), so the UI can be driven by a fake engine in tests.
@@ -65,6 +65,10 @@ pub enum Command {
     Disconnect(DataSourceId),
     LoadChildren { id: DataSourceId, path: CatalogPath },    // M2
     LoadDefinition { id: DataSourceId, path: CatalogPath },  // M2
+    Execute { console: ConsoleId, data_source: DataSourceId, run: RunId, statements: Vec<String> }, // M3
+    FetchMore { console: ConsoleId, run: RunId },            // M3
+    Cancel { console: ConsoleId, run: RunId },               // M3
+    CloseConsole(ConsoleId),                                 // M3
 }
 
 pub enum Event {
@@ -78,6 +82,11 @@ pub enum Event {
     ConnectionTested { id: DataSourceId, result: Result<ServerInfo, String> },
     ChildrenLoaded { id: DataSourceId, path: CatalogPath, result: Result<Vec<CatalogNode>, String> },
     DefinitionLoaded { id: DataSourceId, path: CatalogPath, result: Result<String, String> },
+    ConsoleSessionChanged { console: ConsoleId, state: SessionState },                  // M3
+    StatementStarted { run: RunId, statement: usize, columns: Vec<ColumnInfo> },
+    RowsFetched { run: RunId, statement: usize, rows: Vec<Row>, more: bool },
+    StatementFinished { run: RunId, statement: usize, result: Result<StatementSummary, StatementFailure> },
+    RunFinished { run: RunId, outcome: RunOutcome, elapsed: Duration },
 }
 ```
 
@@ -85,7 +94,10 @@ The engine owns the data source list: it loads `data_sources.toml` at start-up a
 saves and deletes in order, so the UI never touches the file or the keychain. Each connected
 data source has one session task that owns its `Box<dyn Connection>` and answers catalog
 requests one at a time, in order. A disconnect abandons the request in progress. Sessions are
-keyed by `DataSourceId` until query consoles need more than one session per data source (M3).
+keyed by `DataSourceId`. Each query console has its own session too (M3), keyed by `ConsoleId`,
+which also keeps the last statement's result cursor open between `FetchMore`s. Cancelling
+goes through a `watch` channel rather than the request queue, so it reaches the session while
+it is busy with the very statement being cancelled.
 
 Planned for later milestones:
 
@@ -121,25 +133,24 @@ Each driver crate exposes `connect(config, password) -> Result<ItsConnection, Dr
 The engine maps a `ConnectionConfig` variant to a driver in one `match` and boxes the result.
 
 ```rust
-// Implemented (M1, M2):
+// Implemented (M1–M3):
 #[async_trait]
 pub trait Connection: Send {
     fn server_info(&self) -> &ServerInfo;
     async fn ping(&mut self) -> Result<(), DriverError>;
     async fn children(&mut self, path: &CatalogPath) -> Result<Vec<CatalogNode>, DriverError>;
     async fn definition(&mut self, path: &CatalogPath) -> Result<String, DriverError>;
+    async fn execute(&mut self, sql: &str) -> Result<Box<dyn ResultCursor>, DriverError>;
+    fn cancel_handle(&self) -> Arc<dyn CancelHandle>;
     async fn close(self: Box<Self>) -> Result<(), DriverError>;
 }
 
-// Planned additions (M3):
 #[async_trait]
-pub trait Connection: Send {
-    /// Starts a statement and returns a stream of row batches. Dropping the stream
-    /// abandons the remaining rows.
-    async fn execute(&mut self, sql: &str) -> Result<StatementStream<'_>, DriverError>;
-    async fn children(&mut self, node: &CatalogPath) -> Result<Vec<CatalogNode>, DriverError>;
-    fn cancel_handle(&self) -> Box<dyn CancelHandle>;
-    fn take_notices(&mut self) -> Vec<Notice>;
+pub trait ResultCursor: Send {
+    fn columns(&self) -> &[ColumnInfo];
+    async fn next_page(&mut self, max_rows: usize) -> Result<Vec<Row>, DriverError>;
+    fn is_exhausted(&self) -> bool;
+    async fn finish(self: Box<Self>) -> Result<Option<u64>, DriverError>;
 }
 ```
 
@@ -149,17 +160,17 @@ amendment.
 
 ## Core data types
 
-- `Value`: `Null | Bool | Int(i64) | Float(f64) | Numeric(Decimal) | Text | Bytes | Date | Time |
-  Timestamp | TimestampTz | Uuid | Json | Array(Vec<Value>) | Other { type_name, text }`.
-  `Other` is the fallback so an unknown column type never breaks a query; it shows the
-  server's text representation.
-- `ColumnMeta`: name, engine type name, nullable when known, `Value` kind used for alignment
-  and sorting.
-- `RowBatch`: `Vec<Vec<Value>>`, sized to the page size (default 500, same as DataGrip).
-- `CatalogNode`: `{ path, kind, label, has_children }`. `kind` is an enum (`Database`, `Schema`,
-  `Table`, `View`, `MaterializedView`, `Column`, `Index`, `Constraint`, `Function`, `Sequence`,
-  `Trigger`, `Folder`) so the UI can pick icons and custom actions per kind.
-- IDs (`DataSourceId`, `SessionId`, `RunId`) are newtypes, never raw `Uuid`/`u64`.
+- `Cell`: `Option<String>`, a value as the database formats it for display, `None` for `NULL`.
+  Text rather than typed values; see [ADR-0004](adr/0004-results-as-text.md). `Row` is
+  `Vec<Cell>`.
+- `ColumnInfo`: name, plus the declared type when the driver knows it cheaply (SQLite does;
+  PostgreSQL's simple protocol doesn't).
+- Rows travel in pages of 500 (DataGrip's default) as `RowsFetched` events.
+- `CatalogNode`: `{ path, label, detail, has_children, has_definition, system }`. Its kind is the
+  last segment of its `CatalogPath` (`Database`, `Schema`, `Folder(..)`, `Table`, `View`,
+  `MaterializedView`, `Function`, `Sequence`, `Column`, `Index`, `Constraint`, `Trigger`), so
+  the UI can pick actions per kind.
+- IDs (`DataSourceId`, `ConsoleId`, `RunId`) are newtypes, never raw `Uuid`/`u64`.
 
 ## Errors
 

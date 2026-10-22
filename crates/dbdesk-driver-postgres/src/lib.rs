@@ -3,17 +3,21 @@
 //! Must run inside a tokio runtime: each connection spawns a task that drives the socket.
 
 mod catalog;
+mod execution;
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::future::poll_fn;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use dbdesk_core::{
-    BoxError, CatalogNode, CatalogPath, Connection, DriverError, NodeKind, Password,
-    PostgresConfig, ServerInfo,
+    BoxError, CancelHandle, CatalogNode, CatalogPath, Connection, DriverError, NodeKind, Password,
+    PostgresConfig, ResultCursor, ServerInfo,
 };
 use tokio::task::{JoinError, JoinHandle};
-use tokio_postgres::{Client, NoTls};
+use tokio_postgres::tls::NoTlsStream;
+use tokio_postgres::{AsyncMessage, Client, NoTls, Socket};
 
 /// Shown in `pg_stat_activity`, so a DBA can tell dbdesk's sessions apart.
 const APPLICATION_NAME: &str = "dbdesk";
@@ -91,11 +95,7 @@ impl DatabaseClient {
         }
 
         let (client, connection) = pg_config.connect(NoTls).await?;
-        let connection_task = tokio::spawn(async move {
-            if let Err(error) = connection.await {
-                tracing::warn!(error = %error, "PostgreSQL connection closed with an error");
-            }
-        });
+        let connection_task = tokio::spawn(drive_connection(connection, database.to_owned()));
         Ok(Self {
             client,
             connection_task,
@@ -105,6 +105,29 @@ impl DatabaseClient {
     async fn close(self) -> Result<(), JoinError> {
         drop(self.client);
         self.connection_task.await
+    }
+}
+
+/// Drives a connection's socket until the client is dropped, logging server notices (from
+/// `RAISE NOTICE`, `VACUUM VERBOSE`, "relation already exists, skipping", …) on the way.
+///
+/// The connection future must be polled through `poll_message` for this: awaiting it
+/// directly, as the tokio-postgres examples do, silently drops every notice.
+async fn drive_connection(
+    mut connection: tokio_postgres::Connection<Socket, NoTlsStream>,
+    database: String,
+) {
+    while let Some(message) = poll_fn(|cx| connection.poll_message(cx)).await {
+        match message {
+            Ok(AsyncMessage::Notice(notice)) => {
+                tracing::info!(database, "{}: {}", notice.severity(), notice.message());
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(database, error = %error, "PostgreSQL connection closed with an error");
+                return;
+            }
+        }
     }
 }
 
@@ -174,6 +197,18 @@ impl Connection for PostgresConnection {
     async fn definition(&mut self, path: &CatalogPath) -> Result<String, DriverError> {
         let client = self.client_for(path).await?;
         catalog::definition(client, path).await
+    }
+
+    /// Always runs on the configured database. The console's connection is its own session,
+    /// so there is no other database to pick.
+    async fn execute(&mut self, sql: &str) -> Result<Box<dyn ResultCursor>, DriverError> {
+        execution::execute(&self.primary.client, sql).await
+    }
+
+    fn cancel_handle(&self) -> Arc<dyn CancelHandle> {
+        Arc::new(execution::PostgresCancel(
+            self.primary.client.cancel_token(),
+        ))
     }
 
     async fn close(self: Box<Self>) -> Result<(), DriverError> {
@@ -378,6 +413,19 @@ mod tests {
         let add = folder(&schema, FolderKind::Functions)
             .child(NodeKind::Function, "add(a integer, b integer)");
         assert!(connection.definition(&add).await.unwrap().contains("a + b"));
+
+        Box::new(connection).close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn runs_pages_cancels_and_reports_error_positions() {
+        let Some((config, password)) = test_server() else {
+            return;
+        };
+        let mut connection = connect(&config, password.as_ref()).await.unwrap();
+
+        conformance::check_execution(&mut connection).await;
+        conformance::check_cancel(&mut connection, "SELECT pg_sleep(60)").await;
 
         Box::new(connection).close().await.unwrap();
     }

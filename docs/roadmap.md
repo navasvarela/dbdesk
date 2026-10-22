@@ -84,6 +84,37 @@ Follow-ups left out of M2:
 
 **Exit:** I use dbdesk instead of `psql` for a day of ordinary queries.
 
+**Demo note:** built; the exit criterion (a day of real use) is still to be tried. Right-click a
+data source → **New query console**, or a table → **Open data**. Each console has its own
+connection:
+- **Editing:** SQL is highlighted by `dbdesk-sql`'s lexer.
+- **Running:** ⌘↵ runs the selection or the statement at the cursor; ⇧⌘↵ runs everything,
+  stopping at the first failure. ⌘. cancels on both drivers.
+- **Results:** the grid shows 500 rows; **Load more rows** or scrolling to the bottom loads the
+  next 500.
+- **Errors:** the error's position is underlined in the editor.
+- **Safety:** `UPDATE`/`DELETE` without `WHERE` asks "Run anyway?".
+- **Notices:** PostgreSQL notices appear in the log console.
+
+Covered by:
+- Driver checks for execution (paging, NULL, abandoning a result, error positions) and
+  cancellation on PostgreSQL 17 and SQLite.
+- Headless console engine tests (scripts, paging, failures, cancel, a new run discarding unread
+  rows).
+- Console state tests, and a UI test that opens a table's data and loads the next page.
+
+Writing that UI test found a real bug: "Load more rows" was drawn below a grid that takes all
+the space, so it couldn't be clicked; it now sits in the summary line. A stress run found a
+cancel race that left endless SQLite queries running; see "Hard-learned" in the SQL runner doc.
+
+Follow-ups left out of M3 (most belong to M4 anyway):
+
+- Explain (⌥⌘E), manual transactions, persisted consoles, query history, export.
+- Cell selection and copying ranges, a cell viewer, client-side sort and filter.
+- Line numbers, current-statement highlight, completion.
+- Per-data-source safety levels (confirm any change on production).
+- Positions for SQLite's "no such table/column" errors (SQLite doesn't report them).
+
 ## M4 — Daily-driver polish
 
 - Console files persisted; reopen where I left off.
