@@ -1,0 +1,43 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+publish = false
+
+[workspace.dependencies]
+dbdesk-core = { path = "crates/dbdesk-core" }
+dbdesk-engine = { path = "crates/dbdesk-engine" }
+dbdesk-store = { path = "crates/dbdesk-store" }
+
+anyhow = "1.0.104"
+directories = "6.0.0"
+eframe = { version = "0.36.2", default-features = false, features = [
+    "accesskit",
+    "default_fonts",
+    "glow",
+    "persistence",
+    "wayland",
+    "x11",
+] }
+# egui_dock 0.21 is built against egui 0.36; bump the egui family only together with it.
+egui = "0.36.2"
+egui_dock = { version = "0.21.1", features = ["serde"] }
+egui_kittest = "0.36.2"
+jiff = "0.2.38"
+serde = { version = "1.0.229", features = ["derive"] }
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "sync", "time"] }
+tracing = "0.1.44"
+tracing-appender = "0.2.5"
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "registry", "std", "tracing-log"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+expect_used = "deny"
+unwrap_used = "deny"

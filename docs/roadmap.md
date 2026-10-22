@@ -14,6 +14,11 @@ sized for evenings-and-weekends pace; the order matters more than the dates.
 
 **Exit:** the app opens, shows three panels, logs "engine started" in the log console.
 
+**Demo note:** done. `cargo run -p dbdesk-app` opens the docked layout, and the status bar shows
+"Engine running". The log console shows "engine started" with level/search filters, and the
+same entries go to `logs/dbdesk.<date>.log`. The layout survives restarts; **View → Reset layout**
+restores the default. An egui_kittest test drives the whole app headlessly.
+
 ## M1 — Data sources and sessions
 
 - New / edit / delete data source dialog for Postgres and SQLite.

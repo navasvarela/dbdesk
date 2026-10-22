@@ -1,0 +1,30 @@
+[package]
+name = "dbdesk-app"
+description = "The dbdesk desktop application."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "dbdesk"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+dbdesk-engine.workspace = true
+dbdesk-store.workspace = true
+eframe.workspace = true
+egui.workspace = true
+egui_dock.workspace = true
+jiff.workspace = true
+serde.workspace = true
+tracing.workspace = true
+tracing-appender.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+egui_kittest = { workspace = true, features = ["eframe"] }
+
+[lints]
+workspace = true

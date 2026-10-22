@@ -22,8 +22,8 @@ responsive and every operation must be cancellable.
 
 ## Consequences
 
-- No locks shared between UI and engine for application state; the only shared structure is the
-  log ring buffer, locked briefly.
+- No locks shared between UI and engine. The log console follows the same pattern: log entries
+  reach the UI over a channel too.
 - The UI can be tested with a fake engine, and the engine headlessly by sending commands.
 - Every engine response must be an event, including errors; nothing is returned "directly".
   Correlating requests uses ids (`RunId`, `CatalogPath`), and late events for cancelled runs are
