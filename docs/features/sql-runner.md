@@ -2,7 +2,7 @@
 
 The centre panel: query consoles as tabs, each with an editor on top and results below.
 
-Status: implemented in M3, except where marked *planned*.
+Status: implemented in M3 and M4, except where marked *planned*.
 
 ## Query console
 
@@ -12,11 +12,18 @@ Status: implemented in M3, except where marked *planned*.
   other consoles. A long query or a half-read result in one tab never blocks another. The
   connection opens on the first run, and closing the tab closes it.
 - Titled with the data source's name, numbered if there are several (`shop`, `shop (2)`).
-- Toolbar: **Run**, **Run all**, **Cancel**, and the run status (connecting, running,
-  done in N ms, failed, cancelled).
-- *Planned (M4)*: contents saved as `.sql` files and reopened on start (see
-  [Persistence](../persistence.md)); until then console tabs are dropped from the saved layout.
-- *Planned*: header with data source colour, current schema switcher, transaction mode.
+- Toolbar: **Run**, **Run all**, **Explain**, **Cancel**, **History**, and the run status
+  (connecting, running, done in N ms, failed, cancelled). A second row holds the transaction
+  mode (see [Transactions](#transactions)).
+- **Saved as a file.** Each console is `consoles/<data-source-id>/<name>.sql` (`console.sql`,
+  `console_2.sql`, … as DataGrip names them; see [Persistence](../persistence.md)). Edits are
+  written a second after typing stops, and on quit, by the engine, never on the UI thread.
+  Open console tabs are part of the saved layout and reopen with their text on start; a tab
+  whose file or data source is gone is dropped.
+- **Closing** a console keeps its file if anything was typed in it, and removes it otherwise
+  (a fresh console, or one opened by **Open data** and left as it was). Kept files are offered
+  in the data source's context menu under **Open saved console**.
+- *Planned*: header with data source colour, current schema switcher, renaming consoles.
 
 ## Editor
 
@@ -31,8 +38,11 @@ egui's `TextEdit` (monospace, code-editor mode) with a custom layouter:
 The editor is egui's weakest area (see [ADR-0001](../adr/0001-ui-toolkit-egui.md)). If it
 becomes the bottleneck, the plan is a dedicated editor widget in its own crate.
 
-*Planned*: line numbers, current-statement highlight, bracket matching, completion from the
-cached catalog, formatting.
+- Line numbers in the left margin; a line that wraps is numbered once.
+- The statement ⌘↵ would run (the one at the cursor) has a faint background, unless text is
+  selected.
+
+*Planned*: bracket matching, completion from the cached catalog, formatting.
 
 ## Running SQL
 
@@ -41,7 +51,7 @@ cached catalog, formatting.
 | Run | ⌘↵ | The selection (split into statements) if any, otherwise the statement at the cursor |
 | Run all | ⇧⌘↵ | Every statement in the console, in order, stopping at the first failure |
 | Cancel | ⌘. | Stops the running statement, or discards unread rows |
-| Explain | ⌥⌘E | *Planned (M4)* |
+| Explain | ⌥⌘E | The statement at the cursor (or the first one selected), prefixed with `EXPLAIN` (PostgreSQL) or `EXPLAIN QUERY PLAN` (SQLite) |
 
 Shortcuts work while the console's editor has focus, and are taken before the editor sees
 them, so ⌘↵ runs instead of inserting a newline.
@@ -113,7 +123,42 @@ sequenceDiagram
   reports them for syntax errors, not for unknown tables or columns.
 - **Notices** (`RAISE NOTICE`, "already exists, skipping", …) from PostgreSQL go to the log
   console.
-- **Transactions**: auto-commit. *Planned (M4)*: manual mode with commit/rollback.
+- **History**: every statement a console runs is recorded (see [Query history](#query-history)).
+
+## Transactions
+
+Each console has a mode, **Auto-commit** (the default) or **Manual commit**:
+
+- **Auto-commit**: each statement commits on its own, unless the user opens a transaction with
+  their own `BEGIN`.
+- **Manual commit**: before the first statement that isn't itself transaction control
+  (`BEGIN`, `COMMIT`, `ROLLBACK`, `SAVEPOINT`, …), the engine sends `BEGIN`. Changes stay
+  pending until **Commit** or **Rollback**.
+- **Pending indicator**: "● Transaction open", or "● Transaction failed" on PostgreSQL after
+  an error inside the transaction (only a rollback is accepted then; Commit of a failed
+  transaction is reported as the rollback it is). It shows in either mode, so a `BEGIN` typed
+  in auto-commit mode is noticed too. The mode can't change while a transaction is open.
+- **Status from the database**: `Connection::transaction_status` asks the driver. SQLite
+  answers from `sqlite3_get_autocommit`. tokio-postgres doesn't expose the status the protocol
+  sends after each statement, so the driver compares `now()` (the transaction's start) with
+  `statement_timestamp()`, and reads `in_failed_sql_transaction` as failed. The engine asks
+  after statements that control transactions or fail, not after every statement.
+- **Warnings**: closing a console, disconnecting its data source (which closes its consoles'
+  connections too) or quitting with a transaction open asks "Roll back open transactions?"
+  first. Closing a connection is what rolls back; there is no "commit and close".
+
+## Query history
+
+- Every statement a console runs goes to `history.sqlite` (schema in
+  [Persistence](../persistence.md)) with its start time, duration, row count and outcome (ok,
+  error, cancelled). The explorer's own catalog queries and the engine's implicit `BEGIN` are
+  not recorded.
+- **History** in a console's toolbar opens a window over the data source's statements, newest
+  first (up to 500; the search narrows them). The search matches anywhere in the SQL,
+  ignoring ASCII case. **Insert** (or a double-click) puts a statement at the console's cursor
+  on a line of its own.
+- The history is written by one thread from the blocking pool, so a search sent after a run
+  finishes sees that run's statements; the window refreshes after every run.
 
 ## Result grid
 
@@ -126,13 +171,31 @@ sequenceDiagram
 - `NULL` in weak italics, numbers right-aligned (by looking at the text, because the text
   protocol doesn't say which columns are numeric), long text truncated with the full value on
   hover.
-- Right-click a cell: Copy value, Copy row (tab-separated).
-- *Planned (M4)*: cell selection, copy selection, export CSV/JSON, a cell viewer (JSON
-  pretty-printed), client-side sort and filter. *Planned (M5)*: editing data.
+- **Selection**: click a cell to select it; shift-click or drag to select a rectangle. ⌘C (when
+  no text field has focus) or **Copy selection** copies it as TSV, rows in the order shown,
+  `NULL` as `NULL`, values with tabs, line breaks or quotes quoted the way spreadsheets read
+  them back.
+- Right-click a cell: Copy selection, Copy value, Copy row (tab-separated), View value.
+- **Cell viewer**: double-click a cell (or press Space on a selected one) to see its whole value
+  in a window. JSON objects and arrays are pretty-printed, keeping their key order; Copy copies
+  the value as stored.
+- **Sort and filter, client-side**: click a column header to sort (ascending, descending, off),
+  and type in **Filter loaded rows** to keep rows with a cell containing the text (ignoring
+  case). Both work on the rows loaded so far only, never re-query, and say so: "Sorted and
+  filtered here, not by the database: N of M loaded rows". Numbers sort by value when both
+  cells look numeric (the same guess that right-aligns them), `NULL` first. The `#` column keeps
+  each row's position in the result.
+- **Export**: **Export → CSV…/JSON…** asks where (the platform's save dialog, via `rfd`) and
+  the engine writes the rows as shown (sorted and filtered). CSV is RFC 4180 with a header and
+  `NULL` as an empty field; JSON is an array of objects with keys in column order (repeated
+  names get `_2`, `_3`), values as strings or `null`, since cells are text.
+- The editor and the grid are split by a line that can be dragged; each keeps at least a fifth
+  of the console's height.
+- *Planned (M5)*: editing data.
 
 ## Open questions
 
-- Store full result sets of past runs, or only the SQL in history? (Leaning: SQL + row count +
-  duration only.)
+- Store full result sets of past runs, or only the SQL in history? Settled in M4: only the SQL,
+  with its row count, duration and outcome.
 - Should a script be able to keep several result cursors open, at the cost of one connection
   each?

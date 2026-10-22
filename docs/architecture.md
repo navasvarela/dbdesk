@@ -30,8 +30,8 @@ flowchart LR
 | `dbdesk-sql` | A forgiving SQL lexer: statement splitting, statement at the cursor, highlighting tokens, the UPDATE/DELETE-without-WHERE check. | — |
 | `dbdesk-driver-postgres` | `tokio-postgres` implementation of `Connection`. | core |
 | `dbdesk-driver-sqlite` | `rusqlite` implementation, run on `spawn_blocking`. | core |
-| `dbdesk-engine` | Session lifecycle, command handling, cancellation, event emission. | core, sql, store, drivers |
-| `dbdesk-store` | Data source file (TOML), secrets (`SecretStore`, OS keychain via `keyring`), later query history. | core |
+| `dbdesk-engine` | Session lifecycle, command handling, cancellation, transactions, event emission. | core, sql, store, drivers |
+| `dbdesk-store` | Data source file (TOML), secrets (`SecretStore`, OS keychain via `keyring`), console files, query history (`rusqlite`), CSV/JSON export. All blocking; the engine calls it from the blocking pool. | core |
 | `dbdesk-app` | `eframe` binary: panels, widgets, app state, keymap. | core, engine, sql, store |
 
 `dbdesk-app` depends on the engine only through its public `EngineHandle` (a command sender
@@ -54,7 +54,7 @@ Rationale and alternatives: [ADR-0003](adr/0003-ui-engine-message-passing.md).
 
 ## Messages
 
-Implemented so far (M1). See `dbdesk-engine/src/protocol.rs` for the authoritative version:
+Implemented so far (M1–M4). See `dbdesk-engine/src/protocol.rs` for the authoritative version:
 
 ```rust
 pub enum Command {
@@ -65,10 +65,16 @@ pub enum Command {
     Disconnect(DataSourceId),
     LoadChildren { id: DataSourceId, path: CatalogPath },    // M2
     LoadDefinition { id: DataSourceId, path: CatalogPath },  // M2
-    Execute { console: ConsoleId, data_source: DataSourceId, run: RunId, statements: Vec<String> }, // M3
+    Execute { console: ConsoleId, data_source: DataSourceId, run: RunId,
+              statements: Vec<String>, transactions: TransactionMode },          // M3, M4
     FetchMore { console: ConsoleId, run: RunId },            // M3
     Cancel { console: ConsoleId, run: RunId },               // M3
     CloseConsole(ConsoleId),                                 // M3
+    EndTransaction { console: ConsoleId, end: TransactionEnd },                 // M4
+    SaveConsole { key: ConsoleKey, text: String },           // M4
+    DeleteConsoleFile(ConsoleKey),                           // M4
+    SearchHistory { data_source: DataSourceId, text: String },                  // M4
+    ExportRows { console: ConsoleId, export: Export },       // M4
 }
 
 pub enum Event {
@@ -87,6 +93,12 @@ pub enum Event {
     RowsFetched { run: RunId, statement: usize, rows: Vec<Row>, more: bool },
     StatementFinished { run: RunId, statement: usize, result: Result<StatementSummary, StatementFailure> },
     RunFinished { run: RunId, outcome: RunOutcome, elapsed: Duration },
+    ConsolesLoaded(Vec<SavedConsole>),                                          // M4
+    ConsoleSaveFailed { key: ConsoleKey, error: String },                       // M4
+    TransactionChanged { console: ConsoleId, status: TransactionStatus },       // M4
+    TransactionEnded { console: ConsoleId, result: Result<TransactionEnd, String> }, // M4
+    HistoryFound { data_source: DataSourceId, text: String, result: Result<Vec<HistoryEntry>, String> }, // M4
+    ExportFinished { console: ConsoleId, path: PathBuf, result: Result<usize, String> }, // M4
 }
 ```
 
@@ -97,7 +109,14 @@ requests one at a time, in order. A disconnect abandons the request in progress.
 keyed by `DataSourceId`. Each query console has its own session too (M3), keyed by `ConsoleId`,
 which also keeps the last statement's result cursor open between `FetchMore`s. Cancelling
 goes through a `watch` channel rather than the request queue, so it reaches the session while
-it is busy with the very statement being cancelled.
+it is busy with the very statement being cancelled. A console session also tracks its
+connection's transaction status and reports changes (M4). Disconnecting a data source closes
+its explorer session and its consoles' sessions.
+
+Files the engine owns besides the data sources (M4): console files are written in command
+order by the command loop itself; the query history has one thread from the blocking pool,
+fed through a channel by console sessions (records) and the command loop (searches); exports
+run in a task of their own, since a large one may take a while.
 
 Planned for later milestones:
 
@@ -133,7 +152,7 @@ Each driver crate exposes `connect(config, password) -> Result<ItsConnection, Dr
 The engine maps a `ConnectionConfig` variant to a driver in one `match` and boxes the result.
 
 ```rust
-// Implemented (M1–M3):
+// Implemented (M1–M4):
 #[async_trait]
 pub trait Connection: Send {
     fn server_info(&self) -> &ServerInfo;
@@ -141,6 +160,7 @@ pub trait Connection: Send {
     async fn children(&mut self, path: &CatalogPath) -> Result<Vec<CatalogNode>, DriverError>;
     async fn definition(&mut self, path: &CatalogPath) -> Result<String, DriverError>;
     async fn execute(&mut self, sql: &str) -> Result<Box<dyn ResultCursor>, DriverError>;
+    async fn transaction_status(&mut self) -> Result<TransactionStatus, DriverError>; // M4
     fn cancel_handle(&self) -> Arc<dyn CancelHandle>;
     async fn close(self: Box<Self>) -> Result<(), DriverError>;
 }
