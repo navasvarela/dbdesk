@@ -13,12 +13,13 @@ use std::time::Instant;
 use dbdesk_core::{
     CancelHandle, CatalogPath, Connection, DataSource, DataSourceId, describe_error,
 };
-use dbdesk_store::SecretStore;
+use dbdesk_store::{HistoryEntry, SecretStore};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::{oneshot, watch};
 use tokio::task::JoinHandle;
 
 use crate::events::EventSink;
+use crate::history::HistoryLog;
 use crate::open::open;
 use crate::{ConsoleId, Event, PasswordUpdate, RunId, SessionState};
 
@@ -38,6 +39,13 @@ pub(crate) enum SessionOwner {
     Console(ConsoleId),
 }
 
+/// What a session needs from the engine.
+pub(crate) struct Services {
+    pub(crate) secrets: Arc<dyn SecretStore>,
+    pub(crate) events: EventSink,
+    pub(crate) history: HistoryLog,
+}
+
 /// A live connection, owned by its own task so a slow connect or query never holds up the
 /// engine's command loop.
 pub(crate) struct Session {
@@ -53,12 +61,12 @@ pub(crate) struct Session {
 }
 
 impl Session {
-    pub(crate) fn start(
-        data_source: DataSource,
-        owner: SessionOwner,
-        secrets: Arc<dyn SecretStore>,
-        events: EventSink,
-    ) -> Self {
+    pub(crate) fn start(data_source: DataSource, owner: SessionOwner, services: Services) -> Self {
+        let Services {
+            secrets,
+            events,
+            history,
+        } = services;
         let (disconnect, disconnect_signal) = oneshot::channel();
         let (requests, request_receiver) = mpsc::unbounded_channel();
         let (cancel, cancel_signal) = watch::channel(None);
@@ -66,6 +74,9 @@ impl Session {
             data_source,
             owner,
             events,
+            // Only what the user runs in a console belongs in the history, not the
+            // explorer's catalog queries.
+            history: matches!(owner, SessionOwner::Console(_)).then_some(history),
         };
         let signals = Signals {
             disconnect: disconnect_signal,
@@ -112,6 +123,7 @@ struct SessionContext {
     data_source: DataSource,
     owner: SessionOwner,
     events: EventSink,
+    history: Option<HistoryLog>,
 }
 
 impl SessionContext {
@@ -121,6 +133,12 @@ impl SessionContext {
 
     fn send(&self, event: Event) {
         self.events.send(event);
+    }
+
+    fn record(&self, entry: HistoryEntry) {
+        if let Some(history) = &self.history {
+            history.record(entry);
+        }
     }
 
     fn notify(&self, state: SessionState) {
@@ -284,7 +302,7 @@ impl Worker<'_> {
                 changed = self.signals.cancel.changed() => {
                     changed.ok()?;
                     let cancelled = *self.signals.cancel.borrow_and_update();
-                    if let Some(parked) = self.parked.take_if(|parked| Some(parked.run) == cancelled) {
+                    if let Some(parked) = self.parked.take_if(|parked| Some(parked.run()) == cancelled) {
                         query::discard(self.context, parked, self.cancel_handle).await;
                     }
                 }
@@ -295,7 +313,7 @@ impl Worker<'_> {
 
     async fn handle(&mut self, request: SessionRequest) -> Result<(), Disconnected> {
         if let SessionRequest::FetchMore(run) = request {
-            if let Some(parked) = self.parked.take_if(|parked| parked.run == run) {
+            if let Some(parked) = self.parked.take_if(|parked| parked.run() == run) {
                 self.parked = query::fetch_more(self, parked).await?;
             }
             return Ok(());

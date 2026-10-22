@@ -3,7 +3,7 @@ use std::time::Duration;
 use dbdesk_core::{
     CatalogNode, CatalogPath, ColumnInfo, DataSource, DataSourceId, Password, Row, ServerInfo,
 };
-use dbdesk_store::{ConsoleKey, SavedConsole};
+use dbdesk_store::{ConsoleKey, HistoryEntry, SavedConsole};
 
 /// Identifies a query console. Chosen by the UI, unique for the app's lifetime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -77,6 +77,12 @@ pub enum Command {
     },
     /// Removes a console's file, if it exists.
     DeleteConsoleFile(ConsoleKey),
+    /// Looks up the data source's past statements containing `text`, newest first.
+    /// Answered by [`Event::HistoryFound`].
+    SearchHistory {
+        data_source: DataSourceId,
+        text: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,6 +117,13 @@ pub enum Event {
     ConsoleSaveFailed {
         key: ConsoleKey,
         error: String,
+    },
+    /// The answer to [`Command::SearchHistory`], echoing what was searched for so the UI can
+    /// drop answers to searches it has moved on from.
+    HistoryFound {
+        data_source: DataSourceId,
+        text: String,
+        result: Result<Vec<HistoryEntry>, String>,
     },
     SessionChanged {
         id: DataSourceId,

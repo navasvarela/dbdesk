@@ -11,6 +11,7 @@ use dbdesk_core::DataSourceId;
 use dbdesk_engine::{
     Command, ConsoleId, Event, PasswordUpdate, RunId, RunOutcome, StatementFailure,
 };
+use dbdesk_store::HistoryOutcome;
 
 const CONSOLE: ConsoleId = ConsoleId(1);
 const ROWS: usize = 1200;
@@ -214,4 +215,38 @@ fn a_new_run_discards_the_previous_unread_rows() {
     assert_eq!(expect_rows(&mut engine, 2, 0), (1, false));
     expect_statement_ok(&mut engine, 2, 0);
     expect_run_finished(&mut engine, 2, RunOutcome::Completed);
+}
+
+#[test]
+fn records_each_statement_in_the_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut engine, id) = engine_with_sqlite(dir.path());
+    execute(&engine, id, 1, &["SELECT 1", "SELECT * FROM missing"]);
+    while !matches!(next_run_event(&mut engine), Event::RunFinished { .. }) {}
+
+    engine.send(Command::SearchHistory {
+        data_source: id,
+        text: "select".to_owned(),
+    });
+
+    let Event::HistoryFound {
+        data_source,
+        text,
+        result: Ok(entries),
+    } = next_run_event(&mut engine)
+    else {
+        panic!("expected history entries");
+    };
+    assert_eq!((data_source, text.as_str()), (id, "select"));
+    let found: Vec<(&str, HistoryOutcome, Option<u64>)> = entries
+        .iter()
+        .map(|entry| (entry.sql.as_str(), entry.outcome, entry.rows))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            ("SELECT * FROM missing", HistoryOutcome::Error, None),
+            ("SELECT 1", HistoryOutcome::Ok, None),
+        ]
+    );
 }

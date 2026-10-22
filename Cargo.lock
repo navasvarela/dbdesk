@@ -897,6 +897,7 @@ dependencies = [
  "dbdesk-driver-postgres",
  "dbdesk-driver-sqlite",
  "dbdesk-store",
+ "jiff",
  "rusqlite",
  "tempfile",
  "thiserror 2.0.21",
@@ -914,7 +915,9 @@ version = "0.1.0"
 dependencies = [
  "dbdesk-core",
  "directories",
+ "jiff",
  "keyring",
+ "rusqlite",
  "serde",
  "tempfile",
  "thiserror 2.0.21",

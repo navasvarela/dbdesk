@@ -8,9 +8,10 @@ use tokio::task::{JoinError, JoinSet};
 
 use crate::console_files;
 use crate::events::EventSink;
+use crate::history::HistoryLog;
 use crate::open::test_connection;
 use crate::registry::{Registry, RegistryError};
-use crate::session::{Session, SessionOwner, SessionRequest};
+use crate::session::{Services, Session, SessionOwner, SessionRequest};
 use crate::{Command, ConsoleId, EngineConfig, Event, PasswordUpdate, RunId, RunOutcome};
 
 #[derive(Debug, thiserror::Error)]
@@ -34,8 +35,10 @@ pub(crate) async fn run(
     let registry = Registry::load(config.data_sources).await;
     events.send(registry.loaded_event());
     events.send(console_files::load(&config.consoles).await);
+    let (history, history_task) = HistoryLog::start(config.history, events.clone());
 
     let mut engine = Engine {
+        history,
         registry,
         secrets: config.secrets,
         console_files: config.consoles,
@@ -47,7 +50,12 @@ pub(crate) async fn run(
     while let Some(command) = commands.recv().await {
         engine.handle(command).await;
     }
+    // Sessions hold history handles too, so the history thread ends only once they have
+    // stopped and their last statements are recorded.
     engine.shut_down().await;
+    if let Err(error) = history_task.await {
+        tracing::error!("the history thread failed: {error}");
+    }
     tracing::info!("engine stopped");
 }
 
@@ -58,6 +66,7 @@ struct ConsoleSession {
 
 struct Engine {
     registry: Registry,
+    history: HistoryLog,
     secrets: Arc<dyn SecretStore>,
     console_files: ConsoleFiles,
     events: EventSink,
@@ -123,6 +132,9 @@ impl Engine {
             }
             Command::DeleteConsoleFile(key) => {
                 console_files::delete(&self.console_files, key).await;
+            }
+            Command::SearchHistory { data_source, text } => {
+                self.history.search(data_source, text);
             }
         }
     }
@@ -212,8 +224,7 @@ impl Engine {
         let session = Session::start(
             data_source.clone(),
             SessionOwner::Explorer(id),
-            Arc::clone(&self.secrets),
-            self.events.clone(),
+            self.services(),
         );
         self.sessions.insert(id, session);
     }
@@ -244,8 +255,7 @@ impl Engine {
             let session = Session::start(
                 config.clone(),
                 SessionOwner::Console(console),
-                Arc::clone(&self.secrets),
-                self.events.clone(),
+                self.services(),
             );
             self.consoles.insert(
                 console,
@@ -259,6 +269,14 @@ impl Engine {
             console
                 .session
                 .request(SessionRequest::Execute { run, statements });
+        }
+    }
+
+    fn services(&self) -> Services {
+        Services {
+            secrets: Arc::clone(&self.secrets),
+            events: self.events.clone(),
+            history: self.history.clone(),
         }
     }
 
@@ -284,6 +302,7 @@ impl Engine {
     }
 
     async fn shut_down(mut self) {
+        drop(self.history);
         for (_, session) in self.sessions.drain() {
             self.closing.spawn(session.stop());
         }

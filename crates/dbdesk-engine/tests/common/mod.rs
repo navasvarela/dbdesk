@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use dbdesk_core::{ConnectionConfig, DataSource, DataSourceId, Password, SqliteConfig};
 use dbdesk_engine::{Command, EngineConfig, EngineHandle, Event, Repaint, SessionState};
-use dbdesk_store::{ConsoleFiles, DataSourceFile, SecretError, SecretStore};
+use dbdesk_store::{ConsoleFiles, DataSourceFile, HistoryFile, SecretError, SecretStore};
 
 pub const EVENT_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -62,6 +62,7 @@ impl TestEngine {
             data_sources: DataSourceFile::new(data_sources_file),
             secrets,
             consoles: ConsoleFiles::new(dir.join("consoles")),
+            history: HistoryFile::new(dir.join("history.sqlite")),
         };
         let engine = EngineHandle::start(config, SignalRepaint(sender)).unwrap();
         Self { engine, repaints }

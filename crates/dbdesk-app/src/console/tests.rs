@@ -123,3 +123,23 @@ fn a_lost_connection_fails_the_running_statement() {
     let first = &console.run.as_ref().unwrap().statements[0];
     assert!(matches!(&first.result, Some(Err(failure)) if failure.message.contains("refused")));
 }
+
+#[test]
+fn inserts_a_statement_on_a_line_of_its_own_at_the_cursor() {
+    let cases: [(&str, Range<usize>, &str, &str); 3] = [
+        ("", 0..0, "select 1", "select 1;\n"),
+        ("select 1;", 9..9, "select 2;", "select 1;\nselect 2;\n"),
+        // A selection is replaced.
+        ("select 1;\nold;\n", 10..14, "new  ", "select 1;\nnew;\n\n"),
+    ];
+    for (text, selection, sql, expected) in cases {
+        let mut console = console(text);
+        console.selection = selection;
+
+        console.insert_statement(sql, Instant::now());
+
+        assert_eq!(console.text, expected, "{text:?}");
+        assert_eq!(console.pending_cursor, Some(console.selection.end));
+        assert!(console.file.unsaved_since.is_some());
+    }
+}

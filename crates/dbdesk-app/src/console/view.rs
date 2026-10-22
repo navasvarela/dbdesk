@@ -3,7 +3,8 @@
 
 use std::time::Instant;
 
-use egui::text::CCursorRange;
+use egui::text::{CCursor, CCursorRange};
+use egui::text_edit::TextEditState;
 use egui::{Id, Key, KeyboardShortcut, Modifiers, ScrollArea, TextBuffer, TextEdit, Ui, vec2};
 
 use super::{QueryConsole, RunScope, RunState, SubmittedStatement, highlight, results};
@@ -24,6 +25,8 @@ pub enum ConsoleAction {
     Run(Vec<SubmittedStatement>),
     FetchMore(RunId),
     Cancel(RunId),
+    /// Opens the data source's query history, to insert a past statement here.
+    ShowHistory,
 }
 
 pub fn show(ui: &mut Ui, console: &mut QueryConsole, actions: &mut Vec<ConsoleAction>) {
@@ -104,6 +107,13 @@ fn toolbar(ui: &mut Ui, console: &QueryConsole, actions: &mut Vec<ConsoleAction>
         {
             actions.push(ConsoleAction::Cancel(run));
         }
+        if ui
+            .button("History")
+            .on_hover_text("Search the statements run on this data source")
+            .clicked()
+        {
+            actions.push(ConsoleAction::ShowHistory);
+        }
         ui.separator();
         run_status(ui, console);
         if let Some(error) = console.save_error() {
@@ -144,7 +154,27 @@ fn run_status(ui: &mut Ui, console: &QueryConsole) {
     }
 }
 
+/// Applies a cursor move requested from outside the editor, and focuses it.
+fn move_cursor(ui: &Ui, console: &mut QueryConsole, editor_id: Id) {
+    let Some(offset) = console.pending_cursor.take() else {
+        return;
+    };
+    let char_index = console
+        .text
+        .get(..offset)
+        .unwrap_or(&console.text)
+        .chars()
+        .count();
+    let mut state = TextEditState::load(ui.ctx(), editor_id).unwrap_or_default();
+    state
+        .cursor
+        .set_char_range(Some(CCursorRange::one(CCursor::new(char_index))));
+    state.store(ui.ctx(), editor_id);
+    ui.memory_mut(|memory| memory.request_focus(editor_id));
+}
+
 fn editor(ui: &mut Ui, console: &mut QueryConsole, editor_id: Id) {
+    move_cursor(ui, console, editor_id);
     let dialect = console.dialect;
     let error_marker = console.error_marker.clone();
     let mut layouter = |ui: &Ui, text: &dyn TextBuffer, wrap_width: f32| {

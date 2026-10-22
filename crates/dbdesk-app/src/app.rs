@@ -2,13 +2,16 @@ use std::time::Instant;
 
 use dbdesk_core::{CatalogPath, DataSourceId};
 use dbdesk_engine::{Command, EngineConfig, EngineError, EngineHandle, Event, Repaint};
+use dbdesk_store::ConsoleKey;
 use egui_dock::{DockArea, DockState, Style};
 
+use crate::console::ConsoleAction;
 use crate::consoles::Consoles;
 use crate::data_source_dialog::{DataSourceDialog, DialogAction};
 use crate::definition_window::DefinitionWindow;
 use crate::delete_dialog::{DeleteChoice, DeleteConfirmation};
 use crate::explorer::{ExplorerAction, ExplorerOptions};
+use crate::history_window::{HistoryAction, HistoryWindow};
 use crate::log_console::{LogConsole, LogFeed};
 use crate::state::{AppState, EngineStatus};
 use crate::workspace::{self, Panels, Tab};
@@ -25,6 +28,7 @@ pub struct DbDeskApp {
     data_source_dialog: Option<DataSourceDialog>,
     delete_confirmation: Option<DeleteConfirmation>,
     definition_window: Option<DefinitionWindow>,
+    history_window: Option<HistoryWindow>,
     consoles: Consoles,
 }
 
@@ -49,6 +53,7 @@ impl DbDeskApp {
             data_source_dialog: None,
             delete_confirmation: None,
             definition_window: None,
+            history_window: None,
             consoles: Consoles::default(),
         })
     }
@@ -81,6 +86,15 @@ impl DbDeskApp {
         }
         if let Some(window) = &mut self.definition_window {
             window.apply(event);
+        }
+        if let Some(window) = &mut self.history_window {
+            window.apply(event);
+        }
+        // The run's statements are recorded by now; show them.
+        if matches!(event, Event::RunFinished { .. })
+            && let Some(window) = &self.history_window
+        {
+            self.send(window.search_command());
         }
         self.consoles.apply(event);
         if matches!(event, Event::ConsolesLoaded(_)) {
@@ -254,6 +268,32 @@ impl DbDeskApp {
         }
     }
 
+    fn open_history(&mut self, console: ConsoleKey) {
+        let Some(entry) = self.state.data_source(console.data_source) else {
+            return;
+        };
+        let (window, search) = HistoryWindow::open(console, entry.data_source.name.clone());
+        self.history_window = Some(window);
+        self.send(search);
+    }
+
+    fn show_history_window(&mut self, ctx: &egui::Context) {
+        let Some(action) = self
+            .history_window
+            .as_mut()
+            .and_then(|window| window.show(ctx))
+        else {
+            return;
+        };
+        match action {
+            HistoryAction::Search(command) => self.send(command),
+            HistoryAction::Insert { console, sql } => {
+                self.consoles.insert_statement(&console, &sql);
+            }
+            HistoryAction::Close => self.history_window = None,
+        }
+    }
+
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("View", |ui| {
@@ -307,8 +347,12 @@ impl eframe::App for DbDeskApp {
             self.handle_explorer_action(action);
         }
         for (console, action) in console_actions {
-            let command = self.consoles.handle(&console, action);
-            self.send_if(command);
+            if action == ConsoleAction::ShowHistory {
+                self.open_history(console);
+            } else {
+                let command = self.consoles.handle(&console, action);
+                self.send_if(command);
+            }
         }
         for console in closed_consoles {
             let commands = self.consoles.close(&console);
@@ -328,6 +372,7 @@ impl eframe::App for DbDeskApp {
         {
             self.definition_window = None;
         }
+        self.show_history_window(&ctx);
 
         // Entries logged on the UI thread don't wake the UI (see `UiWaker`), so collect any
         // logged during this frame and ask for one more frame to show them.
@@ -365,7 +410,7 @@ mod tests {
 
     use dbdesk_core::{DataSourceId, Password};
     use dbdesk_store::{
-        ConsoleFiles, ConsoleKey, ConsoleName, DataSourceFile, SecretError, SecretStore,
+        ConsoleFiles, ConsoleName, DataSourceFile, HistoryFile, SecretError, SecretStore,
     };
     use egui::accesskit::Role;
     use egui_kittest::Harness;
@@ -399,6 +444,7 @@ mod tests {
             data_sources: DataSourceFile::new(dir.join("data_sources.toml")),
             secrets: Arc::new(NoSecrets),
             consoles: ConsoleFiles::new(dir.join("consoles")),
+            history: HistoryFile::new(dir.join("history.sqlite")),
         }
     }
 
@@ -599,5 +645,32 @@ mod tests {
                 .unwrap()
                 .contains("select 42;")
         });
+    }
+
+    #[test]
+    fn inserts_a_statement_from_the_history_into_the_console() {
+        let dir = tempfile::tempdir().unwrap();
+        save_shop(dir.path(), "CREATE TABLE orders (id INTEGER PRIMARY KEY)");
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        for expand in ["Expand shop", "Expand main", "Expand tables"] {
+            step_until_visible(&mut harness, expand);
+            harness.get_by_label(expand).click();
+        }
+        step_until_visible(&mut harness, "Expand orders");
+        harness.get_by_label("orders").click_secondary();
+        harness.run();
+        harness.get_by_label("Open data").click();
+        step_until_visible(&mut harness, "0 rows");
+
+        harness.get_by_label("History").click();
+        step_until(&mut harness, "the history loading", |harness| {
+            harness.query_by_label("Insert").is_some()
+        });
+        harness.get_by_label("Insert").click();
+        harness.run();
+
+        let query = "SELECT * FROM main.orders;\n";
+        harness.get_by_value(&query.repeat(2));
     }
 }

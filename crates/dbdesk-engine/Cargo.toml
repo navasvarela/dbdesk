@@ -11,6 +11,7 @@ dbdesk-core.workspace = true
 dbdesk-driver-postgres.workspace = true
 dbdesk-driver-sqlite.workspace = true
 dbdesk-store.workspace = true
+jiff.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true

@@ -150,6 +150,13 @@ impl Consoles {
             .collect()
     }
 
+    /// Puts a statement at the console's cursor, if the console is still open.
+    pub fn insert_statement(&mut self, key: &ConsoleKey, sql: &str) {
+        if let Some(console) = self.open.get_mut(key) {
+            console.insert_statement(sql, Instant::now());
+        }
+    }
+
     pub fn apply(&mut self, event: &Event) {
         if let Event::ConsolesLoaded(files) = event {
             self.saved.files.extend(
@@ -170,6 +177,8 @@ impl Consoles {
             ConsoleAction::Run(statements) => self.submit(key, statements),
             ConsoleAction::FetchMore(run) => Some(Command::FetchMore { console: id, run }),
             ConsoleAction::Cancel(run) => Some(Command::Cancel { console: id, run }),
+            // The app opens the history window; there is nothing to send yet.
+            ConsoleAction::ShowHistory => None,
         }
     }
 

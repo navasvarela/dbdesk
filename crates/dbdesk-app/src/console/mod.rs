@@ -58,6 +58,9 @@ pub struct QueryConsole {
     run: Option<RunView>,
     /// Where the last failure points in `text`; underlined until the text changes.
     error_marker: Option<Range<usize>>,
+    /// A byte offset to move the editor's cursor to on the next frame, after the text was
+    /// changed from outside the editor.
+    pending_cursor: Option<usize>,
     file: FileState,
 }
 
@@ -120,6 +123,7 @@ impl QueryConsole {
             session: SessionState::Disconnected,
             run: None,
             error_marker: None,
+            pending_cursor: None,
             file: FileState::default(),
         }
     }
@@ -140,6 +144,27 @@ impl QueryConsole {
 
     pub fn text(&self) -> &str {
         &self.text
+    }
+
+    /// Puts `sql` at the cursor, replacing the selection, as a statement on a line of its own,
+    /// and moves the cursor past it.
+    pub fn insert_statement(&mut self, sql: &str, now: Instant) {
+        let (start, end) = ordered(&self.selection);
+        let sql = sql.trim_end();
+        let mut inserted = String::new();
+        if !self.text[..start].is_empty() && !self.text[..start].ends_with('\n') {
+            inserted.push('\n');
+        }
+        inserted.push_str(sql);
+        if !sql.ends_with(';') {
+            inserted.push(';');
+        }
+        inserted.push('\n');
+        self.text.replace_range(start..end, &inserted);
+        let cursor = start + inserted.len();
+        self.selection = cursor..cursor;
+        self.pending_cursor = Some(cursor);
+        self.edited(now);
     }
 
     /// Records that the user changed the text at `now`.

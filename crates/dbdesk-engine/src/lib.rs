@@ -9,6 +9,7 @@ mod command_loop;
 mod console_files;
 mod events;
 mod handle;
+mod history;
 mod open;
 mod protocol;
 mod registry;
