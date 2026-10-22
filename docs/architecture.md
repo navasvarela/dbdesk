@@ -41,8 +41,10 @@ and an event receiver), so the UI can be driven by a fake engine in tests.
 
 - **UI thread**: `eframe` runs the egui loop on the main thread. Each frame it drains the event
   receiver with `try_recv`, applies events to `AppState`, then draws. It never blocks.
-- **Engine runtime**: a multi-threaded `tokio` runtime started on a background thread at launch.
-  The `SessionManager` task receives `Command`s and spawns one task per session.
+- **Engine runtime**: a multi-threaded `tokio` runtime owned by `EngineHandle`, created at launch.
+  Its worker threads are the background threads; the UI thread never enters it except to block
+  briefly in `EngineHandle::shutdown` on exit. The `SessionManager` task receives `Command`s and
+  spawns one task per session.
 - **Blocking drivers**: SQLite calls run inside `spawn_blocking` so they never stall the runtime.
 - **Waking the UI**: after sending an `Event`, the engine calls `egui::Context::request_repaint()`
   so the UI redraws even when the user is idle. The engine receives a clone of the context at

@@ -4,8 +4,25 @@ A desktop database tool in the spirit of JetBrains DataGrip, written in Rust.
 It is a learning project first and a personal daily driver second: the goal is a tool
 small enough to understand end to end and easy to bend to my own workflow.
 
-This repository currently holds the design documents. Code will live here too once
-milestone M0 starts.
+Status: **M0 (foundations)**. The app opens with the explorer, query console area and log
+console docked, and the engine runs in the background. There are no data sources yet.
+
+## Building and running
+
+```bash
+cargo run -p dbdesk-app
+```
+
+Checks run in CI (and should pass locally before pushing):
+
+```bash
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+Files live in `~/Library/Application Support/dbdesk` on macOS: window and layout state in
+`app.ron`, daily log files in `logs/`.
 
 ## Core features (v1)
 

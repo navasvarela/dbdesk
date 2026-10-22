@@ -9,11 +9,11 @@ dbdesk/
 ├── settings.toml         # app settings: page size, theme, fonts
 ├── keymap.toml           # M5
 ├── actions.toml          # M5, custom catalog actions
-├── layout.ron            # egui_dock state, panel sizes, open tabs
+├── app.ron               # eframe storage: window size, egui_dock layout, open tabs
 ├── consoles/
 │   └── <data-source-id>/<console-name>.sql
 ├── history.sqlite        # query history
-└── logs/dbdesk.log.*     # rolling file log
+└── logs/dbdesk.<date>.log # daily rolling file log, last 7 kept
 ```
 
 ## Data sources
@@ -54,6 +54,10 @@ Searchable from a history dialog per data source. Results themselves are not sto
 
 ## Layout
 
-The `egui_dock` `DockState` is serde-serializable; it is saved on exit and on a timer, and
-restored at start-up. Tabs refer to consoles by id, so a console whose file was deleted is
-dropped from the layout instead of failing to start.
+The `egui_dock` `DockState` is serde-serializable. It is stored under the `dock_layout` key in
+eframe's own storage (`app.ron`, written on exit and every 30 seconds) and restored at start-up.
+A saved layout that no longer deserializes (for example after a `Tab` variant is removed) is
+replaced by the default layout; **View → Reset layout** does the same on demand.
+
+Tabs will refer to consoles by id, so a console whose file was deleted is dropped from the
+layout instead of failing to start.

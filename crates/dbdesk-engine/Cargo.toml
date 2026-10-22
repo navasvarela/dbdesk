@@ -1,0 +1,15 @@
+[package]
+name = "dbdesk-engine"
+description = "Owns all dbdesk I/O on a tokio runtime; talks to the UI only through commands and events."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

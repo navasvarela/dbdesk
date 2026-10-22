@@ -1,0 +1,13 @@
+[package]
+name = "dbdesk-store"
+description = "Where dbdesk keeps its files: config, history, logs."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+directories.workspace = true
+
+[lints]
+workspace = true

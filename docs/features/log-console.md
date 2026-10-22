@@ -23,8 +23,18 @@ All logging goes through `tracing`. Engine code emits ordinary `tracing` events 
 fields (`data_source`, `session`, `run`, `category`). A custom `tracing_subscriber::Layer`:
 
 1. Converts each event into a `LogEntry` (fields extracted with a `Visit` implementation).
-2. Pushes it into a bounded ring buffer (default 10 000 entries, oldest dropped first) shared
-   with the UI behind a short-lived `Mutex` lock, and requests a repaint.
+2. Sends it over a channel to the UI and, if the event came from another thread, requests a
+   repaint.
+3. The UI drains the channel every frame into a ring buffer of 10 000 entries (oldest dropped
+   first). Nothing is shared behind a lock.
+
+The UI-thread exception in step 2 avoids a deadlock: `request_repaint` takes egui's context
+lock, which is not reentrant, and an event logged while that lock is held would block forever.
+Entries logged on the UI thread are collected by a second drain at the end of each frame, which
+requests the repaint itself.
+
+Records from the `log` crate (used by eframe and winit) are bridged into `tracing`. A target
+filter keeps dbdesk's own crates at debug and everything else at warn and above.
 
 A second layer writes the same events to a rolling file (`tracing-appender`) for debugging
 crashes after the fact.
