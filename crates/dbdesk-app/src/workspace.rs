@@ -4,7 +4,9 @@ use egui::{Id, Ui, WidgetText};
 use egui_dock::{DockState, NodeIndex, TabViewer};
 use serde::{Deserialize, Serialize};
 
+use crate::explorer::{self, ExplorerAction};
 use crate::log_console::LogConsole;
+use crate::state::DataSources;
 
 /// Share of the window height for the explorer and query consoles; the log console gets the
 /// rest, spanning the full width as DataGrip's bottom tool windows do.
@@ -49,6 +51,9 @@ pub fn default_layout() -> DockState<Tab> {
 /// Draws the content of each tab.
 pub struct Panels<'a> {
     pub log_console: &'a mut LogConsole,
+    pub data_sources: &'a DataSources,
+    /// What the user asked for in the explorer this frame, for the app to act on.
+    pub explorer_actions: &'a mut Vec<ExplorerAction>,
 }
 
 impl TabViewer for Panels<'_> {
@@ -64,7 +69,7 @@ impl TabViewer for Panels<'_> {
 
     fn ui(&mut self, ui: &mut Ui, tab: &mut Tab) {
         match tab {
-            Tab::Explorer => explorer(ui),
+            Tab::Explorer => explorer::show(ui, self.data_sources, self.explorer_actions),
             Tab::Welcome => welcome(ui),
             Tab::LogConsole => self.log_console.ui(ui),
         }
@@ -74,10 +79,6 @@ impl TabViewer for Panels<'_> {
     fn is_closeable(&self, tab: &Tab) -> bool {
         matches!(tab, Tab::Welcome)
     }
-}
-
-fn explorer(ui: &mut Ui) {
-    ui.weak("No data sources yet.");
 }
 
 fn welcome(ui: &mut Ui) {

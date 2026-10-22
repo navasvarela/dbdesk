@@ -4,7 +4,8 @@ The left-hand panel. It lists data sources and lets you browse what each one con
 
 ## Data sources
 
-A data source is a saved `ConnectionConfig`:
+A data source is a saved `ConnectionConfig`. M1 implements name, host/port/database/user,
+password, and SQLite file + read-only. The other rows are still planned:
 
 | Field | Postgres | SQLite |
 | --- | --- | --- |
@@ -16,9 +17,16 @@ A data source is a saved `ConnectionConfig`:
 | default schema / search_path | ✓ | — |
 | connect timeout, application_name | ✓ | — |
 
-Dialog flow: **New data source** → pick driver → form → **Test connection** (runs
-`TestConnection`, result shown inline and in the log console) → **Save**. Edit and delete from
-the context menu. Duplicate is handy for "same server, other database".
+Dialog flow: **+** → pick driver → form → **Test connection** (runs `TestConnection`; the result
+is shown inline and in the log console) → **Save**. The dialog stays open until the engine
+confirms the save, and shows the error if it fails. Edit and delete (with confirmation) are in
+the context menu. Double-click connects or disconnects. Duplicate is still to do; it's handy
+for "same server, other database".
+
+- An empty name defaults to `database@host`, or the file name for SQLite.
+- Leaving the password empty keeps the saved one. Typing one replaces it.
+- SQLite files are never created: a typo in the path is an error, not a new empty database.
+  A file picker is still to do; for now, paste the path.
 
 ## Tree
 

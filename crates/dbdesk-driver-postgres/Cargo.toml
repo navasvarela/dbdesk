@@ -6,5 +6,15 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[dependencies]
+async-trait.workspace = true
+dbdesk-core.workspace = true
+tokio.workspace = true
+tokio-postgres.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+dbdesk-core = { workspace = true, features = ["conformance"] }
+
 [lints]
 workspace = true
