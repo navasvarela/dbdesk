@@ -15,15 +15,14 @@ use dbdesk_core::{
     PostgresConfig,
 };
 use dbdesk_engine::{Command, Event, PasswordUpdate, SessionState};
-use dbdesk_store::DataSourceFile;
+use dbdesk_store::{ConsoleKey, ConsoleName, DataSourceFile, SavedConsole};
 
 #[test]
 fn saves_connects_disconnects_and_deletes_a_data_source() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("data_sources.toml");
     let mut engine = TestEngine::start(&file, Arc::default());
-    engine.expect(Event::Started);
-    engine.expect(Event::DataSourcesLoaded(vec![]));
+    engine.expect_started(vec![]);
     let data_source = sqlite_data_source(sqlite_database(dir.path()));
     let id = data_source.id;
 
@@ -70,8 +69,7 @@ fn reloads_saved_data_sources_and_stores_passwords_in_the_secret_store() {
     };
 
     let mut engine = TestEngine::start(&file, Arc::clone(&secrets));
-    engine.expect(Event::Started);
-    engine.expect(Event::DataSourcesLoaded(vec![]));
+    engine.expect_started(vec![]);
     engine.send(Command::SaveDataSource {
         data_source: data_source.clone(),
         password: PasswordUpdate::Set(Password::new("s3cret")),
@@ -82,16 +80,48 @@ fn reloads_saved_data_sources_and_stores_passwords_in_the_secret_store() {
     assert_eq!(secrets.get(data_source.id), Some(Password::new("s3cret")));
     assert!(!std::fs::read_to_string(&file).unwrap().contains("s3cret"));
     let mut restarted = TestEngine::start(&file, secrets);
+    restarted.expect_started(vec![data_source]);
+}
+
+#[test]
+fn saves_console_files_in_order_and_reloads_them_after_a_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("data_sources.toml");
+    let data_source = DataSourceId::generate();
+    let key = |name: &str| ConsoleKey {
+        data_source,
+        name: ConsoleName::try_from(name.to_owned()).unwrap(),
+    };
+    let mut engine = TestEngine::start(&file, Arc::default());
+    engine.expect_started(vec![]);
+
+    for text in ["select 1;", "select 2;"] {
+        engine.send(Command::SaveConsole {
+            key: key("console"),
+            text: text.to_owned(),
+        });
+    }
+    engine.send(Command::SaveConsole {
+        key: key("console_2"),
+        text: "gone".to_owned(),
+    });
+    engine.send(Command::DeleteConsoleFile(key("console_2")));
+    engine.engine.shutdown().unwrap();
+
+    let mut restarted = TestEngine::start(&file, Arc::default());
     restarted.expect(Event::Started);
-    restarted.expect(Event::DataSourcesLoaded(vec![data_source]));
+    restarted.expect(Event::DataSourcesLoaded(vec![]));
+    restarted.expect(Event::ConsolesLoaded(vec![SavedConsole {
+        key: key("console"),
+        text: "select 2;".to_owned(),
+    }]));
 }
 
 #[test]
 fn reports_failed_tests_and_connections() {
     let dir = tempfile::tempdir().unwrap();
     let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
-    engine.expect(Event::Started);
-    engine.expect(Event::DataSourcesLoaded(vec![]));
+    engine.expect_started(vec![]);
     let missing = sqlite_data_source(dir.path().join("missing.db"));
     let id = missing.id;
 
@@ -129,6 +159,7 @@ fn never_overwrites_an_unreadable_data_sources_file() {
         engine.next_event(),
         Event::DataSourcesUnavailable { .. }
     ));
+    engine.expect(Event::ConsolesLoaded(vec![]));
 
     let data_source = sqlite_data_source(dir.path().join("app.db"));
     engine.send(Command::SaveDataSource {
@@ -147,8 +178,7 @@ fn never_overwrites_an_unreadable_data_sources_file() {
 fn loading_children_connects_first_and_answers_catalog_requests() {
     let dir = tempfile::tempdir().unwrap();
     let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
-    engine.expect(Event::Started);
-    engine.expect(Event::DataSourcesLoaded(vec![]));
+    engine.expect_started(vec![]);
     let database = sqlite_database(dir.path());
     rusqlite::Connection::open(&database)
         .unwrap()
@@ -209,8 +239,7 @@ fn connects_to_postgres_with_the_saved_password() {
     let parsed = parse_test_url(&url);
     let dir = tempfile::tempdir().unwrap();
     let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
-    engine.expect(Event::Started);
-    engine.expect(Event::DataSourcesLoaded(vec![]));
+    engine.expect_started(vec![]);
     let data_source = DataSource {
         id: DataSourceId::generate(),
         name: "test server".to_owned(),

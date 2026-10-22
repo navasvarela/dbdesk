@@ -18,8 +18,7 @@ const ROWS: usize = 1200;
 /// An engine with one saved SQLite data source, and its id.
 fn engine_with_sqlite(dir: &std::path::Path) -> (TestEngine, DataSourceId) {
     let mut engine = TestEngine::start(&dir.join("data_sources.toml"), Arc::default());
-    engine.expect(Event::Started);
-    engine.expect(Event::DataSourcesLoaded(vec![]));
+    engine.expect_started(vec![]);
     let data_source = sqlite_data_source(sqlite_database(dir));
     let id = data_source.id;
     engine.send(Command::SaveDataSource {

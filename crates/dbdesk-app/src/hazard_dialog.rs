@@ -1,5 +1,5 @@
-use dbdesk_engine::ConsoleId;
 use dbdesk_sql::{Dialect, Hazard, hazard};
+use dbdesk_store::ConsoleKey;
 use egui::{Align, Id, Layout, Modal};
 
 use crate::console::SubmittedStatement;
@@ -11,7 +11,7 @@ pub enum HazardChoice {
 
 /// Asks before running statements that change every row of a table.
 pub struct HazardConfirmation {
-    pub console: ConsoleId,
+    pub console: ConsoleKey,
     pub statements: Vec<SubmittedStatement>,
     warnings: Vec<String>,
 }
@@ -23,7 +23,11 @@ pub enum Review {
 }
 
 /// Checks each statement for an `UPDATE` or `DELETE` that would change every row.
-pub fn review(console: ConsoleId, statements: Vec<SubmittedStatement>, dialect: Dialect) -> Review {
+pub fn review(
+    console: ConsoleKey,
+    statements: Vec<SubmittedStatement>,
+    dialect: Dialect,
+) -> Review {
     let warnings: Vec<String> = statements
         .iter()
         .filter_map(|statement| {

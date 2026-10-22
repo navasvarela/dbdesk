@@ -1,6 +1,8 @@
 //! Draws a console: toolbar, editor and results, and turns clicks and shortcuts into
 //! [`ConsoleAction`]s for the app.
 
+use std::time::Instant;
+
 use egui::text::CCursorRange;
 use egui::{Id, Key, KeyboardShortcut, Modifiers, ScrollArea, TextBuffer, TextEdit, Ui, vec2};
 
@@ -104,6 +106,10 @@ fn toolbar(ui: &mut Ui, console: &QueryConsole, actions: &mut Vec<ConsoleAction>
         }
         ui.separator();
         run_status(ui, console);
+        if let Some(error) = console.save_error() {
+            ui.colored_label(ui.visuals().error_fg_color, "Not saved")
+                .on_hover_text(error);
+        }
     });
 }
 
@@ -160,7 +166,7 @@ fn editor(ui: &mut Ui, console: &mut QueryConsole, editor_id: Id) {
                 .layouter(&mut layouter)
                 .show(ui);
             if output.response.changed() {
-                console.error_marker = None;
+                console.edited(Instant::now());
             }
             if let Some(cursor) = output.cursor_range {
                 console.selection = byte_range(&console.text, &cursor);

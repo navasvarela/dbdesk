@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use dbdesk_core::{ConnectionConfig, DataSource, DataSourceId, Password, SqliteConfig};
 use dbdesk_engine::{Command, EngineConfig, EngineHandle, Event, Repaint, SessionState};
-use dbdesk_store::{DataSourceFile, SecretError, SecretStore};
+use dbdesk_store::{ConsoleFiles, DataSourceFile, SecretError, SecretStore};
 
 pub const EVENT_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -57,9 +57,11 @@ pub struct TestEngine {
 impl TestEngine {
     pub fn start(data_sources_file: &Path, secrets: Arc<MemorySecrets>) -> Self {
         let (sender, repaints) = mpsc::channel();
+        let dir = data_sources_file.parent().unwrap_or(Path::new("."));
         let config = EngineConfig {
             data_sources: DataSourceFile::new(data_sources_file),
             secrets,
+            consoles: ConsoleFiles::new(dir.join("consoles")),
         };
         let engine = EngineHandle::start(config, SignalRepaint(sender)).unwrap();
         Self { engine, repaints }
@@ -82,6 +84,13 @@ impl TestEngine {
 
     pub fn expect(&mut self, expected: Event) {
         assert_eq!(self.next_event(), expected);
+    }
+
+    /// Expects the start-up events of an engine with no saved consoles.
+    pub fn expect_started(&mut self, data_sources: Vec<DataSource>) {
+        self.expect(Event::Started);
+        self.expect(Event::DataSourcesLoaded(data_sources));
+        self.expect(Event::ConsolesLoaded(vec![]));
     }
 
     pub fn expect_session(&mut self, id: DataSourceId) -> SessionState {

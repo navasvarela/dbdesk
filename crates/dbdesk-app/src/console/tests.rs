@@ -3,7 +3,10 @@ use super::*;
 fn console(text: &str) -> QueryConsole {
     QueryConsole::new(
         ConsoleId(1),
-        DataSourceId::generate(),
+        ConsoleKey {
+            data_source: DataSourceId::generate(),
+            name: dbdesk_store::ConsoleName::numbered(1),
+        },
         "test".to_owned(),
         Dialect::Postgres,
         text.to_owned(),

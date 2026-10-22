@@ -8,13 +8,14 @@ mod results;
 mod view;
 
 use std::ops::Range;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use dbdesk_core::{ColumnInfo, DataSourceId, DriverKind, Row};
 use dbdesk_engine::{
-    ConsoleId, Event, RunId, RunOutcome, SessionState, StatementFailure, StatementSummary,
+    Command, ConsoleId, Event, RunId, RunOutcome, SessionState, StatementFailure, StatementSummary,
 };
 use dbdesk_sql::{Dialect, split_statements, statement_at};
+use dbdesk_store::ConsoleKey;
 
 pub use view::{ConsoleAction, show};
 
@@ -43,8 +44,10 @@ pub enum RunScope {
 }
 
 pub struct QueryConsole {
+    /// The engine session's id, new every time the app starts.
     id: ConsoleId,
-    data_source: DataSourceId,
+    /// The console's file, which outlives the app.
+    key: ConsoleKey,
     title: String,
     dialect: Dialect,
     text: String,
@@ -55,6 +58,19 @@ pub struct QueryConsole {
     run: Option<RunView>,
     /// Where the last failure points in `text`; underlined until the text changes.
     error_marker: Option<Range<usize>>,
+    file: FileState,
+}
+
+/// How the console's text relates to its file.
+#[derive(Debug, Default)]
+struct FileState {
+    /// When the text was first changed since it was last written; `None` if it is saved.
+    unsaved_since: Option<Instant>,
+    /// Whether closing the tab keeps the file, so the console can be reopened. False for
+    /// consoles nobody typed in, such as a fresh one or one opened by Open data.
+    keep: bool,
+    /// Why the last save failed, until a later one succeeds.
+    save_error: Option<String>,
 }
 
 pub struct RunView {
@@ -89,14 +105,14 @@ pub struct StatementView {
 impl QueryConsole {
     pub fn new(
         id: ConsoleId,
-        data_source: DataSourceId,
+        key: ConsoleKey,
         title: String,
         dialect: Dialect,
         text: String,
     ) -> Self {
         Self {
             id,
-            data_source,
+            key,
             title,
             dialect,
             text,
@@ -104,11 +120,71 @@ impl QueryConsole {
             session: SessionState::Disconnected,
             run: None,
             error_marker: None,
+            file: FileState::default(),
         }
     }
 
+    /// A console reopened from its file, which closing it again must keep.
+    pub fn reopened(mut self) -> Self {
+        self.file.keep = true;
+        self
+    }
+
+    pub fn id(&self) -> ConsoleId {
+        self.id
+    }
+
     pub fn data_source(&self) -> DataSourceId {
-        self.data_source
+        self.key.data_source
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// Records that the user changed the text at `now`.
+    pub fn edited(&mut self, now: Instant) {
+        self.error_marker = None;
+        self.file.keep = true;
+        self.file.unsaved_since.get_or_insert(now);
+    }
+
+    /// The save to send if the text has been unsaved for at least `delay` (or at all, for a
+    /// zero delay), marking it saved. Otherwise how long until it would be due.
+    pub fn take_save(
+        &mut self,
+        now: Instant,
+        delay: Duration,
+    ) -> Result<Command, Option<Duration>> {
+        let since = self.file.unsaved_since.ok_or(None)?;
+        let waited = now.saturating_duration_since(since);
+        if waited < delay {
+            return Err(Some(delay - waited));
+        }
+        self.file.unsaved_since = None;
+        self.file.save_error = None;
+        Ok(Command::SaveConsole {
+            key: self.key.clone(),
+            text: self.text.clone(),
+        })
+    }
+
+    /// What to do with the file when the tab closes: write the last edits, or remove a file
+    /// nobody typed anything into.
+    pub fn file_on_close(&mut self) -> Option<Command> {
+        if !self.file.keep || self.text.trim().is_empty() {
+            return Some(Command::DeleteConsoleFile(self.key.clone()));
+        }
+        self.take_save(Instant::now(), Duration::ZERO).ok()
+    }
+
+    /// Whether the file is kept once the tab closes.
+    pub fn keeps_file(&self) -> bool {
+        self.file.keep && !self.text.trim().is_empty()
+    }
+
+    pub fn save_error(&self) -> Option<&str> {
+        self.file.save_error.as_deref()
     }
 
     pub fn title(&self) -> &str {
@@ -196,6 +272,10 @@ impl QueryConsole {
         match event {
             Event::ConsoleSessionChanged { console, state } if *console == self.id => {
                 self.session_changed(state);
+            }
+            Event::ConsoleSaveFailed { key, error } if *key == self.key => {
+                // Shown until the next save is sent; that one writes the whole text again.
+                self.file.save_error = Some(error.clone());
             }
             Event::StatementStarted {
                 run,

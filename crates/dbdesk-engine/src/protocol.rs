@@ -3,6 +3,7 @@ use std::time::Duration;
 use dbdesk_core::{
     CatalogNode, CatalogPath, ColumnInfo, DataSource, DataSourceId, Password, Row, ServerInfo,
 };
+use dbdesk_store::{ConsoleKey, SavedConsole};
 
 /// Identifies a query console. Chosen by the UI, unique for the app's lifetime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -68,6 +69,14 @@ pub enum Command {
     },
     /// Disconnects the console's connection.
     CloseConsole(ConsoleId),
+    /// Writes a console's text to its file. Saves are applied in the order sent. A failure is
+    /// reported as [`Event::ConsoleSaveFailed`].
+    SaveConsole {
+        key: ConsoleKey,
+        text: String,
+    },
+    /// Removes a console's file, if it exists.
+    DeleteConsoleFile(ConsoleKey),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,6 +106,12 @@ pub enum Event {
         error: String,
     },
     DataSourceDeleted(DataSourceId),
+    /// Every saved console file, read once at start-up, right after the data sources.
+    ConsolesLoaded(Vec<SavedConsole>),
+    ConsoleSaveFailed {
+        key: ConsoleKey,
+        error: String,
+    },
     SessionChanged {
         id: DataSourceId,
         state: SessionState,

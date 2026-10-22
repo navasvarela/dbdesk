@@ -2,10 +2,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use dbdesk_core::{DataSource, DataSourceId, describe_error};
-use dbdesk_store::{SecretError, SecretStore};
+use dbdesk_store::{ConsoleFiles, SecretError, SecretStore};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::task::{JoinError, JoinSet};
 
+use crate::console_files;
 use crate::events::EventSink;
 use crate::open::test_connection;
 use crate::registry::{Registry, RegistryError};
@@ -32,10 +33,12 @@ pub(crate) async fn run(
     events.send(Event::Started);
     let registry = Registry::load(config.data_sources).await;
     events.send(registry.loaded_event());
+    events.send(console_files::load(&config.consoles).await);
 
     let mut engine = Engine {
         registry,
         secrets: config.secrets,
+        console_files: config.consoles,
         events,
         sessions: HashMap::new(),
         consoles: HashMap::new(),
@@ -56,6 +59,7 @@ struct ConsoleSession {
 struct Engine {
     registry: Registry,
     secrets: Arc<dyn SecretStore>,
+    console_files: ConsoleFiles,
     events: EventSink,
     /// The explorer's sessions, one per data source.
     sessions: HashMap<DataSourceId, Session>,
@@ -66,7 +70,8 @@ struct Engine {
 }
 
 impl Engine {
-    /// Saves and deletes are awaited here, so they apply in the order the UI sent them.
+    /// Saves and deletes (of data sources and console files) are awaited here, so they apply
+    /// in the order the UI sent them.
     /// Anything that waits on a network (connecting, testing) runs in its own task.
     async fn handle(&mut self, command: Command) {
         match command {
@@ -111,6 +116,14 @@ impl Engine {
                 }
             }
             Command::CloseConsole(console) => self.close_console(console),
+            Command::SaveConsole { key, text } => {
+                if let Some(failed) = console_files::save(&self.console_files, key, text).await {
+                    self.events.send(failed);
+                }
+            }
+            Command::DeleteConsoleFile(key) => {
+                console_files::delete(&self.console_files, key).await;
+            }
         }
     }
 
