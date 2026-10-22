@@ -165,3 +165,16 @@ fn explains_the_statement_at_the_cursor_and_marks_errors_in_it() {
     });
     assert_eq!(&text[console.error_marker.clone().unwrap()], "from");
 }
+
+#[test]
+fn shades_the_statement_at_the_cursor_unless_text_is_selected() {
+    let text = "select 1;\nselect 2;";
+    let second = text.find("select 2").unwrap();
+    let mut console = console(text);
+
+    console.selection = second + 3..second + 3;
+    assert_eq!(console.current_statement(), Some(second..text.len() - 1));
+
+    console.selection = 0..4;
+    assert_eq!(console.current_statement(), None);
+}

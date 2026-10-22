@@ -289,6 +289,17 @@ impl QueryConsole {
             .is_some_and(|run| run.state == RunState::Running)
     }
 
+    /// The statement ⌘↵ would run, to shade in the editor: the one at the cursor, unless text
+    /// is selected (the selection is what runs then, and is already highlighted).
+    pub fn current_statement(&self) -> Option<Range<usize>> {
+        let (start, end) = ordered(&self.selection);
+        if start != end {
+            return None;
+        }
+        let ranges = split_statements(&self.text, self.dialect);
+        statement_at(&ranges, end).map(|index| ranges[index].clone())
+    }
+
     /// What `scope` would run right now. Empty if there is nothing but whitespace and
     /// comments.
     pub fn statements_to_run(&self, scope: RunScope) -> Vec<SubmittedStatement> {

@@ -5,8 +5,11 @@ use std::time::Instant;
 
 use egui::text::{CCursor, CCursorRange};
 use egui::text_edit::TextEditState;
-use egui::{Id, Key, KeyboardShortcut, Modifiers, ScrollArea, TextBuffer, TextEdit, Ui, vec2};
+use egui::{
+    Id, Key, KeyboardShortcut, Margin, Modifiers, ScrollArea, TextBuffer, TextEdit, Ui, vec2,
+};
 
+use super::highlight::Marks;
 use super::{
     QueryConsole, RunScope, RunState, SubmittedStatement, cell_viewer, highlight, results,
 };
@@ -313,13 +316,16 @@ fn move_cursor(ui: &Ui, console: &mut QueryConsole, editor_id: Id) {
 fn editor(ui: &mut Ui, console: &mut QueryConsole, editor_id: Id) {
     move_cursor(ui, console, editor_id);
     let dialect = console.dialect;
-    let error_marker = console.error_marker.clone();
+    let marks = Marks {
+        error: console.error_marker.clone(),
+        current_statement: console.current_statement(),
+    };
     let mut layouter = |ui: &Ui, text: &dyn TextBuffer, wrap_width: f32| {
-        let mut job =
-            highlight::layout_job(text.as_str(), dialect, error_marker.as_ref(), ui.style());
+        let mut job = highlight::layout_job(text.as_str(), dialect, &marks, ui.style());
         job.wrap.max_width = wrap_width;
         ui.fonts_mut(|fonts| fonts.layout_job(job))
     };
+    let gutter_width = gutter_width(ui, &console.text);
     ScrollArea::vertical()
         .id_salt(("console_editor_scroll", console.id.0))
         .auto_shrink(false)
@@ -333,8 +339,13 @@ fn editor(ui: &mut Ui, console: &mut QueryConsole, editor_id: Id) {
                 .desired_rows(1)
                 .desired_width(f32::INFINITY)
                 .min_size(vec2(0.0, ui.available_height()))
+                .margin(Margin {
+                    left: gutter_width,
+                    ..TEXT_MARGIN
+                })
                 .layouter(&mut layouter)
                 .show(ui);
+            line_numbers(ui, &output);
             if output.response.changed() {
                 console.edited(Instant::now());
             }
@@ -342,6 +353,51 @@ fn editor(ui: &mut Ui, console: &mut QueryConsole, editor_id: Id) {
                 console.selection = byte_range(&console.text, &cursor);
             }
         });
+}
+
+/// The editor's own margin around the text; the line numbers widen its left side.
+const TEXT_MARGIN: Margin = Margin::symmetric(4, 2);
+/// Space between the line numbers and the text.
+const GUTTER_GAP: f32 = 12.0;
+
+/// The editor's left margin: room for the largest line number, so the text doesn't shift
+/// until a line count needs another digit.
+fn gutter_width(ui: &Ui, text: &str) -> i8 {
+    let lines = text.lines().count().max(1) + usize::from(text.ends_with('\n'));
+    let digits = lines.to_string().len();
+    let font = egui::TextStyle::Monospace.resolve(ui.style());
+    let digit_width = ui.fonts_mut(|fonts| fonts.glyph_width(&font, '0'));
+    let width = f32::from(TEXT_MARGIN.left) + digits as f32 * digit_width + GUTTER_GAP;
+    // Margins are whole points in an `i8`; 127 points hold over a dozen digits.
+    width.ceil().min(f32::from(i8::MAX)) as i8
+}
+
+/// Numbers each line of the editor's text in the gutter. A line that wraps is numbered on
+/// its first row only.
+fn line_numbers(ui: &Ui, output: &egui::text_edit::TextEditOutput) {
+    let font = egui::TextStyle::Monospace.resolve(ui.style());
+    let color = ui.visuals().weak_text_color();
+    let right_edge = output.galley_pos.x - GUTTER_GAP;
+    let rows = &output.galley.rows;
+    let ends: Vec<bool> = rows.iter().map(|row| row.ends_with_newline).collect();
+    for (line, row_index) in line_starts(&ends).into_iter().enumerate() {
+        let y = output.galley_pos.y + rows[row_index].rect().center().y;
+        ui.painter().text(
+            egui::pos2(right_edge, y),
+            egui::Align2::RIGHT_CENTER,
+            (line + 1).to_string(),
+            font.clone(),
+            color,
+        );
+    }
+}
+
+/// The indices of the rows that start a line, given whether each row ends with a line break
+/// (rather than wrapping onto the next).
+fn line_starts(ends_with_newline: &[bool]) -> Vec<usize> {
+    (0..ends_with_newline.len())
+        .filter(|&row| row == 0 || ends_with_newline[row - 1])
+        .collect()
 }
 
 /// Converts the editor's character-index cursor into byte offsets into `text`.
@@ -352,4 +408,17 @@ fn byte_range(text: &str, cursor: &CCursorRange) -> std::ops::Range<usize> {
             .map_or(text.len(), |(byte, _)| byte)
     };
     byte(cursor.secondary.index.0)..byte(cursor.primary.index.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn numbers_only_the_first_row_of_a_wrapped_line() {
+        // Line 1 wraps onto a second row; lines 2 and 3 fit on one row each.
+        assert_eq!(line_starts(&[false, true, true, false]), [0, 2, 3]);
+        assert_eq!(line_starts(&[false]), [0]);
+        assert!(line_starts(&[]).is_empty());
+    }
 }
