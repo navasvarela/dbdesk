@@ -54,6 +54,25 @@ Follow-ups left out of M1:
 
 **Exit:** I can browse a real work schema without waiting on the UI.
 
+**Demo note:** done. Expanding a data source connects it and loads the tree one level at a time,
+with a spinner per loading node. PostgreSQL shows databases (others open their own connection
+on demand), schemas, tables, views, materialized views, functions and sequences, then columns,
+indexes, constraints and triggers per table. SQLite shows schemas, tables and views, then
+columns, indexes, foreign keys and triggers. The filter box matches loaded nodes, the
+**System** checkbox shows system schemas and tables, Refresh reloads a subtree, and Show
+definition opens the source in a read-only window. Covered by a catalog walk over a fixture with
+every object kind on both drivers, an engine test that connects on first expand, and a UI test
+that clicks down to a table's columns.
+
+Follow-ups left out of M2:
+
+- `CREATE TABLE` DDL for Postgres tables (no `pg_get_tabledef`; see the explorer doc's open
+  questions).
+- Counts on folders, and row estimates on tables.
+- Keyboard navigation and selection in the tree.
+- A per-data-source "show system objects" setting (it is global now).
+- Detecting dropped connections (still from M1).
+
 ## M3 — SQL runner
 
 - Query console tabs with highlighting and statement-under-cursor.

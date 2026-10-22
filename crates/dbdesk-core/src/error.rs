@@ -1,5 +1,7 @@
 use std::error::Error;
 
+use crate::CatalogPath;
+
 /// The engine-specific error a driver wraps. Boxed because core can't name driver crates'
 /// error types; [`DriverError`]'s variants carry what callers need to match on.
 pub type BoxError = Box<dyn Error + Send + Sync>;
@@ -13,6 +15,10 @@ pub enum DriverError {
     /// An established connection failed to do what was asked.
     #[error("the connection failed")]
     Connection(#[source] BoxError),
+    /// A catalog path this driver doesn't produce, or one whose object has no definition.
+    /// Points at a bug in the caller, or at a node that disappeared from the database.
+    #[error("nothing to show for {0}")]
+    InvalidPath(CatalogPath),
 }
 
 /// Formats an error and all its sources as one line, outermost first, e.g.

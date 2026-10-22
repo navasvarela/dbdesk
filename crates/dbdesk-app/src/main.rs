@@ -1,8 +1,10 @@
 //! The dbdesk desktop application.
 
 mod app;
+mod catalog_tree;
 mod data_source_dialog;
 mod data_source_form;
+mod definition_window;
 mod delete_dialog;
 mod explorer;
 mod log_console;

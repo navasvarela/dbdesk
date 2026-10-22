@@ -20,7 +20,7 @@ password, and SQLite file + read-only. The other rows are still planned:
 Dialog flow: **+** → pick driver → form → **Test connection** (runs `TestConnection`; the result
 is shown inline and in the log console) → **Save**. The dialog stays open until the engine
 confirms the save, and shows the error if it fails. Edit and delete (with confirmation) are in
-the context menu. Double-click connects or disconnects. Duplicate is still to do; it's handy
+the context menu, as are Connect and Disconnect. Duplicate is still to do; it's handy
 for "same server, other database".
 
 - An empty name defaults to `database@host`, or the file name for SQLite.
@@ -45,20 +45,34 @@ for "same server, other database".
       ▸ functions
       ▸ sequences
 ▸ local.sqlite (●)
-  ▸ main
+  ▸ main                          schema (plus any attached databases)
     ▸ tables
+      ▸ orders
+        ▸ columns / indexes / constraints (foreign keys) / triggers
     ▸ views
-    ▸ indexes
 ```
 
-- **Lazy loading**: expanding a node sends `Introspect { node }`. Children appear when
-  `CatalogLoaded` arrives; until then the node shows a spinner. Nothing is introspected up front.
+Folders don't show counts yet. Columns show their type and `not null` / `primary key` next to
+the name; indexes and constraints show their kind.
+
+- **Lazy loading**: expanding a node sends `LoadChildren { id, path }`. Children appear when
+  `ChildrenLoaded` arrives; until then the node shows a spinner. Nothing is introspected up front.
+  Expanding a disconnected data source connects it first: the engine starts a session and
+  queues the request until it is connected.
+- **Paths**: a node is identified by a `CatalogPath`, the list of `(kind, name)` segments from
+  the data source down, e.g. `[Database app, Schema public, Folder tables, Table users]`.
+  Drivers match on the path's shape. Functions are named with their argument list
+  (`add(integer, integer)`) so overloads are distinct.
 - **Caching**: loaded children are kept in a `CatalogTree` per data source and reused until the
-  user hits **Refresh** on that node (refreshes the subtree) or reconnects.
-- **Filtering**: a filter box above the tree matches loaded nodes by name. It does not trigger
-  introspection of unloaded subtrees (that would hit the server for every keystroke).
-- **Hidden schemas**: `pg_catalog`, `information_schema` and `pg_toast*` are hidden by default,
-  toggle per data source.
+  user hits **Refresh** on that node (reloads its subtree and collapses its descendants), or the
+  connection closes or fails (which forgets the whole tree).
+- **Filtering**: a filter box above the tree matches loaded node labels, case-insensitively. A
+  matching node is shown with its whole subtree. Its ancestors are shown and forced open even if
+  they don't match themselves. It never triggers loading of unloaded subtrees (that would hit
+  the server for every keystroke).
+- **System objects**: `pg_catalog`, `information_schema`, `pg_toast*`, `pg_temp_*`, SQLite's
+  `temp` schema and `sqlite_*` tables are hidden by default. The **System** checkbox in the
+  toolbar shows them. It is global for now, not per data source.
 
 ## Introspection queries
 
@@ -68,26 +82,35 @@ confusing in a browsing tool.
 
 | Node | Postgres source | SQLite source |
 | --- | --- | --- |
-| databases | `pg_database` (not templates) | attached DBs via `pragma_database_list` |
-| schemas | `pg_namespace` | — (database = schema) |
-| tables/views | `pg_class` by `relkind` | `sqlite_schema` |
+| databases | `pg_database` (connectable, not templates) | — |
+| schemas | `pg_namespace` | `pragma_database_list` (main + attached) |
+| tables/views/mat. views/sequences | `pg_class` by `relkind` | `sqlite_schema` by `type` |
+| functions | `pg_proc` (`prokind` f/p/w; aggregates left out) | — |
 | columns | `pg_attribute` + `format_type` | `pragma_table_info` |
-| indexes | `pg_index` + `pg_get_indexdef` | `pragma_index_list` |
-| constraints | `pg_constraint` + `pg_get_constraintdef` | `pragma_foreign_key_list` |
-| functions | `pg_proc` | — |
+| indexes | `pg_index` | `pragma_index_list` |
+| constraints | `pg_constraint` | `pragma_foreign_key_list` (grouped by id; FKs have no names) |
+| triggers | `pg_trigger` (not internal) | `sqlite_schema` where `type = 'trigger'` |
+| definitions | `pg_get_viewdef`, `pg_get_functiondef`, `pg_get_indexdef`, `pg_get_constraintdef`, `pg_get_triggerdef` | the stored `CREATE` statement in `sqlite_schema` |
 
-Postgres connects to one database per connection, so expanding a second database opens a
-second session behind the scenes. The tree hides that detail; the log console shows it.
+Postgres binds a connection to one database, so browsing a database other than the configured
+one opens an extra connection to it inside the same `PostgresConnection`, on first use, using the
+same credentials. It is kept until disconnect. The engine and UI never see this; the log console
+shows "opened a connection for browsing another database".
 
 ## Actions (context menu)
 
-v1:
-- Connect / Disconnect / Refresh
+Implemented (M2):
+- Data source: Connect / Disconnect, Refresh, Edit…, Delete…. Double-click or the arrow
+  expands (and connects).
+- Any node with children: Refresh.
+- Schema objects, columns, constraints, triggers: Copy name (`public.users`, quoted when needed).
+- Views, materialized views, functions, indexes, constraints, triggers (and SQLite tables): Show
+  definition, in a floating read-only window with a Copy button.
+
+Planned (M3):
 - New query console (bound to this data source, default schema set to the selected one)
 - Open table data → new console with `SELECT * FROM <table>` and run it
-- Copy qualified name
-- Show definition (views and functions via `pg_get_viewdef` / `pg_get_functiondef`;
-  SQLite stores the original `CREATE` statement)
+- Open a definition in a query console instead of the read-only window
 
 Later (M5): custom actions from `actions.toml`, e.g.
 

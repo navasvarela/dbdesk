@@ -6,10 +6,18 @@ The driver traits are only honest if every driver passes the same tests. `dbdesk
 them as `dbdesk_core::conformance` behind the `conformance` feature, which driver crates enable
 in their dev-dependencies.
 
-Implemented (M1): `check_lifecycle` (server info, two pings, clean close) and
-`check_connect_failure` (bad config is a `DriverError::Connect`). Planned as the trait grows:
-execute DDL/DML, stream more rows than one page, cancel a long query, introspect each node kind,
-map each value type, report error positions.
+Implemented:
+- `check_lifecycle`: server info, two pings, clean close.
+- `check_connect_failure`: a bad config is a `DriverError::Connect`.
+- `walk_catalog` (M2): walks the tree breadth-first (system nodes skipped) and checks that every
+  child's path extends its parent's, labels aren't empty, and every node with
+  `has_definition` returns a non-empty definition. It returns the visited nodes so each driver
+  test can assert on its own fixture: a schema with one object of every kind.
+- `check_invalid_path` (M2): nonsense paths are `DriverError::InvalidPath`, without touching the
+  server. (This caught the Postgres driver trying to connect to a "database" named in a bogus path.)
+
+Planned as the trait grows: execute DDL/DML, stream more rows than one page, cancel a long
+query, map each value type, report error positions.
 
 Each driver crate runs the suite against its own backend:
 

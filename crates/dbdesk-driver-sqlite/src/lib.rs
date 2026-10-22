@@ -3,11 +3,15 @@
 //! SQLite calls block, so every one runs on tokio's blocking pool and never stalls the
 //! engine's async workers. Must run inside a tokio runtime.
 
+mod catalog;
+
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use dbdesk_core::{BoxError, Connection, DriverError, ServerInfo, SqliteConfig};
+use dbdesk_core::{
+    BoxError, CatalogNode, CatalogPath, Connection, DriverError, ServerInfo, SqliteConfig,
+};
 use rusqlite::OpenFlags;
 
 const PRODUCT: &str = "SQLite";
@@ -63,12 +67,12 @@ pub struct SqliteConnection {
 impl SqliteConnection {
     async fn run_blocking<T: Send + 'static>(
         &self,
-        work: impl FnOnce(&rusqlite::Connection) -> rusqlite::Result<T> + Send + 'static,
+        work: impl FnOnce(&rusqlite::Connection) -> Result<T, DriverError> + Send + 'static,
     ) -> Result<T, DriverError> {
         let connection = Arc::clone(&self.connection);
         tokio::task::spawn_blocking(move || {
             let connection = connection.lock().map_err(|_| poisoned())?;
-            work(&connection).map_err(connection_error)
+            work(&connection)
         })
         .await
         .map_err(connection_error)?
@@ -90,7 +94,23 @@ impl Connection for SqliteConnection {
     }
 
     async fn ping(&mut self) -> Result<(), DriverError> {
-        self.run_blocking(|connection| connection.query_row("SELECT 1", [], |_| Ok(())))
+        self.run_blocking(|connection| {
+            connection
+                .query_row("SELECT 1", [], |_| Ok(()))
+                .map_err(connection_error)
+        })
+        .await
+    }
+
+    async fn children(&mut self, path: &CatalogPath) -> Result<Vec<CatalogNode>, DriverError> {
+        let path = path.clone();
+        self.run_blocking(move |connection| catalog::children(connection, &path))
+            .await
+    }
+
+    async fn definition(&mut self, path: &CatalogPath) -> Result<String, DriverError> {
+        let path = path.clone();
+        self.run_blocking(move |connection| catalog::definition(connection, &path))
             .await
     }
 
@@ -110,7 +130,7 @@ impl Connection for SqliteConnection {
 
 #[cfg(test)]
 mod tests {
-    use dbdesk_core::conformance;
+    use dbdesk_core::{FolderKind, NodeKind, conformance};
 
     use super::*;
 
@@ -166,5 +186,89 @@ mod tests {
         .await;
 
         conformance::check_connect_failure(result);
+    }
+
+    /// One object of every kind the explorer shows.
+    const FIXTURE: &str = "
+        CREATE TABLE customers (id INTEGER PRIMARY KEY, email TEXT NOT NULL UNIQUE);
+        CREATE TABLE orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_id INTEGER NOT NULL REFERENCES customers (id),
+            total REAL
+        );
+        CREATE INDEX orders_customer ON orders (customer_id);
+        CREATE TRIGGER orders_touch AFTER UPDATE ON orders BEGIN SELECT 1; END;
+        CREATE VIEW big_orders AS SELECT id, total FROM orders WHERE total > 100;
+    ";
+
+    fn labels_under<'a>(nodes: &'a [CatalogNode], parent: &CatalogPath) -> Vec<&'a str> {
+        nodes
+            .iter()
+            .filter(|node| node.path.parent().as_ref() == Some(parent))
+            .map(|node| node.label.as_str())
+            .collect()
+    }
+
+    fn folder(parent: &CatalogPath, folder: FolderKind) -> CatalogPath {
+        parent.child(NodeKind::Folder(folder), folder.label())
+    }
+
+    #[tokio::test]
+    async fn walks_the_catalog_and_shows_definitions() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        rusqlite::Connection::open(file.path())
+            .unwrap()
+            .execute_batch(FIXTURE)
+            .unwrap();
+        let mut connection = connect(&SqliteConfig {
+            path: file.path().to_owned(),
+            read_only: true,
+        })
+        .await
+        .unwrap();
+
+        let nodes = conformance::walk_catalog(&mut connection, 5).await;
+        conformance::check_invalid_path(&mut connection).await;
+
+        let main = CatalogPath::root().child(NodeKind::Schema, "main");
+        let tables = folder(&main, FolderKind::Tables);
+        let orders = tables.child(NodeKind::Table, "orders");
+        let sqlite_sequence = nodes
+            .iter()
+            .find(|node| node.path == tables.child(NodeKind::Table, "sqlite_sequence"))
+            .unwrap();
+        assert!(sqlite_sequence.system);
+        let expected: [(CatalogPath, &[&str]); 6] = [
+            (tables.clone(), &["customers", "orders", "sqlite_sequence"]),
+            (folder(&main, FolderKind::Views), &["big_orders"]),
+            (
+                folder(&orders, FolderKind::Columns),
+                &["id", "customer_id", "total"],
+            ),
+            (folder(&orders, FolderKind::Indexes), &["orders_customer"]),
+            (
+                folder(&orders, FolderKind::Constraints),
+                &["(customer_id) → customers(id)"],
+            ),
+            (folder(&orders, FolderKind::Triggers), &["orders_touch"]),
+        ];
+        for (parent, labels) in expected {
+            assert_eq!(labels_under(&nodes, &parent), labels, "under {parent}");
+        }
+
+        let view = folder(&main, FolderKind::Views).child(NodeKind::View, "big_orders");
+        assert_eq!(
+            connection.definition(&view).await.unwrap(),
+            "CREATE VIEW big_orders AS SELECT id, total FROM orders WHERE total > 100;"
+        );
+        let customers_columns = folder(
+            &tables.child(NodeKind::Table, "customers"),
+            FolderKind::Columns,
+        );
+        let id = nodes
+            .iter()
+            .find(|node| node.path == customers_columns.child(NodeKind::Column, "id"))
+            .unwrap();
+        assert_eq!(id.detail.as_deref(), Some("integer, primary key"));
     }
 }

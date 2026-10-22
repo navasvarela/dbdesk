@@ -63,6 +63,8 @@ pub enum Command {
     TestConnection { data_source: DataSource, password: PasswordUpdate },
     Connect(DataSourceId),
     Disconnect(DataSourceId),
+    LoadChildren { id: DataSourceId, path: CatalogPath },    // M2
+    LoadDefinition { id: DataSourceId, path: CatalogPath },  // M2
 }
 
 pub enum Event {
@@ -74,13 +76,16 @@ pub enum Event {
     DataSourceDeleted(DataSourceId),
     SessionChanged { id: DataSourceId, state: SessionState },
     ConnectionTested { id: DataSourceId, result: Result<ServerInfo, String> },
+    ChildrenLoaded { id: DataSourceId, path: CatalogPath, result: Result<Vec<CatalogNode>, String> },
+    DefinitionLoaded { id: DataSourceId, path: CatalogPath, result: Result<String, String> },
 }
 ```
 
 The engine owns the data source list: it loads `data_sources.toml` at start-up and applies
 saves and deletes in order, so the UI never touches the file or the keychain. Each connected
-data source has one session task that owns its `Box<dyn Connection>`. Sessions are keyed by
-`DataSourceId` until query consoles need more than one session per data source (M3).
+data source has one session task that owns its `Box<dyn Connection>` and answers catalog
+requests one at a time, in order. A disconnect abandons the request in progress. Sessions are
+keyed by `DataSourceId` until query consoles need more than one session per data source (M3).
 
 Planned for later milestones:
 
@@ -116,15 +121,17 @@ Each driver crate exposes `connect(config, password) -> Result<ItsConnection, Dr
 The engine maps a `ConnectionConfig` variant to a driver in one `match` and boxes the result.
 
 ```rust
-// Implemented (M1):
+// Implemented (M1, M2):
 #[async_trait]
 pub trait Connection: Send {
     fn server_info(&self) -> &ServerInfo;
     async fn ping(&mut self) -> Result<(), DriverError>;
+    async fn children(&mut self, path: &CatalogPath) -> Result<Vec<CatalogNode>, DriverError>;
+    async fn definition(&mut self, path: &CatalogPath) -> Result<String, DriverError>;
     async fn close(self: Box<Self>) -> Result<(), DriverError>;
 }
 
-// Planned additions (M2, M3):
+// Planned additions (M3):
 #[async_trait]
 pub trait Connection: Send {
     /// Starts a statement and returns a stream of row batches. Dropping the stream

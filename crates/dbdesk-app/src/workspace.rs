@@ -4,7 +4,7 @@ use egui::{Id, Ui, WidgetText};
 use egui_dock::{DockState, NodeIndex, TabViewer};
 use serde::{Deserialize, Serialize};
 
-use crate::explorer::{self, ExplorerAction};
+use crate::explorer::{self, ExplorerAction, ExplorerOptions};
 use crate::log_console::LogConsole;
 use crate::state::DataSources;
 
@@ -52,6 +52,7 @@ pub fn default_layout() -> DockState<Tab> {
 pub struct Panels<'a> {
     pub log_console: &'a mut LogConsole,
     pub data_sources: &'a DataSources,
+    pub explorer_options: &'a mut ExplorerOptions,
     /// What the user asked for in the explorer this frame, for the app to act on.
     pub explorer_actions: &'a mut Vec<ExplorerAction>,
 }
@@ -69,7 +70,12 @@ impl TabViewer for Panels<'_> {
 
     fn ui(&mut self, ui: &mut Ui, tab: &mut Tab) {
         match tab {
-            Tab::Explorer => explorer::show(ui, self.data_sources, self.explorer_actions),
+            Tab::Explorer => explorer::show(
+                ui,
+                self.data_sources,
+                self.explorer_options,
+                self.explorer_actions,
+            ),
             Tab::Welcome => welcome(ui),
             Tab::LogConsole => self.log_console.ui(ui),
         }

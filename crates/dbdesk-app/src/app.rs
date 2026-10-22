@@ -1,9 +1,11 @@
+use dbdesk_core::{CatalogPath, DataSourceId};
 use dbdesk_engine::{Command, EngineConfig, EngineError, EngineHandle, Event, Repaint};
 use egui_dock::{DockArea, DockState, Style};
 
 use crate::data_source_dialog::{DataSourceDialog, DialogAction};
+use crate::definition_window::DefinitionWindow;
 use crate::delete_dialog::{DeleteChoice, DeleteConfirmation};
-use crate::explorer::ExplorerAction;
+use crate::explorer::{ExplorerAction, ExplorerOptions};
 use crate::log_console::{LogConsole, LogFeed};
 use crate::state::{AppState, EngineStatus};
 use crate::workspace::{self, Panels, Tab};
@@ -16,8 +18,10 @@ pub struct DbDeskApp {
     state: AppState,
     dock: DockState<Tab>,
     log_console: LogConsole,
+    explorer_options: ExplorerOptions,
     data_source_dialog: Option<DataSourceDialog>,
     delete_confirmation: Option<DeleteConfirmation>,
+    definition_window: Option<DefinitionWindow>,
 }
 
 impl DbDeskApp {
@@ -37,8 +41,10 @@ impl DbDeskApp {
             state: AppState::default(),
             dock,
             log_console: LogConsole::new(log_feed, &cc.egui_ctx),
+            explorer_options: ExplorerOptions::default(),
             data_source_dialog: None,
             delete_confirmation: None,
+            definition_window: None,
         })
     }
 
@@ -67,6 +73,9 @@ impl DbDeskApp {
             .is_some_and(|dialog| dialog.apply(event))
         {
             self.data_source_dialog = None;
+        }
+        if let Some(window) = &mut self.definition_window {
+            window.apply(event);
         }
     }
 
@@ -106,6 +115,35 @@ impl DbDeskApp {
             }
             ExplorerAction::Connect(id) => self.send(Command::Connect(id)),
             ExplorerAction::Disconnect(id) => self.send(Command::Disconnect(id)),
+            ExplorerAction::Expand(id, path) => {
+                let needs_loading = self
+                    .state
+                    .catalog_mut(id)
+                    .is_some_and(|catalog| catalog.expand(&path));
+                self.load_children_if(needs_loading, id, path);
+            }
+            ExplorerAction::Collapse(id, path) => {
+                if let Some(catalog) = self.state.catalog_mut(id) {
+                    catalog.collapse(&path);
+                }
+            }
+            ExplorerAction::Refresh(id, path) => {
+                let needs_loading = self
+                    .state
+                    .catalog_mut(id)
+                    .is_some_and(|catalog| catalog.refresh(&path));
+                self.load_children_if(needs_loading, id, path);
+            }
+            ExplorerAction::ShowDefinition { id, path, title } => {
+                self.definition_window = Some(DefinitionWindow::new(id, path.clone(), title));
+                self.send(Command::LoadDefinition { id, path });
+            }
+        }
+    }
+
+    fn load_children_if(&self, needs_loading: bool, id: DataSourceId, path: CatalogPath) {
+        if needs_loading {
+            self.send(Command::LoadChildren { id, path });
         }
     }
 
@@ -182,6 +220,7 @@ impl eframe::App for DbDeskApp {
                 &mut Panels {
                     log_console: &mut self.log_console,
                     data_sources: &self.state.data_sources,
+                    explorer_options: &mut self.explorer_options,
                     explorer_actions: &mut explorer_actions,
                 },
             );
@@ -192,6 +231,13 @@ impl eframe::App for DbDeskApp {
         let ctx = ui.ctx().clone();
         self.show_data_source_dialog(&ctx);
         self.show_delete_confirmation(&ctx);
+        if self
+            .definition_window
+            .as_ref()
+            .is_some_and(|window| !window.show(&ctx))
+        {
+            self.definition_window = None;
+        }
 
         // Entries logged on the UI thread don't wake the UI (see `UiWaker`), so collect any
         // logged during this frame and ask for one more frame to show them.
@@ -312,11 +358,47 @@ mod tests {
         harness.run();
         harness.get_by_label("Save").click();
 
-        step_until_visible(&mut harness, "chinook.db");
+        step_until_visible(&mut harness, "Expand chinook.db");
         let saved = DataSourceFile::new(dir.path().join("data_sources.toml"))
             .load()
             .unwrap();
         assert_eq!(saved.len(), 1);
         assert_eq!(saved[0].name, "chinook.db");
+    }
+
+    #[test]
+    fn browses_a_sqlite_catalog_down_to_columns() {
+        let dir = tempfile::tempdir().unwrap();
+        let database = dir.path().join("shop.db");
+        rusqlite::Connection::open(&database)
+            .unwrap()
+            .execute_batch("CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT NOT NULL)")
+            .unwrap();
+        DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .save(&[dbdesk_core::DataSource {
+                id: DataSourceId::generate(),
+                name: "shop".to_owned(),
+                config: dbdesk_core::ConnectionConfig::Sqlite(dbdesk_core::SqliteConfig {
+                    path: database,
+                    read_only: true,
+                }),
+            }])
+            .unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+
+        for (expand, appears) in [
+            ("Expand shop", "Expand main"),
+            ("Expand main", "Expand tables"),
+            ("Expand tables", "Expand orders"),
+            ("Expand orders", "Expand columns"),
+            ("Expand columns", "customer"),
+        ] {
+            step_until_visible(&mut harness, expand);
+            harness.get_by_label(expand).click();
+            step_until_visible(&mut harness, appears);
+        }
+        harness.get_by_label("text, not null");
+        step_until_visible(&mut harness, "1 connected");
     }
 }

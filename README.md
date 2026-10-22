@@ -4,9 +4,9 @@ A desktop database tool in the spirit of JetBrains DataGrip, written in Rust.
 It is a learning project first and a personal daily driver second: the goal is a tool
 small enough to understand end to end and easy to bend to my own workflow.
 
-Status: **M1 (data sources and sessions)**. You can add PostgreSQL and SQLite data sources,
-test them, connect and disconnect, and follow it all in the log console. Browsing schemas
-comes in M2, running SQL in M3.
+Status: **M2 (connection explorer)**. You can add PostgreSQL and SQLite data sources, test and
+connect them, and browse their catalogs (databases, schemas, tables, views, functions, columns,
+indexes, constraints, triggers) with filtering and object definitions. Running SQL comes in M3.
 
 ## Building and running
 

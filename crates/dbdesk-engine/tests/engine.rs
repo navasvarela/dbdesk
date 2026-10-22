@@ -11,7 +11,8 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use dbdesk_core::{
-    ConnectionConfig, DataSource, DataSourceId, Password, PostgresConfig, SqliteConfig,
+    CatalogPath, ConnectionConfig, DataSource, DataSourceId, FolderKind, NodeKind, Password,
+    PostgresConfig, SqliteConfig,
 };
 use dbdesk_engine::{
     Command, EngineConfig, EngineHandle, Event, PasswordUpdate, Repaint, SessionState,
@@ -244,6 +245,62 @@ fn never_overwrites_an_unreadable_data_sources_file() {
         Event::DataSourceSaveFailed { id, .. } if id == data_source.id
     ));
     assert_eq!(std::fs::read_to_string(&file).unwrap(), broken);
+}
+
+#[test]
+fn loading_children_connects_first_and_answers_catalog_requests() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    engine.expect(Event::Started);
+    engine.expect(Event::DataSourcesLoaded(vec![]));
+    let database = sqlite_database(dir.path());
+    rusqlite::Connection::open(&database)
+        .unwrap()
+        .execute_batch("CREATE VIEW v AS SELECT id FROM t")
+        .unwrap();
+    let data_source = sqlite_data_source(database);
+    let id = data_source.id;
+    engine.send(Command::SaveDataSource {
+        data_source,
+        password: PasswordUpdate::Keep,
+    });
+    assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
+
+    engine.send(Command::LoadChildren {
+        id,
+        path: CatalogPath::root(),
+    });
+
+    assert_eq!(engine.expect_session(id), SessionState::Connecting);
+    assert!(matches!(
+        engine.expect_session(id),
+        SessionState::Connected(_)
+    ));
+    match engine.next_event() {
+        Event::ChildrenLoaded {
+            id: loaded,
+            path,
+            result: Ok(nodes),
+        } if loaded == id && path.is_root() => {
+            let labels: Vec<_> = nodes.iter().map(|node| node.label.as_str()).collect();
+            assert_eq!(labels, ["main"]);
+        }
+        other => panic!("expected the root's children, got {other:?}"),
+    }
+
+    let view = CatalogPath::root()
+        .child(NodeKind::Schema, "main")
+        .child(NodeKind::Folder(FolderKind::Views), "views")
+        .child(NodeKind::View, "v");
+    engine.send(Command::LoadDefinition {
+        id,
+        path: view.clone(),
+    });
+    engine.expect(Event::DefinitionLoaded {
+        id,
+        path: view,
+        result: Ok("CREATE VIEW v AS SELECT id FROM t;".to_owned()),
+    });
 }
 
 /// Needs `DBDESK_TEST_POSTGRES_URL`, like the Postgres driver tests; skipped without it.
