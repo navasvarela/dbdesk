@@ -1,4 +1,4 @@
-use dbdesk_core::{DataSource, DataSourceId, Password, ServerInfo};
+use dbdesk_core::{CatalogNode, CatalogPath, DataSource, DataSourceId, Password, ServerInfo};
 
 /// A request from the UI to the engine.
 ///
@@ -22,6 +22,17 @@ pub enum Command {
     },
     Connect(DataSourceId),
     Disconnect(DataSourceId),
+    /// Lists the children of a catalog node, connecting first if needed.
+    /// Answered by [`Event::ChildrenLoaded`].
+    LoadChildren {
+        id: DataSourceId,
+        path: CatalogPath,
+    },
+    /// Answered by [`Event::DefinitionLoaded`].
+    LoadDefinition {
+        id: DataSourceId,
+        path: CatalogPath,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +69,16 @@ pub enum Event {
     ConnectionTested {
         id: DataSourceId,
         result: Result<ServerInfo, String>,
+    },
+    ChildrenLoaded {
+        id: DataSourceId,
+        path: CatalogPath,
+        result: Result<Vec<CatalogNode>, String>,
+    },
+    DefinitionLoaded {
+        id: DataSourceId,
+        path: CatalogPath,
+        result: Result<String, String>,
     },
 }
 

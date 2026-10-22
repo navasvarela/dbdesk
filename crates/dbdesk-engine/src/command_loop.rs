@@ -9,7 +9,7 @@ use tokio::task::{JoinError, JoinSet};
 use crate::events::EventSink;
 use crate::open::test_connection;
 use crate::registry::{Registry, RegistryError};
-use crate::session::Session;
+use crate::session::{Session, SessionRequest};
 use crate::{Command, EngineConfig, Event, PasswordUpdate};
 
 #[derive(Debug, thiserror::Error)]
@@ -79,6 +79,12 @@ impl Engine {
             }
             Command::Connect(id) => self.connect(id),
             Command::Disconnect(id) => self.disconnect(id),
+            Command::LoadChildren { id, path } => {
+                self.request(id, SessionRequest::Children(path));
+            }
+            Command::LoadDefinition { id, path } => {
+                self.request(id, SessionRequest::Definition(path));
+            }
         }
     }
 
@@ -161,6 +167,15 @@ impl Engine {
             self.events.clone(),
         );
         self.sessions.insert(id, session);
+    }
+
+    /// Queues work on the data source's session, starting one if it isn't connected, so
+    /// expanding a disconnected data source in the explorer connects it.
+    fn request(&mut self, id: DataSourceId, request: SessionRequest) {
+        self.connect(id);
+        if let Some(session) = self.sessions.get(&id) {
+            session.request(request);
+        }
     }
 
     fn disconnect(&mut self, id: DataSourceId) {

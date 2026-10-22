@@ -2,9 +2,17 @@
 //!
 //! Must run inside a tokio runtime: each connection spawns a task that drives the socket.
 
+mod catalog;
+
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
+
 use async_trait::async_trait;
-use dbdesk_core::{BoxError, Connection, DriverError, Password, PostgresConfig, ServerInfo};
-use tokio::task::JoinHandle;
+use dbdesk_core::{
+    BoxError, CatalogNode, CatalogPath, Connection, DriverError, NodeKind, Password,
+    PostgresConfig, ServerInfo,
+};
+use tokio::task::{JoinError, JoinHandle};
 use tokio_postgres::{Client, NoTls};
 
 /// Shown in `pg_stat_activity`, so a DBA can tell dbdesk's sessions apart.
@@ -24,28 +32,18 @@ pub async fn connect(
     config: &PostgresConfig,
     password: Option<&Password>,
 ) -> Result<PostgresConnection, DriverError> {
-    let mut pg_config = tokio_postgres::Config::new();
-    pg_config
-        .host(&config.host)
-        .port(config.port)
-        .dbname(&config.database)
-        .user(&config.user)
-        .application_name(APPLICATION_NAME);
-    if let Some(password) = password {
-        pg_config.password(password.expose());
-    }
-
-    let (client, connection) = pg_config.connect(NoTls).await.map_err(connect_error)?;
-    let connection_task = tokio::spawn(async move {
-        if let Err(error) = connection.await {
-            tracing::warn!(error = %error, "PostgreSQL connection closed with an error");
-        }
-    });
-    let version = server_version(&client).await.map_err(connect_error)?;
+    let primary = DatabaseClient::open(config, &config.database, password)
+        .await
+        .map_err(connect_error)?;
+    let version = server_version(&primary.client)
+        .await
+        .map_err(connect_error)?;
 
     Ok(PostgresConnection {
-        client,
-        connection_task,
+        config: config.clone(),
+        password: password.cloned(),
+        primary,
+        others: HashMap::new(),
         server_info: ServerInfo {
             product: PRODUCT.to_owned(),
             version,
@@ -68,12 +66,89 @@ fn connection_error(error: impl Into<BoxError>) -> DriverError {
     DriverError::Connection(error.into())
 }
 
-pub struct PostgresConnection {
+/// A client bound to one database, and the task that drives its socket.
+struct DatabaseClient {
     client: Client,
-    /// Drives the socket. Finishes once `client` is dropped and the server has been told
-    /// the session is over.
+    /// Finishes once `client` is dropped and the server has been told the session is over.
     connection_task: JoinHandle<()>,
+}
+
+impl DatabaseClient {
+    async fn open(
+        config: &PostgresConfig,
+        database: &str,
+        password: Option<&Password>,
+    ) -> Result<Self, tokio_postgres::Error> {
+        let mut pg_config = tokio_postgres::Config::new();
+        pg_config
+            .host(&config.host)
+            .port(config.port)
+            .dbname(database)
+            .user(&config.user)
+            .application_name(APPLICATION_NAME);
+        if let Some(password) = password {
+            pg_config.password(password.expose());
+        }
+
+        let (client, connection) = pg_config.connect(NoTls).await?;
+        let connection_task = tokio::spawn(async move {
+            if let Err(error) = connection.await {
+                tracing::warn!(error = %error, "PostgreSQL connection closed with an error");
+            }
+        });
+        Ok(Self {
+            client,
+            connection_task,
+        })
+    }
+
+    async fn close(self) -> Result<(), JoinError> {
+        drop(self.client);
+        self.connection_task.await
+    }
+}
+
+/// A session with a PostgreSQL server.
+///
+/// PostgreSQL binds each connection to one database, but the explorer lists every database
+/// on the server. Browsing a database other than the configured one opens an extra
+/// connection to it on first use, kept until the session closes.
+pub struct PostgresConnection {
+    config: PostgresConfig,
+    /// Kept in memory, for the session's lifetime only, to open those extra connections.
+    password: Option<Password>,
+    primary: DatabaseClient,
+    others: HashMap<String, DatabaseClient>,
     server_info: ServerInfo,
+}
+
+impl PostgresConnection {
+    /// The client for the database a catalog path belongs to: the one named by the path's
+    /// first segment, or the configured database for the root and for malformed paths (which
+    /// the catalog then rejects without ever opening a connection for them).
+    async fn client_for(&mut self, path: &CatalogPath) -> Result<&Client, DriverError> {
+        let database = match path.segments().first() {
+            Some(segment)
+                if segment.kind == NodeKind::Database && segment.name != self.config.database =>
+            {
+                segment.name.as_str()
+            }
+            _ => return Ok(&self.primary.client),
+        };
+        match self.others.entry(database.to_owned()) {
+            Entry::Occupied(entry) => Ok(&entry.into_mut().client),
+            Entry::Vacant(entry) => {
+                let client = DatabaseClient::open(&self.config, database, self.password.as_ref())
+                    .await
+                    .map_err(connect_error)?;
+                tracing::info!(
+                    database,
+                    "opened a connection for browsing another database"
+                );
+                Ok(&entry.insert(client).client)
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -83,21 +158,35 @@ impl Connection for PostgresConnection {
     }
 
     async fn ping(&mut self) -> Result<(), DriverError> {
-        self.client
+        self.primary
+            .client
             .simple_query("SELECT 1")
             .await
             .map(drop)
             .map_err(connection_error)
     }
 
+    async fn children(&mut self, path: &CatalogPath) -> Result<Vec<CatalogNode>, DriverError> {
+        let client = self.client_for(path).await?;
+        catalog::children(client, path).await
+    }
+
+    async fn definition(&mut self, path: &CatalogPath) -> Result<String, DriverError> {
+        let client = self.client_for(path).await?;
+        catalog::definition(client, path).await
+    }
+
     async fn close(self: Box<Self>) -> Result<(), DriverError> {
         let Self {
-            client,
-            connection_task,
-            server_info: _,
+            primary, others, ..
         } = *self;
-        drop(client);
-        connection_task.await.map_err(connection_error)
+        let mut first_error = None;
+        for client in std::iter::once(primary).chain(others.into_values()) {
+            if let Err(error) = client.close().await {
+                first_error.get_or_insert(error);
+            }
+        }
+        first_error.map_or(Ok(()), |error| Err(connection_error(error)))
     }
 }
 
@@ -105,7 +194,7 @@ impl Connection for PostgresConnection {
 mod tests {
     use std::str::FromStr;
 
-    use dbdesk_core::conformance;
+    use dbdesk_core::{FolderKind, conformance};
     use tokio_postgres::config::Host;
 
     use super::*;
@@ -179,5 +268,117 @@ mod tests {
         };
 
         conformance::check_connect_failure(connect(&config, None).await);
+    }
+
+    const FIXTURE_SCHEMA: &str = "dbdesk_catalog_test";
+    /// One object of every kind the explorer shows, in a schema of its own.
+    const FIXTURE: &str = "
+        DROP SCHEMA IF EXISTS dbdesk_catalog_test CASCADE;
+        CREATE SCHEMA dbdesk_catalog_test;
+        SET search_path TO dbdesk_catalog_test;
+        CREATE TABLE orders (
+            id serial PRIMARY KEY,
+            customer text NOT NULL,
+            total numeric(10, 2) CHECK (total >= 0)
+        );
+        CREATE INDEX orders_customer ON orders (customer);
+        CREATE FUNCTION touch() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$;
+        CREATE TRIGGER orders_touch BEFORE UPDATE ON orders
+            FOR EACH ROW EXECUTE FUNCTION touch();
+        CREATE VIEW big_orders AS SELECT id, total FROM orders WHERE total > 100;
+        CREATE MATERIALIZED VIEW order_totals AS
+            SELECT customer, sum(total) AS total FROM orders GROUP BY customer;
+        CREATE FUNCTION add(a integer, b integer) RETURNS integer
+            LANGUAGE sql AS 'SELECT a + b';
+        CREATE SEQUENCE invoice_numbers;
+    ";
+
+    fn labels_under<'a>(nodes: &'a [CatalogNode], parent: &CatalogPath) -> Vec<&'a str> {
+        nodes
+            .iter()
+            .filter(|node| node.path.parent().as_ref() == Some(parent))
+            .map(|node| node.label.as_str())
+            .collect()
+    }
+
+    fn folder(parent: &CatalogPath, folder: FolderKind) -> CatalogPath {
+        parent.child(NodeKind::Folder(folder), folder.label())
+    }
+
+    #[tokio::test]
+    async fn walks_the_catalog_across_databases_and_shows_definitions() {
+        let Some((config, password)) = test_server() else {
+            return;
+        };
+        let mut connection = connect(&config, password.as_ref()).await.unwrap();
+        connection
+            .primary
+            .client
+            .batch_execute(FIXTURE)
+            .await
+            .unwrap();
+
+        let nodes = conformance::walk_catalog(&mut connection, 6).await;
+        conformance::check_invalid_path(&mut connection).await;
+
+        let root_labels = labels_under(&nodes, &CatalogPath::root());
+        assert!(
+            root_labels.contains(&config.database.as_str()),
+            "{root_labels:?}"
+        );
+        assert!(root_labels.contains(&"postgres"), "{root_labels:?}");
+        let database = CatalogPath::root().child(NodeKind::Database, config.database.clone());
+        let pg_catalog = nodes
+            .iter()
+            .find(|node| node.path == database.child(NodeKind::Schema, "pg_catalog"))
+            .unwrap();
+        assert!(pg_catalog.system);
+
+        let schema = database.child(NodeKind::Schema, FIXTURE_SCHEMA);
+        let orders = folder(&schema, FolderKind::Tables).child(NodeKind::Table, "orders");
+        let expected: [(CatalogPath, &[&str]); 9] = [
+            (folder(&schema, FolderKind::Tables), &["orders"]),
+            (folder(&schema, FolderKind::Views), &["big_orders"]),
+            (
+                folder(&schema, FolderKind::MaterializedViews),
+                &["order_totals"],
+            ),
+            (
+                folder(&schema, FolderKind::Functions),
+                &["add(a integer, b integer)", "touch()"],
+            ),
+            (
+                folder(&schema, FolderKind::Sequences),
+                &["invoice_numbers", "orders_id_seq"],
+            ),
+            (
+                folder(&orders, FolderKind::Columns),
+                &["id", "customer", "total"],
+            ),
+            (
+                folder(&orders, FolderKind::Indexes),
+                &["orders_customer", "orders_pkey"],
+            ),
+            (
+                folder(&orders, FolderKind::Constraints),
+                &["orders_pkey", "orders_total_check"],
+            ),
+            (folder(&orders, FolderKind::Triggers), &["orders_touch"]),
+        ];
+        for (parent, labels) in expected {
+            assert_eq!(labels_under(&nodes, &parent), labels, "under {parent}");
+        }
+
+        let view = folder(&schema, FolderKind::Views).child(NodeKind::View, "big_orders");
+        let view_definition = connection.definition(&view).await.unwrap();
+        assert!(
+            view_definition.starts_with("CREATE VIEW dbdesk_catalog_test.big_orders AS"),
+            "{view_definition}"
+        );
+        let add = folder(&schema, FolderKind::Functions)
+            .child(NodeKind::Function, "add(a integer, b integer)");
+        assert!(connection.definition(&add).await.unwrap().contains("a + b"));
+
+        Box::new(connection).close().await.unwrap();
     }
 }

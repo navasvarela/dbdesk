@@ -1,0 +1,238 @@
+//! The catalog: the tree of objects a data source exposes, loaded one level at a time.
+
+use std::fmt;
+
+/// Where a node sits in the catalog tree, from the data source down. The empty path is the
+/// data source itself.
+///
+/// Every segment carries its kind as well as its name, so drivers can match on the path's
+/// shape (`[Database, Schema, Folder(Tables)]`) instead of guessing what a name refers to.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct CatalogPath(Vec<PathSegment>);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PathSegment {
+    pub kind: NodeKind,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NodeKind {
+    Database,
+    Schema,
+    Folder(FolderKind),
+    Table,
+    View,
+    MaterializedView,
+    Function,
+    Sequence,
+    Column,
+    Index,
+    Constraint,
+    Trigger,
+}
+
+/// Groups children by kind, the way DataGrip shows "tables", "views", and so on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FolderKind {
+    Tables,
+    Views,
+    MaterializedViews,
+    Functions,
+    Sequences,
+    Columns,
+    Indexes,
+    Constraints,
+    Triggers,
+}
+
+impl FolderKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Tables => "tables",
+            Self::Views => "views",
+            Self::MaterializedViews => "materialized views",
+            Self::Functions => "functions",
+            Self::Sequences => "sequences",
+            Self::Columns => "columns",
+            Self::Indexes => "indexes",
+            Self::Constraints => "constraints",
+            Self::Triggers => "triggers",
+        }
+    }
+}
+
+/// One entry in the catalog tree, as returned by [`Connection::children`](crate::Connection).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogNode {
+    pub path: CatalogPath,
+    pub label: String,
+    /// Short extra information shown next to the label, e.g. a column's type.
+    pub detail: Option<String>,
+    pub has_children: bool,
+    /// Whether [`Connection::definition`](crate::Connection) can return source for it.
+    pub has_definition: bool,
+    /// Engine-internal objects (`pg_catalog`, `sqlite_sequence`, …) that the explorer hides
+    /// unless asked to show them.
+    pub system: bool,
+}
+
+impl CatalogNode {
+    pub fn kind(&self) -> Option<NodeKind> {
+        self.path.last().map(|segment| segment.kind)
+    }
+
+    /// A folder node under `parent`, which always has children and no definition.
+    pub fn folder(parent: &CatalogPath, folder: FolderKind) -> Self {
+        Self {
+            path: parent.child(NodeKind::Folder(folder), folder.label()),
+            label: folder.label().to_owned(),
+            detail: None,
+            has_children: true,
+            has_definition: false,
+            system: false,
+        }
+    }
+}
+
+impl CatalogPath {
+    pub fn root() -> Self {
+        Self::default()
+    }
+
+    pub fn child(&self, kind: NodeKind, name: impl Into<String>) -> Self {
+        let mut segments = self.0.clone();
+        segments.push(PathSegment {
+            kind,
+            name: name.into(),
+        });
+        Self(segments)
+    }
+
+    pub fn segments(&self) -> &[PathSegment] {
+        &self.0
+    }
+
+    pub fn last(&self) -> Option<&PathSegment> {
+        self.0.last()
+    }
+
+    pub fn is_root(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// The path one level up, or `None` for the root.
+    pub fn parent(&self) -> Option<Self> {
+        let (_, parent) = self.0.split_last()?;
+        Some(Self(parent.to_vec()))
+    }
+
+    /// Whether `self` is `other` or one of its descendants.
+    pub fn starts_with(&self, other: &Self) -> bool {
+        self.0.starts_with(&other.0)
+    }
+
+    /// The name of the nearest segment of `kind`, searching from the leaf up.
+    pub fn name_of(&self, kind: NodeKind) -> Option<&str> {
+        self.0
+            .iter()
+            .rev()
+            .find(|segment| segment.kind == kind)
+            .map(|segment| segment.name.as_str())
+    }
+
+    /// The name to use in SQL for the object at this path: schema-qualified for schema objects
+    /// (`public.users`, `"My Schema"."Order Items"`), bare for columns, constraints and
+    /// triggers. `None` for databases, schemas and folders.
+    pub fn qualified_name(&self) -> Option<String> {
+        let object = self.last()?;
+        match object.kind {
+            NodeKind::Table
+            | NodeKind::View
+            | NodeKind::MaterializedView
+            | NodeKind::Sequence
+            | NodeKind::Index => Some(self.schema_qualified(&quote_identifier(&object.name))),
+            // Function names already carry their argument list, e.g. `add(integer, integer)`.
+            NodeKind::Function => Some(self.schema_qualified(&object.name)),
+            NodeKind::Column | NodeKind::Constraint | NodeKind::Trigger => {
+                Some(quote_identifier(&object.name))
+            }
+            NodeKind::Database | NodeKind::Schema | NodeKind::Folder(_) => None,
+        }
+    }
+
+    fn schema_qualified(&self, object_name: &str) -> String {
+        match self.name_of(NodeKind::Schema) {
+            Some(schema) => format!("{}.{object_name}", quote_identifier(schema)),
+            None => object_name.to_owned(),
+        }
+    }
+}
+
+impl fmt::Display for CatalogPath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let names: Vec<&str> = self.0.iter().map(|s| s.name.as_str()).collect();
+        write!(f, "/{}", names.join("/"))
+    }
+}
+
+/// Quotes an identifier with double quotes (standard SQL; both PostgreSQL and SQLite accept
+/// it) unless it is a plain lowercase identifier that needs no quoting.
+pub fn quote_identifier(name: &str) -> String {
+    let mut chars = name.chars();
+    let plain = chars
+        .next()
+        .is_some_and(|first| first.is_ascii_lowercase() || first == '_')
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+    if plain {
+        name.to_owned()
+    } else {
+        format!("\"{}\"", name.replace('"', "\"\""))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn table_path(schema: &str, table: &str) -> CatalogPath {
+        CatalogPath::root()
+            .child(NodeKind::Database, "app")
+            .child(NodeKind::Schema, schema)
+            .child(NodeKind::Folder(FolderKind::Tables), "tables")
+            .child(NodeKind::Table, table)
+    }
+
+    #[test]
+    fn qualifies_and_quotes_object_names() {
+        let cases = [
+            (table_path("public", "users"), Some("public.users")),
+            (
+                table_path("Sales", "order \"items\""),
+                Some("\"Sales\".\"order \"\"items\"\"\""),
+            ),
+            (
+                table_path("public", "users").child(NodeKind::Column, "Email"),
+                Some("\"Email\""),
+            ),
+            (table_path("public", "users").parent().unwrap(), None),
+            (CatalogPath::root().child(NodeKind::Database, "app"), None),
+        ];
+
+        for (path, expected) in cases {
+            assert_eq!(path.qualified_name().as_deref(), expected, "{path}");
+        }
+    }
+
+    #[test]
+    fn navigates_up_and_recognises_descendants() {
+        let table = table_path("public", "users");
+        let schema = table.parent().unwrap().parent().unwrap();
+
+        assert!(table.starts_with(&schema));
+        assert!(!schema.starts_with(&table));
+        assert_eq!(table.name_of(NodeKind::Schema), Some("public"));
+        assert_eq!(CatalogPath::root().parent(), None);
+        assert_eq!(table.to_string(), "/app/public/tables/users");
+    }
+}

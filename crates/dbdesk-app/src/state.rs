@@ -1,6 +1,8 @@
 use dbdesk_core::{DataSource, DataSourceId};
 use dbdesk_engine::{Event, SessionState};
 
+use crate::catalog_tree::CatalogTree;
+
 /// What the UI knows about the world, built only from engine events.
 #[derive(Debug, Default)]
 pub struct AppState {
@@ -39,6 +41,7 @@ pub enum DataSources {
 pub struct DataSourceEntry {
     pub data_source: DataSource,
     pub session: SessionState,
+    pub catalog: CatalogTree,
 }
 
 impl DataSourceEntry {
@@ -46,7 +49,17 @@ impl DataSourceEntry {
         Self {
             data_source,
             session: SessionState::Disconnected,
+            catalog: CatalogTree::default(),
         }
+    }
+
+    fn set_session(&mut self, state: &SessionState) {
+        // Everything loaded came from the connection that just went away, and the next
+        // connection may see a different catalog.
+        if matches!(state, SessionState::Disconnected | SessionState::Failed(_)) {
+            self.catalog.reset();
+        }
+        self.session = state.clone();
     }
 }
 
@@ -70,11 +83,18 @@ impl AppState {
             Event::DataSourceDeleted(id) => self.data_sources.remove(*id),
             Event::SessionChanged { id, state } => {
                 if let Some(entry) = self.data_sources.entry_mut(*id) {
-                    entry.session = state.clone();
+                    entry.set_session(state);
                 }
             }
-            // Only the data source dialog cares about these.
-            Event::DataSourceSaveFailed { .. } | Event::ConnectionTested { .. } => {}
+            Event::ChildrenLoaded { id, path, result } => {
+                if let Some(catalog) = self.catalog_mut(*id) {
+                    catalog.loaded(path, result);
+                }
+            }
+            // Only the dialogs and the definition window care about these.
+            Event::DataSourceSaveFailed { .. }
+            | Event::ConnectionTested { .. }
+            | Event::DefinitionLoaded { .. } => {}
         }
     }
 
@@ -83,6 +103,12 @@ impl AppState {
             .entries()
             .iter()
             .find(|e| e.data_source.id == id)
+    }
+
+    pub fn catalog_mut(&mut self, id: DataSourceId) -> Option<&mut CatalogTree> {
+        self.data_sources
+            .entry_mut(id)
+            .map(|entry| &mut entry.catalog)
     }
 
     pub fn connected_count(&self) -> usize {
@@ -208,5 +234,39 @@ mod tests {
         assert_eq!(entry.data_source.name, "new");
         assert_eq!(entry.session, connected);
         assert_eq!(state.connected_count(), 1);
+    }
+
+    #[test]
+    fn losing_the_connection_forgets_the_loaded_catalog() {
+        let mut state = AppState::default();
+        let source = data_source("app");
+        state.apply(&Event::DataSourcesLoaded(vec![source.clone()]));
+        let root = dbdesk_core::CatalogPath::root();
+        let catalog = state.catalog_mut(source.id).unwrap();
+        assert!(catalog.expand(&root));
+
+        state.apply(&Event::SessionChanged {
+            id: source.id,
+            state: SessionState::Connecting,
+        });
+        assert!(
+            state
+                .data_source(source.id)
+                .unwrap()
+                .catalog
+                .is_expanded(&root)
+        );
+        state.apply(&Event::SessionChanged {
+            id: source.id,
+            state: SessionState::Failed("timed out".to_owned()),
+        });
+
+        assert!(
+            !state
+                .data_source(source.id)
+                .unwrap()
+                .catalog
+                .is_expanded(&root)
+        );
     }
 }
