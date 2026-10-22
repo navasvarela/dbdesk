@@ -643,17 +643,8 @@ mod tests {
         );
         let (_layer, feed) = log_console::pipeline();
         let mut harness = start_app(dir.path(), feed);
-        for expand in ["Expand shop", "Expand main", "Expand tables"] {
-            step_until_visible(&mut harness, expand);
-            harness.get_by_label(expand).click();
-        }
-        step_until_visible(&mut harness, "Expand orders");
 
-        harness.get_by_label("orders").click_secondary();
-        harness.run();
-        harness.get_by_label("Open data").click();
-
-        step_until_visible(&mut harness, "500 rows, more available");
+        open_orders(&mut harness, "500 rows, more available");
         harness.get_by_label("Load more rows").click();
         step_until_visible(&mut harness, "600 rows ·");
     }
@@ -714,15 +705,7 @@ mod tests {
         save_shop(dir.path(), "CREATE TABLE orders (id INTEGER PRIMARY KEY)");
         let (_layer, feed) = log_console::pipeline();
         let mut harness = start_app(dir.path(), feed);
-        for expand in ["Expand shop", "Expand main", "Expand tables"] {
-            step_until_visible(&mut harness, expand);
-            harness.get_by_label(expand).click();
-        }
-        step_until_visible(&mut harness, "Expand orders");
-        harness.get_by_label("orders").click_secondary();
-        harness.run();
-        harness.get_by_label("Open data").click();
-        step_until_visible(&mut harness, "0 rows");
+        open_orders(&mut harness, "0 rows");
 
         harness.get_by_label("History").click();
         step_until(&mut harness, "the history loading", |harness| {
@@ -796,5 +779,33 @@ mod tests {
         step_until(&mut harness, "the connection closing", |_| {
             count_orders(dir.path()) == 0
         });
+    }
+
+    /// Opens the `orders` table of a saved `shop` data source in a console, which runs
+    /// `SELECT * FROM main.orders`, and waits for its rows.
+    fn open_orders(harness: &mut Harness<'_, DbDeskApp>, rows_shown: &str) {
+        for expand in ["Expand shop", "Expand main", "Expand tables"] {
+            step_until_visible(harness, expand);
+            harness.get_by_label(expand).click();
+        }
+        step_until_visible(harness, "Expand orders");
+        harness.get_by_label("orders").click_secondary();
+        harness.run();
+        harness.get_by_label("Open data").click();
+        step_until_visible(harness, rows_shown);
+    }
+
+    #[test]
+    fn explains_the_statement_at_the_cursor() {
+        let dir = tempfile::tempdir().unwrap();
+        save_shop(dir.path(), "CREATE TABLE orders (id INTEGER PRIMARY KEY)");
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        open_orders(&mut harness, "0 rows");
+
+        harness.get_by_label("Explain").click();
+
+        // SQLite's query plan for a full table scan.
+        step_until_visible(&mut harness, "SCAN main.orders");
     }
 }

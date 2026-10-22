@@ -143,3 +143,25 @@ fn inserts_a_statement_on_a_line_of_its_own_at_the_cursor() {
         assert!(console.file.unsaved_since.is_some());
     }
 }
+
+#[test]
+fn explains_the_statement_at_the_cursor_and_marks_errors_in_it() {
+    let text = "select 1;\nselect broken from;";
+    let second = text.find("select broken").unwrap();
+    let mut console = console(text);
+    console.selection = second..second;
+
+    let statements = console.statements_to_run(RunScope::Explain);
+
+    assert_eq!(sqls(&statements), ["EXPLAIN select broken from"]);
+    console.begin_run(RunId(1), &statements);
+    console.apply(&Event::StatementFinished {
+        run: RunId(1),
+        statement: 0,
+        result: Err(StatementFailure {
+            message: "syntax error".to_owned(),
+            position: Some("EXPLAIN select broken ".len()),
+        }),
+    });
+    assert_eq!(&text[console.error_marker.clone().unwrap()], "from");
+}

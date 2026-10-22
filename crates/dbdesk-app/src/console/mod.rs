@@ -15,7 +15,7 @@ use dbdesk_engine::{
     Command, ConsoleId, Event, RunId, RunOutcome, SessionState, StatementFailure, StatementSummary,
     TransactionEnd, TransactionMode,
 };
-use dbdesk_sql::{Dialect, split_statements, statement_at};
+use dbdesk_sql::{Dialect, explain_prefix, split_statements, statement_at};
 use dbdesk_store::ConsoleKey;
 
 pub use view::{ConsoleAction, show};
@@ -33,6 +33,9 @@ pub struct SubmittedStatement {
     pub sql: String,
     /// Byte range in the console's text, to place error markers.
     pub range: Range<usize>,
+    /// How many bytes at the start of `sql` aren't in the console's text, such as an
+    /// `EXPLAIN` prefix. Error positions are shifted back by this much.
+    pub prefix_len: usize,
 }
 
 /// Which statements a run covers.
@@ -42,6 +45,8 @@ pub enum RunScope {
     Current,
     /// Every statement in the console.
     All,
+    /// The statement under the cursor (or the first one selected), explained rather than run.
+    Explain,
 }
 
 pub struct QueryConsole {
@@ -101,6 +106,7 @@ pub enum RunState {
 pub struct StatementView {
     sql: String,
     range: Range<usize>,
+    prefix_len: usize,
     columns: Vec<ColumnInfo>,
     rows: Vec<Row>,
     /// More rows can be fetched.
@@ -254,6 +260,7 @@ impl QueryConsole {
                 .map(|range| SubmittedStatement {
                     sql: source[range.clone()].to_owned(),
                     range: range.start + offset..range.end + offset,
+                    prefix_len: 0,
                 })
                 .collect::<Vec<_>>()
         };
@@ -268,6 +275,18 @@ impl QueryConsole {
                 submit(0, current.into_iter().collect(), &self.text)
             }
             RunScope::All => submit(0, split_statements(&self.text, self.dialect), &self.text),
+            RunScope::Explain => {
+                let prefix = explain_prefix(self.dialect);
+                self.statements_to_run(RunScope::Current)
+                    .into_iter()
+                    .take(1)
+                    .map(|statement| SubmittedStatement {
+                        sql: format!("{prefix}{}", statement.sql),
+                        prefix_len: prefix.len(),
+                        ..statement
+                    })
+                    .collect()
+            }
         }
     }
 
@@ -281,6 +300,7 @@ impl QueryConsole {
                 .map(|statement| StatementView {
                     sql: statement.sql.clone(),
                     range: statement.range.clone(),
+                    prefix_len: statement.prefix_len,
                     columns: Vec::new(),
                     rows: Vec::new(),
                     more: false,
@@ -399,7 +419,9 @@ impl QueryConsole {
             ..
         }) = result
         {
-            let offset = statement_view.range.start + position;
+            // A position inside an added prefix points at no text; mark the statement's start.
+            let offset =
+                statement_view.range.start + position.saturating_sub(statement_view.prefix_len);
             self.error_marker = Some(highlight::error_marker(&self.text, self.dialect, offset));
         }
         if result.is_err() {

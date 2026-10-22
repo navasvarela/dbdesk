@@ -276,6 +276,7 @@ mod tests {
                 .map(|sql| SubmittedStatement {
                     sql: (*sql).to_owned(),
                     range: 0..sql.len(),
+                    prefix_len: 0,
                 })
                 .collect(),
         )

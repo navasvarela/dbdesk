@@ -16,6 +16,8 @@ const RUN_CURRENT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, 
 const RUN_ALL: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::Enter);
 const CANCEL: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Period);
+const EXPLAIN: KeyboardShortcut =
+    KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::ALT), Key::E);
 
 /// Height the results start at; the user can drag the line above them.
 const RESULTS_HEIGHT: f32 = 280.0;
@@ -108,6 +110,9 @@ fn shortcuts(
     } else if ui.input_mut(|input| input.consume_shortcut(&RUN_CURRENT)) {
         push_run(console, RunScope::Current, actions);
     }
+    if ui.input_mut(|input| input.consume_shortcut(&EXPLAIN)) {
+        push_run(console, RunScope::Explain, actions);
+    }
     if ui.input_mut(|input| input.consume_shortcut(&CANCEL))
         && let Some(run) = console.cancellable_run()
     {
@@ -144,6 +149,16 @@ fn toolbar(ui: &mut Ui, console: &QueryConsole, actions: &mut Vec<ConsoleAction>
             .clicked()
         {
             push_run(console, RunScope::All, actions);
+        }
+        if ui
+            .add_enabled(!running, egui::Button::new("Explain"))
+            .on_hover_text(format!(
+                "Show how the database would run the statement at the cursor ({})",
+                ui.ctx().format_shortcut(&EXPLAIN)
+            ))
+            .clicked()
+        {
+            push_run(console, RunScope::Explain, actions);
         }
         let cancellable = console.cancellable_run();
         if ui

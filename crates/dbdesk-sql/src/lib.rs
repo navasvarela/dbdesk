@@ -9,12 +9,14 @@
 //! input and reports line/column positions, while the editor needs byte ranges for any text,
 //! and the same tokens also drive syntax highlighting.
 
+mod explain;
 mod keywords;
 mod lexer;
 mod safety;
 mod split;
 mod transaction;
 
+pub use explain::explain_prefix;
 pub use keywords::is_keyword;
 pub use lexer::{Dialect, Token, TokenKind, first_word, tokenize};
 pub use safety::{Hazard, hazard};
