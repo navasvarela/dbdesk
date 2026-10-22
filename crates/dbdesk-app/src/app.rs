@@ -1,8 +1,9 @@
+use std::path::PathBuf;
 use std::time::Instant;
 
 use dbdesk_core::{CatalogPath, DataSourceId};
 use dbdesk_engine::{Command, EngineConfig, EngineError, EngineHandle, Event, Repaint};
-use dbdesk_store::ConsoleKey;
+use dbdesk_store::{ConsoleKey, ExportFormat};
 use egui_dock::{DockArea, DockState, Style};
 
 use crate::console::ConsoleAction;
@@ -11,6 +12,7 @@ use crate::data_source_dialog::{DataSourceDialog, DialogAction};
 use crate::definition_window::DefinitionWindow;
 use crate::delete_dialog::{DeleteChoice, DeleteConfirmation};
 use crate::explorer::{ExplorerAction, ExplorerOptions};
+use crate::export_dialog;
 use crate::history_window::{HistoryAction, HistoryWindow};
 use crate::log_console::{LogConsole, LogFeed};
 use crate::rollback_dialog::{Closing, RollbackChoice, RollbackConfirmation};
@@ -33,6 +35,8 @@ pub struct DbDeskApp {
     rollback_confirmation: Option<RollbackConfirmation>,
     /// Set once quitting may roll back open transactions, so the close isn't asked again.
     quit_confirmed: bool,
+    /// Asks where to export rows. The platform's save dialog, except in tests.
+    pick_export_path: Box<dyn Fn(ExportFormat) -> Option<PathBuf>>,
     consoles: Consoles,
 }
 
@@ -60,6 +64,7 @@ impl DbDeskApp {
             history_window: None,
             rollback_confirmation: None,
             quit_confirmed: false,
+            pick_export_path: Box::new(export_dialog::pick_export_path),
             consoles: Consoles::default(),
         })
     }
@@ -328,6 +333,12 @@ impl DbDeskApp {
         }
     }
 
+    fn export(&self, console: &ConsoleKey, format: ExportFormat) {
+        if let Some(path) = (self.pick_export_path)(format) {
+            self.send_if(self.consoles.export(console, format, path));
+        }
+    }
+
     fn open_history(&mut self, console: ConsoleKey) {
         let Some(entry) = self.state.data_source(console.data_source) else {
             return;
@@ -408,11 +419,13 @@ impl eframe::App for DbDeskApp {
             self.handle_explorer_action(action, &ctx);
         }
         for (console, action) in console_actions {
-            if action == ConsoleAction::ShowHistory {
-                self.open_history(console);
-            } else {
-                let command = self.consoles.handle(&console, action);
-                self.send_if(command);
+            match action {
+                ConsoleAction::ShowHistory => self.open_history(console),
+                ConsoleAction::Export(format) => self.export(&console, format),
+                action => {
+                    let command = self.consoles.handle(&console, action);
+                    self.send_if(command);
+                }
             }
         }
         for console in close_requests {
@@ -807,5 +820,44 @@ mod tests {
 
         // SQLite's query plan for a full table scan.
         step_until_visible(&mut harness, "SCAN main.orders");
+    }
+
+    #[test]
+    fn sorts_views_and_exports_the_loaded_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        save_shop(
+            dir.path(),
+            r#"CREATE TABLE orders (id INTEGER PRIMARY KEY, note TEXT);
+               INSERT INTO orders VALUES (1, 'plain'), (2, '{"gift":true}'), (3, NULL);"#,
+        );
+        let export_path = dir.path().join("orders.csv");
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        let picked = export_path.clone();
+        harness.state_mut().pick_export_path = Box::new(move |_| Some(picked.clone()));
+        open_orders(&mut harness, "3 rows");
+
+        harness.get_by_label("id").click();
+        harness.run();
+        harness.get_by_label("id ▲").click();
+        harness.run();
+        harness.get_by_label("id ▼");
+        harness.get_by_label_contains("Sorted and filtered here, not by the database: 3 of 3");
+
+        harness.get_by_label(r#"{"gift":true}"#).click();
+        harness.run();
+        harness.key_press(egui::Key::Space);
+        harness.run();
+        harness.get_by_label("Value of note");
+        harness.get_by_value("{\n  \"gift\": true\n}");
+
+        harness.get_by_label("Export").click();
+        harness.run();
+        harness.get_by_label("CSV…").click();
+        step_until_visible(&mut harness, "Exported 3 rows");
+        assert_eq!(
+            std::fs::read_to_string(&export_path).unwrap(),
+            "id,note\r\n3,\r\n2,\"{\"\"gift\"\":true}\"\r\n1,plain\r\n"
+        );
     }
 }

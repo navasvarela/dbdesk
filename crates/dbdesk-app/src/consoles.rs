@@ -2,11 +2,12 @@
 //! engine commands to send rather than sending them, so it can be tested without an engine.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use dbdesk_core::{CatalogPath, DataSource, DataSourceId};
 use dbdesk_engine::{Command, ConsoleId, Event, RunId};
-use dbdesk_store::{ConsoleKey, ConsoleName};
+use dbdesk_store::{ConsoleKey, ConsoleName, ExportFormat};
 
 use crate::console::{self, ConsoleAction, QueryConsole, RunScope, SubmittedStatement};
 use crate::hazard_dialog::{self, HazardChoice, HazardConfirmation, Review};
@@ -160,6 +161,11 @@ impl Consoles {
             .collect()
     }
 
+    /// Writes the rows the console's grid shows to `path`.
+    pub fn export(&self, key: &ConsoleKey, format: ExportFormat, path: PathBuf) -> Option<Command> {
+        self.open.get(key)?.export(format, path)
+    }
+
     /// Puts a statement at the console's cursor, if the console is still open.
     pub fn insert_statement(&mut self, key: &ConsoleKey, sql: &str) {
         if let Some(console) = self.open.get_mut(key) {
@@ -190,8 +196,8 @@ impl Consoles {
             ConsoleAction::EndTransaction(end) => {
                 Some(Command::EndTransaction { console: id, end })
             }
-            // The app opens the history window; there is nothing to send yet.
-            ConsoleAction::ShowHistory => None,
+            // The app opens a window or a file dialog for these first.
+            ConsoleAction::ShowHistory | ConsoleAction::Export(_) => None,
         }
     }
 

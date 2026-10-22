@@ -9,6 +9,7 @@ mod data_source_form;
 mod definition_window;
 mod delete_dialog;
 mod explorer;
+mod export_dialog;
 mod hazard_dialog;
 mod history_window;
 mod log_console;

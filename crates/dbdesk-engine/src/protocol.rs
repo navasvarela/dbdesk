@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::time::Duration;
 
 use dbdesk_core::{
@@ -5,6 +6,8 @@ use dbdesk_core::{
     TransactionStatus,
 };
 use dbdesk_store::{ConsoleKey, HistoryEntry, SavedConsole};
+
+use crate::Export;
 
 /// Identifies a query console. Chosen by the UI, unique for the app's lifetime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -87,6 +90,11 @@ pub enum Command {
     },
     /// Removes a console's file, if it exists.
     DeleteConsoleFile(ConsoleKey),
+    /// Writes rows a console shows to a file. Answered by [`Event::ExportFinished`].
+    ExportRows {
+        console: ConsoleId,
+        export: Export,
+    },
     /// Looks up the data source's past statements containing `text`, newest first.
     /// Answered by [`Event::HistoryFound`].
     SearchHistory {
@@ -144,6 +152,12 @@ pub enum Event {
     ConsoleSaveFailed {
         key: ConsoleKey,
         error: String,
+    },
+    /// The answer to [`Command::ExportRows`]: how many rows were written, or why none were.
+    ExportFinished {
+        console: ConsoleId,
+        path: PathBuf,
+        result: Result<usize, String>,
     },
     /// The answer to [`Command::SearchHistory`], echoing what was searched for so the UI can
     /// drop answers to searches it has moved on from.

@@ -8,6 +8,7 @@ use tokio::task::{JoinError, JoinSet};
 
 use crate::console_files;
 use crate::events::EventSink;
+use crate::export;
 use crate::history::HistoryLog;
 use crate::open::test_connection;
 use crate::registry::{Registry, RegistryError};
@@ -146,6 +147,9 @@ impl Engine {
             }
             Command::DeleteConsoleFile(key) => {
                 console_files::delete(&self.console_files, key).await;
+            }
+            Command::ExportRows { console, export } => {
+                tokio::spawn(export::run(console, export, self.events.clone()));
             }
             Command::SearchHistory { data_source, text } => {
                 self.history.search(data_source, text);

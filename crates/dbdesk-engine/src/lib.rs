@@ -8,6 +8,7 @@
 mod command_loop;
 mod console_files;
 mod events;
+mod export;
 mod handle;
 mod history;
 mod open;
@@ -16,6 +17,7 @@ mod registry;
 mod repaint;
 mod session;
 
+pub use export::Export;
 pub use handle::{EngineConfig, EngineError, EngineHandle};
 pub use protocol::{
     Command, ConsoleId, Event, PasswordUpdate, RunId, RunOutcome, SessionState, StatementFailure,

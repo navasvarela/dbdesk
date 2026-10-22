@@ -3,20 +3,23 @@
 //! This module holds the state and its rules (what to run, how events update a run); `view`
 //! and `results` draw it. See `docs/features/sql-runner.md`.
 
+mod cell_viewer;
+mod grid;
 mod highlight;
 mod results;
 mod view;
 
 use std::ops::Range;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use dbdesk_core::{ColumnInfo, DataSourceId, DriverKind, Row, TransactionStatus};
+use dbdesk_core::{Cell, ColumnInfo, DataSourceId, DriverKind, Row, TransactionStatus};
 use dbdesk_engine::{
-    Command, ConsoleId, Event, RunId, RunOutcome, SessionState, StatementFailure, StatementSummary,
-    TransactionEnd, TransactionMode,
+    Command, ConsoleId, Event, Export, RunId, RunOutcome, SessionState, StatementFailure,
+    StatementSummary, TransactionEnd, TransactionMode,
 };
 use dbdesk_sql::{Dialect, explain_prefix, split_statements, statement_at};
-use dbdesk_store::ConsoleKey;
+use dbdesk_store::{ConsoleKey, ExportFormat};
 
 pub use view::{ConsoleAction, show};
 
@@ -71,6 +74,10 @@ pub struct QueryConsole {
     /// A byte offset to move the editor's cursor to on the next frame, after the text was
     /// changed from outside the editor.
     pending_cursor: Option<usize>,
+    /// The cell shown in full in the cell viewer window.
+    viewed_cell: Option<ViewedCell>,
+    /// How the last export went: where the rows went, or why they didn't.
+    export_status: Option<Result<String, String>>,
     file: FileState,
 }
 
@@ -114,6 +121,13 @@ pub struct StatementView {
     /// A fetch is in flight, so the grid doesn't ask twice.
     fetching: bool,
     result: Option<Result<StatementSummary, StatementFailure>>,
+    grid: grid::GridView,
+}
+
+/// A copy of one cell, so the viewer stays open while new rows arrive or a new run starts.
+pub struct ViewedCell {
+    column: String,
+    value: Cell,
 }
 
 impl QueryConsole {
@@ -138,6 +152,8 @@ impl QueryConsole {
             run: None,
             error_marker: None,
             pending_cursor: None,
+            viewed_cell: None,
+            export_status: None,
             file: FileState::default(),
         }
     }
@@ -158,6 +174,29 @@ impl QueryConsole {
 
     pub fn text(&self) -> &str {
         &self.text
+    }
+
+    /// The export of the rows the grid shows for the selected statement, in the order and
+    /// with the filter it shows them. `None` if there are no rows to export.
+    pub fn export(&self, format: ExportFormat, path: PathBuf) -> Option<Command> {
+        let run = self.run.as_ref()?;
+        let statement = run.statements.get(run.selected)?;
+        if statement.columns.is_empty() {
+            return None;
+        }
+        Some(Command::ExportRows {
+            console: self.id,
+            export: Export {
+                path,
+                format,
+                columns: statement
+                    .columns
+                    .iter()
+                    .map(|column| column.name.clone())
+                    .collect(),
+                rows: statement.grid.shown_rows(&statement.rows),
+            },
+        })
     }
 
     /// Puts `sql` at the cursor, replacing the selection, as a statement on a line of its own,
@@ -306,6 +345,7 @@ impl QueryConsole {
                     more: false,
                     fetching: false,
                     result: None,
+                    grid: grid::GridView::default(),
                 })
                 .collect(),
             state: RunState::Running,
@@ -342,6 +382,18 @@ impl QueryConsole {
             }
             Event::TransactionEnded { console, result } if *console == self.id => {
                 self.transaction_ended = Some(result.clone());
+            }
+            Event::ExportFinished {
+                console,
+                path,
+                result,
+            } if *console == self.id => {
+                self.export_status = Some(
+                    result
+                        .as_ref()
+                        .map(|rows| format!("Exported {rows} rows to {}", path.display()))
+                        .map_err(Clone::clone),
+                );
             }
             Event::ConsoleSaveFailed { key, error } if *key == self.key => {
                 // Shown until the next save is sent; that one writes the whole text again.

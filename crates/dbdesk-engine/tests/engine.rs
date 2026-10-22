@@ -15,8 +15,8 @@ use dbdesk_core::{
     CatalogPath, ConnectionConfig, DataSource, DataSourceId, FolderKind, NodeKind, Password,
     PostgresConfig,
 };
-use dbdesk_engine::{Command, Event, PasswordUpdate, SessionState};
-use dbdesk_store::{ConsoleKey, ConsoleName, DataSourceFile, SavedConsole};
+use dbdesk_engine::{Command, ConsoleId, Event, Export, PasswordUpdate, SessionState};
+use dbdesk_store::{ConsoleKey, ConsoleName, DataSourceFile, ExportFormat, SavedConsole};
 
 #[test]
 fn saves_connects_disconnects_and_deletes_a_data_source() {
@@ -116,6 +116,42 @@ fn saves_console_files_in_order_and_reloads_them_after_a_restart() {
         key: key("console"),
         text: "select 2;".to_owned(),
     }]));
+}
+
+#[test]
+fn exports_rows_to_a_file_and_reports_failures() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    engine.expect_started(vec![]);
+    let export = |path: std::path::PathBuf| Export {
+        path,
+        format: ExportFormat::Csv,
+        columns: vec!["n".to_owned()],
+        rows: vec![vec![Some("1".to_owned())], vec![None]],
+    };
+    let console = ConsoleId(1);
+    let written = dir.path().join("rows.csv");
+    let unwritable = dir.path().join("missing/rows.csv");
+
+    engine.send(Command::ExportRows {
+        console,
+        export: export(written.clone()),
+    });
+    engine.expect(Event::ExportFinished {
+        console,
+        path: written.clone(),
+        result: Ok(2),
+    });
+    engine.send(Command::ExportRows {
+        console,
+        export: export(unwritable.clone()),
+    });
+
+    assert!(matches!(
+        engine.next_event(),
+        Event::ExportFinished { result: Err(error), .. } if error.contains("missing/rows.csv")
+    ));
+    assert_eq!(std::fs::read_to_string(written).unwrap(), "n\r\n1\r\n\r\n");
 }
 
 #[test]

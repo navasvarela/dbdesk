@@ -7,10 +7,13 @@ use egui::text::{CCursor, CCursorRange};
 use egui::text_edit::TextEditState;
 use egui::{Id, Key, KeyboardShortcut, Modifiers, ScrollArea, TextBuffer, TextEdit, Ui, vec2};
 
-use super::{QueryConsole, RunScope, RunState, SubmittedStatement, highlight, results};
+use super::{
+    QueryConsole, RunScope, RunState, SubmittedStatement, cell_viewer, highlight, results,
+};
 use crate::theme::SUCCESS_COLOR;
 use dbdesk_core::TransactionStatus;
 use dbdesk_engine::{RunId, RunOutcome, SessionState, TransactionEnd, TransactionMode};
+use dbdesk_store::ExportFormat;
 
 const RUN_CURRENT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Enter);
 const RUN_ALL: KeyboardShortcut =
@@ -33,6 +36,8 @@ pub enum ConsoleAction {
     FetchMore(RunId),
     Cancel(RunId),
     EndTransaction(TransactionEnd),
+    /// Saves the rows the grid shows; the app asks where.
+    Export(ExportFormat),
     /// Opens the data source's query history, to insert a past statement here.
     ShowHistory,
 }
@@ -52,6 +57,7 @@ pub fn show(ui: &mut Ui, console: &mut QueryConsole, actions: &mut Vec<ConsoleAc
     ui.allocate_ui(vec2(width, results_height), |ui| {
         results::show(ui, console, actions);
     });
+    cell_viewer::show(ui.ctx(), console);
 }
 
 /// The editor's and the results' heights, from the results height the user last dragged to.
