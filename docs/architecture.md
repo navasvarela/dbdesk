@@ -26,12 +26,12 @@ flowchart LR
 
 | Crate | Responsibility | Depends on |
 | --- | --- | --- |
-| `dbdesk-core` | Domain types and the `Driver` / `Connection` traits. No I/O. | — |
+| `dbdesk-core` | Domain types (`DataSource`, `ConnectionConfig`, `Password`, …) and the `Connection` trait. No I/O. | — |
 | `dbdesk-sql` | Statement splitting, statement-under-cursor, later completion. Wraps `sqlparser`. | core |
-| `dbdesk-driver-postgres` | `tokio-postgres` implementation of the driver traits. | core |
+| `dbdesk-driver-postgres` | `tokio-postgres` implementation of `Connection`. | core |
 | `dbdesk-driver-sqlite` | `rusqlite` implementation, run on `spawn_blocking`. | core |
 | `dbdesk-engine` | Session lifecycle, command handling, cancellation, event emission. | core, sql, store, drivers |
-| `dbdesk-store` | Data source config (TOML), secrets (`keyring`), query history (SQLite). | core |
+| `dbdesk-store` | Data source file (TOML), secrets (`SecretStore`, OS keychain via `keyring`), later query history. | core |
 | `dbdesk-app` | `eframe` binary: panels, widgets, app state, keymap. | core, engine |
 
 `dbdesk-app` depends on the engine only through its public `EngineHandle` (a command sender
@@ -53,6 +53,36 @@ and an event receiver), so the UI can be driven by a fake engine in tests.
 Rationale and alternatives: [ADR-0003](adr/0003-ui-engine-message-passing.md).
 
 ## Messages
+
+Implemented so far (M1). See `dbdesk-engine/src/protocol.rs` for the authoritative version:
+
+```rust
+pub enum Command {
+    SaveDataSource { data_source: DataSource, password: PasswordUpdate },
+    DeleteDataSource(DataSourceId),
+    TestConnection { data_source: DataSource, password: PasswordUpdate },
+    Connect(DataSourceId),
+    Disconnect(DataSourceId),
+}
+
+pub enum Event {
+    Started,
+    DataSourcesLoaded(Vec<DataSource>),
+    DataSourcesUnavailable { error: String },
+    DataSourceSaved(DataSource),
+    DataSourceSaveFailed { id: DataSourceId, error: String },
+    DataSourceDeleted(DataSourceId),
+    SessionChanged { id: DataSourceId, state: SessionState },
+    ConnectionTested { id: DataSourceId, result: Result<ServerInfo, String> },
+}
+```
+
+The engine owns the data source list: it loads `data_sources.toml` at start-up and applies
+saves and deletes in order, so the UI never touches the file or the keychain. Each connected
+data source has one session task that owns its `Box<dyn Connection>`. Sessions are keyed by
+`DataSourceId` until query consoles need more than one session per data source (M3).
+
+Planned for later milestones:
 
 ```rust
 pub enum Command {
@@ -82,14 +112,19 @@ easy to drop in the UI.
 
 ## Driver abstraction
 
+Each driver crate exposes `connect(config, password) -> Result<ItsConnection, DriverError>`.
+The engine maps a `ConnectionConfig` variant to a driver in one `match` and boxes the result.
+
 ```rust
+// Implemented (M1):
 #[async_trait]
-pub trait Driver: Send + Sync {
-    fn kind(&self) -> DriverKind;
-    async fn connect(&self, config: &ConnectionConfig, secret: Option<&Secret>)
-        -> Result<Box<dyn Connection>, DriverError>;
+pub trait Connection: Send {
+    fn server_info(&self) -> &ServerInfo;
+    async fn ping(&mut self) -> Result<(), DriverError>;
+    async fn close(self: Box<Self>) -> Result<(), DriverError>;
 }
 
+// Planned additions (M2, M3):
 #[async_trait]
 pub trait Connection: Send {
     /// Starts a statement and returns a stream of row batches. Dropping the stream
@@ -101,8 +136,9 @@ pub trait Connection: Send {
 }
 ```
 
-Trait objects (rather than an enum over drivers) are chosen so that adding an engine means
-adding a crate and one registration line. See [ADR-0002](adr/0002-native-drivers-behind-a-trait.md).
+Connections are trait objects so sessions don't care which engine they hold. Connection
+*settings* are a closed enum. See [ADR-0002](adr/0002-native-drivers-behind-a-trait.md) and its M1
+amendment.
 
 ## Core data types
 

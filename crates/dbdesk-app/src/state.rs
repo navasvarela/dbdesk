@@ -1,9 +1,11 @@
-use dbdesk_engine::Event;
+use dbdesk_core::{DataSource, DataSourceId};
+use dbdesk_engine::{Event, SessionState};
 
 /// What the UI knows about the world, built only from engine events.
 #[derive(Debug, Default)]
 pub struct AppState {
     pub engine_status: EngineStatus,
+    pub data_sources: DataSources,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -24,25 +26,187 @@ impl EngineStatus {
     }
 }
 
-impl AppState {
-    pub fn apply(&mut self, event: Event) {
-        match event {
-            Event::Started => self.engine_status = EngineStatus::Running,
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub enum DataSources {
+    #[default]
+    Loading,
+    Unavailable(String),
+    /// Sorted by name, case-insensitively.
+    Loaded(Vec<DataSourceEntry>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DataSourceEntry {
+    pub data_source: DataSource,
+    pub session: SessionState,
+}
+
+impl DataSourceEntry {
+    fn new(data_source: DataSource) -> Self {
+        Self {
+            data_source,
+            session: SessionState::Disconnected,
         }
     }
 }
 
+impl AppState {
+    pub fn apply(&mut self, event: &Event) {
+        match event {
+            Event::Started => self.engine_status = EngineStatus::Running,
+            Event::DataSourcesLoaded(data_sources) => {
+                let mut entries: Vec<_> = data_sources
+                    .iter()
+                    .cloned()
+                    .map(DataSourceEntry::new)
+                    .collect();
+                sort_by_name(&mut entries);
+                self.data_sources = DataSources::Loaded(entries);
+            }
+            Event::DataSourcesUnavailable { error } => {
+                self.data_sources = DataSources::Unavailable(error.clone());
+            }
+            Event::DataSourceSaved(data_source) => self.data_sources.upsert(data_source),
+            Event::DataSourceDeleted(id) => self.data_sources.remove(*id),
+            Event::SessionChanged { id, state } => {
+                if let Some(entry) = self.data_sources.entry_mut(*id) {
+                    entry.session = state.clone();
+                }
+            }
+            // Only the data source dialog cares about these.
+            Event::DataSourceSaveFailed { .. } | Event::ConnectionTested { .. } => {}
+        }
+    }
+
+    pub fn data_source(&self, id: DataSourceId) -> Option<&DataSourceEntry> {
+        self.data_sources
+            .entries()
+            .iter()
+            .find(|e| e.data_source.id == id)
+    }
+
+    pub fn connected_count(&self) -> usize {
+        self.data_sources
+            .entries()
+            .iter()
+            .filter(|entry| matches!(entry.session, SessionState::Connected(_)))
+            .count()
+    }
+}
+
+impl DataSources {
+    pub fn entries(&self) -> &[DataSourceEntry] {
+        match self {
+            Self::Loaded(entries) => entries,
+            Self::Loading | Self::Unavailable(_) => &[],
+        }
+    }
+
+    fn entry_mut(&mut self, id: DataSourceId) -> Option<&mut DataSourceEntry> {
+        match self {
+            Self::Loaded(entries) => entries.iter_mut().find(|e| e.data_source.id == id),
+            Self::Loading | Self::Unavailable(_) => None,
+        }
+    }
+
+    /// Updates the saved data source, keeping its session state, or adds it.
+    fn upsert(&mut self, data_source: &DataSource) {
+        let Self::Loaded(entries) = self else {
+            return;
+        };
+        match entries
+            .iter_mut()
+            .find(|e| e.data_source.id == data_source.id)
+        {
+            Some(entry) => entry.data_source = data_source.clone(),
+            None => entries.push(DataSourceEntry::new(data_source.clone())),
+        }
+        sort_by_name(entries);
+    }
+
+    fn remove(&mut self, id: DataSourceId) {
+        if let Self::Loaded(entries) = self {
+            entries.retain(|entry| entry.data_source.id != id);
+        }
+    }
+}
+
+fn sort_by_name(entries: &mut [DataSourceEntry]) {
+    entries.sort_by_key(|entry| entry.data_source.name.to_lowercase());
+}
+
 #[cfg(test)]
 mod tests {
+    use dbdesk_core::{ConnectionConfig, ServerInfo, SqliteConfig};
+
     use super::*;
+
+    fn data_source(name: &str) -> DataSource {
+        DataSource {
+            id: DataSourceId::generate(),
+            name: name.to_owned(),
+            config: ConnectionConfig::Sqlite(SqliteConfig {
+                path: format!("/data/{name}.db").into(),
+                read_only: false,
+            }),
+        }
+    }
+
+    fn names(state: &AppState) -> Vec<&str> {
+        state
+            .data_sources
+            .entries()
+            .iter()
+            .map(|entry| entry.data_source.name.as_str())
+            .collect()
+    }
 
     #[test]
     fn engine_is_running_once_it_reports_started() {
         let mut state = AppState::default();
         assert_eq!(state.engine_status, EngineStatus::Starting);
 
-        state.apply(Event::Started);
+        state.apply(&Event::Started);
 
         assert_eq!(state.engine_status, EngineStatus::Running);
+    }
+
+    #[test]
+    fn keeps_data_sources_sorted_through_saves_and_deletes() {
+        let mut state = AppState::default();
+        let beta = data_source("beta");
+        state.apply(&Event::DataSourcesLoaded(vec![
+            beta.clone(),
+            data_source("Alpha"),
+        ]));
+        assert_eq!(names(&state), ["Alpha", "beta"]);
+
+        state.apply(&Event::DataSourceSaved(data_source("gamma")));
+        state.apply(&Event::DataSourceDeleted(beta.id));
+
+        assert_eq!(names(&state), ["Alpha", "gamma"]);
+    }
+
+    #[test]
+    fn renaming_keeps_the_session() {
+        let mut state = AppState::default();
+        let mut renamed = data_source("old");
+        state.apply(&Event::DataSourcesLoaded(vec![renamed.clone()]));
+        let connected = SessionState::Connected(ServerInfo {
+            product: "SQLite".to_owned(),
+            version: "3.50.0".to_owned(),
+        });
+        state.apply(&Event::SessionChanged {
+            id: renamed.id,
+            state: connected.clone(),
+        });
+
+        renamed.name = "new".to_owned();
+        state.apply(&Event::DataSourceSaved(renamed.clone()));
+
+        let entry = state.data_source(renamed.id).unwrap();
+        assert_eq!(entry.data_source.name, "new");
+        assert_eq!(entry.session, connected);
+        assert_eq!(state.connected_count(), 1);
     }
 }

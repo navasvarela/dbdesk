@@ -29,6 +29,23 @@ restores the default. An egui_kittest test drives the whole app headlessly.
 
 **Exit:** I can add my local Postgres and a SQLite file, connect to both, and see it logged.
 
+**Demo note:** done. In the explorer, **+** opens the data source dialog for PostgreSQL or
+SQLite, with **Test connection**. Data sources are saved to `data_sources.toml` and passwords to
+the OS keychain. Double-click (or the context menu) connects and disconnects. The status dot
+shows disconnected / connecting / connected / failed, and the tooltip shows the server version
+or the error. Connection lifecycle and timings appear in the log console. Covered by driver
+conformance tests against a real Postgres 17 and SQLite, headless engine tests, and a UI test
+that adds a SQLite data source through the dialog.
+
+Follow-ups left out of M1:
+
+- TLS for Postgres (`sslmode`). Servers that require TLS currently reject the connection.
+- A file picker for SQLite paths.
+- Prompting for a password when none is saved or the keychain is unavailable.
+- Noticing when an established connection drops (the session still shows "connected").
+- Duplicate data source; colour and safety level per data source.
+- Preserving comments in `data_sources.toml` (`toml_edit`).
+
 ## M2 — Connection explorer
 
 - Lazy catalog tree down to columns, indexes, constraints for both drivers.

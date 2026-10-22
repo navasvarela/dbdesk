@@ -22,14 +22,42 @@ dbdesk/
 - Each entry has a stable `id` (UUID, written once) so renames don't break consoles, history or
   keychain entries.
 - Written atomically (write to temp file, then rename) so a crash never truncates it.
-- Unknown fields are preserved on save, so a newer config doesn't lose data when opened by an
-  older build. (Implemented by keeping the parsed `toml_edit::DocumentMut` and editing it in place.)
+- Owned by the engine: loaded once at start-up, rewritten on every save or delete.
+- If the file exists but can't be parsed, the engine refuses all changes and the explorer shows
+  the error. A broken file is never overwritten with an empty list.
+- Comments and unknown fields are **not** preserved when dbdesk rewrites the file (it is written
+  with `serde` + `toml`), and the file header says so. Switching to `toml_edit` to edit the
+  document in place is a follow-up if hand-editing becomes common.
+
+```toml
+[[data_source]]
+id = "6f1c0d9e-3b8a-4c3e-9f57-2d1e8a7b5c40"
+name = "local"
+driver = "postgres"
+host = "localhost"
+port = 5432
+database = "app"
+user = "juan"
+
+[[data_source]]
+id = "0b6a4f8e-91d2-4e7a-a1c3-5f0e2d9b7c18"
+name = "chinook.db"
+driver = "sqlite"
+path = "/Users/juan/data/chinook.db"
+read_only = true
+```
 
 ## Secrets
 
-- Passwords go to the OS keychain via `keyring`, keyed by `dbdesk/<data-source-id>`.
-- If the keychain is unavailable or the user declines, fall back to asking for the password on
-  connect and keeping it in memory for the session only. Never write secrets to disk.
+- Passwords go to the OS keychain via `keyring`: service `dbdesk`, account `<data-source-id>`.
+  The engine only reads the keychain for drivers that use passwords (not SQLite), so opening a
+  SQLite file never triggers a keychain prompt.
+- Behind the `SecretStore` trait, so tests use an in-memory store. A real-keychain round trip is
+  an opt-in test: `cargo test -p dbdesk-store -- --ignored`.
+- Deleting a data source removes its keychain entry. If that fails, the failure is only logged,
+  since a leftover entry is harmless.
+- Not yet: if the keychain is unavailable or the user declines, fall back to asking for the
+  password on connect and keeping it in memory for the session only. Never write secrets to disk.
 - Later: support `~/.pgpass` and `PG*` environment variables for Postgres, which is what other
   tools on the machine already use.
 

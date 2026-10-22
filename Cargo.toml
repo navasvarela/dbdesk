@@ -10,10 +10,13 @@ publish = false
 
 [workspace.dependencies]
 dbdesk-core = { path = "crates/dbdesk-core" }
+dbdesk-driver-postgres = { path = "crates/dbdesk-driver-postgres" }
+dbdesk-driver-sqlite = { path = "crates/dbdesk-driver-sqlite" }
 dbdesk-engine = { path = "crates/dbdesk-engine" }
 dbdesk-store = { path = "crates/dbdesk-store" }
 
 anyhow = "1.0.104"
+async-trait = "0.1.92"
 directories = "6.0.0"
 eframe = { version = "0.36.2", default-features = false, features = [
     "accesskit",
@@ -28,12 +31,18 @@ egui = "0.36.2"
 egui_dock = { version = "0.21.1", features = ["serde"] }
 egui_kittest = "0.36.2"
 jiff = "0.2.38"
+keyring = "4.2.0"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
+tempfile = "3.27.0"
 thiserror = "2.0.21"
-tokio = { version = "1.54.1", features = ["rt-multi-thread", "sync", "time"] }
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+tokio-postgres = "0.7.18"
+toml = "1.1.8"
 tracing = "0.1.44"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "registry", "std", "tracing-log"] }
+uuid = { version = "1.28.0", features = ["v4", "serde"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

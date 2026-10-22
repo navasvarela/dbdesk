@@ -1,0 +1,19 @@
+# Local PostgreSQL for driver tests and manual testing:
+#   docker compose up -d --wait
+#   DBDESK_TEST_POSTGRES_URL=postgres://dbdesk:dbdesk@localhost:55432/dbdesk cargo test
+# Port 55432 avoids clashing with a Postgres already running on 5432.
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: dbdesk
+      POSTGRES_PASSWORD: dbdesk
+      POSTGRES_DB: dbdesk
+    ports:
+      - "55432:5432"
+    # Lets `docker compose up --wait` return only once the server accepts connections.
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "dbdesk", "-d", "dbdesk"]
+      interval: 1s
+      timeout: 5s
+      retries: 30

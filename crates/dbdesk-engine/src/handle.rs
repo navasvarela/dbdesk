@@ -1,10 +1,13 @@
+use std::sync::Arc;
 use std::time::Duration;
 
+use dbdesk_store::{DataSourceFile, SecretStore};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender, error::TryRecvError};
 use tokio::task::{JoinError, JoinHandle};
 
-use crate::command_loop::{self, EventSink};
+use crate::command_loop;
+use crate::events::EventSink;
 use crate::{Command, Event, Repaint};
 
 /// How long [`EngineHandle::shutdown`] waits for in-flight work before abandoning it.
@@ -25,6 +28,12 @@ pub enum EngineError {
     ShutdownTimedOut(Duration),
 }
 
+/// Where the engine keeps what it persists.
+pub struct EngineConfig {
+    pub data_sources: DataSourceFile,
+    pub secrets: Arc<dyn SecretStore>,
+}
+
 /// The UI's connection to a running engine.
 ///
 /// Owns the engine's tokio runtime, so the engine lives exactly as long as this handle.
@@ -38,12 +47,13 @@ pub struct EngineHandle {
 impl EngineHandle {
     /// Starts the engine runtime and its command loop.
     ///
+    /// The engine loads the data sources from `config` and reports them as its first events.
     /// `repaint` is called after every event so an idle UI wakes up to drain it.
     ///
     /// # Errors
     ///
     /// [`EngineError::Runtime`] if the OS refuses to create the runtime's worker threads.
-    pub fn start(repaint: impl Repaint) -> Result<Self, EngineError> {
+    pub fn start(config: EngineConfig, repaint: impl Repaint) -> Result<Self, EngineError> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .thread_name("dbdesk-engine")
             .enable_all()
@@ -52,6 +62,7 @@ impl EngineHandle {
         let (commands, command_receiver) = mpsc::unbounded_channel();
         let (event_sender, events) = mpsc::unbounded_channel();
         let command_loop = runtime.spawn(command_loop::run(
+            config,
             command_receiver,
             EventSink::new(event_sender, repaint),
         ));
@@ -116,36 +127,5 @@ impl EngineHandle {
             Ok(Err(join_error)) => Err(EngineError::CommandLoopFailed(join_error)),
             Err(_elapsed) => Err(EngineError::ShutdownTimedOut(SHUTDOWN_TIMEOUT)),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::mpsc as std_mpsc;
-
-    use super::*;
-
-    /// Signals the test thread on every repaint request.
-    struct SignalRepaint(std_mpsc::Sender<()>);
-
-    impl Repaint for SignalRepaint {
-        fn request_repaint(&self) {
-            // The test may have finished and dropped the receiver; that's fine.
-            let _ = self.0.send(());
-        }
-    }
-
-    #[test]
-    fn reports_started_wakes_the_ui_and_shuts_down_cleanly() {
-        let (repaint_sender, repaints) = std_mpsc::channel();
-        let mut engine = EngineHandle::start(SignalRepaint(repaint_sender)).unwrap();
-
-        repaints
-            .recv_timeout(Duration::from_secs(5))
-            .expect("engine should request a repaint after its first event");
-        assert_eq!(engine.try_recv().unwrap(), Some(Event::Started));
-        assert_eq!(engine.try_recv().unwrap(), None);
-
-        engine.shutdown().unwrap();
     }
 }

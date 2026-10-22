@@ -4,8 +4,9 @@ A desktop database tool in the spirit of JetBrains DataGrip, written in Rust.
 It is a learning project first and a personal daily driver second: the goal is a tool
 small enough to understand end to end and easy to bend to my own workflow.
 
-Status: **M0 (foundations)**. The app opens with the explorer, query console area and log
-console docked, and the engine runs in the background. There are no data sources yet.
+Status: **M1 (data sources and sessions)**. You can add PostgreSQL and SQLite data sources,
+test them, connect and disconnect, and follow it all in the log console. Browsing schemas
+comes in M2, running SQL in M3.
 
 ## Building and running
 
@@ -21,8 +22,20 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-Files live in `~/Library/Application Support/dbdesk` on macOS: window and layout state in
-`app.ron`, daily log files in `logs/`.
+The PostgreSQL tests need a server and are skipped without one. To run them, start the bundled
+container and point the tests at it:
+
+```bash
+docker compose up -d --wait
+```
+
+```bash
+DBDESK_TEST_POSTGRES_URL=postgres://dbdesk:dbdesk@localhost:55432/dbdesk cargo test --workspace
+```
+
+Files live in `~/Library/Application Support/dbdesk` on macOS: data sources in
+`data_sources.toml`, window and layout state in `app.ron`, daily log files in `logs/`. Passwords
+are in the macOS Keychain under the service `dbdesk`.
 
 ## Core features (v1)
 

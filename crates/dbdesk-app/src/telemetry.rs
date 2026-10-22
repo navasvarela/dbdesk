@@ -26,7 +26,7 @@ pub struct Telemetry {
 /// eframe and winit) are bridged in too.
 ///
 /// Must be called on the thread that will run the UI (see `log_console::pipeline`).
-pub fn init(logs_dir: Option<&Path>) -> anyhow::Result<Telemetry> {
+pub fn init(logs_dir: &Path) -> anyhow::Result<Telemetry> {
     let (console_layer, log_feed) = log_console::pipeline();
     let (file_writer, file_guard) = match open_log_files(logs_dir) {
         Ok((writer, guard)) => (Some(writer), Ok(guard)),
@@ -62,8 +62,7 @@ fn targets() -> Targets {
         .with_default(Level::WARN)
 }
 
-fn open_log_files(logs_dir: Option<&Path>) -> anyhow::Result<(NonBlocking, WorkerGuard)> {
-    let logs_dir = logs_dir.context("the OS reports no home directory")?;
+fn open_log_files(logs_dir: &Path) -> anyhow::Result<(NonBlocking, WorkerGuard)> {
     let appender = RollingFileAppender::builder()
         .rotation(Rotation::DAILY)
         .filename_prefix("dbdesk")
