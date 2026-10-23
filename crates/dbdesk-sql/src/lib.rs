@@ -10,6 +10,7 @@
 //! and the same tokens also drive syntax highlighting.
 
 mod explain;
+mod format;
 mod keywords;
 mod lexer;
 mod safety;
@@ -17,6 +18,7 @@ mod split;
 mod transaction;
 
 pub use explain::explain_prefix;
+pub use format::{FormatError, FormatOptions, Formatted, KeywordCase, format_ranges, same_meaning};
 pub use keywords::{is_keyword, keywords};
 pub use lexer::{Dialect, Token, TokenKind, first_word, tokenize};
 pub use safety::{Hazard, hazard};
