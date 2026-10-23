@@ -29,4 +29,4 @@ pub use lexer::{Token, TokenKind, first_word, tokenize};
 pub use projection::{ProjectionItem, projection};
 pub use safety::{Hazard, hazard};
 pub use split::{split_statements, statement_at};
-pub use transaction::controls_transactions;
+pub use transaction::{commits_implicitly, controls_transactions};

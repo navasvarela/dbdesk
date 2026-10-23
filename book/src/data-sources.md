@@ -7,14 +7,14 @@ keychain, never in that file.
 ## Adding one
 
 Click **+** at the top of the explorer (or **New data source** on the Welcome tab) and choose
-**PostgreSQL** or **SQLite**.
+**PostgreSQL**, **SQLite** or **MySQL / MariaDB**.
 
 ![The New PostgreSQL data source dialog](images/data-source-dialog.png)
 
-Both kinds have:
+Every kind has:
 
 - **Name** — how it appears in the explorer. Leave it empty and dbdesk names it for you:
-  `database@host` for PostgreSQL, the file name for SQLite.
+  `database@host` for a server, the file name for SQLite.
 - **Colour** — optional. The colour tints the data source's row in the explorer, the tabs of its
   consoles and a band along the top of each console. Giving production a red and your local copy
   nothing makes it hard to run something in the wrong place.
@@ -53,6 +53,22 @@ must be a name (or IP address) the certificate lists.
 
 dbdesk encrypts with [rustls](https://github.com/rustls/rustls), so there is no OpenSSL to
 install. Client certificates aren't supported yet.
+
+**MySQL / MariaDB** has the same fields as PostgreSQL, with these defaults:
+
+![The New MySQL / MariaDB data source dialog](images/mysql-data-source-dialog.png)
+
+| Field | Default | Notes |
+| --- | --- | --- |
+| Host | `localhost` | Name or IP address of the server. |
+| Port | `3306` | |
+| Database | `mysql` | The database unqualified names refer to, as `USE` would set. The explorer lists every database you may see. |
+| User | `root` | |
+| TLS | `prefer` | As for PostgreSQL. MySQL 8 and MariaDB 11.4 encrypt by default, with a self-signed certificate unless the server is given one, so `verify-full` needs that server's CA file. |
+| Password | none | Stored in the keychain when you save. |
+
+One data source type serves both: dbdesk tells MySQL and MariaDB apart once it connects, and
+**Test connection** says which it found ("Connected to MariaDB 11.4.4").
 
 **SQLite** adds:
 

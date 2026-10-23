@@ -694,7 +694,11 @@ impl QueryConsole {
             }
             RunScope::All => submit(0, split_statements(&self.text, self.dialect), &self.text),
             RunScope::Explain => {
-                let prefix = self.dialect.explain_prefix();
+                let server = match &self.session {
+                    SessionState::Connected(server) => Some(server),
+                    _ => None,
+                };
+                let prefix = self.dialect.explain_prefix(server);
                 self.statements_to_run(RunScope::Current)
                     .into_iter()
                     .take(1)

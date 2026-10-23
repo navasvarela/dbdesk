@@ -224,7 +224,7 @@ console (78 KB) checks from cold in about 13 ms, over four frames.
 | Run | ⌘↵ | The selection (split into statements) if any, otherwise the statement at the cursor |
 | Run all | ⇧⌘↵ | Every statement in the console, in order, stopping at the first failure |
 | Cancel | ⌘. | Stops the running statement, or discards unread rows |
-| Explain | ⌥⌘E | The statement at the cursor (or the first one selected), prefixed with `EXPLAIN` (PostgreSQL) or `EXPLAIN QUERY PLAN` (SQLite) |
+| Explain | ⌥⌘E | The statement at the cursor (or the first one selected), prefixed with `EXPLAIN` (PostgreSQL, MariaDB), `EXPLAIN QUERY PLAN` (SQLite) or `EXPLAIN FORMAT=TREE` (MySQL 8.0.16 and later, once the console knows its server: `Dialect::explain_prefix`) |
 
 Shortcuts work while the console's editor has focus, and are taken before the editor sees
 them, so ⌘↵ runs instead of inserting a newline. These are the defaults; `keymap.toml` can
@@ -315,8 +315,13 @@ Each console has a mode, **Auto-commit** (the default) or **Manual commit**:
 - **Status from the database**: `Connection::transaction_status` asks the driver. SQLite
   answers from `sqlite3_get_autocommit`. tokio-postgres doesn't expose the status the protocol
   sends after each statement, so the driver compares `now()` (the transaction's start) with
-  `statement_timestamp()`, and reads `in_failed_sql_transaction` as failed. The engine asks
-  after statements that control transactions or fail, not after every statement.
+  `statement_timestamp()`, and reads `in_failed_sql_transaction` as failed. MySQL reads the
+  `SERVER_STATUS_IN_TRANS` flag of the server's reply to `DO 0`. The engine asks after
+  statements that control transactions or fail, not after every statement.
+- **Implicit commits**: MySQL commits DDL and account statements at once, with whatever the
+  open transaction held (`Dialect::implicit_commit_verbs`; `CREATE`/`DROP TEMPORARY TABLE` are
+  exempt). In manual mode, or with a transaction open, the "Run anyway?" dialog warns first
+  (`commits_implicitly`, `hazard_dialog::ReviewContext`).
 - **Warnings**: closing a console, disconnecting its data source (which closes its consoles'
   connections too) or quitting with a transaction open asks "Roll back open transactions?"
   first. Closing a connection is what rolls back; there is no "commit and close".

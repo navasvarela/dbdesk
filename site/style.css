@@ -31,6 +31,7 @@
   --on-primary: #0e1f1c;
   --postgresql: #7fa2f5;
   --sqlite: #5ab0e0;
+  --mysql: #7fb2db;
   --glow-strength: 0.22;
   --radius: 12px;
   --font: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -51,6 +52,7 @@
     --on-primary: #ffffff;
     --postgresql: #4169e1;
     --sqlite: #003b57;
+    --mysql: #4479a1;
     --glow-strength: 0.16;
     color-scheme: light;
   }
@@ -207,6 +209,7 @@ h3 { margin: 0 0 8px; font-size: 1.05rem; font-weight: 600; }
 }
 .engine-logo.postgresql { --logo: url("assets/databases/postgresql.svg"); background: var(--postgresql); }
 .engine-logo.sqlite { --logo: url("assets/databases/sqlite.svg"); background: var(--sqlite); }
+.engine-logo.mysql { --logo: url("assets/databases/mysql.svg"); background: var(--mysql); }
 .planned { color: var(--text-weak); margin: 16px 0 0; }
 
 .grid {

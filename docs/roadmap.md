@@ -303,6 +303,24 @@ TLS driver tests against both servers (encrypted per `pg_stat_ssl`, cancel and b
 TLS, each refusal), serde tests for old and new files, form tests for every TLS mode, and a UI
 test that picks `verify-full` with a CA file and saves it.
 
+**DB1 demo note:** built in #32, #35, #36 and #37. `docker compose up -d --wait` now also
+starts MySQL 8.4 (port 55306) and MariaDB 11.4 (port 55307). **+** → **MySQL / MariaDB** opens
+the shared server form (`localhost:3306`, database `mysql`, user `root`); **Test connection**
+says "Connected to MySQL 8.4.…" or "MariaDB 11.4.…", over TLS by default. The explorer lists
+each database as a schema, with tables, views, functions, procedures and events, and columns,
+indexes, constraints and triggers under tables; **Show definition** gives `SHOW CREATE …`,
+tables included. Run `SELECT 1 FROM DUAL WHERE SLEEP(60) = 0` and ⌘. stops it through
+`KILL QUERY` on a second connection. **Open data** on a table and edit a cell: the `UPDATE`
+uses backticks and doubles backslashes. Scripts split on `DELIMITER //`, `"text"` is a string,
+`#` starts a comment, and ⌥⌘E explains as a tree on MySQL 8. In manual commit mode, `CREATE
+TABLE` asks first, since MySQL commits it and the open transaction at once. Underneath:
+`Quoting` and the default schema became per-dialect and per-config facts, the conformance suite
+uses SQL all three engines accept, and its describe check follows the server's
+`lower_case_table_names`. Covered by the whole conformance suite on both servers in CI, driver
+tests for the catalog, definitions and TLS, an engine test of grid edits in MySQL's form, lexer,
+splitter, syntax-check and formatter corpora for the dialect, a UI test that adds a MySQL data
+source, and unit tests for the implicit-commit warning and the tree explain.
+
 ## Object helpers track
 
 Dialogs that write, show and run the SQL to create and change tables, views and users, from a
