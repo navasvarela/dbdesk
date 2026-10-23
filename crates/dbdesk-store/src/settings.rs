@@ -13,6 +13,7 @@ use crate::atomic::write_atomically;
 pub struct Settings {
     pub format: FormatSettings,
     pub lint: LintSettings,
+    pub updates: UpdateSettings,
 }
 
 /// How the SQL formatter writes statements.
@@ -49,6 +50,23 @@ impl Default for LintSettings {
         Self {
             disabled: Vec::new(),
             ask_database: true,
+        }
+    }
+}
+
+/// Whether dbdesk looks for newer releases.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct UpdateSettings {
+    /// Ask GitHub for the newest release once each time dbdesk starts. Help › Check for
+    /// updates works either way.
+    pub check_on_start: bool,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self {
+            check_on_start: true,
         }
     }
 }
@@ -156,6 +174,7 @@ mod tests {
         let settings = file.load().unwrap();
         assert_eq!(settings.format.keyword_case, KeywordCase::Lower);
         assert_eq!(settings.format.indent_width, 4);
+        assert!(settings.updates.check_on_start);
     }
 
     #[test]
@@ -170,6 +189,9 @@ mod tests {
             lint: LintSettings {
                 disabled: vec!["null-comparison".to_owned()],
                 ask_database: false,
+            },
+            updates: UpdateSettings {
+                check_on_start: false,
             },
         };
 

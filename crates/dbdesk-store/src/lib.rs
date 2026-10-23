@@ -24,4 +24,5 @@ pub use paths::{APP_NAME, AppPaths};
 pub use secrets::{Keychain, SecretError, SecretStore};
 pub use settings::{
     FormatSettings, KeywordCase, LintSettings, Settings, SettingsError, SettingsFile,
+    UpdateSettings,
 };

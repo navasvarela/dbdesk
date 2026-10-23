@@ -255,6 +255,16 @@ plan, including the decisions it needs first, is in [Releasing](releasing.md).
   generated release notes.
 - **R3 — Updates:** an in-app update notice, then automatic updates.
 
+**Update notice demo note:** built, ahead of R2. Start a build older than the newest release,
+and the status bar says "dbdesk 0.2.0 is available"; click it for the version you have and
+**Open release page**. **Help › Check for updates…** asks on demand and says "You're up to
+date" otherwise. The check at start-up can be switched off in **View → Settings…**
+(`[updates] check_on_start` in `settings.toml`); a failed automatic check is only logged. The
+engine asks GitHub's `releases/latest` through a `ReleaseFeed` trait, so tests use a fixed feed
+and never the network. Covered by version comparison and state tests, an engine test of both
+answers, a dialog test, and a UI test that finds a newer release at start-up and an up-to-date
+one on request.
+
 ## Database track
 
 More engines, in order of how many people use them. The full plan, with the rankings, what
