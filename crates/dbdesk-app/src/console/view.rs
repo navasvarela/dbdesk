@@ -9,7 +9,7 @@ use egui::{Id, Margin, ScrollArea, TextBuffer, TextEdit, Ui, vec2};
 
 use super::highlight::Marks;
 use super::{
-    QueryConsole, RunScope, RunState, SubmittedStatement, TreeCatalog, cell_viewer,
+    FormatScope, QueryConsole, RunScope, RunState, SubmittedStatement, TreeCatalog, cell_viewer,
     completion_popup, highlight, results,
 };
 use crate::icons::{self, Role};
@@ -22,7 +22,7 @@ use dbdesk_engine::{RunId, RunOutcome, SessionState, TransactionEnd, Transaction
 use dbdesk_store::ExportFormat;
 
 /// What the console's keys can do while its editor has focus.
-const EDITOR_ACTIONS: [Action; 8] = [
+const EDITOR_ACTIONS: [Action; 10] = [
     Action::Complete,
     Action::RunCurrent,
     Action::RunAll,
@@ -31,6 +31,8 @@ const EDITOR_ACTIONS: [Action; 8] = [
     Action::ShowHistory,
     Action::Commit,
     Action::Rollback,
+    Action::Format,
+    Action::FormatAll,
 ];
 
 /// Height the results start at; the user can drag the line above them.
@@ -57,6 +59,8 @@ pub enum ConsoleAction {
     DescribeTable(RelationName),
     /// Writes the grid's pending edits.
     SubmitEdits,
+    /// Formats SQL in the editor, with the formatting settings the app holds.
+    Format(FormatScope),
 }
 
 /// What a console draws with besides its own state.
@@ -176,6 +180,14 @@ fn perform(console: &QueryConsole, action: Action, actions: &mut Vec<ConsoleActi
             actions.push(ConsoleAction::EndTransaction(TransactionEnd::Rollback));
             return;
         }
+        Action::Format => {
+            actions.push(ConsoleAction::Format(FormatScope::Current));
+            return;
+        }
+        Action::FormatAll => {
+            actions.push(ConsoleAction::Format(FormatScope::All));
+            return;
+        }
         // The grid and the editor handle these themselves.
         Action::ViewCell | Action::EditCell | Action::Complete => return,
     };
@@ -190,7 +202,12 @@ fn is_enabled(console: &QueryConsole, action: Action) -> bool {
         Action::RunCurrent | Action::RunAll | Action::Explain => !console.is_running(),
         Action::Cancel => console.cancellable_run().is_some(),
         Action::Commit | Action::Rollback => console.has_open_transaction(),
-        Action::ShowHistory | Action::ViewCell | Action::EditCell | Action::Complete => true,
+        Action::ShowHistory
+        | Action::ViewCell
+        | Action::EditCell
+        | Action::Complete
+        | Action::Format
+        | Action::FormatAll => true,
     }
 }
 
@@ -231,8 +248,10 @@ fn toolbar_icon(action: Action) -> Option<(&'static str, Role)> {
         Action::Explain => Some((icons::TREE_VIEW, Role::Secondary)),
         Action::Cancel => Some((icons::STOP, Role::Error)),
         Action::ShowHistory => Some((icons::CLOCK_COUNTER_CLOCKWISE, Role::Weak)),
+        Action::Format => Some((icons::TEXT_INDENT, Role::Primary)),
         Action::Commit
         | Action::Rollback
+        | Action::FormatAll
         | Action::ViewCell
         | Action::EditCell
         | Action::Complete => None,
@@ -248,6 +267,7 @@ fn toolbar(ui: &mut Ui, console: &QueryConsole, keymap: &Keymap, actions: &mut V
             ("Explain", Action::Explain),
             ("Cancel", Action::Cancel),
             ("History", Action::ShowHistory),
+            ("Format", Action::Format),
         ] {
             action_button(ui, console, keymap, button, actions);
         }
@@ -257,6 +277,10 @@ fn toolbar(ui: &mut Ui, console: &QueryConsole, keymap: &Keymap, actions: &mut V
         run_status(ui, console, palette);
         if let Some(error) = console.save_error() {
             ui.colored_label(palette.error, "Not saved")
+                .on_hover_text(error);
+        }
+        if let Some(error) = &console.format_error {
+            ui.colored_label(palette.error, "Not formatted")
                 .on_hover_text(error);
         }
     });
@@ -359,7 +383,9 @@ fn run_status(ui: &mut Ui, console: &QueryConsole, palette: &Palette) {
     }
 }
 
-/// Applies a cursor move requested from outside the editor, and focuses it.
+/// Applies a cursor move requested from outside the editor, and focuses it. After a format,
+/// also records the text before and after it as undo points, so one undo restores it; egui
+/// would otherwise only record a point once the text had stayed the same for a second.
 fn move_cursor(ui: &Ui, console: &mut QueryConsole, editor_id: Id) {
     let Some(offset) = console.pending_cursor.take() else {
         return;
@@ -370,10 +396,16 @@ fn move_cursor(ui: &Ui, console: &mut QueryConsole, editor_id: Id) {
         .unwrap_or(&console.text)
         .chars()
         .count();
+    let cursor = CCursorRange::one(CCursor::new(char_index));
     let mut state = TextEditState::load(ui.ctx(), editor_id).unwrap_or_default();
-    state
-        .cursor
-        .set_char_range(Some(CCursorRange::one(CCursor::new(char_index))));
+    if let Some(before) = console.format_undo.take() {
+        let mut undoer = state.undoer();
+        let cursor_before = state.cursor.char_range().unwrap_or(cursor);
+        undoer.add_undo(&(cursor_before, before));
+        undoer.add_undo(&(cursor, console.text.clone()));
+        state.set_undoer(undoer);
+    }
+    state.cursor.set_char_range(Some(cursor));
     state.store(ui.ctx(), editor_id);
     ui.memory_mut(|memory| memory.request_focus(editor_id));
 }

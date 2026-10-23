@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use dbdesk_core::{DataSource, DataSourceId, describe_error};
-use dbdesk_store::{ConsoleFiles, KeymapFile, SecretError, SecretStore};
+use dbdesk_store::{ConsoleFiles, KeymapFile, SecretError, SecretStore, SettingsFile};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::task::{JoinError, JoinSet};
 
@@ -14,6 +14,7 @@ use crate::keymap;
 use crate::open::{create_sqlite_database, test_connection};
 use crate::registry::{Registry, RegistryError};
 use crate::session::{Script, Services, Session, SessionOwner, SessionRequest};
+use crate::settings;
 use crate::{Command, ConsoleId, EditFailure, EngineConfig, Event, PasswordUpdate, RunOutcome};
 
 #[derive(Debug, thiserror::Error)]
@@ -35,6 +36,7 @@ pub(crate) async fn run(
     tracing::info!("engine started");
     events.send(Event::Started);
     events.send(keymap::load(&config.keymap).await);
+    events.send(settings::load(&config.settings).await);
     let registry = Registry::load(config.data_sources).await;
     events.send(registry.loaded_event());
     events.send(console_files::load(&config.consoles).await);
@@ -46,6 +48,7 @@ pub(crate) async fn run(
         secrets: config.secrets,
         console_files: config.consoles,
         keymap_file: config.keymap,
+        settings_file: config.settings,
         events,
         sessions: HashMap::new(),
         consoles: HashMap::new(),
@@ -74,6 +77,7 @@ struct Engine {
     secrets: Arc<dyn SecretStore>,
     console_files: ConsoleFiles,
     keymap_file: KeymapFile,
+    settings_file: SettingsFile,
     events: EventSink,
     /// The explorer's sessions, one per data source.
     sessions: HashMap<DataSourceId, Session>,
@@ -177,6 +181,13 @@ impl Engine {
             Command::CreateKeymap { text } => {
                 self.events
                     .send(keymap::create(&self.keymap_file, text).await);
+            }
+            Command::ReloadSettings => {
+                self.events.send(settings::load(&self.settings_file).await);
+            }
+            Command::SaveSettings(new) => {
+                self.events
+                    .send(settings::save(&self.settings_file, new).await);
             }
             Command::ExportRows { console, export } => {
                 tokio::spawn(export::run(console, export, self.events.clone()));

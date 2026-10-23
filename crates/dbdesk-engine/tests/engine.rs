@@ -17,7 +17,8 @@ use dbdesk_core::{
 };
 use dbdesk_engine::{Command, ConsoleId, Event, Export, PasswordUpdate, SessionState};
 use dbdesk_store::{
-    ConsoleKey, ConsoleName, DataSourceFile, ExportFormat, KeymapBindings, SavedConsole,
+    ConsoleKey, ConsoleName, DataSourceFile, ExportFormat, FormatSettings, KeymapBindings,
+    KeywordCase, SavedConsole, Settings,
 };
 
 #[test]
@@ -115,6 +116,7 @@ fn saves_console_files_in_order_and_reloads_them_after_a_restart() {
     let mut restarted = TestEngine::start(&file, Arc::default());
     restarted.expect(Event::Started);
     restarted.expect_keymap(Ok(KeymapBindings::new()));
+    restarted.expect_settings(Ok(Settings::default()));
     restarted.expect(Event::DataSourcesLoaded(vec![]));
     restarted.expect(Event::ConsolesLoaded(vec![SavedConsole {
         key: key("console"),
@@ -188,6 +190,32 @@ fn creates_and_reloads_the_keymap_but_never_overwrites_it() {
 }
 
 #[test]
+fn saves_and_reloads_the_settings_and_reports_a_broken_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    engine.expect_started(vec![]);
+    let lower = Settings {
+        format: FormatSettings {
+            keyword_case: KeywordCase::Lower,
+            indent_width: 2,
+        },
+    };
+
+    engine.send(Command::SaveSettings(lower.clone()));
+    engine.expect_settings(Ok(lower.clone()));
+    let settings_path = dir.path().join("settings.toml");
+    assert!(
+        std::fs::read_to_string(&settings_path)
+            .unwrap()
+            .contains("lower")
+    );
+
+    std::fs::write(&settings_path, "[format]\nkeyword_case = \"shouting\"\n").unwrap();
+    engine.send(Command::ReloadSettings);
+    engine.expect_settings(Err(String::new()));
+}
+
+#[test]
 fn reports_failed_tests_and_connections() {
     let dir = tempfile::tempdir().unwrap();
     let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
@@ -226,6 +254,7 @@ fn never_overwrites_an_unreadable_data_sources_file() {
     let mut engine = TestEngine::start(&file, Arc::default());
     engine.expect(Event::Started);
     engine.expect_keymap(Ok(KeymapBindings::new()));
+    engine.expect_settings(Ok(Settings::default()));
     assert!(matches!(
         engine.next_event(),
         Event::DataSourcesUnavailable { .. }
