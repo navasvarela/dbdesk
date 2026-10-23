@@ -191,10 +191,18 @@ fn card_button(
 fn console_menu(ui: &mut Ui, data_sources: &DataSources, actions: &mut Vec<ExplorerAction>) {
     for entry in data_sources.entries() {
         let data_source = &entry.data_source;
-        let icon = icons::driver(data_source.config.driver());
         let palette = Palette::for_visuals(ui.visuals());
-        let text = widgets::icon_text(ui, icon.glyph, icon.role.color(palette), &data_source.name);
-        let response = widgets::name(ui.button(text), WidgetType::Button, &data_source.name, true);
+        let logo = icons::driver_logo_sized(
+            data_source.config.driver(),
+            palette,
+            ui.text_style_height(&egui::TextStyle::Button),
+        );
+        let response = widgets::name(
+            ui.add(Button::image_and_text(logo, data_source.name.as_str())),
+            WidgetType::Button,
+            &data_source.name,
+            true,
+        );
         if response.clicked() {
             actions.push(ExplorerAction::NewConsole(data_source.id));
         }

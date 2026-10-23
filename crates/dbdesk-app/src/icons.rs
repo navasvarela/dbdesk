@@ -4,7 +4,7 @@
 //! Colours are palette roles, never fixed values, so every icon is readable in both themes.
 
 use dbdesk_core::{DriverKind, NodeKind, SourceColor};
-use egui::{Color32, RichText};
+use egui::{Color32, Image, RichText, Vec2};
 use egui_phosphor::regular as glyph;
 
 use crate::fonts;
@@ -62,11 +62,26 @@ impl Icon {
     }
 }
 
-pub fn driver(driver: DriverKind) -> Icon {
-    match driver {
-        DriverKind::Postgres => Icon::new(glyph::DATABASE, Role::Source(SourceColor::Blue)),
-        DriverKind::Sqlite => Icon::new(glyph::FEATHER, Role::Source(SourceColor::Teal)),
-    }
+/// A database's logo, tinted for the current theme. The SVGs are Simple Icons; see
+/// `assets/icons/databases/README.md` for where they come from and how to add one. Needs
+/// egui_extras' image loaders, installed at start-up.
+pub fn driver_logo(driver: DriverKind, palette: &Palette) -> Image<'static> {
+    let (uri, svg): (&str, &'static [u8]) = match driver {
+        DriverKind::Postgres => (
+            "bytes://logos/postgresql.svg",
+            include_bytes!("../../../assets/icons/databases/postgresql.svg"),
+        ),
+        DriverKind::Sqlite => (
+            "bytes://logos/sqlite.svg",
+            include_bytes!("../../../assets/icons/databases/sqlite.svg"),
+        ),
+    };
+    Image::from_bytes(uri, svg).tint(palette.driver(driver))
+}
+
+/// A database's logo at `size` points square, the size of the text it sits beside.
+pub fn driver_logo_sized(driver: DriverKind, palette: &Palette, size: f32) -> Image<'static> {
+    driver_logo(driver, palette).fit_to_exact_size(Vec2::splat(size))
 }
 
 pub fn node(kind: NodeKind) -> Icon {
@@ -83,5 +98,41 @@ pub fn node(kind: NodeKind) -> Icon {
         NodeKind::Index => Icon::new(glyph::LIST_MAGNIFYING_GLASS, Role::Warning),
         NodeKind::Constraint => Icon::new(glyph::KEY, Role::Warning),
         NodeKind::Trigger => Icon::new(glyph::LIGHTNING, Role::Error),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use egui::load::{ImagePoll, SizeHint};
+
+    use super::*;
+
+    #[test]
+    fn every_driver_logo_renders_to_a_visible_image() {
+        let ctx = egui::Context::default();
+        egui_extras::install_image_loaders(&ctx);
+        for driver in DriverKind::ALL {
+            let image = driver_logo(driver, &Palette::LIGHT);
+            let source = image.source(&ctx);
+            let uri = source.uri().expect("logos are loaded by URI");
+            if let egui::ImageSource::Bytes { uri, bytes } = &source {
+                ctx.include_bytes(uri.clone(), bytes.clone());
+            }
+            let poll = ctx
+                .try_load_image(
+                    uri,
+                    SizeHint::Size {
+                        width: 32,
+                        height: 32,
+                        maintain_aspect_ratio: true,
+                    },
+                )
+                .unwrap_or_else(|error| panic!("{driver:?}: {error}"));
+            let ImagePoll::Ready { image } = poll else {
+                panic!("{driver:?}: the SVG loader answers synchronously");
+            };
+            let opaque = image.pixels.iter().filter(|pixel| pixel.a() > 200).count();
+            assert!(opaque > 50, "{driver:?}: only {opaque} opaque pixels");
+        }
     }
 }

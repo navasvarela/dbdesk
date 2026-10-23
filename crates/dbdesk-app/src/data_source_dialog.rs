@@ -88,7 +88,12 @@ impl DataSourceDialog {
         ui.set_width(DIALOG_WIDTH);
         let palette = Palette::for_visuals(ui.visuals());
         ui.horizontal(|ui| {
-            ui.heading(icons::driver(self.form.driver()).rich_text(palette));
+            let logo_size = ui.text_style_height(&egui::TextStyle::Heading);
+            ui.add(icons::driver_logo_sized(
+                self.form.driver(),
+                palette,
+                logo_size,
+            ));
             ui.heading(self.title());
         });
         ui.add_space(ui.spacing().item_spacing.y);

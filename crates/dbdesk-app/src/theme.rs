@@ -5,7 +5,7 @@
 //! success colour", "weak text") and gets the shade that is readable in the current theme.
 //! `tests::text_colours_meet_wcag_aa` holds the palettes to that.
 
-use dbdesk_core::SourceColor;
+use dbdesk_core::{DriverKind, SourceColor};
 use egui::style::{Selection, WidgetVisuals, Widgets};
 use egui::{Color32, CornerRadius, Margin, Shadow, Stroke, Style, Theme, Visuals};
 
@@ -118,6 +118,21 @@ impl Palette {
             SourceColor::Blue => ((0x2F, 0x6F, 0xE4), (0x6C, 0xA4, 0xFF)),
             SourceColor::Violet => ((0x6A, 0x4C, 0xF0), (0x9A, 0x8B, 0xFF)),
             SourceColor::Pink => ((0xD0, 0x3C, 0x8C), (0xF5, 0x7F, 0xC0)),
+        };
+        let (r, g, b) = if dark { dark_shade } else { light };
+        Color32::from_rgb(r, g, b)
+    }
+}
+
+impl Palette {
+    /// The colour of a database's logo in this theme: the brand's own colour in the light
+    /// theme (from Simple Icons, see `assets/icons/databases/README.md`), and a lighter shade
+    /// of the same hue in the dark one, where the brand colour would be too dark to see.
+    pub fn driver(&self, driver: DriverKind) -> Color32 {
+        let dark = *self == Self::DARK;
+        let (light, dark_shade) = match driver {
+            DriverKind::Postgres => ((0x41, 0x69, 0xE1), (0x7F, 0xA2, 0xF5)),
+            DriverKind::Sqlite => ((0x00, 0x3B, 0x57), (0x5A, 0xB0, 0xE0)),
         };
         let (r, g, b) = if dark { dark_shade } else { light };
         Color32::from_rgb(r, g, b)
@@ -453,6 +468,26 @@ mod tests {
             }
         }
         assert!(failures.is_empty(), "{failures:#?}");
+    }
+
+    /// WCAG 2.1's minimum for graphics that identify something (success criterion 1.4.11).
+    const GRAPHICS: f64 = 3.0;
+
+    #[test]
+    fn database_logos_stand_out_from_what_they_are_drawn_on() {
+        for theme in [Theme::Light, Theme::Dark] {
+            let palette = Palette::of(theme);
+            // The explorer and the dialog, a text field, and a hovered menu entry.
+            for background in [palette.panel, palette.field, palette.control_hover] {
+                for driver in DriverKind::ALL {
+                    let ratio = contrast(palette.driver(driver), background);
+                    assert!(
+                        ratio >= GRAPHICS,
+                        "{theme:?}: the {driver:?} logo is {ratio:.2}:1 on {background:?}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
