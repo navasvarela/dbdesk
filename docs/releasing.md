@@ -1,6 +1,7 @@
 # Release binaries
 
-Status: **R1 built**, not released yet (see [Cutting a release](#cutting-a-release)).
+Status: **R1 released** as v0.1.0 on 2026-10-23. R3's update notice is built, ahead of R2
+(see [R3](#r3--updates)).
 Decisions settled on 2026-10-23 (see [Decisions](#decisions)).
 
 Today the only way to run dbdesk is to install Rust and build it from source (see the manual's
@@ -200,6 +201,13 @@ re-prompt for Keychain access.
 
 **Exit:** a user on an older version is offered the new one and updates without visiting
 GitHub.
+
+**Status:** the notice is built. At start-up (unless switched off in **View → Settings…**)
+and from **Help › Check for updates…**, the engine asks GitHub's API for the newest published
+release (`releases/latest`, which skips drafts and prereleases) and the app compares its tag
+with the running version. A newer one shows as a link in the status bar that leads to the
+release page. The notice needed no signing, so it came before R2; the updater itself waits for
+signed builds, because it must verify what it installs.
 
 ## Decisions
 

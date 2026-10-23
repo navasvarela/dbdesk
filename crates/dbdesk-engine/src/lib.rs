@@ -15,6 +15,7 @@ mod keymap;
 mod open;
 mod protocol;
 mod registry;
+mod releases;
 mod repaint;
 mod session;
 mod settings;
@@ -25,4 +26,5 @@ pub use protocol::{
     Command, ConsoleId, EditFailure, Event, PasswordUpdate, RunId, RunOutcome, SessionState,
     StatementCheck, StatementFailure, StatementSummary, TransactionEnd, TransactionMode,
 };
+pub use releases::{GithubReleases, Release, ReleaseError, ReleaseFeed};
 pub use repaint::Repaint;

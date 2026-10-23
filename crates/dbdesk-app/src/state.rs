@@ -96,6 +96,7 @@ impl AppState {
             | Event::ConsolesLoaded(_)
             | Event::KeymapLoaded { .. }
             | Event::SettingsLoaded { .. }
+            | Event::LatestRelease(_)
             | Event::HistoryFound { .. }
             | Event::ExportFinished { .. }
             | Event::TableDescribed { .. }

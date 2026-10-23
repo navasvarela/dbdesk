@@ -100,8 +100,8 @@ An id in `lint.disabled` that names no rule is listed in the Settings window, an
 ## Query consoles
 
 - One plain `.sql` file per console: `consoles/<data-source-id>/<name>.sql`, readable and
-  editable with any editor (while dbdesk is closed). Names are `console`, `console_2`, … as
-  DataGrip numbers them; any other `.sql` file put in the folder shows up as a saved console
+  editable with any editor (while dbdesk is closed). Names are `console`, `console_2`, …; any
+  other `.sql` file put in the folder shows up as a saved console
   named after the file.
 - Owned by the engine (`ConsoleFiles` in `dbdesk-store`): read once at start-up, right after the
   data sources, and written atomically (temporary file, then rename) on `SaveConsole`. The UI

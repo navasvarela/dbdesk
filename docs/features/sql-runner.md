@@ -16,7 +16,7 @@ Status: implemented in M3 and M4, except where marked *planned*.
   (connecting, running, done in N ms, failed, cancelled). A second row holds the transaction
   mode (see [Transactions](#transactions)).
 - **Saved as a file.** Each console is `consoles/<data-source-id>/<name>.sql` (`console.sql`,
-  `console_2.sql`, … as DataGrip names them; see [Persistence](../persistence.md)). Edits are
+  `console_2.sql`, …; see [Persistence](../persistence.md)). Edits are
   written a second after typing stops, and on quit, by the engine, never on the UI thread.
   Open console tabs are part of the saved layout and reopen with their text on start; a tab
   whose file or data source is gone is dropped.
