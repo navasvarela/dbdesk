@@ -966,13 +966,17 @@ mod tests {
             .close_connections(Closing::Console(key), &ctx);
         step_until_visible(&mut harness, "Roll back open transactions?");
         // The modal is measured on its first frame and placed on the next; a click aimed at
-        // the first frame's button lands outside it and dismisses the modal.
-        harness.run();
+        // the first frame's button lands outside it and dismisses the modal. Exactly two
+        // frames, not `run()`: a spinner still turning elsewhere (the slower Windows runner
+        // got there first) keeps the UI repainting, and `run()` would give up waiting for it
+        // to settle.
+        harness.run_steps(2);
         assert_eq!(workspace::console_tabs(&harness.state().dock).len(), 1);
         harness.get_by_label("Roll back and close").click();
-        harness.run();
 
-        assert!(workspace::console_tabs(&harness.state().dock).is_empty());
+        step_until(&mut harness, "the console tab closing", |harness| {
+            workspace::console_tabs(&harness.state().dock).is_empty()
+        });
         step_until(&mut harness, "the connection closing", |_| {
             count_orders(dir.path()) == 0
         });
