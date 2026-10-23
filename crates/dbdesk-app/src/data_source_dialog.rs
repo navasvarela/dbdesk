@@ -153,6 +153,10 @@ impl DataSourceDialog {
                         server_rows(ui, &mut fields.server, password_hint);
                         None
                     }
+                    DriverFields::Mysql(fields) => {
+                        server_rows(ui, &mut fields.server, password_hint);
+                        None
+                    }
                     DriverFields::Sqlite(fields) => sqlite_rows(ui, fields),
                 }
             })

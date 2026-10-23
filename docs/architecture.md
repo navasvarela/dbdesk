@@ -16,6 +16,7 @@ flowchart LR
         CmdTx --> Engine[dbdesk-engine<br/>SessionManager]
         Engine --> PG[driver-postgres]
         Engine --> SQ[driver-sqlite]
+        Engine --> MY[driver-mysql]
         Engine -->|Event + request_repaint| EvRx
     end
     Engine --> Store[dbdesk-store<br/>config, keychain, history]
@@ -30,6 +31,7 @@ flowchart LR
 | `dbdesk-sql` | A forgiving SQL lexer: statement splitting, statement at the cursor, highlighting tokens, the UPDATE/DELETE-without-WHERE check, the formatter, and the syntax checker (`sqlparser`) and lint rules. What differs between dialects lives in its `dialect` module. | core, sqlparser |
 | `dbdesk-driver-postgres` | `tokio-postgres` implementation of `Connection`. | core |
 | `dbdesk-driver-sqlite` | `rusqlite` implementation, run on `spawn_blocking`. | core |
+| `dbdesk-driver-mysql` | `mysql_async` implementation for MySQL and MariaDB; a statement's task owns the connection while its result is open, and cancel is `KILL QUERY` from a second connection. | core |
 | `dbdesk-engine` | Session lifecycle, command handling, cancellation, transactions, event emission. | core, sql, store, drivers |
 | `dbdesk-store` | Data source file (TOML), secrets (`SecretStore`, OS keychain via `keyring`), console files, query history (`rusqlite`), CSV/JSON export. All blocking; the engine calls it from the blocking pool. | core |
 | `dbdesk-app` | `eframe` binary: panels, widgets, app state, keymap. | core, engine, sql, store |

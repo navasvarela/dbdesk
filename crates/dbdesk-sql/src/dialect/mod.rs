@@ -239,6 +239,7 @@ impl From<DriverKind> for Dialect {
         match driver {
             DriverKind::Postgres => Self::Postgres,
             DriverKind::Sqlite => Self::Sqlite,
+            DriverKind::Mysql => Self::Mysql,
         }
     }
 }
@@ -278,6 +279,9 @@ mod tests {
     #[test]
     fn every_driver_has_a_dialect() {
         let dialects: Vec<Dialect> = DriverKind::ALL.into_iter().map(Dialect::from).collect();
-        assert_eq!(dialects, [Dialect::Postgres, Dialect::Sqlite]);
+        assert_eq!(
+            dialects,
+            [Dialect::Postgres, Dialect::Sqlite, Dialect::Mysql]
+        );
     }
 }

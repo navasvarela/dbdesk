@@ -12,8 +12,8 @@ use std::time::Duration;
 use std::str::FromStr;
 
 use dbdesk_core::{
-    ConnectionConfig, DataSource, DataSourceId, Password, PostgresConfig, ServerConfig,
-    SqliteConfig, TlsMode,
+    ConnectionConfig, DataSource, DataSourceId, MysqlConfig, Password, PostgresConfig,
+    ServerConfig, SqliteConfig, TlsMode,
 };
 use dbdesk_engine::{Command, EngineConfig, EngineHandle, Event, Repaint, SessionState};
 use dbdesk_store::{
@@ -170,6 +170,26 @@ pub fn postgres_test_server() -> Option<ParsedUrl> {
     Some(parse_test_url(&url))
 }
 
+/// The MySQL-family servers named by `DBDESK_TEST_MYSQL_URL` and `DBDESK_TEST_MARIADB_URL`
+/// (`mysql://user:password@host:port/database`), as data source settings and passwords.
+/// Empty, with a note, when neither is set, so tests that need one skip.
+pub fn mysql_test_servers() -> Vec<(MysqlConfig, Password)> {
+    let servers: Vec<(MysqlConfig, Password)> =
+        ["DBDESK_TEST_MYSQL_URL", "DBDESK_TEST_MARIADB_URL"]
+            .into_iter()
+            .filter_map(|variable| std::env::var(variable).ok())
+            .map(|url| {
+                let rest = url.strip_prefix("mysql://").expect("mysql:// URL");
+                let (config, password) = parse_server(rest, "3306");
+                (MysqlConfig { server: config }, password)
+            })
+            .collect();
+    if servers.is_empty() {
+        eprintln!("skipping: neither DBDESK_TEST_MYSQL_URL nor DBDESK_TEST_MARIADB_URL is set");
+    }
+    servers
+}
+
 pub struct ParsedUrl {
     pub config: PostgresConfig,
     pub password: Password,
@@ -182,20 +202,27 @@ fn parse_test_url(url: &str) -> ParsedUrl {
         .strip_prefix("postgres://")
         .or_else(|| url.strip_prefix("postgresql://"))
         .expect("postgres:// URL");
+    let (server, password) = parse_server(rest, "5432");
+    ParsedUrl {
+        config: PostgresConfig { server },
+        password,
+    }
+}
+
+/// `user:password@host[:port]/database`, the part of a URL after its scheme.
+fn parse_server(rest: &str, default_port: &str) -> (ServerConfig, Password) {
     let (credentials, rest) = rest.split_once('@').expect("user:password@ in URL");
     let (user, password) = credentials.split_once(':').expect("password in URL");
     let (host_port, database) = rest.split_once('/').expect("/database in URL");
-    let (host, port) = host_port.split_once(':').unwrap_or((host_port, "5432"));
-    ParsedUrl {
-        config: PostgresConfig {
-            server: ServerConfig {
-                host: host.to_owned(),
-                port: u16::from_str(port).expect("numeric port"),
-                database: database.to_owned(),
-                user: user.to_owned(),
-                tls: TlsMode::default(),
-            },
-        },
-        password: Password::new(password),
-    }
+    let (host, port) = host_port
+        .split_once(':')
+        .unwrap_or((host_port, default_port));
+    let server = ServerConfig {
+        host: host.to_owned(),
+        port: u16::from_str(port).expect("numeric port"),
+        database: database.to_owned(),
+        user: user.to_owned(),
+        tls: TlsMode::default(),
+    };
+    (server, Password::new(password))
 }

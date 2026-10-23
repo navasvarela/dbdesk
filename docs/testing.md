@@ -45,6 +45,11 @@ Each driver crate runs the suite against its own backend:
   signed by the test authority in `docker/postgres-tls/` (`generate.sh` makes both), which the
   `verify-full` tests trust. Tests are skipped with a message when `DBDESK_TEST_POSTGRES_URL`
   or `DBDESK_TEST_POSTGRES_TLS_URL` is unset, so `cargo test` works offline.
+- **MySQL and MariaDB**: the `mysql` (8.4, port 55306) and `mariadb` (11.4, port 55307)
+  containers, both through the same tests, each skipped when its `DBDESK_TEST_MYSQL_URL` or
+  `DBDESK_TEST_MARIADB_URL` is unset. Both make a self-signed certificate on first start, so
+  the TLS tests need no fixture of their own. `check_describe_table` asks the server's
+  `lower_case_table_names` whether unquoted names match ignoring case: on Linux they don't.
 
 Every server engine follows the same pattern: a service in `docker-compose.yml` and its URL in
 `test-servers.env`, which CI reads too. To run everything locally:

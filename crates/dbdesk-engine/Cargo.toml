@@ -10,6 +10,7 @@ publish.workspace = true
 
 [dependencies]
 dbdesk-core.workspace = true
+dbdesk-driver-mysql.workspace = true
 dbdesk-driver-postgres.workspace = true
 dbdesk-driver-sqlite.workspace = true
 dbdesk-sql.workspace = true
