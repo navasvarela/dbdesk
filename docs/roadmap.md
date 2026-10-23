@@ -40,7 +40,7 @@ that adds a SQLite data source through the dialog.
 Follow-ups left out of M1:
 
 - TLS for Postgres (`sslmode`). Servers that require TLS currently reject the connection.
-- A file picker for SQLite paths.
+- ~~A file picker for SQLite paths.~~ Done: **Browse…** and **New…** (create an empty database).
 - Prompting for a password when none is saved or the keychain is unavailable.
 - Noticing when an established connection drops (the session still shows "connected").
 - Duplicate data source; colour and safety level per data source.

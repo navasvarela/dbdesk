@@ -48,9 +48,10 @@ connection in the data source dialog is the quickest way to try again.
 
 ## "unable to open database file" for SQLite
 
-The file in the data source's **File** field doesn't exist, or dbdesk can't read it. dbdesk
-never creates SQLite files; create the database first (for example with the `sqlite3` command)
-and check the path.
+The file in the data source's **File** field doesn't exist, or dbdesk can't read it. Connecting
+never creates a SQLite file, so check the path, or pick the file with **Browse…** in the data
+source dialog. To start a new database, use **New…** there (see
+[Data sources](data-sources.md#adding-one)).
 
 ## "Can't read data sources"
 

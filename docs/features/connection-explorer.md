@@ -25,8 +25,17 @@ for "same server, other database".
 
 - An empty name defaults to `database@host`, or the file name for SQLite.
 - Leaving the password empty keeps the saved one. Typing one replaces it.
-- SQLite files are never created: a typo in the path is an error, not a new empty database.
-  A file picker is still to do; for now, paste the path.
+- **Browse…** opens the system's file dialog to pick an existing database. It doesn't filter
+  by extension: SQLite files use many extensions or none, and on macOS a filter can't offer an
+  "All files" option.
+- **New…** opens the system's Save dialog. The engine then creates an empty database there
+  (`Command::CreateSqliteDatabase`), writing the SQLite header straight away so other tools
+  recognise the file. It refuses to overwrite an existing file, even if the Save dialog asked
+  "Replace?" and you agreed.
+- Connecting never creates a file: a typo in the path is an error, not a new empty database.
+  Creating a database is always the explicit **New…** step.
+- Both dialogs block the UI while open, like the export's save dialog. They are the exception
+  to "the UI never waits": they are modal anyway, and macOS requires them on the main thread.
 
 ## Tree
 

@@ -53,6 +53,9 @@ pub enum Command {
         id: DataSourceId,
         path: CatalogPath,
     },
+    /// Creates a new, empty SQLite database file, refusing to overwrite an existing one.
+    /// Answered by [`Event::SqliteDatabaseCreated`].
+    CreateSqliteDatabase(PathBuf),
     /// Runs statements in order on the console's own connection, connecting it to
     /// `data_source` first if needed, and stops at the first failure. Each statement's first
     /// page of rows is reported; the last statement's remaining rows stay available through
@@ -221,6 +224,10 @@ pub enum Event {
         id: DataSourceId,
         path: CatalogPath,
         result: Result<String, String>,
+    },
+    SqliteDatabaseCreated {
+        path: PathBuf,
+        result: Result<(), String>,
     },
     ConsoleSessionChanged {
         console: ConsoleId,

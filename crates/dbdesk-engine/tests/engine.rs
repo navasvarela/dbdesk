@@ -300,6 +300,28 @@ fn loading_children_connects_first_and_answers_catalog_requests() {
     });
 }
 
+#[test]
+fn creates_a_sqlite_database_but_never_overwrites_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    engine.expect_started(vec![]);
+    let path = dir.path().join("new.db");
+
+    engine.send(Command::CreateSqliteDatabase(path.clone()));
+    engine.expect(Event::SqliteDatabaseCreated {
+        path: path.clone(),
+        result: Ok(()),
+    });
+    engine.send(Command::CreateSqliteDatabase(path.clone()));
+
+    match engine.next_event() {
+        Event::SqliteDatabaseCreated {
+            result: Err(error), ..
+        } => assert!(error.contains("already exists"), "{error}"),
+        other => panic!("expected a refusal to overwrite, got {other:?}"),
+    }
+}
+
 /// Needs `DBDESK_TEST_POSTGRES_URL`, like the Postgres driver tests; skipped without it.
 #[test]
 fn connects_to_postgres_with_the_saved_password() {
