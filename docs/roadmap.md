@@ -201,6 +201,23 @@ The original candidates:
 - Editing data in the grid.
 - MySQL driver; a driver for the `db-data-structures` engine.
 
+## SQL tools
+
+Three additions to the query console, one PR each: a formatter, a syntax checker and linter,
+and context-aware completion.
+
+**Formatter demo note:** built. Type `select id,name from users where active=true` and press
+⌥⌘L (or **Format**, or **Code → Format**): the statement is laid out clause by clause with
+upper-case keywords and the cursor stays on its token; ⌘Z takes it back in one step. ⇧⌥⌘L
+formats the whole console. **View → Settings…** switches keywords to lower case or as typed,
+and the indent width, saved in `settings.toml`. The formatter is our own, over the lexer,
+because `sqlformat` changed string literals and dollar-quoted bodies (see the SQL runner doc).
+Covered by a corpus of PostgreSQL and SQLite statements formatted in every setting, whose
+tokens must come out identical (ignoring whitespace and keyword case) and stable when formatted
+twice; layout, cursor-mapping and safety-check tests; settings file and engine tests; and a UI
+test that formats with ⌥⌘L, undoes it, and formats again from the Code menu after switching to
+lower case.
+
 ## Release track
 
 Downloads that install like any other desktop app, instead of building from source. The full

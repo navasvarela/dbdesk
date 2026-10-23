@@ -48,6 +48,36 @@ Names come from what the explorer has loaded for the data source. When a suggest
 part that isn't loaded yet, dbdesk loads it in the background (the list says "Loading the
 catalog…"), which connects the explorer if it wasn't.
 
+**Formatting.** ⌥⌘L (or **Format** in the toolbar, or **Code → Format**) lays out the selected
+text, or the statement at the cursor; ⇧⌥⌘L (**Code → Format all**) formats every statement in
+the console:
+
+```sql
+SELECT
+    id,
+    name
+FROM users u
+JOIN orders o ON o.user_id = u.id
+WHERE u.active
+    AND o.total > 10
+ORDER BY name
+```
+
+Each clause starts a line, lists of several items put one per line, and every `AND` or `OR` of
+a `WHERE` starts a line. Subqueries are indented inside their parentheses. Statements that
+aren't queries, such as `CREATE FUNCTION`, keep their line breaks; a `CREATE TABLE` gets one
+column per line.
+
+Formatting only changes spaces, line breaks and the case of keywords. Strings, comments,
+quoted names and function bodies between `$$` are never touched, and dbdesk checks the result
+before using it: if it would read differently to the database, the text stays as it was and the
+toolbar says **Not formatted**. The cursor stays where it was in the SQL, and ⌘Z undoes the
+whole format at once.
+
+**View → Settings…** chooses how keywords are written (UPPER, lower, or as you typed them) and
+how many spaces each level is indented. They're saved in `settings.toml` (see
+[Where dbdesk keeps its files](files.md)).
+
 ## Running SQL
 
 ![A console with the results of a query](images/workspace.png)
@@ -61,6 +91,7 @@ The toolbar's buttons, and their shortcuts while the editor has focus:
 | **Explain** | ⌥⌘E | Shows how the database would run the statement at the cursor: `EXPLAIN` on PostgreSQL, `EXPLAIN QUERY PLAN` on SQLite. |
 | **Cancel** (□) | ⌘. | Stops the running statement, or discards rows not yet loaded. |
 | **History** | — | Opens the data source's query history. |
+| **Format** | ⌥⌘L | Formats the selected text, or the statement at the cursor (see [The editor](#the-editor)). |
 
 On Linux and Windows, use Ctrl instead of ⌘. Hover over a button to see its current shortcut;
 all of them can be changed (see [Keyboard shortcuts](shortcuts.md)).

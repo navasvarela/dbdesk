@@ -27,7 +27,7 @@ flowchart LR
 | Crate | Responsibility | Depends on |
 | --- | --- | --- |
 | `dbdesk-core` | Domain types (`DataSource`, `ConnectionConfig`, `Password`, …) and the `Connection` trait. No I/O. | — |
-| `dbdesk-sql` | A forgiving SQL lexer: statement splitting, statement at the cursor, highlighting tokens, the UPDATE/DELETE-without-WHERE check. | — |
+| `dbdesk-sql` | A forgiving SQL lexer: statement splitting, statement at the cursor, highlighting tokens, the UPDATE/DELETE-without-WHERE check, the formatter. | — |
 | `dbdesk-driver-postgres` | `tokio-postgres` implementation of `Connection`. | core |
 | `dbdesk-driver-sqlite` | `rusqlite` implementation, run on `spawn_blocking`. | core |
 | `dbdesk-engine` | Session lifecycle, command handling, cancellation, transactions, event emission. | core, sql, store, drivers |
@@ -79,6 +79,8 @@ pub enum Command {
     DescribeTable { data_source: DataSourceId, table: RelationName },          // M5
     ApplyEdits { console: ConsoleId, statements: Vec<String> },                // M5
     CreateKeymap { text: String },                           // M5
+    ReloadSettings,                                          // SQL tools
+    SaveSettings(Settings),                                  // SQL tools
 }
 
 pub enum Event {
@@ -107,6 +109,7 @@ pub enum Event {
     TableDescribed { data_source: DataSourceId, table: RelationName,
                      result: Result<Option<TableDescription>, String> },        // M5
     EditsApplied { console: ConsoleId, result: Result<(), EditFailure> },       // M5
+    SettingsLoaded { path: PathBuf, result: Result<Settings, String> },         // SQL tools
 }
 ```
 
