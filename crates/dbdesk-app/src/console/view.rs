@@ -14,8 +14,8 @@ use super::{
 };
 use crate::keymap::{Action, Keymap};
 use crate::theme::SUCCESS_COLOR;
-use dbdesk_core::CatalogPath;
 use dbdesk_core::TransactionStatus;
+use dbdesk_core::{CatalogPath, RelationName};
 use dbdesk_engine::{RunId, RunOutcome, SessionState, TransactionEnd, TransactionMode};
 use dbdesk_store::ExportFormat;
 
@@ -51,6 +51,10 @@ pub enum ConsoleAction {
     ShowHistory,
     /// Loads these catalog levels into the explorer's cache, for completion.
     LoadCatalog(Vec<CatalogPath>),
+    /// Asks which columns and key a result's table has, to decide whether rows can be edited.
+    DescribeTable(RelationName),
+    /// Writes the grid's pending edits.
+    SubmitEdits,
 }
 
 /// What a console draws with besides its own state.
@@ -171,7 +175,7 @@ fn perform(console: &QueryConsole, action: Action, actions: &mut Vec<ConsoleActi
             return;
         }
         // The grid and the editor handle these themselves.
-        Action::ViewCell | Action::Complete => return,
+        Action::ViewCell | Action::EditCell | Action::Complete => return,
     };
     let statements = console.statements_to_run(scope);
     if !statements.is_empty() {
@@ -184,7 +188,7 @@ fn is_enabled(console: &QueryConsole, action: Action) -> bool {
         Action::RunCurrent | Action::RunAll | Action::Explain => !console.is_running(),
         Action::Cancel => console.cancellable_run().is_some(),
         Action::Commit | Action::Rollback => console.has_open_transaction(),
-        Action::ShowHistory | Action::ViewCell | Action::Complete => true,
+        Action::ShowHistory | Action::ViewCell | Action::EditCell | Action::Complete => true,
     }
 }
 

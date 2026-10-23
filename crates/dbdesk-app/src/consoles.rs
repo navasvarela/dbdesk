@@ -196,6 +196,11 @@ impl Consoles {
             ConsoleAction::EndTransaction(end) => {
                 Some(Command::EndTransaction { console: id, end })
             }
+            ConsoleAction::DescribeTable(table) => Some(Command::DescribeTable {
+                data_source: self.open.get(key)?.data_source(),
+                table,
+            }),
+            ConsoleAction::SubmitEdits => self.open.get_mut(key)?.submit_edits(),
             // The app opens a window or a file dialog, or updates the catalog, for these.
             ConsoleAction::ShowHistory
             | ConsoleAction::Export(_)

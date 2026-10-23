@@ -7,6 +7,7 @@ mod catalog_source;
 mod cell_viewer;
 mod completion;
 mod completion_popup;
+mod edit;
 mod grid;
 mod highlight;
 mod results;
@@ -16,13 +17,18 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use dbdesk_core::{Cell, ColumnInfo, DataSourceId, DriverKind, Row, TransactionStatus};
+use dbdesk_core::{
+    Cell, ColumnInfo, DataSourceId, DriverKind, RelationName, Row, TableDescription,
+    TransactionStatus,
+};
 use dbdesk_engine::{
-    Command, ConsoleId, Event, Export, RunId, RunOutcome, SessionState, StatementFailure,
-    StatementSummary, TransactionEnd, TransactionMode,
+    Command, ConsoleId, EditFailure, Event, Export, RunId, RunOutcome, SessionState,
+    StatementFailure, StatementSummary, TransactionEnd, TransactionMode,
 };
 use dbdesk_sql::{Dialect, explain_prefix, split_statements, statement_at};
 use dbdesk_store::{ConsoleKey, ExportFormat};
+
+use edit::Editability;
 
 pub use catalog_source::TreeCatalog;
 pub use view::{ConsoleAction, ConsoleContext, show};
@@ -128,6 +134,7 @@ pub struct StatementView {
     fetching: bool,
     result: Option<Result<StatementSummary, StatementFailure>>,
     grid: grid::GridView,
+    edits: edit::EditSession,
 }
 
 /// The completion list at the cursor.
@@ -196,6 +203,101 @@ impl QueryConsole {
 
     pub fn text(&self) -> &str {
         &self.text
+    }
+
+    /// Decides, for each result that hasn't been looked at, whether it may be editable, and
+    /// returns the tables to describe for those that may.
+    pub fn tables_to_describe(&mut self) -> Vec<RelationName> {
+        let dialect = self.dialect;
+        let Some(run) = self.run.as_mut() else {
+            return Vec::new();
+        };
+        let mut tables = Vec::new();
+        for statement in &mut run.statements {
+            if statement.columns.is_empty() || statement.edits.editability != Editability::Unknown {
+                continue;
+            }
+            statement.edits.editability = match edit::editable_source(&statement.sql, dialect) {
+                Ok(table) => {
+                    tables.push(table.clone());
+                    Editability::Describing(table)
+                }
+                Err(reason) => Editability::ReadOnly(reason),
+            };
+        }
+        tables
+    }
+
+    fn table_described(
+        &mut self,
+        table: &RelationName,
+        result: &Result<Option<TableDescription>, String>,
+    ) {
+        let Some(run) = self.run.as_mut() else {
+            return;
+        };
+        for statement in &mut run.statements {
+            if statement.edits.editability != Editability::Describing(table.clone()) {
+                continue;
+            }
+            statement.edits.editability = match result {
+                Ok(Some(description)) => edit::edit_target(description.clone(), &statement.columns),
+                Ok(None) => Editability::ReadOnly(format!("{} isn't a table", table.to_sql())),
+                Err(error) => Editability::ReadOnly(format!("Couldn't look up the table: {error}")),
+            };
+        }
+    }
+
+    /// The `UPDATE`s for the shown statement's pending edits, marking them as submitted.
+    /// `None` if there is nothing to submit.
+    pub fn submit_edits(&mut self) -> Option<Command> {
+        let run = self.run.as_mut()?;
+        let statement = run.statements.get_mut(run.selected)?;
+        let target = statement.edits.target()?;
+        if statement.edits.pending.is_empty() || statement.edits.submitting {
+            return None;
+        }
+        let statements =
+            statement
+                .edits
+                .pending
+                .statements(target, &statement.columns, &statement.rows);
+        statement.edits.submitting = true;
+        statement.edits.error = None;
+        Some(Command::ApplyEdits {
+            console: self.id,
+            statements,
+        })
+    }
+
+    fn edits_applied(&mut self, result: &Result<(), EditFailure>) {
+        let Some(run) = self.run.as_mut() else {
+            return;
+        };
+        let Some(statement) = run
+            .statements
+            .iter_mut()
+            .find(|statement| statement.edits.submitting)
+        else {
+            return;
+        };
+        let edits = &mut statement.edits;
+        edits.submitting = false;
+        match result {
+            Ok(()) => {
+                edits.pending.apply_to(&mut statement.rows);
+                edits.error = None;
+            }
+            Err(failure) => {
+                let row = failure
+                    .statement
+                    .and_then(|index| edits.pending.rows().get(index).copied());
+                edits.error = Some(match row {
+                    Some(row) => format!("Row {}: {}", row + 1, failure.message),
+                    None => failure.message.clone(),
+                });
+            }
+        }
     }
 
     /// The export of the rows the grid shows for the selected statement, in the order and
@@ -482,6 +584,7 @@ impl QueryConsole {
                     fetching: false,
                     result: None,
                     grid: grid::GridView::default(),
+                    edits: edit::EditSession::default(),
                 })
                 .collect(),
             state: RunState::Running,
@@ -530,6 +633,14 @@ impl QueryConsole {
                         .map(|rows| format!("Exported {rows} rows to {}", path.display()))
                         .map_err(Clone::clone),
                 );
+            }
+            Event::TableDescribed {
+                data_source,
+                table,
+                result,
+            } if *data_source == self.data_source() => self.table_described(table, result),
+            Event::EditsApplied { console, result } if *console == self.id => {
+                self.edits_applied(result);
             }
             Event::ConsoleSaveFailed { key, error } if *key == self.key => {
                 // Shown until the next save is sent; that one writes the whole text again.

@@ -8,6 +8,7 @@ use dbdesk_store::ExportFormat;
 use egui::{Align, Label, Layout, RichText, Sense, TextEdit, Ui};
 use egui_extras::{Column, TableBuilder};
 
+use super::edit::{CellEditor, EditSession, Editability};
 use super::grid::{CellPos, GridView, SortKey};
 use super::{ConsoleAction, QueryConsole, RunState, StatementView, ViewedCell};
 use crate::keymap::{Action, Keymap};
@@ -16,6 +17,9 @@ const COLUMN_WIDTH: f32 = 140.0;
 const MIN_COLUMN_WIDTH: f32 = 40.0;
 const ROW_NUMBER_WIDTH: f32 = 40.0;
 const FILTER_WIDTH: f32 = 180.0;
+/// How strongly an edited cell is tinted with the warning colour: visible at a glance,
+/// faint enough to read the value.
+const PENDING_TINT: f32 = 0.25;
 
 /// Statements whose row count means "rows changed", as opposed to DDL, where the database
 /// reports 0 or nothing meaningful.
@@ -28,6 +32,12 @@ pub fn show(
     actions: &mut Vec<ConsoleAction>,
 ) {
     let dialect = console.dialect;
+    actions.extend(
+        console
+            .tables_to_describe()
+            .into_iter()
+            .map(ConsoleAction::DescribeTable),
+    );
     let Some(run) = console.run.as_mut() else {
         ui.weak("Run the statement at the cursor with ⌘↵, or the whole console with ⇧⌘↵.");
         return;
@@ -183,7 +193,45 @@ fn grid_toolbar(
             }
             None => {}
         }
+        ui.separator();
+        edit_status(ui, &mut statement.edits, actions);
     });
+}
+
+/// Whether the rows can be edited, and the pending changes with Submit and Revert.
+fn edit_status(ui: &mut Ui, edits: &mut EditSession, actions: &mut Vec<ConsoleAction>) {
+    if let Editability::ReadOnly(reason) = &edits.editability {
+        ui.weak("Read-only").on_hover_text(reason);
+        return;
+    }
+    if edits.submitting {
+        ui.spinner();
+        ui.weak("Saving…");
+        return;
+    }
+    let changed = edits.pending.len();
+    if changed > 0 {
+        ui.colored_label(
+            ui.visuals().warn_fg_color,
+            match changed {
+                1 => "1 changed cell".to_owned(),
+                n => format!("{n} changed cells"),
+            },
+        );
+        if ui
+            .button("Submit")
+            .on_hover_text("Write the changes with one UPDATE per row, all or none")
+            .clicked()
+        {
+            actions.push(ConsoleAction::SubmitEdits);
+        }
+        if ui.button("Revert").clicked() {
+            edits.revert();
+        }
+    }
+    if let Some(error) = &edits.error {
+        ui.colored_label(ui.visuals().error_fg_color, error);
+    }
 }
 
 #[derive(Default)]
@@ -201,6 +249,17 @@ enum CellInput {
     Extend(CellPos),
     StartDrag(CellPos),
     View(CellPos),
+    /// Start typing into the cell at this loaded row and column.
+    Edit {
+        row: usize,
+        column: usize,
+    },
+    SetNull {
+        row: usize,
+        column: usize,
+    },
+    CommitEdit,
+    CancelEdit,
 }
 
 fn grid(ui: &mut Ui, run: RunId, statement: &mut StatementView, keymap: &Keymap) -> GridOutput {
@@ -209,6 +268,7 @@ fn grid(ui: &mut Ui, run: RunId, statement: &mut StatementView, keymap: &Keymap)
         rows,
         grid,
         range,
+        edits,
         ..
     } = statement;
     let row_height = ui.spacing().interact_size.y;
@@ -258,14 +318,24 @@ fn grid(ui: &mut Ui, run: RunId, statement: &mut StatementView, keymap: &Keymap)
                         column,
                     };
                     table_row.col(|ui| {
-                        let context = CellContext {
-                            grid: grid_view,
-                            rows,
-                            row: values,
+                        let input = match &mut edits.editing {
+                            Some(editor)
+                                if editor.row == loaded_index && editor.column == column =>
+                            {
+                                cell_editor(ui, editor)
+                            }
+                            _ => {
+                                let context = CellContext {
+                                    grid: grid_view,
+                                    rows,
+                                    row: values,
+                                    loaded_index,
+                                    edits,
+                                };
+                                cell(ui, cell_pos, value, &context)
+                            }
                         };
-                        if let Some(input) = cell(ui, cell_pos, value, &context) {
-                            inputs.push(input);
-                        }
+                        inputs.extend(input);
                     });
                 }
                 if position + 1 == order.len() {
@@ -280,6 +350,8 @@ fn grid(ui: &mut Ui, run: RunId, statement: &mut StatementView, keymap: &Keymap)
     if ui.input(|input| input.pointer.any_released()) {
         grid.stop_drag();
     }
+    // The Enter that closes an editor is still in this frame's input; it mustn't reopen it.
+    let mut editor_closed = false;
     for input in inputs {
         match input {
             CellInput::Select(cell) => grid.select(cell),
@@ -289,7 +361,33 @@ fn grid(ui: &mut Ui, run: RunId, statement: &mut StatementView, keymap: &Keymap)
                 grid.select(cell);
                 output.viewed = viewed_cell(columns, rows, grid, cell);
             }
+            CellInput::Edit { row, column } => start_editing(edits, rows, row, column),
+            CellInput::SetNull { row, column } => edits.pending.set(rows, row, column, None),
+            CellInput::CommitEdit => {
+                editor_closed = true;
+                if let Some(editor) = edits.editing.take() {
+                    edits
+                        .pending
+                        .set(rows, editor.row, editor.column, Some(editor.text));
+                }
+            }
+            CellInput::CancelEdit => {
+                editor_closed = true;
+                edits.editing = None;
+            }
         }
+    }
+    if let Some(cell) = grid.selected_cell()
+        && !editor_closed
+        && edits.editing.is_none()
+        && no_text_field_focused(ui)
+        && !ui
+            .input_mut(|input| keymap.consume(input, &[Action::EditCell]))
+            .is_empty()
+        && let Some(&row) = grid.order().get(cell.row)
+        && edits.is_editable(cell.column)
+    {
+        start_editing(edits, rows, row, cell.column);
     }
     copy_selection_on_request(ui, grid, rows);
     if let Some(cell) = grid.selected_cell()
@@ -338,20 +436,66 @@ fn sort_arrow(sort: Option<SortKey>, column: usize) -> &'static str {
     }
 }
 
+fn start_editing(edits: &mut EditSession, rows: &[Row], row: usize, column: usize) {
+    let current = edits
+        .pending
+        .get(row, column)
+        .or_else(|| rows.get(row).and_then(|loaded| loaded.get(column)));
+    edits.editing = Some(CellEditor {
+        row,
+        column,
+        text: current.cloned().flatten().unwrap_or_default(),
+        focused: false,
+    });
+}
+
+/// The text field a cell turns into while edited. Enter or clicking away keeps the text as a
+/// pending change; Escape drops it.
+fn cell_editor(ui: &mut Ui, editor: &mut CellEditor) -> Option<CellInput> {
+    let response = ui.add(TextEdit::singleline(&mut editor.text).desired_width(f32::INFINITY));
+    if !editor.focused {
+        response.request_focus();
+        editor.focused = true;
+        return None;
+    }
+    if !response.lost_focus() {
+        return None;
+    }
+    if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
+        Some(CellInput::CancelEdit)
+    } else {
+        Some(CellInput::CommitEdit)
+    }
+}
+
 /// What a cell needs to know besides its own value.
 struct CellContext<'a> {
     grid: &'a GridView,
     rows: &'a [Row],
     row: &'a Row,
+    /// The row's place among the loaded rows, which edits are keyed by.
+    loaded_index: usize,
+    edits: &'a EditSession,
 }
 
-/// Draws a cell, highlighted if selected: click selects it, shift-click or dragging extends
-/// the selection, double-click (or Space on a selected cell) opens it in the viewer.
-fn cell(ui: &mut Ui, pos: CellPos, value: &Cell, context: &CellContext<'_>) -> Option<CellInput> {
+/// Draws a cell, highlighted if selected, and its pending value if it was edited: click
+/// selects it, shift-click or dragging extends the selection, double-click edits an editable
+/// cell and opens any other in the viewer (as Space does).
+fn cell(ui: &mut Ui, pos: CellPos, loaded: &Cell, context: &CellContext<'_>) -> Option<CellInput> {
+    let (row, column) = (context.loaded_index, pos.column);
+    let pending = context.edits.pending.get(row, column);
+    let value = pending.unwrap_or(loaded);
     if context.grid.is_selected(pos) {
         ui.painter()
             .rect_filled(ui.max_rect(), 0.0, ui.visuals().selection.bg_fill);
+    } else if pending.is_some() {
+        ui.painter().rect_filled(
+            ui.max_rect(),
+            0.0,
+            ui.visuals().warn_fg_color.gamma_multiply(PENDING_TINT),
+        );
     }
+    let editable = context.edits.is_editable(column);
     let sense = Sense::click_and_drag();
     let response = match value {
         None => ui.add(
@@ -367,7 +511,7 @@ fn cell(ui: &mut Ui, pos: CellPos, value: &Cell, context: &CellContext<'_>) -> O
         }
         Some(text) => ui.add(Label::new(text).selectable(false).truncate().sense(sense)),
     };
-    let mut view = false;
+    let (mut view, mut edit, mut set_null) = (false, false, false);
     response.context_menu(|ui| {
         if let Some(tsv) = context.grid.selection_as_tsv(context.rows)
             && ui.button("Copy selection").clicked()
@@ -381,8 +525,21 @@ fn cell(ui: &mut Ui, pos: CellPos, value: &Cell, context: &CellContext<'_>) -> O
             ui.ctx().copy_text(row_as_tsv(context.row));
         }
         view = ui.button("View value").clicked();
+        if editable {
+            ui.separator();
+            if ui.button("Edit value").clicked() {
+                edit = true;
+            }
+            if ui.button("Set NULL").clicked() {
+                set_null = true;
+            }
+        }
     });
-    if view || response.double_clicked() {
+    if edit || (editable && response.double_clicked()) {
+        Some(CellInput::Edit { row, column })
+    } else if set_null {
+        Some(CellInput::SetNull { row, column })
+    } else if view || response.double_clicked() {
         Some(CellInput::View(pos))
     } else if response.drag_started() {
         Some(CellInput::StartDrag(pos))
