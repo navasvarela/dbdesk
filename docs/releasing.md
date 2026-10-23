@@ -1,7 +1,7 @@
 # Release binaries
 
-Status: **R1 released** as v0.1.0 on 2026-10-23. R3's update notice is built, ahead of R2
-(see [R3](#r3--updates)).
+Status: **R1 released** as v0.1.0 on 2026-10-23, followed by v0.2.0 (MySQL and MariaDB, TLS,
+the update notice). R3's update notice is built, ahead of R2 (see [R3](#r3--updates)).
 Decisions settled on 2026-10-23 (see [Decisions](#decisions)).
 
 Today the only way to run dbdesk is to install Rust and build it from source (see the manual's
