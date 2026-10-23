@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 336" width="640" height="336" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="14">
+<title>dbdesk palette</title>
+<rect width="320.0" height="336" fill="#FFFFFF"/>
+<rect x="320.0" width="320.0" height="336" fill="#1E1F22"/>
+<text x="20" y="28" fill="#5D6270" font-size="12" letter-spacing="1">LIGHT THEME</text>
+<text x="340.0" y="28" fill="#9AA0AD" font-size="12" letter-spacing="1">DARK THEME</text>
+<rect x="20" y="44" width="40" height="40" rx="8" fill="#0A7A6C"/>
+<text x="72" y="61" fill="#0A7A6C" font-weight="600">Primary · Lagoon</text>
+<text x="72" y="79" fill="#5D6270" font-family="ui-monospace, SF Mono, Menlo, monospace" font-size="12">#0A7A6C</text>
+<rect x="340.0" y="44" width="40" height="40" rx="8" fill="#2DD4BF"/>
+<text x="392.0" y="61" fill="#2DD4BF" font-weight="600">Primary · Lagoon</text>
+<text x="392.0" y="79" fill="#9AA0AD" font-family="ui-monospace, SF Mono, Menlo, monospace" font-size="12">#2DD4BF</text>
+<rect x="20" y="100" width="40" height="40" rx="8" fill="#5B3FE0"/>
+<text x="72" y="117" fill="#5B3FE0" font-weight="600">Secondary · Ultraviolet</text>
+<text x="72" y="135" fill="#5D6270" font-family="ui-monospace, SF Mono, Menlo, monospace" font-size="12">#5B3FE0</text>
+<rect x="340.0" y="100" width="40" height="40" rx="8" fill="#9A8BFF"/>
+<text x="392.0" y="117" fill="#9A8BFF" font-weight="600">Secondary · Ultraviolet</text>
+<text x="392.0" y="135" fill="#9AA0AD" font-family="ui-monospace, SF Mono, Menlo, monospace" font-size="12">#9A8BFF</text>
+<rect x="20" y="156" width="40" height="40" rx="8" fill="#1C7C45"/>
+<text x="72" y="173" fill="#1C7C45" font-weight="600">Success</text>
+<text x="72" y="191" fill="#5D6270" font-family="ui-monospace, SF Mono, Menlo, monospace" font-size="12">#1C7C45</text>
+<rect x="340.0" y="156" width="40" height="40" rx="8" fill="#5BD68A"/>
+<text x="392.0" y="173" fill="#5BD68A" font-weight="600">Success</text>
+<text x="392.0" y="191" fill="#9AA0AD" font-family="ui-monospace, SF Mono, Menlo, monospace" font-size="12">#5BD68A</text>
+<rect x="20" y="212" width="40" height="40" rx="8" fill="#985600"/>
+<text x="72" y="229" fill="#985600" font-weight="600">Warning</text>
+<text x="72" y="247" fill="#5D6270" font-family="ui-monospace, SF Mono, Menlo, monospace" font-size="12">#985600</text>
+<rect x="340.0" y="212" width="40" height="40" rx="8" fill="#F2B33D"/>
+<text x="392.0" y="229" fill="#F2B33D" font-weight="600">Warning</text>
+<text x="392.0" y="247" fill="#9AA0AD" font-family="ui-monospace, SF Mono, Menlo, monospace" font-size="12">#F2B33D</text>
+<rect x="20" y="268" width="40" height="40" rx="8" fill="#C42B42"/>
+<text x="72" y="285" fill="#C42B42" font-weight="600">Error</text>
+<text x="72" y="303" fill="#5D6270" font-family="ui-monospace, SF Mono, Menlo, monospace" font-size="12">#C42B42</text>
+<rect x="340.0" y="268" width="40" height="40" rx="8" fill="#FF7A7A"/>
+<text x="392.0" y="285" fill="#FF7A7A" font-weight="600">Error</text>
+<text x="392.0" y="303" fill="#9AA0AD" font-family="ui-monospace, SF Mono, Menlo, monospace" font-size="12">#FF7A7A</text>
+</svg>
