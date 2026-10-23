@@ -13,6 +13,9 @@ errors. Consoles are saved as `.sql` files and reopen on start, every statement 
 searchable history, and a console can hold a transaction open until you commit. The grid
 selects, copies, sorts and filters loaded rows, shows long values, and exports CSV or JSON.
 
+The [user manual](book/src/SUMMARY.md) explains how to install and use dbdesk. Build it with
+`mdbook serve book` to read it in a browser.
+
 ## Building and running
 
 ```bash
@@ -57,6 +60,7 @@ UI: **egui** (via `eframe`) with **egui_dock** for DataGrip-style dockable panel
 
 | Document | What it covers |
 | --- | --- |
+| [User manual](book/src/SUMMARY.md) | Installing and using dbdesk, for people who have never seen it |
 | [Vision](docs/vision.md) | Goals, non-goals, terminology, what "personalised" means |
 | [Architecture](docs/architecture.md) | Crates, threading model, data flow, core types |
 | [Connection explorer](docs/features/connection-explorer.md) | Data sources, catalog tree, introspection |
@@ -64,7 +68,7 @@ UI: **egui** (via `eframe`) with **egui_dock** for DataGrip-style dockable panel
 | [Log console](docs/features/log-console.md) | Logging pipeline and what gets logged |
 | [Keymap](docs/features/keymap.md) | `keymap.toml`: action ids and rebinding keys |
 | [Persistence](docs/persistence.md) | Config files, secrets, history, layout state |
-| [Testing](docs/testing.md) | Driver conformance suite, UI testing strategy |
+| [Testing](docs/testing.md) | Driver conformance suite, UI testing strategy, screenshots, the manual's build |
 | [Brand](docs/brand.md) | The logo, its files, and the colour palette |
 | [Look and feel](docs/features/look-and-feel.md) | Themes, panels, fonts, icons, data source colours |
 | [Roadmap](docs/roadmap.md) | Milestones M0–M5 with exit criteria |

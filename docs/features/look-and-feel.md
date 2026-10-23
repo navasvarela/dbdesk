@@ -121,7 +121,8 @@ comments weak and italic.
 
 ## Screenshots
 
-Pictures of the UI are rendered, not taken by hand: `screenshots::regenerate_screenshots`
-(ignored by default) drives the app headlessly with egui_kittest's wgpu renderer against a
-SQLite fixture, and a PostgreSQL data source when `DBDESK_TEST_POSTGRES_URL` is set. See
+Pictures of the UI, including every image in the user manual (`book/`), are rendered, not
+taken by hand: `screenshots::regenerate_screenshots` (ignored by default) drives the app
+headlessly with egui_kittest's wgpu renderer against a SQLite fixture, and a PostgreSQL data
+source when `DBDESK_TEST_POSTGRES_URL` is set. See
 [testing.md](../testing.md#screenshots).

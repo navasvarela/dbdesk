@@ -19,6 +19,16 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all --check
 
+  # The user manual in book/. A broken link to a page or an image fails the build.
+  book:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: mdbook@0.5.4,mdbook-linkcheck2@0.13.0
+      - run: mdbook build book
+
   check:
     strategy:
       fail-fast: false
