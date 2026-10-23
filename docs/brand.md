@@ -29,6 +29,7 @@ gaps, so it works as a single-ink stamp.
 | `assets/brand/icon-*.png` | The app icon at 16–1024 px. The window icon is `icon-256.png`. |
 | `assets/brand/logo-*.png` | The bare mark at 16–512 px. |
 | `assets/brand/dbdesk.icns` | The macOS icon set, for an app bundle. |
+| `assets/brand/social-preview.png` | 1280×640 card for the repository's social preview (GitHub → Settings → General → Social preview). Its text is set in the bundled Inter. |
 
 The PNGs and the `.icns` are generated: edit the SVGs, then run `assets/brand/export.sh`. It
 needs `resvg` 0.48.1 (`cargo install resvg --version 0.48.1 --locked`) and macOS's `iconutil`.
