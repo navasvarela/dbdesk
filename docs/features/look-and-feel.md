@@ -74,7 +74,6 @@ in an ordinary label shows as a missing-glyph box, which is easy to spot.
 
 | Kind | Icon | Colour |
 | --- | --- | --- |
-| PostgreSQL / SQLite data source | database / feather | blue / teal |
 | Database, schema | database, tree | secondary |
 | Folder | folder | warning (amber) |
 | Table, view, materialized view | table, eye, stack | primary |
@@ -82,6 +81,22 @@ in an ordinary label shows as a missing-glyph box, which is easy to spot.
 | Column | columns | weak text |
 | Index, constraint | magnifying list, key | warning |
 | Trigger | lightning | error |
+
+**Data sources show their database's logo** rather than a generic icon: on the explorer row,
+in the New data source menu, on the Welcome tab's console menu and in the data source dialog's
+title. The logos are [Simple Icons](https://simpleicons.org) SVGs (CC0), kept in
+`assets/icons/databases/` with their source, version and the one change made to them, and
+rendered by egui_extras' SVG loader (`resvg`). They are single-colour shapes, filled white and
+tinted per theme by `Palette::driver`: the brand's colour in the light theme, a lighter shade
+of the same hue in the dark one. `theme::tests::database_logos_stand_out_from_what_they_are_drawn_on`
+holds them to WCAG's 3:1 for graphics. Console tabs keep the SQL-file icon in the data source's
+colour, because egui_dock's tab titles are text and can't hold an image.
+
+We chose SVG files over an icon font (a Nerd Font, say): Simple Icons covers the databases
+dbdesk plans to support (MySQL, MariaDB, ClickHouse, DuckDB) under one licence, while Nerd
+Fonts mix icon sets under several licences, cover databases unevenly, and would mean embedding
+a large font for a handful of glyphs. Oracle is the exception: it had its logo removed from
+Simple Icons, so an Oracle driver will need another source.
 
 Loaded folders show how many children they have as a small, weak badge after the label
 (`tables 4`), counting system objects only while they are shown.

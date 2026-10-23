@@ -132,16 +132,11 @@ fn toolbar(ui: &mut Ui, options: &mut ExplorerOptions, actions: &mut Vec<Explore
 /// One entry per driver, each with its icon. Also used by the Welcome tab.
 pub fn new_data_source_menu(ui: &mut Ui, actions: &mut Vec<ExplorerAction>) {
     let palette = Palette::for_visuals(ui.visuals());
+    let logo_size = ui.text_style_height(&TextStyle::Button);
     for driver in DriverKind::ALL {
-        let icon = icons::driver(driver);
-        let text = widgets::icon_text(
-            ui,
-            icon.glyph,
-            icon.role.color(palette),
-            driver.display_name(),
-        );
+        let logo = icons::driver_logo_sized(driver, palette, logo_size);
         let response = widgets::name(
-            ui.button(text),
+            ui.add(egui::Button::image_and_text(logo, driver.display_name())),
             WidgetType::Button,
             driver.display_name(),
             true,
@@ -168,7 +163,12 @@ fn data_source_tree(
         if expander(ui, expanded, &entry.data_source.name).clicked() {
             actions.push(toggle_expansion(id, &root, expanded));
         }
-        ui.label(icons::driver(entry.data_source.config.driver()).rich_text(palette));
+        let logo_size = ui.text_style_height(&TextStyle::Body);
+        ui.add(icons::driver_logo_sized(
+            entry.data_source.config.driver(),
+            palette,
+            logo_size,
+        ));
         let name = ui.add(
             Label::new(&entry.data_source.name)
                 .selectable(false)
