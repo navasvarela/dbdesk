@@ -10,7 +10,7 @@ mod ranking;
 use std::ops::Range;
 
 use dbdesk_core::quote_identifier;
-use dbdesk_sql::{Dialect, Token, TokenKind, builtin_functions, is_keyword, keywords, tokenize};
+use dbdesk_sql::{Dialect, Token, TokenKind, is_keyword, keywords, tokenize};
 
 use context::Context;
 use derived::{DerivedKind, DerivedTable};
@@ -542,7 +542,7 @@ fn function_candidates(input: &CompletionInput<'_>) -> Vec<Candidate> {
         })
         .collect();
     let upper = typed_in_upper_case(prefix);
-    for builtin in builtin_functions(input.dialect) {
+    for builtin in input.dialect.builtin_functions() {
         if found
             .iter()
             .any(|seen| seen.label.eq_ignore_ascii_case(builtin))

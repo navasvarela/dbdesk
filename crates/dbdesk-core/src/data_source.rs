@@ -108,6 +108,15 @@ impl ConnectionConfig {
         }
     }
 
+    /// The database a connection opens, on engines whose catalog has databases above its
+    /// schemas; the explorer lists that database's schemas.
+    pub fn database(&self) -> Option<&str> {
+        match self {
+            Self::Postgres(config) => Some(&config.database),
+            Self::Sqlite(_) => None,
+        }
+    }
+
     /// A name for a data source the user didn't name: `database@host`, or the file name.
     pub fn default_name(&self) -> String {
         match self {

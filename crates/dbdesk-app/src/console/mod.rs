@@ -20,16 +20,13 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use dbdesk_core::{
-    Cell, ColumnInfo, DataSourceId, DriverKind, RelationName, Row, TableDescription,
-    TransactionStatus,
+    Cell, ColumnInfo, DataSourceId, RelationName, Row, TableDescription, TransactionStatus,
 };
 use dbdesk_engine::{
     Command, ConsoleId, EditFailure, Event, Export, RunId, RunOutcome, SessionState,
     StatementFailure, StatementSummary, TransactionEnd, TransactionMode,
 };
-use dbdesk_sql::{
-    Dialect, FormatOptions, explain_prefix, format_ranges, split_statements, statement_at, tokenize,
-};
+use dbdesk_sql::{Dialect, FormatOptions, format_ranges, split_statements, statement_at, tokenize};
 use dbdesk_store::{ConsoleKey, ExportFormat};
 
 use edit::Editability;
@@ -38,13 +35,6 @@ pub use catalog_source::TreeCatalog;
 pub use completion::{Candidate, RecentCompletions};
 pub use problems::LintOptions;
 pub use view::{ConsoleAction, ConsoleContext, show};
-
-pub fn dialect_for(driver: DriverKind) -> Dialect {
-    match driver {
-        DriverKind::Postgres => Dialect::Postgres,
-        DriverKind::Sqlite => Dialect::Sqlite,
-    }
-}
 
 /// One statement sent to the engine, and where it came from in the editor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -700,7 +690,7 @@ impl QueryConsole {
             }
             RunScope::All => submit(0, split_statements(&self.text, self.dialect), &self.text),
             RunScope::Explain => {
-                let prefix = explain_prefix(self.dialect);
+                let prefix = self.dialect.explain_prefix();
                 self.statements_to_run(RunScope::Current)
                     .into_iter()
                     .take(1)

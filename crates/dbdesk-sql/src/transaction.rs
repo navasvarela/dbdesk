@@ -1,4 +1,5 @@
-use crate::lexer::{Dialect, first_word};
+use crate::dialect::Dialect;
+use crate::lexer::first_word;
 
 /// First words of statements that start, end or partly undo a transaction. `prepare` also
 /// starts ordinary prepared statements; treating those as transaction control only costs a

@@ -991,6 +991,7 @@ dependencies = [
 name = "dbdesk-sql"
 version = "0.1.0"
 dependencies = [
+ "dbdesk-core",
  "sqlparser",
 ]
 

@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use dbdesk_core::{
-    CancelHandle, CatalogPath, Connection, DataSource, DataSourceId, DriverKind, RelationName,
+    CancelHandle, CatalogPath, Connection, DataSource, DataSourceId, RelationName,
     TransactionStatus, describe_error,
 };
 use dbdesk_sql::Dialect;
@@ -163,10 +163,7 @@ impl SessionContext {
 
     /// The dialect of the SQL this session runs, for reading statements' first words.
     fn dialect(&self) -> Dialect {
-        match self.data_source.config.driver() {
-            DriverKind::Postgres => Dialect::Postgres,
-            DriverKind::Sqlite => Dialect::Sqlite,
-        }
+        Dialect::from(self.data_source.config.driver())
     }
 
     /// Tells a console about its connection's transaction. The explorer never opens one.

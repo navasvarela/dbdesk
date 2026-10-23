@@ -20,8 +20,9 @@ mod tests;
 use std::fmt;
 use std::ops::Range;
 
+use crate::dialect::Dialect;
 use crate::keywords::is_keyword;
-use crate::lexer::{Dialect, Token, TokenKind, tokenize};
+use crate::lexer::{Token, TokenKind, tokenize};
 
 pub use meaning::same_meaning;
 

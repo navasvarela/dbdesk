@@ -1,13 +1,6 @@
 use std::ops::Range;
 
-/// The SQL flavour, which decides a few lexical rules.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Dialect {
-    /// Dollar-quoted strings (`$body$ … $body$`), nested block comments, `E'…'` strings.
-    Postgres,
-    /// `[bracketed]` and `` `backtick` `` identifiers.
-    Sqlite,
-}
+use crate::dialect::{Dialect, LexicalRules};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenKind {
@@ -46,7 +39,7 @@ pub fn tokenize(sql: &str, dialect: Dialect) -> Vec<Token> {
     let mut lexer = Lexer {
         sql,
         position: 0,
-        dialect,
+        rules: dialect.lexical_rules(),
     };
     let mut tokens = Vec::new();
     while lexer.position < sql.len() {
@@ -73,7 +66,7 @@ pub fn first_word(sql: &str, dialect: Dialect) -> Option<String> {
 struct Lexer<'a> {
     sql: &'a str,
     position: usize,
-    dialect: Dialect,
+    rules: LexicalRules,
 }
 
 impl Lexer<'_> {
@@ -118,27 +111,27 @@ impl Lexer<'_> {
             }
             ('/', Some('*')) => self.block_comment(),
             ('\'', _) => self.quoted('\'', TokenKind::String),
-            ('e' | 'E', Some('\'')) if self.dialect == Dialect::Postgres => {
+            ('e' | 'E', Some('\'')) if self.rules.escape_strings => {
                 self.bump();
                 self.escape_string()
             }
             ('"', _) => self.quoted('"', TokenKind::QuotedIdentifier),
-            ('`', _) if self.dialect == Dialect::Sqlite => {
+            ('`', _) if self.rules.backtick_identifiers => {
                 self.quoted('`', TokenKind::QuotedIdentifier)
             }
-            ('[', _) if self.dialect == Dialect::Sqlite => {
+            ('[', _) if self.rules.bracket_identifiers => {
                 self.bump();
                 self.bump_while(|c| c != ']');
                 self.bump();
                 TokenKind::QuotedIdentifier
             }
-            ('$', _) if self.dialect == Dialect::Postgres => self.dollar(),
+            ('$', _) if self.rules.dollar_quoting => self.dollar(),
             (c, _) if c.is_ascii_digit() => self.number(),
             ('.', Some(c)) if c.is_ascii_digit() => self.number(),
             (c, _) if is_word_start(c) => {
-                let dialect = self.dialect;
+                let rules = self.rules;
                 self.bump();
-                self.bump_while(|c| is_word_part(c, dialect));
+                self.bump_while(|c| is_word_part(c, rules));
                 TokenKind::Word
             }
             (';', _) => {
@@ -152,7 +145,7 @@ impl Lexer<'_> {
         }
     }
 
-    /// `/* … */`. PostgreSQL nests block comments; SQLite ends at the first `*/`.
+    /// `/* … */`, nested or ending at the first `*/` as the dialect has it.
     fn block_comment(&mut self) -> TokenKind {
         self.position += 2;
         let mut depth = 1;
@@ -160,7 +153,7 @@ impl Lexer<'_> {
             if self.rest().starts_with("*/") {
                 self.position += 2;
                 depth -= 1;
-            } else if self.dialect == Dialect::Postgres && self.rest().starts_with("/*") {
+            } else if self.rules.nested_block_comments && self.rest().starts_with("/*") {
                 self.position += 2;
                 depth += 1;
             } else if self.bump().is_none() {
@@ -206,7 +199,7 @@ impl Lexer<'_> {
     /// `$tag$ … $tag$` (dollar quoting) or `$1` (a parameter marker).
     fn dollar(&mut self) -> TokenKind {
         let tag_length = self.rest()[1..]
-            .find(|c: char| !is_word_part(c, Dialect::Sqlite))
+            .find(|c: char| !is_plain_word_part(c))
             .unwrap_or(self.rest().len() - 1);
         let tag = &self.rest()[..tag_length + 1];
         let opens_quote = self.rest()[tag_length + 1..].starts_with('$')
@@ -235,8 +228,13 @@ fn is_word_start(c: char) -> bool {
     c.is_alphabetic() || c == '_'
 }
 
-fn is_word_part(c: char, dialect: Dialect) -> bool {
-    c.is_alphanumeric() || c == '_' || (c == '$' && dialect == Dialect::Postgres)
+fn is_word_part(c: char, rules: LexicalRules) -> bool {
+    is_plain_word_part(c) || (c == '$' && rules.dollar_quoting)
+}
+
+/// A character of an identifier in every dialect; also what a `$tag$` is made of.
+fn is_plain_word_part(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
 }
 
 #[cfg(test)]

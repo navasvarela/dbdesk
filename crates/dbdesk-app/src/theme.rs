@@ -9,6 +9,8 @@ use dbdesk_core::{DriverKind, SourceColor};
 use egui::style::{Selection, WidgetVisuals, Widgets};
 use egui::{Color32, CornerRadius, Margin, Shadow, Stroke, Style, Theme, Visuals};
 
+use crate::database_brand;
+
 /// The gap between panels, which turns each panel into a separate rounded "island".
 const ISLAND_GAP: f32 = 6.0;
 const ISLAND_RADIUS: u8 = 10;
@@ -125,17 +127,14 @@ impl Palette {
 }
 
 impl Palette {
-    /// The colour of a database's logo in this theme: the brand's own colour in the light
-    /// theme (from Simple Icons, see `assets/icons/databases/README.md`), and a lighter shade
-    /// of the same hue in the dark one, where the brand colour would be too dark to see.
+    /// The colour of a database's logo in this theme.
     pub fn driver(&self, driver: DriverKind) -> Color32 {
-        let dark = *self == Self::DARK;
-        let (light, dark_shade) = match driver {
-            DriverKind::Postgres => ((0x41, 0x69, 0xE1), (0x7F, 0xA2, 0xF5)),
-            DriverKind::Sqlite => ((0x00, 0x3B, 0x57), (0x5A, 0xB0, 0xE0)),
-        };
-        let (r, g, b) = if dark { dark_shade } else { light };
-        Color32::from_rgb(r, g, b)
+        let brand = database_brand::of(driver);
+        if *self == Self::DARK {
+            brand.dark
+        } else {
+            brand.light
+        }
     }
 }
 

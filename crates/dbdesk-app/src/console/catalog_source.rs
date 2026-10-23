@@ -2,6 +2,7 @@
 //! loaded.
 
 use dbdesk_core::{CatalogNode, CatalogPath, ConnectionConfig, FolderKind, NodeKind};
+use dbdesk_sql::Dialect;
 
 use super::completion::{CatalogSource, ColumnEntry, FunctionEntry, TableEntry, TableRef};
 use crate::catalog_tree::{CatalogTree, Children};
@@ -39,17 +40,14 @@ pub struct TreeCatalog<'a> {
 
 impl<'a> TreeCatalog<'a> {
     pub fn new(tree: &'a CatalogTree, config: &ConnectionConfig) -> Self {
-        match config {
-            ConnectionConfig::Postgres(postgres) => Self {
-                tree,
-                schemas_parent: CatalogPath::root().child(NodeKind::Database, &postgres.database),
-                default_schema: "public",
-            },
-            ConnectionConfig::Sqlite(_) => Self {
-                tree,
-                schemas_parent: CatalogPath::root(),
-                default_schema: "main",
-            },
+        let schemas_parent = match config.database() {
+            Some(database) => CatalogPath::root().child(NodeKind::Database, database),
+            None => CatalogPath::root(),
+        };
+        Self {
+            tree,
+            schemas_parent,
+            default_schema: Dialect::from(config.driver()).default_schema(),
         }
     }
 

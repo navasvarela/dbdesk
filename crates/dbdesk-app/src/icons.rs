@@ -7,8 +7,8 @@ use dbdesk_core::{DriverKind, NodeKind, SourceColor};
 use egui::{Color32, Image, RichText, Vec2};
 use egui_phosphor::regular as glyph;
 
-use crate::fonts;
 use crate::theme::Palette;
+use crate::{database_brand, fonts};
 
 pub use egui_phosphor::regular::{
     ARROWS_CLOCKWISE, BOOK_OPEN, CARET_DOWN, CARET_RIGHT, CHECK_CIRCLE, CLOCK_COUNTER_CLOCKWISE,
@@ -62,21 +62,11 @@ impl Icon {
     }
 }
 
-/// A database's logo, tinted for the current theme. The SVGs are Simple Icons; see
-/// `assets/icons/databases/README.md` for where they come from and how to add one. Needs
-/// egui_extras' image loaders, installed at start-up.
+/// A database's logo, tinted for the current theme. Needs egui_extras' image loaders,
+/// installed at start-up.
 pub fn driver_logo(driver: DriverKind, palette: &Palette) -> Image<'static> {
-    let (uri, svg): (&str, &'static [u8]) = match driver {
-        DriverKind::Postgres => (
-            "bytes://logos/postgresql.svg",
-            include_bytes!("../../../assets/icons/databases/postgresql.svg"),
-        ),
-        DriverKind::Sqlite => (
-            "bytes://logos/sqlite.svg",
-            include_bytes!("../../../assets/icons/databases/sqlite.svg"),
-        ),
-    };
-    Image::from_bytes(uri, svg).tint(palette.driver(driver))
+    let brand = database_brand::of(driver);
+    Image::from_bytes(brand.logo_uri, brand.logo_svg).tint(palette.driver(driver))
 }
 
 /// A database's logo at `size` points square, the size of the text it sits beside.

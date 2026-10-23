@@ -9,6 +9,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+dbdesk-core.workspace = true
 sqlparser.workspace = true
 
 [lints]
