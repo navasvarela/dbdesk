@@ -4,7 +4,8 @@
 
 dbdesk is a desktop tool for browsing and querying databases, in the spirit of JetBrains
 DataGrip. It connects to **PostgreSQL** and **SQLite**, shows what is inside them as a tree, and
-gives you query consoles to run SQL and page through the results.
+gives you query consoles to write and run SQL, page through, sort and export the results, and
+edit rows.
 
 ![dbdesk with the explorer, a query console and the log console](images/workspace.png)
 

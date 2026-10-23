@@ -64,6 +64,12 @@ The engine is the part of dbdesk that talks to databases. If it stops, nothing c
 run, and the reason is in the log console and the log file. Restart dbdesk; if it happens
 again, please report it with the day's log file.
 
+## "keymap.toml: N problems" in the status bar
+
+Some lines of `keymap.toml` couldn't be used: an unknown action, a shortcut that can't be read,
+or a shortcut two actions share. Click the message to open **View → Keymap…**, which lists each
+problem; fix the file and click **Reload**. Everything else in the file still applies.
+
 ## The panels are in a mess
 
 **View → Reset layout** puts every panel back where it started. If you closed the Welcome tab,

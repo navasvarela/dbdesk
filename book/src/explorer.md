@@ -59,6 +59,9 @@ Right-click an object for what you can do with it:
 | **Show definition** | Objects whose source the database keeps (see below) | Opens the source in a window. |
 | **Refresh** | Anything with children | Reloads the node's children and collapses everything below it. |
 
+A data source's own menu (Connect, New query console, Open saved console, Edit, Delete and so
+on) is described in [Data sources](data-sources.md#editing-connecting-and-deleting).
+
 ## Definitions
 
 **Show definition** opens a window with the object's SQL, which you can select and copy with

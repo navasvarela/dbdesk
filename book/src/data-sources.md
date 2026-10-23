@@ -79,8 +79,9 @@ Right-click a data source in the explorer for:
 | **Connect** / **Disconnect** | Opens or closes the explorer's connection. Expanding a data source also connects it. |
 | **Refresh** | Reloads everything under the data source (while connected). |
 | **New query console** | Opens a console on this data source. See [Query consoles](consoles.md). |
+| **Open saved console** | Reopens a console you closed, by its file name. Shown when there are any. |
 | **Edit…** | Opens the dialog with the saved settings. |
-| **Delete…** | Asks for confirmation, then removes the data source, closes its consoles and deletes its saved password. |
+| **Delete…** | Asks for confirmation, then removes the data source and deletes its saved password. |
 
 Hover over a data source to see its driver, where it connects to and its connection state. The
 dot after its name shows the state of the explorer's connection: amber while connecting, green
