@@ -8,8 +8,12 @@
 use std::time::{Duration, Instant};
 
 use dbdesk_core::{CancelHandle, DriverError, ResultCursor, describe_error};
+use dbdesk_store::{HistoryEntry, HistoryOutcome};
+use jiff::Timestamp;
 
-use super::{Disconnected, SessionContext, Worker, cancel_running_statement};
+use dbdesk_sql::controls_transactions;
+
+use super::{Disconnected, Script, SessionContext, Worker, cancel_running_statement, transaction};
 use crate::{Event, RunId, RunOutcome, StatementFailure, StatementSummary};
 
 /// Rows per page: DataGrip's default. Plenty to look at, few enough to arrive at once.
@@ -17,13 +21,27 @@ const PAGE_SIZE: usize = 500;
 /// How much of a statement the log console shows.
 const LOG_PREVIEW_CHARS: usize = 80;
 
+/// Which statement of which run an event or history entry is about.
+#[derive(Debug, Clone)]
+struct StatementRef {
+    run: RunId,
+    index: usize,
+    sql: String,
+    started_at: Timestamp,
+}
+
 /// A statement with rows still unread, holding its connection until finished.
 pub(super) struct Parked {
-    pub(super) run: RunId,
-    statement: usize,
+    statement: StatementRef,
     cursor: Box<dyn ResultCursor>,
     /// Time until the first page arrived, reported as the statement's duration.
     elapsed: Duration,
+}
+
+impl Parked {
+    pub(super) fn run(&self) -> RunId {
+        self.statement.run
+    }
 }
 
 enum StatementEnd {
@@ -34,21 +52,42 @@ enum StatementEnd {
 
 pub(super) async fn run_script(
     worker: &mut Worker<'_>,
-    run: RunId,
-    statements: &[String],
+    script: &Script,
 ) -> Result<Option<Parked>, Disconnected> {
+    let run = script.run;
     let started = Instant::now();
-    let last = statements.len().saturating_sub(1);
+    let last = script.statements.len().saturating_sub(1);
     let mut outcome = RunOutcome::Completed;
     let mut parked = None;
-    for (index, sql) in statements.iter().enumerate() {
+    for (index, sql) in script.statements.iter().enumerate() {
         // A cancel that arrives between statements stops the script before the next one.
         if worker.signals.is_cancelled(run) {
             outcome = RunOutcome::Cancelled;
             break;
         }
+        let statement = StatementRef {
+            run,
+            index,
+            sql: sql.clone(),
+            started_at: Timestamp::now(),
+        };
+        if let Err(error) =
+            transaction::begin_if_needed(worker, script.transactions, run, sql).await?
+        {
+            report_failure(worker, &statement, Duration::ZERO, &error);
+            outcome = RunOutcome::Failed;
+            break;
+        }
         tracing::info!(data_source = %worker.context.name(), "running {}", preview(sql));
-        match run_statement(worker, run, index, sql, index == last).await? {
+        let end = run_statement(worker, statement, index == last).await?;
+        // A parked statement still holds the connection, so it can't be asked. Only the last
+        // statement parks, and one that returns rows hardly ever controls transactions.
+        let failed = matches!(end, StatementEnd::Failed);
+        let controls = controls_transactions(sql, worker.context.dialect());
+        if (failed || controls) && !matches!(end, StatementEnd::Parked(_)) {
+            transaction::refresh(worker).await?;
+        }
+        match end {
             StatementEnd::Completed => {}
             StatementEnd::Parked(statement) => parked = Some(statement),
             StatementEnd::Failed if worker.signals.is_cancelled(run) => {
@@ -71,13 +110,12 @@ pub(super) async fn run_script(
 
 async fn run_statement(
     worker: &mut Worker<'_>,
-    run: RunId,
-    index: usize,
-    sql: &str,
+    statement: StatementRef,
     is_last: bool,
 ) -> Result<StatementEnd, Disconnected> {
+    let run = statement.run;
     let started = Instant::now();
-    let execute = worker.connection.execute(sql);
+    let execute = worker.connection.execute(&statement.sql);
     let mut cursor = match worker
         .signals
         .guard(execute, Some(run), worker.cancel_handle)
@@ -85,17 +123,17 @@ async fn run_statement(
     {
         Ok(cursor) => cursor,
         Err(error) => {
-            report_failure(worker.context, run, index, &error);
+            report_failure(worker, &statement, started.elapsed(), &error);
             return Ok(StatementEnd::Failed);
         }
     };
     if cursor.columns().is_empty() {
-        return finish(worker, run, index, cursor, started, None).await;
+        return finish(worker, statement, cursor, started, None).await;
     }
 
     worker.context.send(Event::StatementStarted {
         run,
-        statement: index,
+        statement: statement.index,
         columns: cursor.columns().to_vec(),
     });
     let page = cursor.next_page(PAGE_SIZE);
@@ -108,7 +146,7 @@ async fn run_statement(
         Err(error) => {
             // The statement already failed; whatever finishing reports adds nothing.
             let _ = cursor.finish().await;
-            report_failure(worker.context, run, index, &error);
+            report_failure(worker, &statement, started.elapsed(), &error);
             return Ok(StatementEnd::Failed);
         }
     };
@@ -116,27 +154,25 @@ async fn run_statement(
     let more = !cursor.is_exhausted();
     worker.context.send(Event::RowsFetched {
         run,
-        statement: index,
+        statement: statement.index,
         rows,
         more: more && is_last,
     });
     if more && is_last {
         return Ok(StatementEnd::Parked(Parked {
-            run,
-            statement: index,
+            statement,
             cursor,
             elapsed,
         }));
     }
-    finish(worker, run, index, cursor, started, Some(elapsed)).await
+    finish(worker, statement, cursor, started, Some(elapsed)).await
 }
 
 /// Ends a statement and reports it. If rows were left unread, the server is asked to stop
 /// producing them first, and the error that cancel causes is expected rather than reported.
 async fn finish(
     worker: &mut Worker<'_>,
-    run: RunId,
-    index: usize,
+    statement: StatementRef,
     cursor: Box<dyn ResultCursor>,
     started: Instant,
     first_page: Option<Duration>,
@@ -147,19 +183,26 @@ async fn finish(
     }
     let finished = worker
         .signals
-        .guard(cursor.finish(), Some(run), worker.cancel_handle)
+        .guard(cursor.finish(), Some(statement.run), worker.cancel_handle)
         .await?;
     let elapsed = first_page.unwrap_or_else(|| started.elapsed());
-    match finished {
-        Ok(rows_changed) => {
-            report_success(worker.context, run, index, rows_changed, elapsed, truncated)
-        }
-        Err(_) if truncated => report_success(worker.context, run, index, None, elapsed, true),
+    let rows_changed = match finished {
+        Ok(rows_changed) => rows_changed,
+        Err(_) if truncated => None,
         Err(error) => {
-            report_failure(worker.context, run, index, &error);
+            report_failure(worker, &statement, elapsed, &error);
             return Ok(StatementEnd::Failed);
         }
-    }
+    };
+    report_success(
+        worker.context,
+        &statement,
+        StatementSummary {
+            rows_changed,
+            elapsed,
+            truncated,
+        },
+    );
     Ok(StatementEnd::Completed)
 }
 
@@ -168,11 +211,11 @@ pub(super) async fn fetch_more(
     parked: Parked,
 ) -> Result<Option<Parked>, Disconnected> {
     let Parked {
-        run,
         statement,
         mut cursor,
         elapsed,
     } = parked;
+    let run = statement.run;
     let page = cursor.next_page(PAGE_SIZE);
     let rows = match worker
         .signals
@@ -182,20 +225,19 @@ pub(super) async fn fetch_more(
         Ok(rows) => rows,
         Err(error) => {
             let _ = cursor.finish().await;
-            report_failure(worker.context, run, statement, &error);
+            report_failure(worker, &statement, elapsed, &error);
             return Ok(None);
         }
     };
     let more = !cursor.is_exhausted();
     worker.context.send(Event::RowsFetched {
         run,
-        statement,
+        statement: statement.index,
         rows,
         more,
     });
     if more {
         return Ok(Some(Parked {
-            run,
             statement,
             cursor,
             elapsed,
@@ -206,10 +248,16 @@ pub(super) async fn fetch_more(
         .guard(cursor.finish(), Some(run), worker.cancel_handle)
         .await?;
     match finished {
-        Ok(rows_changed) => {
-            report_success(worker.context, run, statement, rows_changed, elapsed, false)
-        }
-        Err(error) => report_failure(worker.context, run, statement, &error),
+        Ok(rows_changed) => report_success(
+            worker.context,
+            &statement,
+            StatementSummary {
+                rows_changed,
+                elapsed,
+                truncated: false,
+            },
+        ),
+        Err(error) => report_failure(worker, &statement, elapsed, &error),
     }
     Ok(None)
 }
@@ -226,54 +274,80 @@ pub(super) async fn discard(
     let _ = parked.cursor.finish().await;
     report_success(
         context,
-        parked.run,
-        parked.statement,
-        None,
-        parked.elapsed,
-        true,
+        &parked.statement,
+        StatementSummary {
+            rows_changed: None,
+            elapsed: parked.elapsed,
+            truncated: true,
+        },
     );
 }
 
-fn report_success(
-    context: &SessionContext,
-    run: RunId,
-    statement: usize,
-    rows_changed: Option<u64>,
-    elapsed: Duration,
-    truncated: bool,
-) {
+fn report_success(context: &SessionContext, statement: &StatementRef, summary: StatementSummary) {
     tracing::info!(
         data_source = %context.name(),
-        elapsed_ms = elapsed.as_millis(),
-        rows = rows_changed,
-        truncated,
+        elapsed_ms = summary.elapsed.as_millis(),
+        rows = summary.rows_changed,
+        truncated = summary.truncated,
         "statement {} finished",
-        statement + 1
+        statement.index + 1
     );
-    context.send(Event::StatementFinished {
-        run,
+    context.record(history_entry(
+        context,
         statement,
-        result: Ok(StatementSummary {
-            rows_changed,
-            elapsed,
-            truncated,
-        }),
+        summary.elapsed,
+        summary.rows_changed,
+        HistoryOutcome::Ok,
+    ));
+    context.send(Event::StatementFinished {
+        run: statement.run,
+        statement: statement.index,
+        result: Ok(summary),
     });
 }
 
-fn report_failure(context: &SessionContext, run: RunId, statement: usize, error: &DriverError) {
+fn report_failure(
+    worker: &Worker<'_>,
+    statement: &StatementRef,
+    elapsed: Duration,
+    error: &DriverError,
+) {
+    let context = worker.context;
     let (message, position) = match error {
         // The outer "the statement failed" adds nothing in a console that shows the result
         // of each statement; the database's own message is what matters.
         DriverError::Statement { source, position } => (describe_error(source.as_ref()), *position),
         other => (describe_error(other), None),
     };
-    tracing::warn!(data_source = %context.name(), "statement {} failed: {message}", statement + 1);
+    tracing::warn!(data_source = %context.name(), "statement {} failed: {message}", statement.index + 1);
+    let outcome = if worker.signals.is_cancelled(statement.run) {
+        HistoryOutcome::Cancelled
+    } else {
+        HistoryOutcome::Error
+    };
+    context.record(history_entry(context, statement, elapsed, None, outcome));
     context.send(Event::StatementFinished {
-        run,
-        statement,
+        run: statement.run,
+        statement: statement.index,
         result: Err(StatementFailure { message, position }),
     });
+}
+
+fn history_entry(
+    context: &SessionContext,
+    statement: &StatementRef,
+    elapsed: Duration,
+    rows: Option<u64>,
+    outcome: HistoryOutcome,
+) -> HistoryEntry {
+    HistoryEntry {
+        data_source: context.data_source.id,
+        executed_at: statement.started_at,
+        sql: statement.sql.clone(),
+        duration: Some(elapsed),
+        rows,
+        outcome,
+    }
 }
 
 /// The statement's first line, shortened for the log.

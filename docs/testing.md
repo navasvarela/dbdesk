@@ -22,6 +22,14 @@ Implemented:
   endless recursive CTE) stops within 10 s of a cancel from another task, and the connection
   stays usable.
 
+- `check_transactions` (M4): `transaction_status` follows `BEGIN`, `COMMIT` and `ROLLBACK`,
+  committed rows stay and rolled-back ones don't, and a failure inside a transaction leaves it
+  open (failed, on PostgreSQL) until it is rolled back.
+
+- `check_describe_table` (M5): an unquoted name resolves ignoring case, columns come in table
+  order and the primary key in key order, a keyless table has an empty key, and views and
+  missing tables are `None`.
+
 Races hide in cancellation, so after changing it, run the cancel tests in a loop. A one-off
 pass proved nothing in M3: the console's cancel test hung 2 runs in 5 before its fix.
 
@@ -39,8 +47,10 @@ well under the sleep time.
 ## Engine
 
 The engine is tested headless (`dbdesk-engine/tests/engine.rs` and `console.rs`, sharing
-`tests/common`): send `Command`s, collect `Event`s, assert on the sequence. It uses a temp directory for `data_sources.toml` and an
-in-memory `SecretStore`. Planned: a fake driver (in-memory, scripted responses) covers ordering cases that are hard to trigger
+`tests/common`): send `Command`s, collect `Event`s, assert on the sequence. It uses a temp
+directory for `data_sources.toml`, console files, `history.sqlite` and exports, and an
+in-memory `SecretStore`. Tests that need PostgreSQL (a commit of a failed transaction, say)
+skip without `DBDESK_TEST_POSTGRES_URL`, like the driver tests. Planned: a fake driver (in-memory, scripted responses) covers ordering cases that are hard to trigger
 against a real server, such as a cancel arriving after the last row.
 
 ## UI
@@ -48,6 +58,13 @@ against a real server, such as a cancel arriving after the last row.
 - `AppState` reducers (applying an `Event` to state) are pure functions with plain unit tests.
 - Widgets get smoke tests through `egui_kittest`, which drives egui headlessly and supports
   snapshot images. Used sparingly, for the result grid and explorer tree.
+
+Hard-learned from the M4 UI tests: `egui_kittest` clicks at the centre of a widget's last
+known rectangle, in an 800×600 window. A widget laid out off-screen, or covered by another one
+that egui hit-tests first, simply doesn't get the click, and the test only notices when the
+expected effect never happens. When a click seems ignored, print the widget's rect and egui's
+`interaction_snapshot` before suspecting the code under test. Modals are measured on their
+first frame and placed on the next, so run a frame before clicking inside one.
 
 ## CI
 

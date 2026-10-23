@@ -27,4 +27,19 @@ impl AppPaths {
     pub fn data_sources_file(&self) -> PathBuf {
         self.dirs.config_dir().join("data_sources.toml")
     }
+
+    /// Query console files, one folder per data source. Not guaranteed to exist yet.
+    pub fn consoles_dir(&self) -> PathBuf {
+        self.dirs.config_dir().join("consoles")
+    }
+
+    /// Key bindings, if the user wrote any. Not guaranteed to exist.
+    pub fn keymap_file(&self) -> PathBuf {
+        self.dirs.config_dir().join("keymap.toml")
+    }
+
+    /// The query history database. Not guaranteed to exist yet.
+    pub fn history_file(&self) -> PathBuf {
+        self.dirs.config_dir().join("history.sqlite")
+    }
 }

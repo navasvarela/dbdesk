@@ -21,7 +21,9 @@ egui.workspace = true
 egui_dock.workspace = true
 egui_extras.workspace = true
 jiff.workspace = true
+rfd.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tracing-appender.workspace = true
@@ -31,6 +33,7 @@ tracing-subscriber.workspace = true
 egui_kittest = { workspace = true, features = ["eframe"] }
 rusqlite.workspace = true
 tempfile.workspace = true
+toml.workspace = true
 
 [lints]
 workspace = true

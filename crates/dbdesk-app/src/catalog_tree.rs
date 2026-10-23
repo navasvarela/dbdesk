@@ -42,6 +42,26 @@ impl CatalogTree {
         }
     }
 
+    /// Asks for `path`'s children without expanding it, as completion does to fill the cache.
+    /// Returns `true` if they must be requested: nobody has asked for them before. A failed
+    /// load isn't retried here; expanding the node in the explorer retries it.
+    #[must_use]
+    pub fn request(&mut self, path: &CatalogPath) -> bool {
+        if self.children.contains_key(path) {
+            return false;
+        }
+        self.children.insert(path.clone(), Children::Loading);
+        true
+    }
+
+    /// The children of `path`, if they have been loaded.
+    pub fn loaded_children(&self, path: &CatalogPath) -> Option<&[CatalogNode]> {
+        match self.children.get(path)? {
+            Children::Loaded(nodes) => Some(nodes),
+            Children::Loading | Children::Failed(_) => None,
+        }
+    }
+
     pub fn collapse(&mut self, path: &CatalogPath) {
         self.expanded.remove(path);
     }
@@ -140,5 +160,20 @@ mod tests {
         tree.loaded(&root, &Ok(vec![schema_node("main")]));
 
         assert_eq!(tree.children(&root), None);
+    }
+
+    #[test]
+    fn requests_children_for_completion_once_without_expanding() {
+        let mut tree = CatalogTree::default();
+        let root = CatalogPath::root();
+
+        assert!(tree.request(&root));
+        assert!(!tree.request(&root));
+        assert!(!tree.is_expanded(&root));
+        assert_eq!(tree.loaded_children(&root), None);
+        tree.loaded(&root, &Ok(vec![schema_node("main")]));
+
+        assert_eq!(tree.loaded_children(&root).map(<[_]>::len), Some(1));
+        assert!(!tree.expand(&root), "already loaded");
     }
 }

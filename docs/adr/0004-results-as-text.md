@@ -36,6 +36,10 @@ Results are text:
 - Sorting, filtering or editing by type will need typed values. When editing data arrives
   (M5), those features can use the extended protocol for the rows they edit, without changing
   how results are displayed.
+  - *M5 update*: editing didn't need it. Edited values go back as string literals in
+    generated `UPDATE`s, which PostgreSQL converts to the column's type and SQLite stores by
+    affinity, so text in, text out holds. Client-side sorting compares numbers by value when
+    both cells look numeric.
 
 ## Alternatives considered
 
