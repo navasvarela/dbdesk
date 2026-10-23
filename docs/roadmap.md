@@ -201,6 +201,19 @@ The original candidates:
 - Editing data in the grid.
 - MySQL driver; a driver for the `db-data-structures` engine.
 
+## Release track
+
+Downloads that install like any other desktop app, instead of building from source. The full
+plan, including the decisions it needs first, is in [Releasing](releasing.md).
+
+- **R1 — First downloadable build:** unsigned macOS (universal `.dmg`) and Linux (AppImage,
+  `.deb`) builds attached to a draft GitHub release by a tag-triggered workflow; Windows in CI,
+  its installer attached once tried on a real machine. Also `--version`, the MIT OR Apache-2.0
+  licence files, and the Install chapter rewritten.
+- **R2 — Trusted installs:** macOS signing and notarization, Windows signing, a Homebrew cask,
+  generated release notes.
+- **R3 — Updates:** an in-app update notice, then automatic updates.
+
 ## Design and documentation track
 
 Runs alongside the feature milestones rather than after them: each item is usable on its own.

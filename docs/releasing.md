@@ -1,0 +1,180 @@
+# Release binaries
+
+Status: **planned**, decisions settled on 2026-10-23 (see [Decisions](#decisions)). Nothing
+here is built yet.
+
+Today the only way to run dbdesk is to install Rust and build it from source (see the manual's
+[Install](../book/src/install.md) chapter). That is fine for its author and a wall for anyone
+else. This plan replaces it with downloads that install like any other desktop app.
+
+## What users get
+
+| Platform | Download | Installs with |
+| --- | --- | --- |
+| macOS 11+, Apple silicon and Intel | `dbdesk-<version>.dmg`, one universal app | Drag to Applications, or `brew install --cask navasvarela/tap/dbdesk` |
+| Linux x86_64 | `dbdesk-<version>-x86_64.AppImage` | Download, `chmod +x`, run; works on most distributions |
+| Linux x86_64, Debian/Ubuntu | `dbdesk_<version>_amd64.deb` | `sudo apt install ./dbdesk_<version>_amd64.deb` |
+| Windows 10+ x86_64 | `dbdesk-<version>-setup.exe` | Run the installer |
+
+Every release also has `SHA256SUMS`, and release notes generated from the Conventional Commits
+since the previous release. ARM Linux and ARM Windows wait until someone asks.
+
+## Pipeline
+
+Pushing a tag `vX.Y.Z` on `main` runs `.github/workflows/release.yml`:
+
+```mermaid
+flowchart LR
+    T[tag vX.Y.Z] --> V[verify: tag = version,<br/>full CI incl. Postgres]
+    V --> M[macOS: build arm64 + x86_64,<br/>lipo, .app, .dmg]
+    V --> L[Linux: build on Ubuntu 22.04,<br/>AppImage + .deb]
+    V --> W[Windows: build,<br/>NSIS installer]
+    M --> S[sign + notarize<br/>when secrets exist]
+    W --> S2[sign when<br/>secrets exist]
+    S --> K[smoke test:<br/>dbdesk --version]
+    L --> K
+    S2 --> K
+    K --> R[draft GitHub release:<br/>artifacts, SHA256SUMS, notes]
+    R --> P[human publishes]
+    P --> H[bump Homebrew cask]
+```
+
+1. **Verify.** The tag must match the workspace version in `Cargo.toml`, and the full CI suite
+   runs again, Postgres tests included. A tag on a commit that fails CI produces nothing.
+2. **Build.**
+   - **macOS** on an Apple-silicon runner: `aarch64-apple-darwin` and `x86_64-apple-darwin`
+     binaries, joined into a universal binary with `lipo`. One download, no "which Mac do I
+     have?" question.
+   - **Linux** on `ubuntu-22.04`, the oldest supported runner: binaries link against the glibc
+     they're built with, so building old keeps the AppImage running on older distributions.
+   - **Windows** on `windows-2022`.
+3. **Package** with `cargo-packager`, configured under `[package.metadata.packager]` in
+   `crates/dbdesk-app/Cargo.toml`: the `.app` bundle and `.dmg`, the AppImage and `.deb`, and an
+   NSIS installer. The bundle uses the existing `assets/brand/dbdesk.icns` and icon PNGs.
+4. **Sign** when the signing secrets are configured, and skip with a note in the release
+   otherwise. macOS: Developer ID signing, then notarization with `notarytool` and stapling.
+   Windows: Authenticode.
+5. **Smoke test** every packaged artifact on its own runner by starting the binary inside it
+   with `--version`, a new flag that prints the version and exits before opening a window. It
+   catches broken bundles, missing libraries and a binary that won't start, cheaply.
+6. **Draft a GitHub release** with the artifacts, `SHA256SUMS` and the notes. A person looks at
+   the draft and publishes it, so a release never goes out unseen.
+7. **After publishing,** a second job updates the Homebrew cask (version and checksum) in the
+   tap repository.
+
+## Tooling
+
+| Need | Choice | Why |
+| --- | --- | --- |
+| Bundles and installers | [`cargo-packager`](https://github.com/crabnebula-dev/cargo-packager) | Built for desktop apps: `.app`, `.dmg`, AppImage, `.deb`, NSIS and WiX from one config, plus an updater for later. |
+| Release notes, `CHANGELOG.md` | [`git-cliff`](https://git-cliff.org) | Groups Conventional Commits (`feat`, `fix`, breaking `!`) into readable notes, which `CONTRIBUTING.md` already requires. |
+| Third-party licences | [`cargo-about`](https://github.com/EmbarkStudios/cargo-about) | Generates the licence notices of every dependency to ship with the app; the bundled fonts' OFL and Inter licences are added alongside. |
+| Dependency inventory | [`cargo-auditable`](https://github.com/rust-secure-code/cargo-auditable) | Embeds the dependency list in the binary, so `cargo audit bin` can check a released build for vulnerable crates later. |
+
+**Why not `dist` (cargo-dist):** it is excellent for command-line tools (shell and PowerShell
+installers, Homebrew formulas, MSI), but it doesn't build `.app` bundles or DMGs, which a Mac
+GUI app needs. **Why not hand-written scripts:** `.app` layout, `Info.plist`, DMG building,
+AppImage and NSIS are each a small project; `cargo-packager` already does all of them.
+
+## Release build
+
+```toml
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+```
+
+Measured before and after in the PR that adds it: binary size and start-up time. Symbols are
+stripped from what ships; crash reports can come later with separately uploaded debug info if
+they are ever needed.
+
+## Platform details
+
+**macOS**
+- **Bundle settings:** id `io.github.navasvarela.dbdesk`, minimum macOS 11. The bundle sets
+  `NSHighResolutionCapable`, and the menu bar shows "dbdesk", not the binary name.
+- **Gatekeeper:** it blocks unsigned apps downloaded from the internet. Without signing, users
+  have to approve dbdesk in System Settings › Privacy & Security after the first failed launch.
+- **Keychain:** passwords live in the Keychain, and macOS ties "Always Allow" to the app's code
+  signature. An unsigned (ad-hoc signed) build gets a new signature on every release, so after
+  each update the user is asked again for every saved password. A Developer ID signature stays
+  the same across releases, and the prompts happen once.
+
+**Linux**
+- **Passwords:** stored through the Secret Service (GNOME Keyring, KWallet). Desktop
+  distributions run one; minimal window managers may not, and the manual's troubleshooting
+  chapter will say how to start one.
+- **System libraries:** the app needs `libxkbcommon`, Wayland or X11, and OpenGL from the
+  system, all present on desktop distributions. No OpenSSL: TLS, when it comes, should use
+  `rustls` so there is nothing to link.
+- **Desktop integration:** the `.deb` and the AppImage include a `.desktop` file and icons, so
+  dbdesk appears in the application menu.
+
+**Windows**
+- **Untested.** dbdesk has never been built or run on Windows. Before it can ship there, CI
+  needs a Windows job running the test suite (the Postgres tests skip there, as on macOS).
+- **Passwords:** go to the Windows Credential Manager through the same `keyring` crate.
+- **SmartScreen:** it warns about unsigned installers ("Windows protected your PC") until a
+  signature builds reputation.
+
+## Prerequisites in the app
+
+- **`--version`:** a flag that prints `dbdesk <version> (<commit>)` and exits, for the smoke
+  test and for bug reports. The same text goes in a Help › About dialog.
+- **Licence files, first.** The repository is public but has none yet, and without one nobody
+  may legally use, copy or redistribute the code or the binaries: MIT OR Apache-2.0 (see
+  [Decisions](#decisions)).
+- **A Windows CI job** (above).
+- **The manual's Install chapter,** rewritten around the downloads, with "build from source"
+  kept as a section for contributors.
+
+## Versioning
+
+- SemVer from the workspace `version`, starting at **0.1.0**: M0–M5 and the D1–D3 design work.
+- While in 0.x, a breaking change to a saved file (the `!` commits in `CONTRIBUTING.md`) bumps
+  the minor version and is called out first in the release notes; anything else bumps the patch.
+- Releasing is done by a person: bump the version in a `build: release 0.x.y` PR, which also
+  updates `CHANGELOG.md` from `git-cliff`, merge it, then tag the merge commit.
+
+## Milestones
+
+### R1 — First downloadable build
+
+- `--version`, the About dialog, the release profile, `LICENSE`, third-party notices.
+- A Windows CI job.
+- `release.yml` producing **unsigned** macOS and Linux artifacts as a draft release, with
+  smoke tests and `SHA256SUMS`. It builds the Windows installer too, but attaches it only once
+  it has been tried on a real Windows machine.
+- The Install chapter rewritten.
+
+**Exit:** someone with a clean Mac and a clean Linux machine, who doesn't have Rust installed,
+installs dbdesk from the release page and opens a SQLite file.
+
+### R2 — Trusted installs
+
+- macOS Developer ID signing and notarization, Windows signing, and the Homebrew cask in a tap.
+- Release notes and `CHANGELOG.md` from `git-cliff`.
+
+**Exit:** installing shows no Gatekeeper or SmartScreen warning, and an update doesn't
+re-prompt for Keychain access.
+
+### R3 — Updates
+
+- An in-app "a new version is available" notice, then the `cargo-packager` updater, which
+  checks a signed `latest.json` on the releases page.
+
+**Exit:** a user on an older version is offered the new one and updates without visiting
+GitHub.
+
+## Decisions
+
+Settled on 2026-10-23:
+
+| Question | Decision | Consequence |
+| --- | --- | --- |
+| Where the downloads live | **A public repository.** It was made public on 2026-10-23. | Releases, the Homebrew tap and the D4 website all work on GitHub's free plan. It went public before the licence files existed, so adding them is R1's first and most urgent step: until then the code is visible but nobody may use it. |
+| Licence | **MIT OR Apache-2.0**, the Rust ecosystem's usual pair. | `LICENSE-MIT` and `LICENSE-APACHE` at the root, `license = "MIT OR Apache-2.0"` in the workspace manifest, and the README says so. Bundled fonts keep their own licences (OFL for JetBrains Mono, Inter's licence). |
+| macOS signing | **Unsigned in R1, signed and notarized in R2.** | R1's release notes and Install chapter explain how to open an unsigned app, and warn that updates re-ask for saved passwords. Enrol in the Apple Developer Program ($99 a year) before R2. |
+| Windows | **CI job now, installer once tried on a real machine.** | R1 adds Windows to CI and the release workflow builds the installer, but it is attached to releases only after someone has run it on Windows. Signing (around $10 a month) is decided then. |
+| Homebrew | Not asked yet; planned for R2. | `navasvarela/homebrew-tap`, once the repository is public. |

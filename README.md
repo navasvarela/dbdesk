@@ -77,5 +77,6 @@ UI: **egui** (via `eframe`) with **egui_dock** for dockable panels.
 | [Brand](docs/brand.md) | The logo, its files, and the colour palette |
 | [Look and feel](docs/features/look-and-feel.md) | Themes, panels, fonts, icons, data source colours |
 | [Roadmap](docs/roadmap.md) | Milestones M0–M5, and the design and documentation track (D1–D4), with exit criteria |
+| [Releasing](docs/releasing.md) | Plan for downloadable builds: packaging, signing, the release workflow (proposed) |
 | [Contributing](CONTRIBUTING.md) | How commits, branches and pull requests are named |
 | [ADRs](docs/adr/README.md) | Architecture decision records |
