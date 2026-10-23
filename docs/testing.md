@@ -26,6 +26,10 @@ Implemented:
   committed rows stay and rolled-back ones don't, and a failure inside a transaction leaves it
   open (failed, on PostgreSQL) until it is rolled back.
 
+- `check_describe_table` (M5): an unquoted name resolves ignoring case, columns come in table
+  order and the primary key in key order, a keyless table has an empty key, and views and
+  missing tables are `None`.
+
 Races hide in cancellation, so after changing it, run the cancel tests in a loop. A one-off
 pass proved nothing in M3: the console's cancel test hung 2 runs in 5 before its fix.
 

@@ -38,9 +38,10 @@ rebind it. Status: implemented in M5.
 | `console.commit` | — | Commit the console's transaction |
 | `console.rollback` | — | Roll back the console's transaction |
 | `grid.view-cell` | Space | Show the selected cell in the cell viewer |
+| `grid.edit-cell` | F2, Enter | Edit the selected cell, if its table can be edited |
 
 Console actions work while the console's editor has focus, and are taken before the editor
-sees the key. `grid.view-cell` works while no text field has focus. Toolbar buttons show their
+sees the key. The `grid.*` actions work while no text field has focus. Toolbar buttons show their
 action's current shortcut in their tooltip.
 
 ## Design

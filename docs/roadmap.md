@@ -184,6 +184,14 @@ Covered by tests for finding the prefix, qualifier and table references, ranking
 reading and requesting catalog levels, accepting a candidate, and a UI test that completes a
 column on a fresh connection.
 
+**Grid editing demo note:** built. Open a table's data, double-click a cell (or F2), type, and
+**Submit** writes one `UPDATE` per changed row, all or none; in manual commit mode they join
+the open transaction. Results that aren't one table's rows, or lack its primary key, say
+"Read-only" and why. Covered by a `describe_table` conformance check on both drivers, engine
+tests for all-or-none edits in a transaction or a savepoint (SQLite and PostgreSQL), tests for
+deciding what's editable and generating `UPDATE`s, and a UI test that edits and submits a
+cell.
+
 The original candidates:
 
 - `keymap.toml`, themes, fonts.

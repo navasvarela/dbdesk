@@ -76,6 +76,8 @@ pub enum Command {
     SearchHistory { data_source: DataSourceId, text: String },                  // M4
     ExportRows { console: ConsoleId, export: Export },       // M4
     ReloadKeymap,                                            // M5
+    DescribeTable { data_source: DataSourceId, table: RelationName },          // M5
+    ApplyEdits { console: ConsoleId, statements: Vec<String> },                // M5
     CreateKeymap { text: String },                           // M5
 }
 
@@ -102,6 +104,9 @@ pub enum Event {
     HistoryFound { data_source: DataSourceId, text: String, result: Result<Vec<HistoryEntry>, String> }, // M4
     ExportFinished { console: ConsoleId, path: PathBuf, result: Result<usize, String> }, // M4
     KeymapLoaded { path: PathBuf, result: Result<KeymapBindings, String> },     // M5
+    TableDescribed { data_source: DataSourceId, table: RelationName,
+                     result: Result<Option<TableDescription>, String> },        // M5
+    EditsApplied { console: ConsoleId, result: Result<(), EditFailure> },       // M5
 }
 ```
 
@@ -164,6 +169,8 @@ pub trait Connection: Send {
     async fn definition(&mut self, path: &CatalogPath) -> Result<String, DriverError>;
     async fn execute(&mut self, sql: &str) -> Result<Box<dyn ResultCursor>, DriverError>;
     async fn transaction_status(&mut self) -> Result<TransactionStatus, DriverError>; // M4
+    async fn describe_table(&mut self, table: &RelationName)
+        -> Result<Option<TableDescription>, DriverError>;                    // M5
     fn cancel_handle(&self) -> Arc<dyn CancelHandle>;
     async fn close(self: Box<Self>) -> Result<(), DriverError>;
 }
