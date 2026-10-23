@@ -3,17 +3,19 @@
 use std::collections::BTreeMap;
 
 use dbdesk_core::SourceColor;
-use dbdesk_engine::ConsoleId;
+use dbdesk_store::ConsoleKey;
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Color32, FontId, Id, Ui, WidgetText};
 use egui_dock::tab_viewer::OnCloseResponse;
 use egui_dock::{DockState, NodeIndex, TabStyle, TabViewer};
 use serde::{Deserialize, Serialize};
 
-use crate::console::{self, ConsoleAction, QueryConsole};
+use crate::console::{self, ConsoleAction, ConsoleContext, QueryConsole, TreeCatalog};
+use crate::consoles::SavedConsoles;
 use crate::explorer::{self, ExplorerAction, ExplorerOptions};
 use crate::fonts;
 use crate::icons::{self, Icon, Role};
+use crate::keymap::Keymap;
 use crate::log_console::LogConsole;
 use crate::state::DataSources;
 use crate::theme::{self, Palette};
@@ -37,37 +39,56 @@ const EXPLORER_SHARE_OF_UPPER_AREA: f32 = 1.0 - CONSOLES_SHARE_OF_UPPER_AREA;
 ///
 /// Saved with the layout in eframe's storage. A saved layout that names a variant which no
 /// longer exists fails to load, and the app falls back to [`default_layout`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Tab {
     Explorer,
     Welcome,
     LogConsole,
-    /// The number of a [`ConsoleId`]. Consoles aren't saved yet (M4), so these tabs are
-    /// dropped when a saved layout is loaded; see [`without_consoles`].
-    QueryConsole(u64),
+    /// A console, by its file. Restored at start-up once the engine has read the console
+    /// files; see [`restore_consoles`].
+    QueryConsole(ConsoleKey),
 }
 
-impl Tab {
-    pub fn console(id: ConsoleId) -> Self {
-        Self::QueryConsole(id.0)
+/// The consoles whose tabs the layout holds, so they can be reopened at start-up.
+pub fn console_tabs(layout: &DockState<Tab>) -> Vec<ConsoleKey> {
+    layout
+        .iter_all_tabs()
+        .filter_map(|(_, tab)| match tab {
+            Tab::QueryConsole(key) => Some(key.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Drops the console tabs `reopen` can't reopen (their file or data source is gone), so a
+/// restored layout never shows an empty tab.
+pub fn restore_consoles(layout: &mut DockState<Tab>, mut reopen: impl FnMut(&ConsoleKey) -> bool) {
+    for key in console_tabs(layout) {
+        if !reopen(&key) {
+            close_console_tab(layout, &key);
+        }
     }
 }
 
-/// `layout` minus its console tabs, whose consoles don't survive a restart yet.
-pub fn without_consoles(mut layout: DockState<Tab>) -> DockState<Tab> {
-    layout.retain_tabs(|tab| !matches!(tab, Tab::QueryConsole(_)));
-    layout
+pub fn close_console_tab(layout: &mut DockState<Tab>, key: &ConsoleKey) {
+    if let Some(path) = layout.find_tab(&Tab::QueryConsole(key.clone())) {
+        layout.remove_tab(path);
+    }
 }
 
 /// Adds a console tab next to the other consoles (or the Welcome tab) and focuses it.
-pub fn open_console_tab(layout: &mut DockState<Tab>, id: ConsoleId) {
-    let tab = Tab::console(id);
+pub fn open_console_tab(layout: &mut DockState<Tab>, key: ConsoleKey) {
+    let tab = Tab::QueryConsole(key);
     let tree = layout.main_surface_mut();
     match tree.find_tab_from(|tab| matches!(tab, Tab::QueryConsole(_) | Tab::Welcome)) {
-        Some((node, _)) => tree[node].append_tab(tab),
+        Some((node, _)) => tree[node].append_tab(tab.clone()),
         // The consoles' area was closed; give them a new one beside everything else.
         None => {
-            tree.split_right(NodeIndex::root(), EXPLORER_SHARE_OF_UPPER_AREA, vec![tab]);
+            tree.split_right(
+                NodeIndex::root(),
+                EXPLORER_SHARE_OF_UPPER_AREA,
+                vec![tab.clone()],
+            );
         }
     }
     if let Some(path) = layout.find_tab(&tab) {
@@ -94,21 +115,24 @@ pub struct Panels<'a> {
     pub palette: &'static Palette,
     pub log_console: &'a mut LogConsole,
     pub data_sources: &'a DataSources,
+    pub saved_consoles: &'a SavedConsoles,
     pub explorer_options: &'a mut ExplorerOptions,
     /// What the user asked for in the explorer this frame, for the app to act on.
     pub explorer_actions: &'a mut Vec<ExplorerAction>,
-    pub consoles: &'a mut BTreeMap<ConsoleId, QueryConsole>,
+    pub consoles: &'a mut BTreeMap<ConsoleKey, QueryConsole>,
+    pub keymap: &'a Keymap,
     /// What the user asked of each console this frame.
-    pub console_actions: &'a mut Vec<(ConsoleId, ConsoleAction)>,
-    /// Consoles whose tabs were closed this frame.
-    pub closed_consoles: &'a mut Vec<ConsoleId>,
+    pub console_actions: &'a mut Vec<(ConsoleKey, ConsoleAction)>,
+    /// Consoles whose tabs the user asked to close this frame. The tabs stay until the app
+    /// closes them, which may first ask about rolling back an open transaction.
+    pub close_requests: &'a mut Vec<ConsoleKey>,
 }
 
 impl TabViewer for Panels<'_> {
     type Tab = Tab;
 
     fn id(&mut self, tab: &mut Tab) -> Id {
-        Id::new(*tab)
+        Id::new(&*tab)
     }
 
     fn title(&mut self, tab: &mut Tab) -> WidgetText {
@@ -132,13 +156,14 @@ impl TabViewer for Panels<'_> {
                 },
                 "Log console",
             ),
-            Tab::QueryConsole(id) => {
-                let id = ConsoleId(*id);
+            Tab::QueryConsole(key) => {
                 let title = self
                     .consoles
-                    .get(&id)
+                    .get(key)
                     .map_or("console", QueryConsole::title);
-                let role = self.console_color(id).map_or(Role::Secondary, Role::Source);
+                let role = self
+                    .console_color(key)
+                    .map_or(Role::Secondary, Role::Source);
                 let icon = Icon {
                     glyph: icons::FILE_SQL,
                     role,
@@ -149,10 +174,10 @@ impl TabViewer for Panels<'_> {
     }
 
     fn tab_style_override(&self, tab: &Tab, global_style: &TabStyle) -> Option<TabStyle> {
-        let Tab::QueryConsole(id) = tab else {
+        let Tab::QueryConsole(key) = tab else {
             return None;
         };
-        let color = self.console_color(ConsoleId(*id))?;
+        let color = self.console_color(key)?;
         Some(theme::source_tab_style(global_style, self.palette, color))
     }
 
@@ -160,24 +185,42 @@ impl TabViewer for Panels<'_> {
         match tab {
             Tab::Explorer => explorer::show(
                 ui,
-                self.data_sources,
+                &explorer::ExplorerView {
+                    data_sources: self.data_sources,
+                    saved_consoles: self.saved_consoles,
+                },
                 self.explorer_options,
                 self.explorer_actions,
             ),
             Tab::Welcome => welcome::show(ui, self.data_sources, self.explorer_actions),
             Tab::LogConsole => self.log_console.ui(ui),
-            Tab::QueryConsole(id) => {
-                let id = ConsoleId(*id);
-                if let Some(color) = self.console_color(id) {
-                    source_band(ui, self.palette.source(color));
-                }
-                if let Some(query_console) = self.consoles.get_mut(&id) {
+            Tab::QueryConsole(key) => match self.consoles.get_mut(key) {
+                Some(query_console) => {
+                    let data_source = query_console.data_source();
+                    if let Some(color) = self.data_sources.color_of(data_source) {
+                        source_band(ui, self.palette.source(color));
+                    }
+                    let context = ConsoleContext {
+                        keymap: self.keymap,
+                        catalog: self
+                            .data_sources
+                            .entries()
+                            .iter()
+                            .find(|entry| entry.data_source.id == data_source)
+                            .map(|entry| {
+                                TreeCatalog::new(&entry.catalog, &entry.data_source.config)
+                            }),
+                    };
                     let mut actions = Vec::new();
-                    console::show(ui, query_console, &mut actions);
+                    console::show(ui, query_console, &context, &mut actions);
                     self.console_actions
-                        .extend(actions.into_iter().map(|action| (id, action)));
+                        .extend(actions.into_iter().map(|action| (key.clone(), action)));
                 }
-            }
+                // Restored from the saved layout, waiting for the engine to read its file.
+                None => {
+                    ui.weak("Loading…");
+                }
+            },
         }
     }
 
@@ -187,18 +230,21 @@ impl TabViewer for Panels<'_> {
     }
 
     fn on_close(&mut self, tab: &mut Tab) -> OnCloseResponse {
-        if let Tab::QueryConsole(id) = tab {
-            self.closed_consoles.push(ConsoleId(*id));
+        match tab {
+            Tab::QueryConsole(key) => {
+                self.close_requests.push(key.clone());
+                OnCloseResponse::Ignore
+            }
+            _ => OnCloseResponse::Close,
         }
-        OnCloseResponse::Close
     }
 }
 
 impl Panels<'_> {
     /// The colour of the data source a console runs on, looked up every frame so a colour
     /// changed in the data source dialog shows at once.
-    fn console_color(&self, id: ConsoleId) -> Option<SourceColor> {
-        let data_source = self.consoles.get(&id)?.data_source();
+    fn console_color(&self, key: &ConsoleKey) -> Option<SourceColor> {
+        let data_source = self.consoles.get(key)?.data_source();
         self.data_sources.color_of(data_source)
     }
 }

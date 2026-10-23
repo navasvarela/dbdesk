@@ -1,8 +1,13 @@
+use std::path::PathBuf;
 use std::time::Duration;
 
 use dbdesk_core::{
-    CatalogNode, CatalogPath, ColumnInfo, DataSource, DataSourceId, Password, Row, ServerInfo,
+    CatalogNode, CatalogPath, ColumnInfo, DataSource, DataSourceId, Password, RelationName, Row,
+    ServerInfo, TableDescription, TransactionStatus,
 };
+use dbdesk_store::{ConsoleKey, HistoryEntry, KeymapBindings, SavedConsole};
+
+use crate::Export;
 
 /// Identifies a query console. Chosen by the UI, unique for the app's lifetime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -34,6 +39,8 @@ pub enum Command {
         password: PasswordUpdate,
     },
     Connect(DataSourceId),
+    /// Disconnects the explorer's connection and every console's connection to the data
+    /// source, rolling back their open transactions.
     Disconnect(DataSourceId),
     /// Lists the children of a catalog node, connecting first if needed.
     /// Answered by [`Event::ChildrenLoaded`].
@@ -55,6 +62,13 @@ pub enum Command {
         data_source: DataSourceId,
         run: RunId,
         statements: Vec<String>,
+        transactions: TransactionMode,
+    },
+    /// Commits or rolls back the console's open transaction. Answered by
+    /// [`Event::TransactionEnded`].
+    EndTransaction {
+        console: ConsoleId,
+        end: TransactionEnd,
     },
     /// Reads the next page of the run's last statement.
     FetchMore {
@@ -66,8 +80,65 @@ pub enum Command {
         console: ConsoleId,
         run: RunId,
     },
-    /// Disconnects the console's connection.
+    /// Disconnects the console's connection, which rolls back its open transaction.
     CloseConsole(ConsoleId),
+    /// Writes a console's text to its file. Saves are applied in the order sent. A failure is
+    /// reported as [`Event::ConsoleSaveFailed`].
+    SaveConsole {
+        key: ConsoleKey,
+        text: String,
+    },
+    /// Removes a console's file, if it exists.
+    DeleteConsoleFile(ConsoleKey),
+    /// Resolves and describes a table on the explorer's connection, connecting first if
+    /// needed, so a console's open result isn't disturbed. Answered by
+    /// [`Event::TableDescribed`].
+    DescribeTable {
+        data_source: DataSourceId,
+        table: RelationName,
+    },
+    /// Runs generated `UPDATE`s on the console's connection, all or none: each must change
+    /// exactly one row. Inside an open transaction they stay part of it (behind a savepoint);
+    /// otherwise they commit together. Answered by [`Event::EditsApplied`].
+    ApplyEdits {
+        console: ConsoleId,
+        statements: Vec<String>,
+    },
+    /// Reads `keymap.toml` again. Answered by [`Event::KeymapLoaded`].
+    ReloadKeymap,
+    /// Writes a new `keymap.toml` holding `text`, unless one exists, then reads it.
+    /// Answered by [`Event::KeymapLoaded`].
+    CreateKeymap {
+        text: String,
+    },
+    /// Writes rows a console shows to a file. Answered by [`Event::ExportFinished`].
+    ExportRows {
+        console: ConsoleId,
+        export: Export,
+    },
+    /// Looks up the data source's past statements containing `text`, newest first.
+    /// Answered by [`Event::HistoryFound`].
+    SearchHistory {
+        data_source: DataSourceId,
+        text: String,
+    },
+}
+
+/// How a console's statements are committed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TransactionMode {
+    /// Each statement commits on its own, unless the user opens a transaction with `BEGIN`.
+    #[default]
+    Auto,
+    /// A transaction is started before the first statement that changes anything, and stays
+    /// open until committed or rolled back.
+    Manual,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransactionEnd {
+    Commit,
+    Rollback,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,6 +168,42 @@ pub enum Event {
         error: String,
     },
     DataSourceDeleted(DataSourceId),
+    /// Every saved console file, read once at start-up, right after the data sources.
+    ConsolesLoaded(Vec<SavedConsole>),
+    /// The bindings `keymap.toml` sets, read at start-up (before the data sources) and on
+    /// request. Empty if there is no file.
+    KeymapLoaded {
+        path: PathBuf,
+        result: Result<KeymapBindings, String>,
+    },
+    ConsoleSaveFailed {
+        key: ConsoleKey,
+        error: String,
+    },
+    /// The answer to [`Command::DescribeTable`]: `None` if there is no such plain table.
+    TableDescribed {
+        data_source: DataSourceId,
+        table: RelationName,
+        result: Result<Option<TableDescription>, String>,
+    },
+    /// The answer to [`Command::ApplyEdits`].
+    EditsApplied {
+        console: ConsoleId,
+        result: Result<(), EditFailure>,
+    },
+    /// The answer to [`Command::ExportRows`]: how many rows were written, or why none were.
+    ExportFinished {
+        console: ConsoleId,
+        path: PathBuf,
+        result: Result<usize, String>,
+    },
+    /// The answer to [`Command::SearchHistory`], echoing what was searched for so the UI can
+    /// drop answers to searches it has moved on from.
+    HistoryFound {
+        data_source: DataSourceId,
+        text: String,
+        result: Result<Vec<HistoryEntry>, String>,
+    },
     SessionChanged {
         id: DataSourceId,
         state: SessionState,
@@ -118,6 +225,19 @@ pub enum Event {
     ConsoleSessionChanged {
         console: ConsoleId,
         state: SessionState,
+    },
+    /// The console's connection entered or left a transaction, by any statement or by
+    /// [`Command::EndTransaction`]. A new connection starts outside one, and closing one ends
+    /// its transaction, so neither is reported.
+    TransactionChanged {
+        console: ConsoleId,
+        status: TransactionStatus,
+    },
+    /// The answer to [`Command::EndTransaction`]: what actually happened, which is a rollback
+    /// when committing a transaction that had failed.
+    TransactionEnded {
+        console: ConsoleId,
+        result: Result<TransactionEnd, String>,
     },
     /// A statement that returns rows has started; its rows follow as [`Event::RowsFetched`].
     StatementStarted {
@@ -154,6 +274,15 @@ pub struct StatementSummary {
     pub elapsed: Duration,
     /// Whether rows were left unread.
     pub truncated: bool,
+}
+
+/// Why edits weren't applied. Nothing was: the changes were rolled back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditFailure {
+    /// The index of the statement that failed, if one did (rather than starting or ending
+    /// the transaction around them).
+    pub statement: Option<usize>,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

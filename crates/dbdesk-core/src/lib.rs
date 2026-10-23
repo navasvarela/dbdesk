@@ -9,6 +9,7 @@ mod data_source;
 mod error;
 mod execution;
 mod password;
+mod table;
 
 #[cfg(feature = "conformance")]
 pub mod conformance;
@@ -20,5 +21,6 @@ pub use data_source::{
     SqliteConfig,
 };
 pub use error::{BoxError, DriverError, describe_error};
-pub use execution::{CancelHandle, Cell, ColumnInfo, ResultCursor, Row};
+pub use execution::{CancelHandle, Cell, ColumnInfo, ResultCursor, Row, TransactionStatus};
 pub use password::Password;
+pub use table::{Identifier, RelationName, TableDescription, quote_always};
