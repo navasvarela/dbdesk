@@ -1,6 +1,6 @@
 # More databases
 
-Status: **planned**, nothing built yet. Order agreed on 2026-10-23.
+Status: **DB0 built**; DB1 onwards planned. Order agreed on 2026-10-23.
 
 dbdesk speaks PostgreSQL and SQLite. This plan adds the next engines in order of how many
 people would use them, and starts with the groundwork that makes each one cheaper than the

@@ -273,6 +273,23 @@ each engine needs and the open decisions, is in [More databases](databases.md).
 - **DB4 — Oracle:** after R2, because its client needs Oracle's own library installed
   separately.
 
+**DB0 demo note:** built in #26, #27 and #28. Run `docker compose up -d --wait`: besides the
+usual PostgreSQL, a second one on port 55443 refuses unencrypted connections. Add it as a data
+source with **TLS** `disable` and **Test connection** fails with *pg_hba.conf rejects connection
+… no encryption*; pick `require` and it connects. Pick `verify-full` and it fails with
+*UnknownIssuer*, until **CA file** points at `docker/postgres-tls/ca.crt`. Browsing, running
+and ⌘. cancel all work over TLS. Old `data_sources.toml` files load with `prefer`, and the TLS
+choice is a `[data_source.tls]` table. Underneath, every per-dialect fact (lexer rules,
+`sqlparser` dialect, known parser gaps, functions, `EXPLAIN` prefix, system names) is a method
+in `dbdesk-sql`'s `dialect` module: non-test matches on `Dialect`, `DriverKind` or
+`ConnectionConfig` went from 31 in 16 files to 19 in 5. Host, port, database, user, password
+and TLS are one `ServerConfig` in core and one `ServerFields` section in the dialog, which a
+new server engine reuses. CI starts every compose service and exports the URLs listed in
+`test-servers.env`, so a new engine's container touches those two files only. Covered by the
+TLS driver tests against both servers (encrypted per `pg_stat_ssl`, cancel and browsing over
+TLS, each refusal), serde tests for old and new files, form tests for every TLS mode, and a UI
+test that picks `verify-full` with a CA file and saves it.
+
 ## Design and documentation track
 
 Runs alongside the feature milestones rather than after them: each item is usable on its own.
