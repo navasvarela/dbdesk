@@ -9,16 +9,19 @@ use egui::{Id, Margin, ScrollArea, TextBuffer, TextEdit, Ui, vec2};
 
 use super::highlight::Marks;
 use super::{
-    QueryConsole, RunScope, RunState, SubmittedStatement, cell_viewer, highlight, results,
+    QueryConsole, RunScope, RunState, SubmittedStatement, TreeCatalog, cell_viewer,
+    completion_popup, highlight, results,
 };
 use crate::keymap::{Action, Keymap};
 use crate::theme::SUCCESS_COLOR;
+use dbdesk_core::CatalogPath;
 use dbdesk_core::TransactionStatus;
 use dbdesk_engine::{RunId, RunOutcome, SessionState, TransactionEnd, TransactionMode};
 use dbdesk_store::ExportFormat;
 
 /// What the console's keys can do while its editor has focus.
-const EDITOR_ACTIONS: [Action; 7] = [
+const EDITOR_ACTIONS: [Action; 8] = [
+    Action::Complete,
     Action::RunCurrent,
     Action::RunAll,
     Action::Explain,
@@ -46,14 +49,24 @@ pub enum ConsoleAction {
     Export(ExportFormat),
     /// Opens the data source's query history, to insert a past statement here.
     ShowHistory,
+    /// Loads these catalog levels into the explorer's cache, for completion.
+    LoadCatalog(Vec<CatalogPath>),
+}
+
+/// What a console draws with besides its own state.
+pub struct ConsoleContext<'a> {
+    pub keymap: &'a Keymap,
+    /// The data source's cached catalog, for completion. `None` if the data source is gone.
+    pub catalog: Option<TreeCatalog<'a>>,
 }
 
 pub fn show(
     ui: &mut Ui,
     console: &mut QueryConsole,
-    keymap: &Keymap,
+    context: &ConsoleContext<'_>,
     actions: &mut Vec<ConsoleAction>,
 ) {
+    let keymap = context.keymap;
     let editor_id = Id::new(("console_editor", console.id.0));
     shortcuts(ui, console, keymap, editor_id, actions);
     toolbar(ui, console, keymap, actions);
@@ -62,7 +75,7 @@ pub fn show(
     let (editor_height, results_height) = split_heights(ui, console);
     let width = ui.available_width();
     ui.allocate_ui(vec2(width, editor_height), |ui| {
-        editor(ui, console, editor_id)
+        editor(ui, console, editor_id, context.catalog.as_ref(), actions);
     });
     splitter(ui, console);
     ui.allocate_ui(vec2(width, results_height), |ui| {
@@ -114,7 +127,7 @@ fn splitter(ui: &mut Ui, console: &QueryConsole) {
 /// editor sees them, so ⌘↵ runs instead of inserting a newline.
 fn shortcuts(
     ui: &mut Ui,
-    console: &QueryConsole,
+    console: &mut QueryConsole,
     keymap: &Keymap,
     editor_id: Id,
     actions: &mut Vec<ConsoleAction>,
@@ -122,8 +135,13 @@ fn shortcuts(
     if !ui.memory(|memory| memory.has_focus(editor_id)) {
         return;
     }
+    completion_popup::handle_keys(ui, console);
     for action in ui.input_mut(|input| keymap.consume(input, &EDITOR_ACTIONS)) {
-        perform(console, action, actions);
+        if action == Action::Complete {
+            console.open_completion(true);
+        } else {
+            perform(console, action, actions);
+        }
     }
 }
 
@@ -152,8 +170,8 @@ fn perform(console: &QueryConsole, action: Action, actions: &mut Vec<ConsoleActi
             actions.push(ConsoleAction::EndTransaction(TransactionEnd::Rollback));
             return;
         }
-        // The grid handles its own keys.
-        Action::ViewCell => return,
+        // The grid and the editor handle these themselves.
+        Action::ViewCell | Action::Complete => return,
     };
     let statements = console.statements_to_run(scope);
     if !statements.is_empty() {
@@ -166,7 +184,7 @@ fn is_enabled(console: &QueryConsole, action: Action) -> bool {
         Action::RunCurrent | Action::RunAll | Action::Explain => !console.is_running(),
         Action::Cancel => console.cancellable_run().is_some(),
         Action::Commit | Action::Rollback => console.has_open_transaction(),
-        Action::ShowHistory | Action::ViewCell => true,
+        Action::ShowHistory | Action::ViewCell | Action::Complete => true,
     }
 }
 
@@ -327,7 +345,13 @@ fn move_cursor(ui: &Ui, console: &mut QueryConsole, editor_id: Id) {
     ui.memory_mut(|memory| memory.request_focus(editor_id));
 }
 
-fn editor(ui: &mut Ui, console: &mut QueryConsole, editor_id: Id) {
+fn editor(
+    ui: &mut Ui,
+    console: &mut QueryConsole,
+    editor_id: Id,
+    catalog: Option<&TreeCatalog<'_>>,
+    actions: &mut Vec<ConsoleAction>,
+) {
     move_cursor(ui, console, editor_id);
     let dialect = console.dialect;
     let marks = Marks {
@@ -366,6 +390,12 @@ fn editor(ui: &mut Ui, console: &mut QueryConsole, editor_id: Id) {
             if let Some(cursor) = output.cursor_range {
                 console.selection = byte_range(&console.text, &cursor);
             }
+            completion_popup::follow_editor(ui, console, &output);
+            let missing = console.refresh_completion(catalog);
+            if !missing.is_empty() {
+                actions.push(ConsoleAction::LoadCatalog(missing));
+            }
+            completion_popup::show(ui, console, &output);
         });
 }
 

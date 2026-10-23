@@ -196,8 +196,10 @@ impl Consoles {
             ConsoleAction::EndTransaction(end) => {
                 Some(Command::EndTransaction { console: id, end })
             }
-            // The app opens a window or a file dialog for these first.
-            ConsoleAction::ShowHistory | ConsoleAction::Export(_) => None,
+            // The app opens a window or a file dialog, or updates the catalog, for these.
+            ConsoleAction::ShowHistory
+            | ConsoleAction::Export(_)
+            | ConsoleAction::LoadCatalog(_) => None,
         }
     }
 

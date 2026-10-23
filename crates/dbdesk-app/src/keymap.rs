@@ -11,6 +11,7 @@ use egui::{InputState, Key, KeyboardShortcut, Modifiers};
 /// released; descriptions can.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Action {
+    Complete,
     RunCurrent,
     RunAll,
     Explain,
@@ -22,7 +23,8 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
+        Self::Complete,
         Self::RunCurrent,
         Self::RunAll,
         Self::Explain,
@@ -35,6 +37,7 @@ impl Action {
 
     pub fn id(self) -> &'static str {
         match self {
+            Self::Complete => "console.complete",
             Self::RunCurrent => "console.run",
             Self::RunAll => "console.run-all",
             Self::Explain => "console.explain",
@@ -48,6 +51,7 @@ impl Action {
 
     pub fn description(self) -> &'static str {
         match self {
+            Self::Complete => "Suggest names and keywords at the cursor",
             Self::RunCurrent => "Run the selection or the statement at the cursor",
             Self::RunAll => "Run every statement in the console",
             Self::Explain => "Explain the statement at the cursor",
@@ -67,6 +71,8 @@ impl Action {
     fn default_bindings(self) -> Vec<KeyboardShortcut> {
         let shortcut = |modifiers, key| vec![KeyboardShortcut::new(modifiers, key)];
         match self {
+            // DataGrip's basic completion, on every platform.
+            Self::Complete => shortcut(Modifiers::CTRL, Key::Space),
             Self::RunCurrent => shortcut(Modifiers::COMMAND, Key::Enter),
             Self::RunAll => shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::Enter),
             Self::Explain => shortcut(Modifiers::COMMAND | Modifiers::ALT, Key::E),

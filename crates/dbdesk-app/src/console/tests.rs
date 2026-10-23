@@ -178,3 +178,28 @@ fn shades_the_statement_at_the_cursor_unless_text_is_selected() {
     console.selection = 0..4;
     assert_eq!(console.current_statement(), None);
 }
+
+#[test]
+fn completion_replaces_the_typed_prefix_and_closes() {
+    let mut console = console("select * from t where SEL");
+    console.selection = console.text.len()..console.text.len();
+
+    console.open_completion(false);
+    let _ = console.refresh_completion(None);
+    assert!(
+        console.completion.is_some(),
+        "keywords match without a catalog"
+    );
+    console.accept_completion(Instant::now());
+
+    assert_eq!(console.text, "select * from t where SELECT");
+    assert!(console.completion.is_none());
+    assert_eq!(console.pending_cursor, Some(console.text.len()));
+
+    console.open_completion(false);
+    let _ = console.refresh_completion(None);
+    assert!(
+        console.completion.is_none(),
+        "nothing starts with SELECT but SELECT itself"
+    );
+}
