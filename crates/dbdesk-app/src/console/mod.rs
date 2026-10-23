@@ -35,6 +35,7 @@ use dbdesk_store::{ConsoleKey, ExportFormat};
 use edit::Editability;
 
 pub use catalog_source::TreeCatalog;
+pub use completion::{Candidate, RecentCompletions};
 pub use problems::LintOptions;
 pub use view::{ConsoleAction, ConsoleContext, show};
 
@@ -111,6 +112,8 @@ pub struct QueryConsole {
     viewed_cell: Option<ViewedCell>,
     /// The completion list, while it is open.
     completion: Option<Completion>,
+    /// The candidate accepted last, until the app records it as recent.
+    accepted_completion: Option<completion::Candidate>,
     /// How the last export went: where the rows went, or why they didn't.
     export_status: Option<Result<String, String>>,
     file: FileState,
@@ -209,6 +212,7 @@ impl QueryConsole {
             problem_rects: Vec::new(),
             viewed_cell: None,
             completion: None,
+            accepted_completion: None,
             export_status: None,
             file: FileState::default(),
         }
@@ -383,6 +387,7 @@ impl QueryConsole {
     pub fn refresh_completion(
         &mut self,
         catalog: Option<&TreeCatalog<'_>>,
+        recent: &completion::RecentCompletions,
     ) -> Vec<dbdesk_core::CatalogPath> {
         let Some(open) = &self.completion else {
             return Vec::new();
@@ -395,15 +400,25 @@ impl QueryConsole {
             self.completion = None;
             return Vec::new();
         };
-        let statement = self
+        // The statement the prefix belongs to; none past the end of the one before it, where
+        // a new statement is starting.
+        let (statement, statement_start) = self
             .current_statement()
-            .and_then(|range| self.text.get(range))
+            .filter(|range| point.replace.start <= range.end)
+            .and_then(|range| Some((self.text.get(range.clone())?, range.start)))
             .unwrap_or_default();
         let references = completion::table_references(statement, self.dialect);
-        let candidates = match catalog {
-            Some(catalog) => completion::candidates(&point, &references, catalog),
-            None => completion::candidates(&point, &references, &completion::NoCatalog),
-        };
+        let candidates = completion::candidates(&completion::CompletionInput {
+            point: &point,
+            statement,
+            prefix_start: point.replace.start.saturating_sub(statement_start),
+            dialect: self.dialect,
+            catalog: match catalog {
+                Some(catalog) => catalog,
+                None => &completion::NoCatalog,
+            },
+            recent,
+        });
         let needed = catalog
             .map(|catalog| catalog.missing(&references))
             .unwrap_or_default();
@@ -453,10 +468,16 @@ impl QueryConsole {
         }
         self.text
             .replace_range(open.replace.clone(), &candidate.insert);
-        let cursor = open.replace.start + candidate.insert.len();
+        let cursor = open.replace.start + candidate.insert.len() - candidate.cursor_back;
         self.selection = cursor..cursor;
         self.pending_cursor = Some(cursor);
+        self.accepted_completion = Some(candidate.clone());
         self.edited(now);
+    }
+
+    /// The candidate accepted since this was last asked, for the app to remember as recent.
+    pub fn take_accepted_completion(&mut self) -> Option<completion::Candidate> {
+        self.accepted_completion.take()
     }
 
     /// Puts `sql` at the cursor, replacing the selection, as a statement on a line of its own,

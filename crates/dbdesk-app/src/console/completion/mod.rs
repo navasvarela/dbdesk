@@ -1,13 +1,21 @@
-//! What to suggest at the cursor: SQL keywords, and the schemas, tables, views and columns
-//! the cached catalog knows. Pure; the catalog comes in through [`CatalogSource`].
+//! What to suggest at the cursor: the names the clause calls for (see [`context`]), from
+//! the cached catalog and from the statement itself (aliases, CTEs, subqueries), functions
+//! and keywords, ranked by [`ranking`]. Pure; the catalog comes in through
+//! [`CatalogSource`].
+
+mod context;
+mod derived;
+mod ranking;
 
 use std::ops::Range;
 
 use dbdesk_core::quote_identifier;
-use dbdesk_sql::{Dialect, Token, TokenKind, is_keyword, keywords, tokenize};
+use dbdesk_sql::{Dialect, Token, TokenKind, builtin_functions, is_keyword, keywords, tokenize};
 
-/// More would be a list nobody scrolls; typing narrows it.
-const MAX_CANDIDATES: usize = 100;
+use context::Context;
+use derived::{DerivedKind, DerivedTable};
+
+pub use ranking::RecentCompletions;
 
 /// Keywords after which a table name follows.
 const TABLE_INTRODUCERS: &[&str] = &["from", "join", "update", "into"];
@@ -24,6 +32,8 @@ pub trait CatalogSource {
     /// schema (and the list of schemas itself): only then is a name missing from
     /// [`CatalogSource::tables`] really missing.
     fn tables_loaded(&self, schema: Option<&str>) -> bool;
+    /// The functions of the schemas whose functions have been loaded.
+    fn functions(&self) -> Vec<FunctionEntry>;
 }
 
 /// A data source with nothing cached: completion offers keywords only.
@@ -49,6 +59,10 @@ impl CatalogSource for NoCatalog {
     fn tables_loaded(&self, _: Option<&str>) -> bool {
         false
     }
+
+    fn functions(&self) -> Vec<FunctionEntry> {
+        Vec::new()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,6 +70,15 @@ pub struct TableEntry {
     pub schema: String,
     pub name: String,
     pub is_view: bool,
+}
+
+/// A function the database has, as the explorer lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionEntry {
+    pub schema: String,
+    pub name: String,
+    /// The argument list as the explorer shows it, `(integer, integer)`, when it does.
+    pub arguments: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,7 +93,12 @@ pub enum CandidateKind {
     Column,
     Table,
     View,
+    /// A CTE, or a subquery's alias.
+    Derived,
+    /// A table's alias in the statement.
+    Alias,
     Schema,
+    Function,
     Keyword,
 }
 
@@ -83,6 +111,21 @@ pub struct Candidate {
     pub detail: Option<String>,
     /// What replaces the typed prefix.
     pub insert: String,
+    /// How many bytes at the end of `insert` the cursor stays before: inside a function's
+    /// parentheses.
+    pub cursor_back: usize,
+}
+
+/// Everything completion looks at.
+pub struct CompletionInput<'a> {
+    pub point: &'a CompletionPoint,
+    /// The statement the cursor is in.
+    pub statement: &'a str,
+    /// Where in `statement` the typed prefix starts.
+    pub prefix_start: usize,
+    pub dialect: Dialect,
+    pub catalog: &'a dyn CatalogSource,
+    pub recent: &'a RecentCompletions,
 }
 
 /// Where completion happens: the word being typed and what qualifies it.
@@ -237,115 +280,228 @@ fn read_reference(text: &str, tokens: &[Token], index: usize) -> Option<(TableRe
     ))
 }
 
-/// The candidates for `point`, best first: with a qualifier, the columns of the table or
-/// alias it names, or the tables of the schema it names; without one, the columns of the
-/// statement's tables, then tables and views, schemas and keywords.
-pub fn candidates(
-    point: &CompletionPoint,
-    references: &[TableRef],
-    catalog: &dyn CatalogSource,
-) -> Vec<Candidate> {
-    let mut found = match &point.qualifier {
-        Some(qualifier) => qualified(qualifier, references, catalog),
-        None => unqualified(point, references, catalog),
+/// The candidates at the cursor, best first. With a qualifier (`x.`): the columns of the
+/// table, alias, CTE or subquery it names, or the tables of the schema it names. Without one,
+/// what the clause calls for (see [`Context`]).
+pub fn candidates(input: &CompletionInput<'_>) -> Vec<Candidate> {
+    let references = table_references(input.statement, input.dialect);
+    let derived = derived::derived_tables(input.statement, input.dialect, input.catalog);
+    let names = Names {
+        references: &references,
+        derived: &derived,
+        catalog: input.catalog,
     };
-    // A name typed in full has nothing left to complete; offering it again would only make
-    // Enter accept it instead of breaking the line.
-    found.retain(|candidate| {
-        starts_with_ignoring_case(&candidate.label, &point.prefix)
-            && !candidate.label.eq_ignore_ascii_case(&point.prefix)
-    });
-    found.truncate(MAX_CANDIDATES);
-    found
+    let found = match &input.point.qualifier {
+        Some(qualifier) => names.qualified(qualifier),
+        None => {
+            let before = input
+                .statement
+                .get(..input.prefix_start)
+                .unwrap_or(input.statement);
+            let context = context::context_at(before, input.dialect);
+            names.unqualified(&context, input)
+        }
+    };
+    ranking::rank(found, &input.point.prefix, input.recent)
 }
 
-fn qualified(
-    qualifier: &str,
-    references: &[TableRef],
-    catalog: &dyn CatalogSource,
-) -> Vec<Candidate> {
-    let tables = catalog.tables();
-    let referenced = references.iter().find(|reference| {
-        reference
-            .alias
-            .as_deref()
-            .unwrap_or(&reference.table)
-            .eq_ignore_ascii_case(qualifier)
-    });
-    let table = match referenced {
-        Some(reference) => resolve(
-            reference.schema.as_deref(),
-            &reference.table,
-            &tables,
-            catalog,
-        ),
-        None => resolve(None, qualifier, &tables, catalog),
-    };
-    if let Some(table) = table {
-        return column_candidates(table, catalog);
-    }
-    let schema_named = catalog
-        .schemas()
-        .into_iter()
-        .find(|schema| schema.eq_ignore_ascii_case(qualifier));
-    match schema_named {
-        Some(schema) => tables
-            .iter()
-            .filter(|table| table.schema == schema)
-            .map(|table| table_candidate(table, quote_identifier(&table.name)))
-            .collect(),
-        None => Vec::new(),
-    }
+/// The names a statement can use: its tables, its own derived tables, and the catalog.
+struct Names<'a> {
+    references: &'a [TableRef],
+    derived: &'a [DerivedTable],
+    catalog: &'a dyn CatalogSource,
 }
 
-fn unqualified(
-    point: &CompletionPoint,
-    references: &[TableRef],
-    catalog: &dyn CatalogSource,
-) -> Vec<Candidate> {
-    let tables = catalog.tables();
-    let mut found = Vec::new();
-    for reference in references {
-        if let Some(table) = resolve(
-            reference.schema.as_deref(),
-            &reference.table,
-            &tables,
-            catalog,
-        ) {
-            for column in column_candidates(table, catalog) {
-                if !found
-                    .iter()
-                    .any(|seen: &Candidate| seen.label == column.label)
-                {
-                    found.push(column);
-                }
-            }
+impl Names<'_> {
+    fn qualified(&self, qualifier: &str) -> Vec<Candidate> {
+        let referenced = self.references.iter().find(|reference| {
+            reference
+                .alias
+                .as_deref()
+                .unwrap_or(&reference.table)
+                .eq_ignore_ascii_case(qualifier)
+        });
+        if let Some(columns) = match referenced {
+            Some(reference) => self.columns_of(reference.schema.as_deref(), &reference.table),
+            None => self.columns_of(None, qualifier),
+        } {
+            return columns;
+        }
+        let tables = self.catalog.tables();
+        let schema_named = self
+            .catalog
+            .schemas()
+            .into_iter()
+            .find(|schema| schema.eq_ignore_ascii_case(qualifier));
+        match schema_named {
+            Some(schema) => tables
+                .iter()
+                .filter(|table| table.schema == schema)
+                .map(|table| table_candidate(table, quote_identifier(&table.name)))
+                .collect(),
+            None => Vec::new(),
         }
     }
-    let default_schema = catalog.default_schema();
-    found.extend(tables.iter().map(|table| {
-        let insert = if table.schema == default_schema {
-            quote_identifier(&table.name)
-        } else {
-            format!(
-                "{}.{}",
-                quote_identifier(&table.schema),
-                quote_identifier(&table.name)
-            )
-        };
-        table_candidate(table, insert)
-    }));
-    found.extend(catalog.schemas().into_iter().map(|schema| Candidate {
-        kind: CandidateKind::Schema,
-        insert: quote_identifier(&schema),
-        label: schema,
-        detail: None,
-    }));
-    // Every keyword matches an empty prefix, which would bury the names.
-    if !point.prefix.is_empty() {
-        let uppercase = point.prefix.chars().any(|c| c.is_ascii_uppercase());
-        found.extend(keywords().iter().map(|keyword| {
-            let insert = if uppercase {
+
+    /// The columns of a derived table (CTE or subquery alias) or catalog table of that name,
+    /// `None` if there is neither.
+    fn columns_of(&self, schema: Option<&str>, table: &str) -> Option<Vec<Candidate>> {
+        let derived = schema.is_none().then(|| {
+            self.derived
+                .iter()
+                .find(|derived| derived.name.eq_ignore_ascii_case(table))
+        });
+        if let Some(Some(derived)) = derived {
+            return Some(derived_columns(derived));
+        }
+        let tables = self.catalog.tables();
+        let entry = resolve(schema, table, &tables, self.catalog)?;
+        Some(column_candidates(entry, self.catalog))
+    }
+
+    fn unqualified(&self, context: &Context, input: &CompletionInput<'_>) -> Vec<Candidate> {
+        let prefix = &input.point.prefix;
+        let mut found = Vec::new();
+        match context {
+            Context::InsertColumns { schema, table } => {
+                found.extend(
+                    self.columns_of(schema.as_deref(), table)
+                        .unwrap_or_default(),
+                );
+            }
+            Context::AfterTable => found.extend(keyword_candidates(prefix)),
+            Context::Tables => {
+                found.extend(self.cte_candidates());
+                found.extend(self.table_candidates());
+                found.extend(self.schema_candidates());
+                found.extend(keyword_candidates(prefix));
+            }
+            Context::Columns => {
+                found.extend(self.statement_columns());
+                found.extend(self.alias_candidates());
+                found.extend(function_candidates(input));
+                found.extend(keyword_candidates(prefix));
+            }
+            Context::Any => {
+                found.extend(self.statement_columns());
+                found.extend(self.cte_candidates());
+                found.extend(self.table_candidates());
+                found.extend(self.schema_candidates());
+                found.extend(function_candidates(input));
+                found.extend(keyword_candidates(prefix));
+            }
+        }
+        found
+    }
+
+    /// The columns of every table the statement names, and of its subqueries, each name once.
+    fn statement_columns(&self) -> Vec<Candidate> {
+        let mut found: Vec<Candidate> = Vec::new();
+        let referenced = self
+            .references
+            .iter()
+            .filter_map(|reference| self.columns_of(reference.schema.as_deref(), &reference.table));
+        let subqueries = self
+            .derived
+            .iter()
+            .filter(|derived| derived.kind == DerivedKind::Subquery)
+            .map(derived_columns);
+        for column in referenced.chain(subqueries).flatten() {
+            if !found.iter().any(|seen| seen.label == column.label) {
+                found.push(column);
+            }
+        }
+        found
+    }
+
+    fn alias_candidates(&self) -> Vec<Candidate> {
+        let aliases = self.references.iter().filter_map(|reference| {
+            let alias = reference.alias.as_ref()?;
+            Some((alias.clone(), format!("alias · {}", reference.table)))
+        });
+        let subqueries = self
+            .derived
+            .iter()
+            .filter(|derived| derived.kind == DerivedKind::Subquery)
+            .map(|derived| (derived.name.clone(), "subquery".to_owned()));
+        aliases
+            .chain(subqueries)
+            .map(|(alias, detail)| Candidate {
+                kind: CandidateKind::Alias,
+                insert: quote_identifier(&alias),
+                label: alias,
+                detail: Some(detail),
+                cursor_back: 0,
+            })
+            .collect()
+    }
+
+    fn cte_candidates(&self) -> Vec<Candidate> {
+        self.derived
+            .iter()
+            .filter(|derived| derived.kind == DerivedKind::Cte)
+            .map(|cte| Candidate {
+                kind: CandidateKind::Derived,
+                insert: quote_identifier(&cte.name),
+                label: cte.name.clone(),
+                detail: Some("CTE".to_owned()),
+                cursor_back: 0,
+            })
+            .collect()
+    }
+
+    /// Tables and views, schema-qualified outside the default schema.
+    fn table_candidates(&self) -> Vec<Candidate> {
+        let default_schema = self.catalog.default_schema();
+        self.catalog
+            .tables()
+            .iter()
+            .map(|table| {
+                let insert = if table.schema == default_schema {
+                    quote_identifier(&table.name)
+                } else {
+                    format!(
+                        "{}.{}",
+                        quote_identifier(&table.schema),
+                        quote_identifier(&table.name)
+                    )
+                };
+                table_candidate(table, insert)
+            })
+            .collect()
+    }
+
+    fn schema_candidates(&self) -> Vec<Candidate> {
+        self.catalog
+            .schemas()
+            .into_iter()
+            .map(|schema| Candidate {
+                kind: CandidateKind::Schema,
+                insert: quote_identifier(&schema),
+                label: schema,
+                detail: Some("schema".to_owned()),
+                cursor_back: 0,
+            })
+            .collect()
+    }
+}
+
+/// Whether completed words follow the case being typed: upper case if the prefix has any.
+fn typed_in_upper_case(prefix: &str) -> bool {
+    prefix.chars().any(|c| c.is_ascii_uppercase())
+}
+
+/// Keywords, in the case being typed. None for an empty prefix: every keyword matches it,
+/// which would bury the names.
+fn keyword_candidates(prefix: &str) -> Vec<Candidate> {
+    if prefix.is_empty() {
+        return Vec::new();
+    }
+    let upper = typed_in_upper_case(prefix);
+    keywords()
+        .iter()
+        .map(|keyword| {
+            let insert = if upper {
                 keyword.to_ascii_uppercase()
             } else {
                 (*keyword).to_owned()
@@ -353,12 +509,78 @@ fn unqualified(
             Candidate {
                 kind: CandidateKind::Keyword,
                 label: insert.clone(),
-                detail: None,
+                detail: Some("keyword".to_owned()),
                 insert,
+                cursor_back: 0,
             }
-        }));
+        })
+        .collect()
+}
+
+/// The database's functions the catalog has loaded, then the dialect's built-ins, each
+/// inserted with its parentheses and the cursor between them. None for an empty prefix.
+fn function_candidates(input: &CompletionInput<'_>) -> Vec<Candidate> {
+    let prefix = &input.point.prefix;
+    if prefix.is_empty() {
+        return Vec::new();
+    }
+    let call = |name: &str| format!("{name}()");
+    let mut found: Vec<Candidate> = input
+        .catalog
+        .functions()
+        .into_iter()
+        .map(|function| Candidate {
+            kind: CandidateKind::Function,
+            insert: call(&quote_identifier(&function.name)),
+            detail: Some(format!(
+                "function · {}{}",
+                function.schema,
+                function.arguments.as_deref().unwrap_or("()")
+            )),
+            label: function.name,
+            cursor_back: 1,
+        })
+        .collect();
+    let upper = typed_in_upper_case(prefix);
+    for builtin in builtin_functions(input.dialect) {
+        if found
+            .iter()
+            .any(|seen| seen.label.eq_ignore_ascii_case(builtin))
+        {
+            continue;
+        }
+        let name = if upper {
+            builtin.to_ascii_uppercase()
+        } else {
+            (*builtin).to_owned()
+        };
+        found.push(Candidate {
+            kind: CandidateKind::Function,
+            insert: call(&name),
+            label: name,
+            detail: Some("function".to_owned()),
+            cursor_back: 1,
+        });
     }
     found
+}
+
+fn derived_columns(derived: &DerivedTable) -> Vec<Candidate> {
+    let detail = match derived.kind {
+        DerivedKind::Cte => format!("{} · CTE", derived.name),
+        DerivedKind::Subquery => format!("{} · subquery", derived.name),
+    };
+    derived
+        .columns
+        .iter()
+        .map(|column| Candidate {
+            kind: CandidateKind::Column,
+            insert: quote_identifier(column),
+            label: column.clone(),
+            detail: Some(detail.clone()),
+            cursor_back: 0,
+        })
+        .collect()
 }
 
 /// The catalog's table for a reference: in its schema if it names one, else in the default
@@ -392,31 +614,28 @@ fn column_candidates(table: &TableEntry, catalog: &dyn CatalogSource) -> Vec<Can
             kind: CandidateKind::Column,
             insert: quote_identifier(&column.name),
             detail: Some(match column.detail {
-                Some(detail) => format!("{} · {detail}", table.name),
+                Some(detail) => format!("{detail} · {}", table.name),
                 None => table.name.clone(),
             }),
             label: column.name,
+            cursor_back: 0,
         })
         .collect()
 }
 
 fn table_candidate(table: &TableEntry, insert: String) -> Candidate {
+    let (kind, word) = if table.is_view {
+        (CandidateKind::View, "view")
+    } else {
+        (CandidateKind::Table, "table")
+    };
     Candidate {
-        kind: if table.is_view {
-            CandidateKind::View
-        } else {
-            CandidateKind::Table
-        },
+        kind,
         label: table.name.clone(),
-        detail: Some(table.schema.clone()),
+        detail: Some(format!("{word} · {}", table.schema)),
         insert,
+        cursor_back: 0,
     }
-}
-
-fn starts_with_ignoring_case(label: &str, prefix: &str) -> bool {
-    label
-        .get(..prefix.len())
-        .is_some_and(|start| start.eq_ignore_ascii_case(prefix))
 }
 
 #[cfg(test)]
@@ -462,16 +681,35 @@ mod tests {
         fn tables_loaded(&self, _: Option<&str>) -> bool {
             true
         }
+
+        fn functions(&self) -> Vec<FunctionEntry> {
+            vec![FunctionEntry {
+                schema: "public".to_owned(),
+                name: "order_total".to_owned(),
+                arguments: Some("(integer)".to_owned()),
+            }]
+        }
     }
 
     fn point_at_end(text: &str) -> Option<CompletionPoint> {
         completion_point(text, text.len(), Dialect::Postgres)
     }
 
+    /// The candidates for a cursor at `cursor` in `text`, which is one statement.
+    fn suggest_at(text: &str, cursor: usize) -> Vec<Candidate> {
+        let point = completion_point(text, cursor, Dialect::Postgres).unwrap();
+        candidates(&CompletionInput {
+            point: &point,
+            statement: text,
+            prefix_start: point.replace.start,
+            dialect: Dialect::Postgres,
+            catalog: &FakeCatalog,
+            recent: &RecentCompletions::default(),
+        })
+    }
+
     fn suggest(text: &str) -> Vec<(CandidateKind, String)> {
-        let point = point_at_end(text).unwrap();
-        let references = table_references(text, Dialect::Postgres);
-        candidates(&point, &references, &FakeCatalog)
+        suggest_at(text, text.len())
             .into_iter()
             .map(|candidate| (candidate.kind, candidate.insert))
             .collect()
@@ -521,9 +759,7 @@ mod tests {
     #[test]
     fn suggests_columns_of_an_alias_or_table_after_a_dot() {
         // The cursor sits after `o.c`; the alias is defined later in the statement.
-        let point = completion_point("select o.c from orders o", 10, Dialect::Postgres).unwrap();
-        let references = table_references("select o.c from orders o", Dialect::Postgres);
-        let found: Vec<String> = candidates(&point, &references, &FakeCatalog)
+        let found: Vec<String> = suggest_at("select o.c from orders o", 10)
             .into_iter()
             .map(|candidate| candidate.insert)
             .collect();
@@ -548,8 +784,8 @@ mod tests {
     #[test]
     fn suggests_columns_then_tables_schemas_and_keywords_matching_the_prefix() {
         assert_eq!(
-            suggest("select * from orders where cus"),
-            [(CandidateKind::Column, "customer_id".to_owned())]
+            suggest("select * from orders where cus")[0],
+            (CandidateKind::Column, "customer_id".to_owned())
         );
         assert_eq!(
             suggest("select * from Ord"),
@@ -565,5 +801,69 @@ mod tests {
                 .iter()
                 .all(|(kind, _)| *kind != CandidateKind::Keyword)
         );
+    }
+
+    #[test]
+    fn offers_what_the_clause_calls_for() {
+        use CandidateKind::*;
+        let kinds = |text: &str| -> Vec<CandidateKind> {
+            let mut kinds: Vec<CandidateKind> =
+                suggest(text).into_iter().map(|(kind, _)| kind).collect();
+            kinds.dedup();
+            kinds
+        };
+        assert_eq!(
+            kinds("select * from orders o join "),
+            [Table, View, Table, Schema]
+        );
+        assert_eq!(
+            kinds("select * from orders o "),
+            Vec::<CandidateKind>::new()
+        );
+        assert_eq!(kinds("select * from orders o wh"), [Keyword]);
+        assert_eq!(
+            suggest("insert into orders (cu"),
+            [(Column, "customer_id".to_owned())]
+        );
+        assert_eq!(
+            suggest("select * from orders where cid"),
+            [(Column, "customer_id".to_owned())],
+            "fuzzy"
+        );
+        assert_eq!(
+            suggest("select * from orders oo where o")[..3],
+            [
+                (Alias, "oo".to_owned()),
+                (Function, "order_total()".to_owned()),
+                (Keyword, "offset".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn completes_cte_and_subquery_columns_and_functions() {
+        let cte = "with big as (select id as big_id, total from orders) select * from big b where ";
+        assert_eq!(
+            suggest(&format!("{cte}big_")),
+            [(CandidateKind::Column, "big_id".to_owned())]
+        );
+        assert_eq!(
+            suggest(&format!("{cte}b.")),
+            [
+                (CandidateKind::Column, "big_id".to_owned()),
+                (CandidateKind::Column, "total".to_owned()),
+            ]
+        );
+        assert_eq!(
+            suggest("select * from (select customer_id as who from orders) s where s.w"),
+            [(CandidateKind::Column, "who".to_owned())]
+        );
+        assert_eq!(
+            suggest("with big as (select 1) select * from bi")[0],
+            (CandidateKind::Derived, "big".to_owned())
+        );
+        let coalesce = suggest_at("select COAL", 11);
+        assert_eq!(coalesce[0].insert, "COALESCE()");
+        assert_eq!(coalesce[0].cursor_back, 1);
     }
 }

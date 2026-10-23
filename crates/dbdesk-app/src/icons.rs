@@ -84,6 +84,21 @@ pub fn driver_logo_sized(driver: DriverKind, palette: &Palette, size: f32) -> Im
     driver_logo(driver, palette).fit_to_exact_size(Vec2::splat(size))
 }
 
+/// A SQL keyword, in the completion list.
+pub fn keyword() -> Icon {
+    Icon::new(glyph::TEXT_AA, Role::Secondary)
+}
+
+/// A table's alias in a statement, in the completion list.
+pub fn alias() -> Icon {
+    Icon::new(glyph::TAG, Role::Weak)
+}
+
+/// A table the statement defines itself (a CTE or a subquery), in the completion list.
+pub fn derived_table() -> Icon {
+    Icon::new(glyph::BRACKETS_ROUND, Role::Primary)
+}
+
 pub fn node(kind: NodeKind) -> Icon {
     match kind {
         NodeKind::Database => Icon::new(glyph::DATABASE, Role::Secondary),

@@ -100,6 +100,12 @@ impl DbDeskApp {
         })
     }
 
+    /// The open consoles, for tests that look at what a console drew.
+    #[cfg(test)]
+    pub fn open_consoles(&self) -> impl Iterator<Item = &crate::console::QueryConsole> {
+        self.consoles.open_consoles()
+    }
+
     fn drain_engine_events(&mut self) {
         loop {
             let Some(engine) = &mut self.engine else {
@@ -573,7 +579,8 @@ impl eframe::App for DbDeskApp {
         let mut close_requests = Vec::new();
         let palette = Palette::for_visuals(ui.visuals());
         let lint = self.settings.lint_options();
-        let (open_consoles, saved_consoles) = self.consoles.open_and_saved_mut();
+        let (open_consoles, saved_consoles, recent_completions) =
+            self.consoles.open_and_saved_mut();
         DockArea::new(&mut self.dock)
             .style(theme::dock_style(ui.style()))
             // Calmer tab bars: tabs close one at a time, and panels don't fold away.
@@ -591,6 +598,7 @@ impl eframe::App for DbDeskApp {
                     consoles: open_consoles,
                     keymap: &self.keymap,
                     lint: &lint,
+                    recent_completions,
                     console_actions: &mut console_actions,
                     close_requests: &mut close_requests,
                 },
@@ -1157,7 +1165,9 @@ mod tests {
         harness
             .get_by_role(Role::MultilineTextInput)
             .type_text("SELECT * FROM orders WHERE cus");
-        step_until_visible(&mut harness, "c customer");
+        step_until(&mut harness, "the column to be suggested", |harness| {
+            harness.query_by_label("customer").is_some()
+        });
         harness.key_press(egui::Key::Enter);
         harness.run();
 
@@ -1272,6 +1282,55 @@ mod tests {
         harness.get_by_label_contains("null-comparison");
         harness.hover_at(squiggles[1].center());
         step_until_visible(&mut harness, "Syntax error: expected an expression");
+    }
+
+    #[test]
+    fn completes_tables_after_from_and_an_aliases_columns_after_its_dot() {
+        let dir = tempfile::tempdir().unwrap();
+        save_shop(
+            dir.path(),
+            "CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT);
+             CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT);",
+        );
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        open_console(&mut harness);
+        let editor_is = |harness: &Harness<'_, DbDeskApp>, text: &str| {
+            harness
+                .query_by(|node| {
+                    node.role() == Role::MultilineTextInput && node.value().as_deref() == Some(text)
+                })
+                .is_some()
+        };
+
+        harness
+            .get_by_role(Role::MultilineTextInput)
+            .type_text("SELECT * FROM cus");
+        step_until(&mut harness, "the table to be suggested", |harness| {
+            harness.query_by_label("customers").is_some()
+        });
+        assert!(
+            harness.query_by_label("customer").is_none(),
+            "after FROM, tables are offered, not columns"
+        );
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        assert!(editor_is(&harness, "SELECT * FROM customers"));
+
+        harness
+            .get_by_role(Role::MultilineTextInput)
+            .type_text(" c WHERE c.na");
+        step_until(
+            &mut harness,
+            "the alias's column to be suggested",
+            |harness| harness.query_by_label("name").is_some(),
+        );
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        assert!(editor_is(
+            &harness,
+            "SELECT * FROM customers c WHERE c.name"
+        ));
     }
 
     #[test]

@@ -9,8 +9,8 @@ use egui::{Id, Margin, ScrollArea, TextBuffer, TextEdit, Ui, vec2};
 
 use super::highlight::Marks;
 use super::{
-    FormatScope, LintOptions, QueryConsole, RunScope, RunState, SubmittedStatement, TreeCatalog,
-    cell_viewer, completion_popup, highlight, results,
+    Candidate, FormatScope, LintOptions, QueryConsole, RecentCompletions, RunScope, RunState,
+    SubmittedStatement, TreeCatalog, cell_viewer, completion_popup, highlight, results,
 };
 use crate::icons::{self, Role};
 use crate::keymap::{Action, Keymap};
@@ -66,6 +66,8 @@ pub enum ConsoleAction {
     Format(FormatScope),
     /// Asks the database whether it would accept these statements, without running them.
     Validate(Vec<String>),
+    /// A completion was accepted; it ranks higher next time, in every console.
+    CompletionAccepted(Candidate),
 }
 
 /// What a console draws with besides its own state.
@@ -75,6 +77,8 @@ pub struct ConsoleContext<'a> {
     pub catalog: Option<TreeCatalog<'a>>,
     /// Which problems to look for while typing.
     pub lint: &'a LintOptions,
+    /// Completions accepted lately, which rank first.
+    pub recent: &'a RecentCompletions,
 }
 
 pub fn show(
@@ -99,6 +103,11 @@ pub fn show(
         results::show(ui, console, keymap, actions);
     });
     cell_viewer::show(ui.ctx(), console);
+    actions.extend(
+        console
+            .take_accepted_completion()
+            .map(ConsoleAction::CompletionAccepted),
+    );
 }
 
 /// The editor's and the results' heights, from the results height the user last dragged to.
@@ -529,7 +538,7 @@ fn editor(
                 console.selection = byte_range(&console.text, &cursor);
             }
             completion_popup::follow_editor(ui, console, &output);
-            let missing = console.refresh_completion(catalog);
+            let missing = console.refresh_completion(catalog, context.recent);
             if !missing.is_empty() {
                 actions.push(ConsoleAction::LoadCatalog(missing));
             }
