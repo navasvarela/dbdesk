@@ -230,6 +230,17 @@ rejects found by a corpus of valid statements. Covered by that corpus and lint t
 never connects, never disturbs unread rows and skips open PostgreSQL transactions, problem
 and catalog-lint tests, and a UI test that hovers a warning and an error.
 
+**Completion demo note:** built, extending M5's completion. `SELECT * FROM cus` offers the
+`customers` table, not columns; `JOIN customers c ON c.` lists its columns with their types;
+`INSERT INTO orders (cu` offers only `orders`' columns; `WITH big AS (SELECT id AS big_id
+FROM orders) SELECT * FROM big WHERE big_` offers `big_id`, read from the CTE by the parser
+(the lexer when it doesn't parse); `coal` gives `coalesce()` with the cursor inside. `cid`
+fuzzy-matches `customer_id`, and what you accepted lately rises to the top in every console.
+The list has the explorer's icons and each candidate's type. Covered by context, derived
+table, ranking, function and projection tests, and a UI test that completes a table after
+`FROM` (where the column of the same prefix isn't offered) and an alias's column after its
+dot. Fixed on the way: the list never grew past the height of its first frame.
+
 ## Release track
 
 Downloads that install like any other desktop app, instead of building from source. The full
