@@ -1,5 +1,7 @@
 //! Tables as a statement names them, and what editing their rows needs to know.
 
+use crate::Quoting;
+
 /// A name as written in SQL. Whether it was quoted matters: PostgreSQL folds unquoted names
 /// to lowercase, and SQLite matches them ignoring case.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -9,10 +11,10 @@ pub struct Identifier {
 }
 
 impl Identifier {
-    /// The identifier as SQL text: quoted ones in double quotes, with quotes doubled.
-    pub fn to_sql(&self) -> String {
+    /// The identifier as SQL text, quoted as it was written.
+    pub fn to_sql(&self, quoting: Quoting) -> String {
         if self.quoted {
-            quote_always(&self.name)
+            quoting.identifier(&self.name)
         } else {
             self.name.clone()
         }
@@ -27,10 +29,10 @@ pub struct RelationName {
 }
 
 impl RelationName {
-    pub fn to_sql(&self) -> String {
+    pub fn to_sql(&self, quoting: Quoting) -> String {
         match &self.schema {
-            Some(schema) => format!("{}.{}", schema.to_sql(), self.name.to_sql()),
-            None => self.name.to_sql(),
+            Some(schema) => format!("{}.{}", schema.to_sql(quoting), self.name.to_sql(quoting)),
+            None => self.name.to_sql(quoting),
         }
     }
 }
@@ -49,19 +51,13 @@ pub struct TableDescription {
 impl TableDescription {
     /// The table's name for generated SQL: schema-qualified and always quoted, so it means
     /// exactly this table whatever the search path and whatever the names spell.
-    pub fn qualified_name(&self) -> String {
+    pub fn qualified_name(&self, quoting: Quoting) -> String {
         format!(
             "{}.{}",
-            quote_always(&self.schema),
-            quote_always(&self.name)
+            quoting.identifier(&self.schema),
+            quoting.identifier(&self.name)
         )
     }
-}
-
-/// Double-quotes an identifier, doubling quotes inside, even where it needs no quoting, as
-/// generated statements must not depend on whether a name happens to be a keyword.
-pub fn quote_always(name: &str) -> String {
-    format!("\"{}\"", name.replace('"', "\"\""))
 }
 
 #[cfg(test)]
@@ -80,13 +76,19 @@ mod tests {
                 quoted: true,
             },
         };
-        assert_eq!(name.to_sql(), "public.\"Order \"\"Items\"\"\"");
+        assert_eq!(
+            name.to_sql(Quoting::STANDARD),
+            "public.\"Order \"\"Items\"\"\""
+        );
         let described = TableDescription {
             schema: "public".to_owned(),
             name: "order".to_owned(),
             columns: vec![],
             primary_key: vec![],
         };
-        assert_eq!(described.qualified_name(), "\"public\".\"order\"");
+        assert_eq!(
+            described.qualified_name(Quoting::STANDARD),
+            "\"public\".\"order\""
+        );
     }
 }

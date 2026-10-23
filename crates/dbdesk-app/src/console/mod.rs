@@ -269,7 +269,10 @@ impl QueryConsole {
             }
             statement.edits.editability = match result {
                 Ok(Some(description)) => edit::edit_target(description.clone(), &statement.columns),
-                Ok(None) => Editability::ReadOnly(format!("{} isn't a table", table.to_sql())),
+                Ok(None) => Editability::ReadOnly(format!(
+                    "{} isn't a table",
+                    table.to_sql(self.dialect.quoting())
+                )),
                 Err(error) => Editability::ReadOnly(format!("Couldn't look up the table: {error}")),
             };
         }
@@ -284,11 +287,12 @@ impl QueryConsole {
         if statement.edits.pending.is_empty() || statement.edits.submitting {
             return None;
         }
-        let statements =
-            statement
-                .edits
-                .pending
-                .statements(target, &statement.columns, &statement.rows);
+        let statements = statement.edits.pending.statements(
+            target,
+            &statement.columns,
+            &statement.rows,
+            self.dialect.quoting(),
+        );
         statement.edits.submitting = true;
         statement.edits.error = None;
         Some(Command::ApplyEdits {

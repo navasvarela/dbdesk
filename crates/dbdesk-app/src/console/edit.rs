@@ -3,9 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use dbdesk_core::{
-    Cell, ColumnInfo, Identifier, RelationName, Row, TableDescription, quote_always,
-};
+use dbdesk_core::{Cell, ColumnInfo, Identifier, Quoting, RelationName, Row, TableDescription};
 use dbdesk_sql::{Dialect, Token, TokenKind, first_word, tokenize};
 
 /// Words that make a `SELECT` combine, group or deduplicate rows, so a result row no longer
@@ -279,12 +277,14 @@ impl PendingEdits {
         target: &EditTarget,
         columns: &[ColumnInfo],
         rows: &[Row],
+        quoting: Quoting,
     ) -> Vec<String> {
         self.changes
             .iter()
             .filter_map(|(&row, changes)| {
                 let loaded = rows.get(row)?;
-                Some(update_statement(target, columns, loaded, changes))
+                let row = RowChange { loaded, changes };
+                Some(update_statement(target, columns, row, quoting))
             })
             .collect()
     }
@@ -303,45 +303,52 @@ impl PendingEdits {
     }
 }
 
+/// One loaded row and the values typed over it, by column.
+struct RowChange<'a> {
+    loaded: &'a Row,
+    changes: &'a BTreeMap<usize, Cell>,
+}
+
 fn update_statement(
     target: &EditTarget,
     columns: &[ColumnInfo],
-    loaded: &Row,
-    changes: &BTreeMap<usize, Cell>,
+    row: RowChange<'_>,
+    quoting: Quoting,
 ) -> String {
-    let assignments: Vec<String> = changes
+    let assignments: Vec<String> = row
+        .changes
         .iter()
         .filter_map(|(&column, value)| {
-            let name = &columns.get(column)?.name;
-            Some(format!("{} = {}", quote_always(name), literal(value)))
+            let name = quoting.identifier(&columns.get(column)?.name);
+            Some(format!("{name} = {}", literal(value, quoting)))
         })
         .collect();
     let conditions: Vec<String> = target
         .key
         .iter()
         .filter_map(|&column| {
-            let name = quote_always(&columns.get(column)?.name);
-            Some(match loaded.get(column)? {
+            let name = quoting.identifier(&columns.get(column)?.name);
+            Some(match row.loaded.get(column)? {
                 None => format!("{name} IS NULL"),
-                value => format!("{name} = {}", literal(value)),
+                value => format!("{name} = {}", literal(value, quoting)),
             })
         })
         .collect();
     format!(
         "UPDATE {} SET {} WHERE {}",
-        target.table.qualified_name(),
+        target.table.qualified_name(quoting),
         assignments.join(", "),
         conditions.join(" AND ")
     )
 }
 
-/// A value as a string literal, or `NULL`. Both engines turn a string literal into the
+/// A value as a string literal, or `NULL`. The engines turn a string literal into the
 /// column's type (PostgreSQL from an untyped literal, SQLite by type affinity), which is how
 /// text from the grid (ADR-0004) goes back in without dbdesk knowing the types.
-fn literal(value: &Cell) -> String {
+fn literal(value: &Cell, quoting: Quoting) -> String {
     match value {
         None => "NULL".to_owned(),
-        Some(text) => format!("'{}'", text.replace('\'', "''")),
+        Some(text) => quoting.string_literal(text),
     }
 }
 
@@ -462,7 +469,7 @@ mod tests {
         assert_eq!(pending.len(), 2, "setting a value back drops the change");
 
         assert_eq!(
-            pending.statements(&target, &columns, &rows),
+            pending.statements(&target, &columns, &rows, Quoting::STANDARD),
             [r#"UPDATE "public"."people" SET "name" = 'Bob''s', "note" = NULL WHERE "id" = '2'"#]
         );
         pending.apply_to(&mut rows);

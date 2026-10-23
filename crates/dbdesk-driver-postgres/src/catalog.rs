@@ -5,7 +5,7 @@
 //! confusing in a browsing tool. See `docs/features/connection-explorer.md`.
 
 use dbdesk_core::{
-    CatalogNode, CatalogPath, DriverError, FolderKind, NodeKind, PathSegment, quote_identifier,
+    CatalogNode, CatalogPath, DriverError, FolderKind, NodeKind, PathSegment, Quoting,
 };
 use tokio_postgres::types::ToSql;
 use tokio_postgres::{Client, Row};
@@ -380,7 +380,7 @@ pub(crate) async fn definition(client: &Client, path: &CatalogPath) -> Result<St
     let invalid = || DriverError::InvalidPath(path.clone());
     let leaf = path.last().ok_or_else(invalid)?;
     let schema = path.name_of(NodeKind::Schema).ok_or_else(invalid)?;
-    let qualified = path.qualified_name().ok_or_else(invalid)?;
+    let qualified = path.qualified_name(Quoting::STANDARD).ok_or_else(invalid)?;
     let name = leaf.name.as_str();
 
     match leaf.kind {
@@ -415,8 +415,8 @@ pub(crate) async fn definition(client: &Client, path: &CatalogPath) -> Result<St
             let body = single_text(client, path, &sql, &[&schema, &relation, &name]).await?;
             Ok(format!(
                 "ALTER TABLE {}.{} ADD CONSTRAINT {qualified} {body};",
-                quote_identifier(schema),
-                quote_identifier(relation)
+                Quoting::STANDARD.identifier_if_needed(schema),
+                Quoting::STANDARD.identifier_if_needed(relation)
             ))
         }
         NodeKind::Trigger => {

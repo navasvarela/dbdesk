@@ -9,12 +9,13 @@ mod data_source;
 mod error;
 mod execution;
 mod password;
+mod quoting;
 mod table;
 
 #[cfg(feature = "conformance")]
 pub mod conformance;
 
-pub use catalog::{CatalogNode, CatalogPath, FolderKind, NodeKind, PathSegment, quote_identifier};
+pub use catalog::{CatalogNode, CatalogPath, FolderKind, NodeKind, PathSegment};
 pub use connection::{Connection, Rejection, RejectionKind, ServerInfo};
 pub use data_source::{
     ConnectionConfig, DataSource, DataSourceId, DriverKind, PostgresConfig, ServerConfig,
@@ -23,4 +24,5 @@ pub use data_source::{
 pub use error::{BoxError, DriverError, describe_error};
 pub use execution::{CancelHandle, Cell, ColumnInfo, ResultCursor, Row, TransactionStatus};
 pub use password::Password;
-pub use table::{Identifier, RelationName, TableDescription, quote_always};
+pub use quoting::Quoting;
+pub use table::{Identifier, RelationName, TableDescription};

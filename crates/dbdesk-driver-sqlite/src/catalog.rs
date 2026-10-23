@@ -6,7 +6,7 @@
 //! statement of every table, view, index and trigger, which is what "definition" returns.
 
 use dbdesk_core::{
-    CatalogNode, CatalogPath, DriverError, FolderKind, NodeKind, PathSegment, quote_identifier,
+    CatalogNode, CatalogPath, DriverError, FolderKind, NodeKind, PathSegment, Quoting,
 };
 use rusqlite::{Connection, Params, Row};
 
@@ -189,7 +189,7 @@ fn relations(
     };
     let sql = format!(
         "SELECT name FROM {}.sqlite_schema WHERE type = ?1 ORDER BY name",
-        quote_identifier(schema)
+        Quoting::STANDARD.identifier_if_needed(schema)
     );
     let names = rows(connection, &sql, [object_type], |row| {
         row.get::<_, String>(0)
@@ -247,7 +247,7 @@ fn indexes(
          FROM pragma_index_list(?1, ?2) il \
          LEFT JOIN {}.sqlite_schema s ON s.type = 'index' AND s.name = il.name \
          ORDER BY il.name",
-        quote_identifier(schema)
+        Quoting::STANDARD.identifier_if_needed(schema)
     );
     rows(connection, &sql, [relation, schema], |row| {
         let unique: bool = row.get(1)?;
@@ -297,7 +297,7 @@ fn triggers(
 ) -> Result<Vec<CatalogNode>, DriverError> {
     let sql = format!(
         "SELECT name FROM {}.sqlite_schema WHERE type = 'trigger' AND tbl_name = ?1 ORDER BY name",
-        quote_identifier(schema)
+        Quoting::STANDARD.identifier_if_needed(schema)
     );
     let names = rows(connection, &sql, [relation], |row| row.get::<_, String>(0))?;
     Ok(names
@@ -325,7 +325,7 @@ pub(crate) fn definition(
     };
     let sql = format!(
         "SELECT sql FROM {}.sqlite_schema WHERE type = ?1 AND name = ?2 AND sql IS NOT NULL",
-        quote_identifier(schema)
+        Quoting::STANDARD.identifier_if_needed(schema)
     );
     let found = rows(connection, &sql, [object_type, leaf.name.as_str()], |row| {
         row.get::<_, String>(0)

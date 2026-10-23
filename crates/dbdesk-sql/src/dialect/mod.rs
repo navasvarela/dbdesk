@@ -1,6 +1,6 @@
 //! Everything that differs between SQL dialects, in one place: the lexer's rules, the
-//! `sqlparser` dialect, the built-in functions, the `EXPLAIN` prefix and the catalog's
-//! system names.
+//! `sqlparser` dialect, the built-in functions, the `EXPLAIN` prefix, quoting and the
+//! catalog's system names.
 //!
 //! The rest of the crate asks a [`Dialect`] for these facts instead of matching on it, so a
 //! new dialect is a new variant here, its rows in each method and, if its lexical rules are
@@ -8,7 +8,7 @@
 
 mod functions;
 
-use dbdesk_core::DriverKind;
+use dbdesk_core::{DriverKind, Quoting};
 use sqlparser::dialect::{PostgreSqlDialect, SQLiteDialect};
 
 /// The SQL flavour of a data source.
@@ -132,11 +132,11 @@ impl Dialect {
         }
     }
 
-    /// The schema unqualified names resolve to, as a new connection sees it.
-    pub fn default_schema(self) -> &'static str {
+    /// How SQL that dbdesk writes (qualified names, completions, grid edits) quotes
+    /// identifiers and strings.
+    pub fn quoting(self) -> Quoting {
         match self {
-            Self::Postgres => "public",
-            Self::Sqlite => "main",
+            Self::Postgres | Self::Sqlite => Quoting::STANDARD,
         }
     }
 
