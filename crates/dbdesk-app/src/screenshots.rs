@@ -16,7 +16,8 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use dbdesk_core::{
-    ConnectionConfig, DataSource, DataSourceId, Password, PostgresConfig, SourceColor, SqliteConfig,
+    ConnectionConfig, DataSource, DataSourceId, Password, PostgresConfig, SourceColor,
+    SqliteConfig, TlsMode,
 };
 use dbdesk_store::DataSourceFile;
 use egui::accesskit::Role;
@@ -361,6 +362,7 @@ fn postgres_data_source(url: &str) -> (DataSource, Password) {
             port: port.parse().unwrap(),
             database: database.to_owned(),
             user: user.to_owned(),
+            tls: TlsMode::default(),
         }),
     };
     (data_source, Password::new(password))

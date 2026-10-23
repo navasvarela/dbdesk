@@ -51,11 +51,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
       # GitHub only runs containers on Linux runners, so the Postgres tests are skipped on
-      # macOS and Windows (they check DBDESK_TEST_POSTGRES_URL); the SQLite ones still run.
+      # macOS and Windows (they check DBDESK_TEST_POSTGRES_URL and
+      # DBDESK_TEST_POSTGRES_TLS_URL); the SQLite ones still run.
       - if: runner.os == 'Linux'
         name: Start PostgreSQL
         run: |
           docker compose up -d --wait
           echo "DBDESK_TEST_POSTGRES_URL=postgres://dbdesk:dbdesk@localhost:55432/dbdesk" >> "$GITHUB_ENV"
+          echo "DBDESK_TEST_POSTGRES_TLS_URL=postgres://dbdesk:dbdesk@localhost:55443/dbdesk" >> "$GITHUB_ENV"
       - run: cargo clippy --workspace --all-targets
       - run: cargo test --workspace

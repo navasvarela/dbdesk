@@ -39,7 +39,8 @@ that adds a SQLite data source through the dialog.
 
 Follow-ups left out of M1:
 
-- TLS for Postgres (`sslmode`). Servers that require TLS currently reject the connection.
+- ~~TLS for Postgres (`sslmode`).~~ Done in DB0: `disable`, `prefer`, `require` and
+  `verify-full` with an optional CA file, on rustls.
 - ~~A file picker for SQLite paths.~~ Done: **Browse…** and **New…** (create an empty database).
 - Prompting for a password when none is saved or the keychain is unavailable.
 - Noticing when an established connection drops (the session still shows "connected").

@@ -1,10 +1,11 @@
 //! The platform's open and save dialogs, for choosing an existing SQLite database or naming a
-//! new one.
+//! new one, and for choosing a CA certificate.
 
 use std::path::{Path, PathBuf};
 
 const OPEN_TITLE: &str = "Choose a SQLite database";
 const NEW_TITLE: &str = "Create a SQLite database";
+const CA_TITLE: &str = "Choose a CA certificate (PEM)";
 /// What the Save dialog suggests for a new database.
 const NEW_FILE_NAME: &str = "database.db";
 
@@ -29,6 +30,12 @@ pub fn pick_new_sqlite_file(current: &str) -> Option<PathBuf> {
     dialog(NEW_TITLE, current)
         .set_file_name(NEW_FILE_NAME)
         .save_file()
+}
+
+/// Shows the open-file dialog for a PEM file of trusted authorities. No extension filter, for
+/// the same reason as [`pick_sqlite_file`]: they come as `.pem`, `.crt` and `.cer`.
+pub fn pick_ca_file(current: &str) -> Option<PathBuf> {
+    dialog(CA_TITLE, current).pick_file()
 }
 
 fn dialog(title: &str, current: &str) -> rfd::FileDialog {

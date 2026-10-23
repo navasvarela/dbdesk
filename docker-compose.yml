@@ -1,7 +1,13 @@
-# Local PostgreSQL for driver tests and manual testing:
+# Database servers for the driver tests and manual testing, one service per engine (plus
+# PostgreSQL again with TLS required):
 #   docker compose up -d --wait
-#   DBDESK_TEST_POSTGRES_URL=postgres://dbdesk:dbdesk@localhost:55432/dbdesk cargo test
-# Port 55432 avoids clashing with a Postgres already running on 5432.
+# Then point the tests at them; each test that needs a server is skipped when its variable
+# is unset, so `cargo test` also works with none running:
+#   DBDESK_TEST_POSTGRES_URL=postgres://dbdesk:dbdesk@localhost:55432/dbdesk
+#   DBDESK_TEST_POSTGRES_TLS_URL=postgres://dbdesk:dbdesk@localhost:55443/dbdesk
+# The ports avoid clashing with servers already running on their usual ports. CI exports the
+# same variables (.github/workflows/ci.yml), so a new engine adds a service here and its
+# variable there.
 services:
   postgres:
     image: postgres:17
@@ -12,6 +18,37 @@ services:
     ports:
       - "55432:5432"
     # Lets `docker compose up --wait` return only once the server accepts connections.
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "dbdesk", "-d", "dbdesk"]
+      interval: 1s
+      timeout: 5s
+      retries: 30
+
+  # Refuses unencrypted TCP connections (see docker/postgres-tls/pg_hba.conf). Its
+  # certificate is signed by the test authority in docker/postgres-tls/ca.crt, which the
+  # verify-full tests trust.
+  postgres-tls:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: dbdesk
+      POSTGRES_PASSWORD: dbdesk
+      POSTGRES_DB: dbdesk
+    ports:
+      - "55443:5432"
+    volumes:
+      - ./docker/postgres-tls:/tls:ro
+    # PostgreSQL refuses a key file other users can read or that it doesn't own, and a
+    # mounted file keeps the host's owner and mode, so the key is copied in first.
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        install -o postgres -m 600 /tls/server.key /var/lib/postgresql/server.key &&
+        exec docker-entrypoint.sh postgres
+        -c ssl=on
+        -c ssl_cert_file=/tls/server.crt
+        -c ssl_key_file=/var/lib/postgresql/server.key
+        -c hba_file=/tls/pg_hba.conf
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "dbdesk", "-d", "dbdesk"]
       interval: 1s

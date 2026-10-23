@@ -163,10 +163,37 @@ pub struct PostgresConfig {
     pub port: u16,
     pub database: String,
     pub user: String,
+    /// Absent from files written before TLS existed, which then get the default.
+    #[serde(default)]
+    pub tls: TlsMode,
 }
 
 impl PostgresConfig {
     pub const DEFAULT_PORT: u16 = 5432;
+}
+
+/// Whether and how a network connection is encrypted. The modes are libpq's `sslmode` values
+/// of the same names, so they mean what PostgreSQL users already expect.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "kebab-case")]
+pub enum TlsMode {
+    /// Never encrypt.
+    Disable,
+    /// Encrypt if the server offers it, without checking its certificate; otherwise connect
+    /// unencrypted. The default, as in libpq: it changes nothing for servers without TLS.
+    #[default]
+    Prefer,
+    /// Always encrypt, without checking the server's certificate. Protects against someone
+    /// reading the traffic, not against someone impersonating the server.
+    Require,
+    /// Always encrypt, and check that the certificate is signed by a trusted authority and
+    /// names the host connected to.
+    VerifyFull {
+        /// A PEM file with the authorities to trust instead of the public web ones, for
+        /// servers with a private or self-signed certificate.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ca_file: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -215,6 +242,9 @@ mod tests {
                         port: 5432,
                         database: "app".to_owned(),
                         user: "juan".to_owned(),
+                        tls: TlsMode::VerifyFull {
+                            ca_file: Some("/etc/ssl/internal-ca.pem".into()),
+                        },
                     }),
                 },
                 DataSource {
@@ -233,6 +263,66 @@ mod tests {
         assert!(text.contains("driver = \"postgres\""), "{text}");
         assert!(text.contains("driver = \"sqlite\""), "{text}");
         assert_eq!(toml::from_str::<File>(&text).unwrap(), file);
+    }
+
+    #[test]
+    fn tls_defaults_to_prefer_in_files_written_before_it_existed() {
+        let without = r#"
+            [[data_source]]
+            id = "4b5f9a3e-8a52-4a7e-9c6b-1f0f2b0c9d11"
+            name = "local"
+            driver = "postgres"
+            host = "localhost"
+            port = 5432
+            database = "app"
+            user = "juan"
+        "#;
+
+        let file: File = toml::from_str(without).unwrap();
+
+        let ConnectionConfig::Postgres(config) = &file.data_source[0].config else {
+            panic!("expected a PostgreSQL data source");
+        };
+        assert_eq!(config.tls, TlsMode::Prefer);
+    }
+
+    #[test]
+    fn writes_tls_as_a_mode_with_its_ca_file() {
+        let modes = [
+            (TlsMode::Disable, "mode = \"disable\""),
+            (TlsMode::Require, "mode = \"require\""),
+            (
+                TlsMode::VerifyFull {
+                    ca_file: Some("/ca.pem".into()),
+                },
+                "ca_file = \"/ca.pem\"",
+            ),
+            (
+                TlsMode::VerifyFull { ca_file: None },
+                "mode = \"verify-full\"",
+            ),
+        ];
+        for (tls, expected) in modes {
+            let file = File {
+                data_source: vec![DataSource {
+                    id: DataSourceId::generate(),
+                    name: "local".to_owned(),
+                    color: None,
+                    config: ConnectionConfig::Postgres(PostgresConfig {
+                        host: "localhost".to_owned(),
+                        port: 5432,
+                        database: "app".to_owned(),
+                        user: "juan".to_owned(),
+                        tls,
+                    }),
+                }],
+            };
+
+            let text = toml::to_string(&file).unwrap();
+
+            assert!(text.contains(expected), "{text}");
+            assert_eq!(toml::from_str::<File>(&text).unwrap(), file);
+        }
     }
 
     #[test]
@@ -262,6 +352,7 @@ mod tests {
             port: 6432,
             database: "app".to_owned(),
             user: "juan".to_owned(),
+            tls: TlsMode::Require,
         });
         let sqlite = ConnectionConfig::Sqlite(SqliteConfig {
             path: "/data/app.db".into(),
