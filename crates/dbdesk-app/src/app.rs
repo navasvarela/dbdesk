@@ -7,6 +7,7 @@ use dbdesk_store::{ConsoleKey, ExportFormat};
 use egui::{Frame, Margin, RichText, ThemePreference};
 use egui_dock::{DockArea, DockState};
 
+use crate::about_dialog;
 use crate::console::ConsoleAction;
 use crate::consoles::Consoles;
 use crate::data_source_dialog::{DataSourceDialog, DialogAction};
@@ -49,6 +50,7 @@ pub struct DbDeskApp {
     /// Where `keymap.toml` is, once the engine has reported it.
     keymap_path: Option<PathBuf>,
     keymap_window_open: bool,
+    about_open: bool,
     /// Asks where to export rows. The platform's save dialog, except in tests.
     pick_export_path: Box<dyn Fn(ExportFormat) -> Option<PathBuf>>,
     consoles: Consoles,
@@ -91,6 +93,7 @@ impl DbDeskApp {
             keymap: Keymap::default(),
             keymap_path: None,
             keymap_window_open: false,
+            about_open: false,
             consoles: Consoles::default(),
             maximize_window,
         })
@@ -437,7 +440,18 @@ impl DbDeskApp {
                     tracing::info!("layout reset");
                 }
             });
+            ui.menu_button("Help", |ui| {
+                if ui.button("About dbdesk").clicked() {
+                    self.about_open = true;
+                }
+            });
         });
+    }
+
+    fn show_about(&mut self, ctx: &egui::Context) {
+        if self.about_open && about_dialog::show(ctx) {
+            self.about_open = false;
+        }
     }
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
@@ -572,6 +586,7 @@ impl eframe::App for DbDeskApp {
         }
         self.show_history_window(&ctx);
         self.show_keymap_window(&ctx);
+        self.show_about(&ctx);
 
         // Entries logged on the UI thread don't wake the UI (see `UiWaker`), so collect any
         // logged during this frame and ask for one more frame to show them.

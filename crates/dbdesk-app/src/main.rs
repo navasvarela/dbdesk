@@ -1,5 +1,6 @@
 //! The dbdesk desktop application.
 
+mod about_dialog;
 mod app;
 mod brand;
 mod catalog_tree;
@@ -27,6 +28,7 @@ mod telemetry;
 #[cfg(test)]
 mod test_support;
 mod theme;
+mod version;
 mod welcome;
 mod widgets;
 mod workspace;
@@ -45,6 +47,11 @@ use crate::app::DbDeskApp;
 const DEFAULT_WINDOW_SIZE: [f32; 2] = [1440.0, 900.0];
 
 fn main() -> anyhow::Result<()> {
+    // Before anything else: `--version` must work without a display, a home directory or a
+    // config folder, because the release workflow smoke-tests packaged builds with it.
+    if version::CliRequest::parse(std::env::args().skip(1)).answer() {
+        return Ok(());
+    }
     let paths = AppPaths::discover()
         .context("the OS reports no home directory, so dbdesk has nowhere to keep its files")?;
     let telemetry = telemetry::init(&paths.logs_dir())?;
