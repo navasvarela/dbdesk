@@ -64,6 +64,20 @@ select 1 /* c */ -- d
 ;
 "#;
 
+/// MySQL statements, with a `DELIMITER` script.
+const MYSQL_CORPUS: &str = r#"
+select `id`, "double", 'it\'s', 'C:\\temp' from `shop`.`users` where a = 1 # note
+order by 1 limit 5, 10;
+insert into t (a, b) values (1, 'x') on duplicate key update b = values(b);
+update t set a = a + 1 where id = 1 order by id limit 1;
+create table if not exists items (id int unsigned not null auto_increment primary key, name varchar(100) not null, price decimal(10, 2)) engine = InnoDB default charset = utf8mb4;
+select 1--1, @@session.sql_mode, @row := @row + 1;
+DELIMITER //
+CREATE PROCEDURE touch(n INT) BEGIN IF n > 0 THEN UPDATE items SET price = price + 1 WHERE id = n; END IF; END//
+DELIMITER ;
+show tables;
+"#;
+
 fn format_all(text: &str, dialect: Dialect, options: &FormatOptions) -> String {
     let ranges = split_statements(text, dialect);
     format_ranges(text, &ranges, dialect, options)
@@ -80,6 +94,7 @@ fn formatting_the_corpus_never_changes_a_token_and_is_stable() {
     for (corpus, dialect) in [
         (POSTGRES_CORPUS, Dialect::Postgres),
         (SQLITE_CORPUS, Dialect::Sqlite),
+        (MYSQL_CORPUS, Dialect::Mysql),
     ] {
         for case in [
             KeywordCase::Upper,
@@ -105,6 +120,7 @@ fn every_statement_formats_on_its_own_too() {
     for (corpus, dialect) in [
         (POSTGRES_CORPUS, Dialect::Postgres),
         (SQLITE_CORPUS, Dialect::Sqlite),
+        (MYSQL_CORPUS, Dialect::Mysql),
     ] {
         for range in split_statements(corpus, dialect) {
             let statement = &corpus[range];

@@ -135,6 +135,9 @@ impl<'a> Tokens<'a> {
                         .find(|&close| self.text(close) == Some(")"))
                         .is_some_and(|close| self.word(close + 1).as_deref() == Some("as"))
             }
+            ParserGap::InfixOperator(operator) => {
+                current.as_deref() == Some(operator) && self.text(index + 1) != Some("(")
+            }
             ParserGap::IsAnyExpression => {
                 current.as_deref() == Some("is") && {
                     let next = if self.word(index + 1).as_deref() == Some("not") {
