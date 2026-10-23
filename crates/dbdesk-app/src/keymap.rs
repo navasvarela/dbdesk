@@ -20,10 +20,11 @@ pub enum Action {
     Commit,
     Rollback,
     ViewCell,
+    EditCell,
 }
 
 impl Action {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Complete,
         Self::RunCurrent,
         Self::RunAll,
@@ -33,6 +34,7 @@ impl Action {
         Self::Commit,
         Self::Rollback,
         Self::ViewCell,
+        Self::EditCell,
     ];
 
     pub fn id(self) -> &'static str {
@@ -46,6 +48,7 @@ impl Action {
             Self::Commit => "console.commit",
             Self::Rollback => "console.rollback",
             Self::ViewCell => "grid.view-cell",
+            Self::EditCell => "grid.edit-cell",
         }
     }
 
@@ -60,6 +63,7 @@ impl Action {
             Self::Commit => "Commit the console's transaction",
             Self::Rollback => "Roll back the console's transaction",
             Self::ViewCell => "Show the selected cell in the cell viewer",
+            Self::EditCell => "Edit the selected cell, if its table can be edited",
         }
     }
 
@@ -78,6 +82,10 @@ impl Action {
             Self::Explain => shortcut(Modifiers::COMMAND | Modifiers::ALT, Key::E),
             Self::Cancel => shortcut(Modifiers::COMMAND, Key::Period),
             Self::ViewCell => shortcut(Modifiers::NONE, Key::Space),
+            Self::EditCell => vec![
+                KeyboardShortcut::new(Modifiers::NONE, Key::F2),
+                KeyboardShortcut::new(Modifiers::NONE, Key::Enter),
+            ],
             Self::ShowHistory | Self::Commit | Self::Rollback => Vec::new(),
         }
     }

@@ -212,7 +212,35 @@ Each console has a mode, **Auto-commit** (the default) or **Manual commit**:
   names get `_2`, `_3`), values as strings or `null`, since cells are text.
 - The editor and the grid are split by a line that can be dragged; each keeps at least a fifth
   of the console's height.
-- *Planned (M5)*: editing data.
+## Editing data
+
+- **What can be edited**: the rows of a `SELECT` from a single table (no joins, set
+  operations, `GROUP BY` or `DISTINCT`), when the table has a primary key and the result has
+  every key column. Only columns of that table (each named once in the result) can be edited.
+  Anything else says "Read-only" in the grid's toolbar, with the reason on hover.
+- **How the table is found**: the statement names it; the engine resolves that name on the
+  explorer's connection with `Connection::describe_table` (`to_regclass` on PostgreSQL, so
+  the search path and case folding apply; `pragma_table_list` on SQLite) and returns its real
+  schema, columns and primary key. The explorer's connection keeps the console's open result
+  undisturbed.
+- **Editing**: double-click an editable cell, select it and press F2 or Enter
+  (`grid.edit-cell`), or use **Edit value** in its context menu; Enter or clicking away keeps
+  the text, Escape drops it. **Set NULL** sets `NULL` (an emptied cell is an empty string).
+  Changed cells are tinted and show their new value; "N changed cells" offers **Submit** and
+  **Revert**.
+- **Submitting** runs one `UPDATE … SET … WHERE <key> = <value as loaded>` per changed row on
+  the console's own connection, all or none: in a transaction of their own, or behind a
+  savepoint inside the console's open transaction (so in manual commit mode they stay pending
+  with the rest). Each must change exactly one row; otherwise (the row changed or went since
+  it was read, or a value doesn't fit the column) everything is rolled back, the changes stay
+  pending, and the error names the row. Discarding unread rows is the price: the connection
+  can't hold a cursor and run the updates.
+- **Values are text**, as the grid holds them ([ADR-0004](../adr/0004-results-as-text.md)):
+  each goes back as a string literal, which PostgreSQL converts to the column's type and
+  SQLite stores by the column's affinity. So whatever displays can be edited as it displays
+  (`t` for a boolean, `{1,2}` for an array). SQLite blobs shown as `x'…'` would be stored as
+  that text; don't edit them.
+- *Planned*: inserting and deleting rows, a key binding for Submit.
 
 ## Open questions
 

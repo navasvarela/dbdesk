@@ -4,6 +4,7 @@
 //! query never holds up browsing or another console.
 
 mod catalog;
+mod edits;
 mod query;
 mod transaction;
 
@@ -12,8 +13,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use dbdesk_core::{
-    CancelHandle, CatalogPath, Connection, DataSource, DataSourceId, DriverKind, TransactionStatus,
-    describe_error,
+    CancelHandle, CatalogPath, Connection, DataSource, DataSourceId, DriverKind, RelationName,
+    TransactionStatus, describe_error,
 };
 use dbdesk_sql::Dialect;
 use dbdesk_store::{HistoryEntry, SecretStore};
@@ -36,6 +37,8 @@ pub(crate) enum SessionRequest {
     Execute(Script),
     FetchMore(RunId),
     EndTransaction(TransactionEnd),
+    DescribeTable(RelationName),
+    ApplyEdits(Vec<String>),
 }
 
 /// Statements to run in a console, in order.
@@ -368,6 +371,11 @@ impl Worker<'_> {
                 Ok(())
             }
             SessionRequest::EndTransaction(end) => transaction::end(self, end).await,
+            SessionRequest::DescribeTable(table) => {
+                let work = catalog::describe_table(self.context, &mut *self.connection, table);
+                self.signals.guard(work, None, self.cancel_handle).await
+            }
+            SessionRequest::ApplyEdits(statements) => edits::apply(self, &statements).await,
             SessionRequest::FetchMore(_) => Ok(()),
         }
     }

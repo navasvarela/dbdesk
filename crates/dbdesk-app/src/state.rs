@@ -97,6 +97,8 @@ impl AppState {
             | Event::KeymapLoaded { .. }
             | Event::HistoryFound { .. }
             | Event::ExportFinished { .. }
+            | Event::TableDescribed { .. }
+            | Event::EditsApplied { .. }
             | Event::TransactionChanged { .. }
             | Event::TransactionEnded { .. }
             | Event::ConsoleSaveFailed { .. }

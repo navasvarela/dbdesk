@@ -883,8 +883,9 @@ mod tests {
 
         harness.get_by_label("Explain").click();
 
-        // SQLite's query plan for a full table scan.
+        // SQLite's query plan for a full table scan, which is no table's rows to edit.
         step_until_visible(&mut harness, "SCAN main.orders");
+        harness.get_by_label("Read-only");
     }
 
     #[test]
@@ -992,5 +993,68 @@ mod tests {
                 .is_expanded(&dbdesk_core::CatalogPath::root()),
             "completion loads the catalog without expanding the explorer"
         );
+    }
+
+    #[test]
+    fn edits_a_cell_and_submits_it_as_an_update() {
+        let dir = tempfile::tempdir().unwrap();
+        save_shop(
+            dir.path(),
+            "CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT);
+             INSERT INTO orders VALUES (1, 'ada'), (2, 'bob');",
+        );
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        open_orders(&mut harness, "2 rows");
+        let cell_editor = |harness: &Harness<'_, DbDeskApp>| {
+            harness
+                .query_by(|node| {
+                    node.role() == Role::TextInput && node.value().as_deref() == Some("ada")
+                })
+                .is_some()
+        };
+
+        harness.get_by_label("ada").click();
+        harness.run();
+        // F2 edits once the table has been described; until then it does nothing.
+        let deadline = std::time::Instant::now() + WAIT_TIMEOUT;
+        while !cell_editor(&harness) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the cell editor never opened"
+            );
+            harness.key_press(egui::Key::F2);
+            harness.step();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness
+            .get_by(|node| node.role() == Role::TextInput && node.value().as_deref() == Some("ada"))
+            .type_text("Ada Lovelace");
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        harness.get_by_label("1 changed cell");
+        assert!(
+            harness
+                .query_by(|node| {
+                    node.role() == Role::TextInput
+                        && node.value().as_deref() == Some("Ada Lovelace")
+                })
+                .is_none(),
+            "Enter closes the editor and keeps it closed"
+        );
+        harness.get_by_label("Submit").click();
+
+        step_until(&mut harness, "the edit being saved", |harness| {
+            harness.query_by_label("1 changed cell").is_none()
+        });
+        harness.get_by_label("Ada Lovelace");
+        let saved: String = rusqlite::Connection::open(dir.path().join("shop.db"))
+            .unwrap()
+            .query_row("SELECT customer FROM orders WHERE id = 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(saved, "Ada Lovelace");
     }
 }

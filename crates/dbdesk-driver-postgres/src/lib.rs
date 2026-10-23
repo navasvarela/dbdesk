@@ -4,6 +4,7 @@
 
 mod catalog;
 mod execution;
+mod table;
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -13,7 +14,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use dbdesk_core::{
     BoxError, CancelHandle, CatalogNode, CatalogPath, Connection, DriverError, NodeKind, Password,
-    PostgresConfig, ResultCursor, ServerInfo, TransactionStatus,
+    PostgresConfig, RelationName, ResultCursor, ServerInfo, TableDescription, TransactionStatus,
 };
 use tokio::task::{JoinError, JoinHandle};
 use tokio_postgres::tls::NoTlsStream;
@@ -203,6 +204,14 @@ impl Connection for PostgresConnection {
     /// so there is no other database to pick.
     async fn execute(&mut self, sql: &str) -> Result<Box<dyn ResultCursor>, DriverError> {
         execution::execute(&self.primary.client, sql).await
+    }
+
+    /// Always on the configured database, the one consoles run on.
+    async fn describe_table(
+        &mut self,
+        table: &RelationName,
+    ) -> Result<Option<TableDescription>, DriverError> {
+        table::describe_table(&self.primary.client, table).await
     }
 
     async fn transaction_status(&mut self) -> Result<TransactionStatus, DriverError> {
@@ -430,6 +439,7 @@ mod tests {
 
         conformance::check_execution(&mut connection).await;
         conformance::check_transactions(&mut connection).await;
+        conformance::check_describe_table(&mut connection).await;
         conformance::check_cancel(&mut connection, "SELECT pg_sleep(60)").await;
 
         Box::new(connection).close().await.unwrap();

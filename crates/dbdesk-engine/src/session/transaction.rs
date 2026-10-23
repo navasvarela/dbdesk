@@ -97,10 +97,20 @@ async fn run_command(
     sql: &str,
     run: Option<RunId>,
 ) -> Result<Result<(), DriverError>, Disconnected> {
+    Ok(run_counting(worker, sql, run).await?.map(drop))
+}
+
+/// Runs a statement that returns no rows to completion, and returns how many rows it
+/// changed, as the database reports it.
+pub(super) async fn run_counting(
+    worker: &mut Worker<'_>,
+    sql: &str,
+    run: Option<RunId>,
+) -> Result<Result<Option<u64>, DriverError>, Disconnected> {
     let connection = &mut *worker.connection;
     let work = async move {
         let cursor = connection.execute(sql).await?;
-        cursor.finish().await.map(drop)
+        cursor.finish().await
     };
     worker.signals.guard(work, run, worker.cancel_handle).await
 }
