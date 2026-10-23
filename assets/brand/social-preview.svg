@@ -19,5 +19,5 @@
     <path d="M10 37A22 7 0 0 0 54 37V48A22 7 0 0 1 10 48Z" fill="#9A8BFF"/>
   </g>
   <text x="480" y="330" font-family="Inter" font-weight="600" font-size="120" fill="#F2F3F7">dbdesk</text>
-  <text x="484" y="398" font-family="Inter" font-size="34" fill="#A9AFBC">Browse and query PostgreSQL and SQLite</text>
+  <text x="484" y="398" font-family="Inter" font-size="34" fill="#A9AFBC">Browse and Query databases</text>
 </svg>
