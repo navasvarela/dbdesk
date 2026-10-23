@@ -84,7 +84,13 @@ read_only = true
 [format]
 keyword_case = "upper"  # "upper", "lower" or "preserve" (as typed)
 indent_width = 4        # spaces per level, 1 to 8
+
+[lint]
+disabled = ["select-star-in-insert"]  # lint rule ids, see features/sql-runner.md
+ask_database = true                   # connected consoles prepare (never run) statements
 ```
+
+An id in `lint.disabled` that names no rule is listed in the Settings window, and ignored.
 
 ## Query consoles
 

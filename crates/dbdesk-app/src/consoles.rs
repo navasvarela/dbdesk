@@ -58,6 +58,11 @@ impl Consoles {
         &self.saved
     }
 
+    #[cfg(test)]
+    pub fn open_consoles(&self) -> impl Iterator<Item = &QueryConsole> {
+        self.open.values()
+    }
+
     /// Opens a new console on `data_source`, holding `text`, in a file of its own.
     pub fn open(&mut self, data_source: &DataSource, text: String) -> ConsoleKey {
         let key = ConsoleKey {
@@ -211,6 +216,10 @@ impl Consoles {
                 table,
             }),
             ConsoleAction::SubmitEdits => self.open.get_mut(key)?.submit_edits(),
+            ConsoleAction::Validate(statements) => Some(Command::ValidateStatements {
+                console: id,
+                statements,
+            }),
             // The app opens a window or a file dialog, or updates the catalog, for these.
             ConsoleAction::ShowHistory
             | ConsoleAction::Export(_)

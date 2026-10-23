@@ -107,6 +107,7 @@ impl AppState {
             | Event::DefinitionLoaded { .. }
             | Event::SqliteDatabaseCreated { .. }
             | Event::ConsoleSessionChanged { .. }
+            | Event::StatementsValidated { .. }
             | Event::StatementStarted { .. }
             | Event::RowsFetched { .. }
             | Event::StatementFinished { .. }

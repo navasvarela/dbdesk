@@ -6,8 +6,8 @@
 use std::time::{Duration, Instant};
 
 use crate::{
-    CatalogNode, CatalogPath, Connection, DriverError, Identifier, NodeKind, RelationName,
-    ResultCursor, TransactionStatus, describe_error,
+    CatalogNode, CatalogPath, Connection, DriverError, Identifier, NodeKind, RejectionKind,
+    RelationName, ResultCursor, TransactionStatus, describe_error,
 };
 
 /// A fresh connection reports its server, answers pings, and closes cleanly.
@@ -337,6 +337,59 @@ pub async fn check_describe_table(connection: &mut dyn Connection) {
     ] {
         run_to_end(connection, drop).await;
     }
+}
+
+/// Validating prepares without running: an accepted `INSERT` inserts nothing, the connection's
+/// temporary tables are visible, unknown names and syntax errors are told apart (syntax errors
+/// with their position), and no transaction is left open.
+pub async fn check_validate(connection: &mut dyn Connection) {
+    run_to_end(connection, "CREATE TEMP TABLE dbdesk_validate (n integer)").await;
+    for accepted in [
+        "SELECT n FROM dbdesk_validate WHERE n > 1",
+        "INSERT INTO dbdesk_validate VALUES (1)",
+        "DELETE FROM dbdesk_validate",
+    ] {
+        let rejection = connection.validate(accepted).await.expect("validate");
+        assert_eq!(rejection, None, "{accepted}");
+    }
+    let mut cursor = connection
+        .execute("SELECT count(*) FROM dbdesk_validate")
+        .await
+        .expect("count");
+    let rows = cursor.next_page(PAGE).await.expect("read the count");
+    cursor.finish().await.expect("finish");
+    assert_eq!(
+        rows,
+        vec![vec![Some("0".to_owned())]],
+        "nothing was inserted"
+    );
+
+    for (unknown, sql) in [
+        ("table", "SELECT * FROM dbdesk_no_such_table"),
+        ("column", "SELECT missing FROM dbdesk_validate"),
+    ] {
+        let rejection = connection
+            .validate(sql)
+            .await
+            .expect("validate")
+            .unwrap_or_else(|| panic!("an unknown {unknown} is rejected"));
+        assert_eq!(rejection.kind, RejectionKind::UnknownName, "{rejection:?}");
+        assert!(!rejection.message.is_empty());
+    }
+    let sql = "SELECT n n n FROM dbdesk_validate";
+    let rejection = connection
+        .validate(sql)
+        .await
+        .expect("validate")
+        .expect("a syntax error is rejected");
+    assert_eq!(rejection.kind, RejectionKind::Syntax, "{rejection:?}");
+    assert_eq!(
+        rejection.position,
+        Some("SELECT n n ".len()),
+        "{rejection:?}"
+    );
+    assert_eq!(status(connection).await, TransactionStatus::Idle);
+    run_to_end(connection, "DROP TABLE dbdesk_validate").await;
 }
 
 async fn status(connection: &mut dyn Connection) -> TransactionStatus {

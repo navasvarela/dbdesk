@@ -27,7 +27,7 @@ flowchart LR
 | Crate | Responsibility | Depends on |
 | --- | --- | --- |
 | `dbdesk-core` | Domain types (`DataSource`, `ConnectionConfig`, `Password`, …) and the `Connection` trait. No I/O. | — |
-| `dbdesk-sql` | A forgiving SQL lexer: statement splitting, statement at the cursor, highlighting tokens, the UPDATE/DELETE-without-WHERE check, the formatter. | — |
+| `dbdesk-sql` | A forgiving SQL lexer: statement splitting, statement at the cursor, highlighting tokens, the UPDATE/DELETE-without-WHERE check, the formatter, and the syntax checker (`sqlparser`) and lint rules. | sqlparser |
 | `dbdesk-driver-postgres` | `tokio-postgres` implementation of `Connection`. | core |
 | `dbdesk-driver-sqlite` | `rusqlite` implementation, run on `spawn_blocking`. | core |
 | `dbdesk-engine` | Session lifecycle, command handling, cancellation, transactions, event emission. | core, sql, store, drivers |
@@ -81,6 +81,7 @@ pub enum Command {
     CreateKeymap { text: String },                           // M5
     ReloadSettings,                                          // SQL tools
     SaveSettings(Settings),                                  // SQL tools
+    ValidateStatements { console: ConsoleId, statements: Vec<String> },        // SQL tools
 }
 
 pub enum Event {
@@ -110,6 +111,8 @@ pub enum Event {
                      result: Result<Option<TableDescription>, String> },        // M5
     EditsApplied { console: ConsoleId, result: Result<(), EditFailure> },       // M5
     SettingsLoaded { path: PathBuf, result: Result<Settings, String> },         // SQL tools
+    StatementsValidated { console: ConsoleId,
+                          results: Vec<(String, StatementCheck)> },              // SQL tools
 }
 ```
 
@@ -172,6 +175,8 @@ pub trait Connection: Send {
     async fn definition(&mut self, path: &CatalogPath) -> Result<String, DriverError>;
     async fn execute(&mut self, sql: &str) -> Result<Box<dyn ResultCursor>, DriverError>;
     async fn transaction_status(&mut self) -> Result<TransactionStatus, DriverError>; // M4
+    async fn validate(&mut self, sql: &str)
+        -> Result<Option<Rejection>, DriverError>;                            // SQL tools
     async fn describe_table(&mut self, table: &RelationName)
         -> Result<Option<TableDescription>, DriverError>;                    // M5
     fn cancel_handle(&self) -> Arc<dyn CancelHandle>;

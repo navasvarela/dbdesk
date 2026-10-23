@@ -3,6 +3,7 @@
 //! This module holds the state and its rules (what to run, how events update a run); `view`
 //! and `results` draw it. See `docs/features/sql-runner.md`.
 
+mod catalog_lint;
 mod catalog_source;
 mod cell_viewer;
 mod completion;
@@ -10,6 +11,7 @@ mod completion_popup;
 mod edit;
 mod grid;
 mod highlight;
+mod problems;
 mod results;
 mod view;
 
@@ -33,6 +35,7 @@ use dbdesk_store::{ConsoleKey, ExportFormat};
 use edit::Editability;
 
 pub use catalog_source::TreeCatalog;
+pub use problems::LintOptions;
 pub use view::{ConsoleAction, ConsoleContext, show};
 
 pub fn dialect_for(driver: DriverKind) -> Dialect {
@@ -100,6 +103,10 @@ pub struct QueryConsole {
     format_undo: Option<String>,
     /// Why the last format was refused, until the text changes.
     format_error: Option<String>,
+    /// Syntax errors and lint warnings, kept up to date while typing.
+    problems: problems::Problems,
+    /// Where each shown problem's squiggle was drawn last frame (with its index), for hovering.
+    problem_rects: Vec<(egui::Rect, usize)>,
     /// The cell shown in full in the cell viewer window.
     viewed_cell: Option<ViewedCell>,
     /// The completion list, while it is open.
@@ -198,6 +205,8 @@ impl QueryConsole {
             pending_cursor: None,
             format_undo: None,
             format_error: None,
+            problems: problems::Problems::new(Instant::now()),
+            problem_rects: Vec::new(),
             viewed_cell: None,
             completion: None,
             export_status: None,
@@ -221,6 +230,12 @@ impl QueryConsole {
 
     pub fn text(&self) -> &str {
         &self.text
+    }
+
+    /// Where each problem's squiggle was drawn last frame, for tests to hover over.
+    #[cfg(test)]
+    pub fn squiggle_rects(&self) -> impl Iterator<Item = egui::Rect> + '_ {
+        self.problem_rects.iter().map(|(rect, _)| *rect)
     }
 
     /// Decides, for each result that hasn't been looked at, whether it may be editable, and
@@ -521,10 +536,46 @@ impl QueryConsole {
         }
     }
 
+    /// Checks the text for problems if it is due; see [`problems::Problems::check`].
+    pub fn check_problems(
+        &mut self,
+        catalog: Option<&TreeCatalog<'_>>,
+        options: &LintOptions,
+        now: Instant,
+    ) -> problems::CheckOutcome {
+        let can_ask_database = matches!(self.session, SessionState::Connected(_))
+            && self.cancellable_run().is_none()
+            && self.transaction == TransactionStatus::Idle;
+        let input = problems::CheckInput {
+            text: &self.text,
+            dialect: self.dialect,
+            catalog: match catalog {
+                Some(catalog) => catalog,
+                None => &completion::NoCatalog,
+            },
+            options,
+            can_ask_database,
+        };
+        self.problems.check(&input, now)
+    }
+
+    /// Moves the cursor to the next problem after it (or the previous one before it),
+    /// wrapping around.
+    pub fn jump_to_problem(&mut self, forward: bool) {
+        let (start, end) = ordered(&self.selection);
+        let from = if forward { end } else { start };
+        if let Some(problem) = self.problems.next_from(from, forward) {
+            let at = problem.range.start;
+            self.selection = at..at;
+            self.pending_cursor = Some(at);
+        }
+    }
+
     /// Records that the user changed the text at `now`.
     pub fn edited(&mut self, now: Instant) {
         self.error_marker = None;
         self.format_error = None;
+        self.problems.edited(now);
         self.file.keep = true;
         self.file.unsaved_since.get_or_insert(now);
     }
@@ -693,6 +744,10 @@ impl QueryConsole {
             }
             Event::TransactionChanged { console, status } if *console == self.id => {
                 self.transaction = *status;
+                // Statements skipped inside the transaction can be asked about now.
+                if *status == TransactionStatus::Idle {
+                    self.problems.forget_database(Instant::now());
+                }
             }
             Event::TransactionEnded { console, result } if *console == self.id => {
                 self.transaction_ended = Some(result.clone());
@@ -716,6 +771,13 @@ impl QueryConsole {
             } if *data_source == self.data_source() => self.table_described(table, result),
             Event::EditsApplied { console, result } if *console == self.id => {
                 self.edits_applied(result);
+            }
+            Event::StatementsValidated { console, results } if *console == self.id => {
+                self.problems.database_answered(results, Instant::now());
+            }
+            // Tables the checks didn't know may have loaded.
+            Event::ChildrenLoaded { id, .. } if *id == self.data_source() => {
+                self.problems.recheck(Instant::now());
             }
             Event::ConsoleSaveFailed { key, error } if *key == self.key => {
                 // Shown until the next save is sent; that one writes the whole text again.
@@ -762,6 +824,8 @@ impl QueryConsole {
                         outcome: *outcome,
                         elapsed: *elapsed,
                     };
+                    // The run may have created or dropped tables, or ended a transaction.
+                    self.problems.forget_database(Instant::now());
                 }
             }
             _ => {}
@@ -806,6 +870,9 @@ impl QueryConsole {
     /// A connection that fails or closes ends whatever the console was doing with it.
     fn session_changed(&mut self, state: &SessionState) {
         self.session = state.clone();
+        if matches!(state, SessionState::Connected(_)) {
+            self.problems.forget_database(Instant::now());
+        }
         if matches!(state, SessionState::Disconnected | SessionState::Failed(_)) {
             // The database rolls back whatever a closed connection left uncommitted.
             self.transaction = TransactionStatus::Idle;

@@ -7,6 +7,7 @@ mod catalog;
 mod edits;
 mod query;
 mod transaction;
+mod validate;
 
 use std::future::Future;
 use std::sync::Arc;
@@ -39,6 +40,8 @@ pub(crate) enum SessionRequest {
     EndTransaction(TransactionEnd),
     DescribeTable(RelationName),
     ApplyEdits(Vec<String>),
+    /// Prepares statements without running them; see [`crate::Command::ValidateStatements`].
+    Validate(Vec<String>),
 }
 
 /// Statements to run in a console, in order.
@@ -353,6 +356,10 @@ impl Worker<'_> {
             }
             return Ok(());
         }
+        // Validation is only a check, so it never costs the user their unread rows.
+        if let SessionRequest::Validate(statements) = request {
+            return validate::validate(self, statements).await;
+        }
         // Anything else needs the connection, which parked rows are still holding.
         if let Some(parked) = self.parked.take() {
             query::discard(self.context, parked, self.cancel_handle).await;
@@ -376,7 +383,7 @@ impl Worker<'_> {
                 self.signals.guard(work, None, self.cancel_handle).await
             }
             SessionRequest::ApplyEdits(statements) => edits::apply(self, &statements).await,
-            SessionRequest::FetchMore(_) => Ok(()),
+            SessionRequest::FetchMore(_) | SessionRequest::Validate(_) => Ok(()),
         }
     }
 }

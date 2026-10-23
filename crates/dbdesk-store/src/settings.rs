@@ -12,6 +12,7 @@ use crate::atomic::write_atomically;
 #[serde(default, deny_unknown_fields)]
 pub struct Settings {
     pub format: FormatSettings,
+    pub lint: LintSettings,
 }
 
 /// How the SQL formatter writes statements.
@@ -28,6 +29,26 @@ impl Default for FormatSettings {
         Self {
             keyword_case: KeywordCase::Upper,
             indent_width: 4,
+        }
+    }
+}
+
+/// What the console checks while typing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct LintSettings {
+    /// Ids of the lint rules switched off. Kept as written; the app reports ids it doesn't
+    /// know.
+    pub disabled: Vec<String>,
+    /// Whether a connected console asks its database to prepare (never run) its statements.
+    pub ask_database: bool,
+}
+
+impl Default for LintSettings {
+    fn default() -> Self {
+        Self {
+            disabled: Vec::new(),
+            ask_database: true,
         }
     }
 }
@@ -145,6 +166,10 @@ mod tests {
             format: FormatSettings {
                 keyword_case: KeywordCase::Preserve,
                 indent_width: 2,
+            },
+            lint: LintSettings {
+                disabled: vec!["null-comparison".to_owned()],
+                ask_database: false,
             },
         };
 

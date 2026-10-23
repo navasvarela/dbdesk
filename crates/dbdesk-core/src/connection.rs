@@ -23,6 +23,26 @@ impl fmt::Display for ServerInfo {
     }
 }
 
+/// Why the database would refuse a statement, found by preparing it without running it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rejection {
+    /// The database's message.
+    pub message: String,
+    /// Byte offset into the statement where the problem was found, when the database says.
+    pub position: Option<usize>,
+    pub kind: RejectionKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RejectionKind {
+    /// The statement can't be read.
+    Syntax,
+    /// It names a table, column, function or schema that doesn't exist (now).
+    UnknownName,
+    /// Anything else: a type mismatch, an ambiguous column, …
+    Other,
+}
+
 /// A live connection to a database, implemented once per driver.
 ///
 /// Used as `Box<dyn Connection>`, hence `async-trait`: native `async fn` in traits is not
@@ -72,6 +92,21 @@ pub trait Connection: Send {
         &mut self,
         table: &RelationName,
     ) -> Result<Option<TableDescription>, DriverError>;
+
+    /// Asks the database whether it would accept `sql`, one data query or change (`SELECT`,
+    /// `WITH`, `VALUES`, `INSERT`, `UPDATE`, `DELETE`), without running it: PostgreSQL parses
+    /// and analyses it as an unnamed prepared statement, SQLite compiles it. Names resolve as
+    /// they would for a run on this connection (search path, temporary tables). `None` if it
+    /// would be accepted.
+    ///
+    /// Callers must not ask while a result cursor is open, nor inside an open transaction on
+    /// PostgreSQL, where a rejected statement aborts the transaction. Other statements may run
+    /// something while being prepared (some SQLite pragmas do), so they must not be passed.
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError::Connection`] if the database can't be asked.
+    async fn validate(&mut self, sql: &str) -> Result<Option<Rejection>, DriverError>;
 
     /// Whether a transaction is open on this connection, as the database sees it, so a
     /// transaction the user started with their own `BEGIN` counts too.

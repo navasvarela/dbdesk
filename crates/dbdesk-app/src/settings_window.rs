@@ -1,7 +1,9 @@
-//! View → Settings: how SQL is formatted. Each change is saved to `settings.toml` at once.
+//! View → Settings: how SQL is formatted and what the console checks while typing. Each
+//! change is saved to `settings.toml` at once.
 
+use dbdesk_sql::LintRule;
 use dbdesk_store::{KeywordCase, Settings};
-use egui::{Grid, Window};
+use egui::{Grid, RichText, Window};
 
 use crate::settings::{AppSettings, INDENT_WIDTHS};
 
@@ -27,7 +29,12 @@ pub fn show(ctx: &egui::Context, settings: &AppSettings) -> Option<SettingsWindo
     }
 }
 
+/// The window's content width. Fixed, because an auto-sized window and its wrapping labels
+/// would otherwise keep resizing each other.
+const WIDTH: f32 = 560.0;
+
 fn contents(ui: &mut egui::Ui, settings: &AppSettings) -> Option<SettingsWindowAction> {
+    ui.set_width(WIDTH);
     let mut action = None;
     ui.horizontal(|ui| {
         if let Some(path) = settings.path() {
@@ -43,6 +50,9 @@ fn contents(ui: &mut egui::Ui, settings: &AppSettings) -> Option<SettingsWindowA
     });
     if let Some(error) = settings.error() {
         ui.colored_label(ui.visuals().error_fg_color, error);
+    }
+    for problem in settings.problems() {
+        ui.colored_label(ui.visuals().warn_fg_color, problem);
     }
     ui.separator();
     ui.strong("SQL formatting");
@@ -72,10 +82,33 @@ fn contents(ui: &mut egui::Ui, settings: &AppSettings) -> Option<SettingsWindowA
                 });
             ui.end_row();
         });
+    ui.separator();
+    lint_settings(ui, &mut draft);
     if &draft != settings.settings() {
         action = Some(SettingsWindowAction::Save(draft));
     }
     action
+}
+
+/// The rules the console checks while typing, each switchable off, and whether to ask the
+/// database.
+fn lint_settings(ui: &mut egui::Ui, draft: &mut Settings) {
+    ui.strong("Problems while typing");
+    ui.checkbox(
+        &mut draft.lint.ask_database,
+        "Ask the database to prepare statements (connected consoles; nothing runs)",
+    );
+    for rule in LintRule::ALL {
+        let mut enabled = !draft.lint.disabled.iter().any(|id| id == rule.id());
+        let label = format!("{} ({})", rule.description(), rule.id());
+        if ui.checkbox(&mut enabled, RichText::new(label)).changed() {
+            if enabled {
+                draft.lint.disabled.retain(|id| id != rule.id());
+            } else {
+                draft.lint.disabled.push(rule.id().to_owned());
+            }
+        }
+    }
 }
 
 fn spaces(width: u8) -> String {

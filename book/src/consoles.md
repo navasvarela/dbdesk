@@ -74,6 +74,29 @@ before using it: if it would read differently to the database, the text stays as
 toolbar says **Not formatted**. The cursor stays where it was in the SQL, and ⌘Z undoes the
 whole format at once.
 
+**Problems while typing.** A moment after you stop typing, dbdesk underlines mistakes: a red
+wave for errors (SQL the database can't read), an amber one for warnings (SQL that runs but
+probably doesn't do what you meant). Hover over one to read it. The toolbar counts them; click
+the count, or press F8 (⇧F8 for the previous one), to move the cursor to the next.
+
+Warnings point out:
+
+- `= NULL` or `<> NULL`, which are never true: write `IS NULL` or `IS NOT NULL`;
+- `UPDATE` or `DELETE` without `WHERE`, which change every row;
+- `INSERT … SELECT *`, which depends on the column order of the source;
+- a table, or `alias.column`, the explorer has loaded and doesn't have. These only appear for
+  parts of the catalog the explorer has already loaded, so expand the data source to get
+  them.
+
+Only queries and data changes (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, `WITH`, `VALUES`) are
+checked for syntax: dbdesk would rather miss an error in a `CREATE FUNCTION` than flag one that
+isn't there. Once a console has run something, its own connection also asks the database
+whether it would accept each statement, without running it, so the database's own messages
+show up too ("The database says: …"). This never happens while results are still loading or a
+transaction is open.
+
+**View → Settings…** switches each kind of warning off, and asking the database too.
+
 **View → Settings…** chooses how keywords are written (UPPER, lower, or as you typed them) and
 how many spaces each level is indented. They're saved in `settings.toml` (see
 [Where dbdesk keeps its files](files.md)).

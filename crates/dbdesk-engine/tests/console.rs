@@ -7,11 +7,11 @@ mod common;
 use std::sync::Arc;
 
 use common::{TestEngine, postgres_test_server, sqlite_data_source, sqlite_database};
-use dbdesk_core::TransactionStatus;
 use dbdesk_core::{ConnectionConfig, DataSource, DataSourceId, Identifier, RelationName};
+use dbdesk_core::{RejectionKind, TransactionStatus};
 use dbdesk_engine::{
     Command, ConsoleId, EditFailure, Event, PasswordUpdate, RunId, RunOutcome, SessionState,
-    StatementFailure, TransactionEnd, TransactionMode,
+    StatementCheck, StatementFailure, TransactionEnd, TransactionMode,
 };
 use dbdesk_store::HistoryOutcome;
 
@@ -597,4 +597,118 @@ fn applies_and_rolls_back_edits_on_postgres() {
             break;
         }
     }
+}
+
+fn validate(engine: &TestEngine, statements: &[&str]) {
+    engine.send(Command::ValidateStatements {
+        console: CONSOLE,
+        statements: statements.iter().map(|s| (*s).to_owned()).collect(),
+    });
+}
+
+/// What the database said about each statement, in order.
+fn expect_checks(engine: &mut TestEngine) -> Vec<StatementCheck> {
+    match next_run_event(engine) {
+        Event::StatementsValidated { console, results } if console == CONSOLE => {
+            results.into_iter().map(|(_, check)| check).collect()
+        }
+        other => panic!("expected validation results, got {other:?}"),
+    }
+}
+
+fn rejected(check: &StatementCheck) -> Option<RejectionKind> {
+    match check {
+        StatementCheck::Rejected(rejection) => Some(rejection.kind),
+        _ => None,
+    }
+}
+
+#[test]
+fn validates_statements_without_running_them_or_disturbing_unread_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut engine, id) = engine_with_sqlite(dir.path());
+    validate(&engine, &["SELECT 1"]);
+    assert_eq!(
+        expect_checks(&mut engine),
+        [StatementCheck::Skipped],
+        "a console that never ran isn't connected, and validating doesn't connect it"
+    );
+    execute(&engine, id, 1, &[SETUP[0]]);
+    finish_run(&mut engine, 1);
+
+    validate(
+        &engine,
+        &[
+            "INSERT INTO numbers VALUES (1)",
+            "SELECT nope FROM numbers",
+            "SELECT n FROM numbers WHERE",
+            "PRAGMA user_version = 7",
+        ],
+    );
+    let checks = expect_checks(&mut engine);
+    assert_eq!(checks[0], StatementCheck::Accepted);
+    assert_eq!(rejected(&checks[1]), Some(RejectionKind::UnknownName));
+    assert_eq!(rejected(&checks[2]), Some(RejectionKind::Syntax));
+    assert_eq!(
+        checks[3],
+        StatementCheck::Skipped,
+        "pragmas are never prepared"
+    );
+
+    execute(&engine, id, 2, &[SETUP[1], "SELECT n FROM numbers"]);
+    expect_statement_ok(&mut engine, 2, 0);
+    assert!(matches!(
+        next_run_event(&mut engine),
+        Event::StatementStarted { .. }
+    ));
+    assert_eq!(expect_rows(&mut engine, 2, 1), (500, true));
+    expect_run_finished(&mut engine, 2, RunOutcome::Completed);
+    validate(&engine, &["SELECT n FROM numbers"]);
+    assert_eq!(expect_checks(&mut engine), [StatementCheck::Skipped]);
+    engine.send(Command::FetchMore {
+        console: CONSOLE,
+        run: RunId(2),
+    });
+    assert_eq!(
+        expect_rows(&mut engine, 2, 1),
+        (500, true),
+        "the unread rows are still there, and only the 1200 inserted rows"
+    );
+}
+
+#[test]
+fn never_validates_inside_a_postgres_transaction() {
+    let Some(server) = postgres_test_server() else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    engine.expect_started(vec![]);
+    let data_source = DataSource {
+        id: DataSourceId::generate(),
+        name: "test server".to_owned(),
+        color: None,
+        config: ConnectionConfig::Postgres(server.config),
+    };
+    let id = data_source.id;
+    engine.send(Command::SaveDataSource {
+        data_source,
+        password: PasswordUpdate::Set(server.password),
+    });
+    assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
+    execute(&engine, id, 1, &["SELECT 1"]);
+    finish_run(&mut engine, 1);
+
+    validate(
+        &engine,
+        &["SELECT nope FROM pg_class", "SELECT relname FROM pg_class"],
+    );
+    let checks = expect_checks(&mut engine);
+    assert_eq!(rejected(&checks[0]), Some(RejectionKind::UnknownName));
+    assert_eq!(checks[1], StatementCheck::Accepted);
+
+    execute(&engine, id, 2, &["BEGIN"]);
+    finish_run(&mut engine, 2);
+    validate(&engine, &["SELECT nope FROM pg_class"]);
+    assert_eq!(expect_checks(&mut engine), [StatementCheck::Skipped]);
 }

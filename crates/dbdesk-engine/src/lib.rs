@@ -23,6 +23,6 @@ pub use export::Export;
 pub use handle::{EngineConfig, EngineError, EngineHandle};
 pub use protocol::{
     Command, ConsoleId, EditFailure, Event, PasswordUpdate, RunId, RunOutcome, SessionState,
-    StatementFailure, StatementSummary, TransactionEnd, TransactionMode,
+    StatementCheck, StatementFailure, StatementSummary, TransactionEnd, TransactionMode,
 };
 pub use repaint::Repaint;

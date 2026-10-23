@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use dbdesk_core::{
-    CatalogNode, CatalogPath, ColumnInfo, DataSource, DataSourceId, Password, RelationName, Row,
-    ServerInfo, TableDescription, TransactionStatus,
+    CatalogNode, CatalogPath, ColumnInfo, DataSource, DataSourceId, Password, Rejection,
+    RelationName, Row, ServerInfo, TableDescription, TransactionStatus,
 };
 use dbdesk_store::{ConsoleKey, HistoryEntry, KeymapBindings, SavedConsole, Settings};
 
@@ -107,6 +107,14 @@ pub enum Command {
         console: ConsoleId,
         statements: Vec<String>,
     },
+    /// Asks the console's own connection whether the database would accept each statement,
+    /// without running any (see `Connection::validate`). Never connects: a console that
+    /// isn't connected has every statement skipped. Answered by
+    /// [`Event::StatementsValidated`].
+    ValidateStatements {
+        console: ConsoleId,
+        statements: Vec<String>,
+    },
     /// Reads `keymap.toml` again. Answered by [`Event::KeymapLoaded`].
     ReloadKeymap,
     /// Writes a new `keymap.toml` holding `text`, unless one exists, then reads it.
@@ -205,6 +213,12 @@ pub enum Event {
         console: ConsoleId,
         result: Result<(), EditFailure>,
     },
+    /// The answer to [`Command::ValidateStatements`]: each statement, as sent, and what the
+    /// database said.
+    StatementsValidated {
+        console: ConsoleId,
+        results: Vec<(String, StatementCheck)>,
+    },
     /// The answer to [`Command::ExportRows`]: how many rows were written, or why none were.
     ExportFinished {
         console: ConsoleId,
@@ -292,6 +306,16 @@ pub struct StatementSummary {
     pub elapsed: Duration,
     /// Whether rows were left unread.
     pub truncated: bool,
+}
+
+/// What the database said about a statement it was asked to prepare.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StatementCheck {
+    Accepted,
+    Rejected(Rejection),
+    /// Not asked: the console isn't connected, holds unread rows or an open transaction, the
+    /// statement isn't a data query or change, or the database couldn't be asked.
+    Skipped,
 }
 
 /// Why edits weren't applied. Nothing was: the changes were rolled back.

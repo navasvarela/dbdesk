@@ -8,7 +8,10 @@
 use std::pin::Pin;
 
 use async_trait::async_trait;
-use dbdesk_core::{CancelHandle, ColumnInfo, DriverError, ResultCursor, Row, TransactionStatus};
+use dbdesk_core::{
+    CancelHandle, ColumnInfo, DriverError, Rejection, RejectionKind, ResultCursor, Row,
+    TransactionStatus,
+};
 use futures_util::StreamExt;
 use tokio_postgres::error::{ErrorPosition, SqlState};
 use tokio_postgres::{CancelToken, Client, NoTls, SimpleQueryMessage, SimpleQueryStream};
@@ -64,10 +67,51 @@ pub(crate) async fn transaction_status(client: &Client) -> Result<TransactionSta
     })
 }
 
-/// Maps a server error to [`DriverError::Statement`], converting PostgreSQL's 1-based
-/// character position into a byte offset into `sql`.
+/// Prepares `sql` as an unnamed statement (Parse and Describe in the extended protocol), which
+/// parses and analyses it but runs nothing; dropping it closes it on the server.
+pub(crate) async fn validate(client: &Client, sql: &str) -> Result<Option<Rejection>, DriverError> {
+    let error = match client.prepare(sql).await {
+        Ok(_) => return Ok(None),
+        Err(error) => error,
+    };
+    let Some(db_error) = error.as_db_error() else {
+        return Err(DriverError::Connection(Box::new(error)));
+    };
+    let code = db_error.code();
+    let kind = if *code == SqlState::SYNTAX_ERROR {
+        RejectionKind::Syntax
+    } else if [
+        SqlState::UNDEFINED_TABLE,
+        SqlState::UNDEFINED_COLUMN,
+        SqlState::UNDEFINED_FUNCTION,
+        SqlState::UNDEFINED_OBJECT,
+        SqlState::INVALID_SCHEMA_NAME,
+    ]
+    .contains(code)
+    {
+        RejectionKind::UnknownName
+    } else {
+        RejectionKind::Other
+    };
+    Ok(Some(Rejection {
+        message: db_error.message().to_owned(),
+        position: error_position(sql, &error),
+        kind,
+    }))
+}
+
+/// Maps a server error to [`DriverError::Statement`], with its position.
 fn statement_error(sql: &str, error: tokio_postgres::Error) -> DriverError {
-    let position = error
+    let position = error_position(sql, &error);
+    DriverError::Statement {
+        source: Box::new(error),
+        position,
+    }
+}
+
+/// Converts PostgreSQL's 1-based character position into a byte offset into `sql`.
+fn error_position(sql: &str, error: &tokio_postgres::Error) -> Option<usize> {
+    error
         .as_db_error()
         .and_then(|db_error| db_error.position())
         .and_then(|position| match position {
@@ -76,11 +120,7 @@ fn statement_error(sql: &str, error: tokio_postgres::Error) -> DriverError {
                 sql.char_indices().nth(index).map(|(byte, _)| byte)
             }
             ErrorPosition::Internal { .. } => None,
-        });
-    DriverError::Statement {
-        source: Box::new(error),
-        position,
-    }
+        })
 }
 
 struct PostgresCursor {

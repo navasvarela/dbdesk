@@ -165,6 +165,7 @@ impl CatalogSource for TreeCatalog<'_> {
             schema: Some(table.schema.clone()),
             table: table.name.clone(),
             alias: None,
+            range: 0..0,
         };
         let relation = self.relation_node(&reference)?;
         let columns = self.folder(&relation.path, FolderKind::Columns)?;
@@ -178,6 +179,26 @@ impl CatalogSource for TreeCatalog<'_> {
                 })
                 .collect(),
         )
+    }
+
+    fn tables_loaded(&self, schema: Option<&str>) -> bool {
+        let loaded =
+            |path: &CatalogPath| matches!(self.tree.children(path), Some(Children::Loaded(_)));
+        if !loaded(&self.schemas_parent) {
+            return false;
+        }
+        let mut schemas = self
+            .schema_nodes()
+            .filter(|node| schema.is_none_or(|name| node.label.eq_ignore_ascii_case(name)))
+            .peekable();
+        let any = schemas.peek().is_some();
+        let all_loaded = schemas.all(|schema| {
+            loaded(&schema.path)
+                && self
+                    .relation_folders(&schema.path)
+                    .all(|folder| loaded(&folder.path))
+        });
+        any && all_loaded
     }
 }
 
@@ -219,6 +240,7 @@ mod tests {
             schema: None,
             table: "orders".to_owned(),
             alias: None,
+            range: 0..0,
         }];
 
         let unrequested = |tree: &CatalogTree| {
