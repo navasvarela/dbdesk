@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::{CancelHandle, CatalogNode, CatalogPath, DriverError, ResultCursor};
+use crate::{CancelHandle, CatalogNode, CatalogPath, DriverError, ResultCursor, TransactionStatus};
 
 /// What a server reported about itself when the connection was opened.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +57,14 @@ pub trait Connection: Send {
     /// [`DriverError::Statement`] if the statement is rejected or fails before producing a
     /// result, with the error's position when known.
     async fn execute(&mut self, sql: &str) -> Result<Box<dyn ResultCursor>, DriverError>;
+
+    /// Whether a transaction is open on this connection, as the database sees it, so a
+    /// transaction the user started with their own `BEGIN` counts too.
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError::Connection`] if the database can't be asked.
+    async fn transaction_status(&mut self) -> Result<TransactionStatus, DriverError>;
 
     /// A handle for cancelling this connection's running statement from another task. Valid
     /// for the connection's whole lifetime.

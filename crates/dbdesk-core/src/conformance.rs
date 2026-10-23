@@ -6,7 +6,8 @@
 use std::time::{Duration, Instant};
 
 use crate::{
-    CatalogNode, CatalogPath, Connection, DriverError, NodeKind, ResultCursor, describe_error,
+    CatalogNode, CatalogPath, Connection, DriverError, NodeKind, ResultCursor, TransactionStatus,
+    describe_error,
 };
 
 /// A fresh connection reports its server, answers pings, and closes cleanly.
@@ -222,6 +223,74 @@ async fn check_error_position(connection: &mut dyn Connection) {
         other => panic!("expected a statement error, got {other:?}"),
     }
     connection.ping().await.expect("usable after an error");
+}
+
+/// The transaction status follows `BEGIN`, `COMMIT` and `ROLLBACK`, committed changes stay,
+/// rolled back ones don't, and a failure inside a transaction leaves it open (PostgreSQL also
+/// marks it failed) until it is rolled back.
+pub async fn check_transactions(connection: &mut dyn Connection) {
+    assert_eq!(
+        status(connection).await,
+        TransactionStatus::Idle,
+        "at first"
+    );
+    run_to_end(
+        connection,
+        "CREATE TEMP TABLE dbdesk_transactions (n integer)",
+    )
+    .await;
+
+    run_to_end(connection, "BEGIN").await;
+    assert_eq!(
+        status(connection).await,
+        TransactionStatus::InTransaction,
+        "after BEGIN"
+    );
+    run_to_end(connection, "INSERT INTO dbdesk_transactions VALUES (1)").await;
+    run_to_end(connection, "COMMIT").await;
+    assert_eq!(
+        status(connection).await,
+        TransactionStatus::Idle,
+        "after COMMIT"
+    );
+
+    run_to_end(connection, "BEGIN").await;
+    run_to_end(connection, "INSERT INTO dbdesk_transactions VALUES (2)").await;
+    let failed = connection
+        .execute("SELECT * FROM dbdesk_no_such_table")
+        .await;
+    assert!(failed.is_err(), "selecting from a missing table");
+    assert_ne!(
+        status(connection).await,
+        TransactionStatus::Idle,
+        "after a failure"
+    );
+    run_to_end(connection, "ROLLBACK").await;
+    assert_eq!(
+        status(connection).await,
+        TransactionStatus::Idle,
+        "after ROLLBACK"
+    );
+
+    let mut cursor = connection
+        .execute("SELECT n FROM dbdesk_transactions")
+        .await
+        .expect("select");
+    let rows = cursor.next_page(PAGE).await.expect("rows");
+    cursor.finish().await.expect("finish");
+    assert_eq!(
+        rows,
+        vec![vec![Some("1".to_owned())]],
+        "only the committed row"
+    );
+    run_to_end(connection, "DROP TABLE dbdesk_transactions").await;
+}
+
+async fn status(connection: &mut dyn Connection) -> TransactionStatus {
+    connection
+        .transaction_status()
+        .await
+        .expect("transaction status")
 }
 
 /// How long `check_cancel` waits before cancelling, and the most the whole statement may

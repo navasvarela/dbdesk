@@ -6,17 +6,21 @@
 //! [`EngineHandle::try_recv`] once per frame. See `docs/adr/0003-ui-engine-message-passing.md`.
 
 mod command_loop;
+mod console_files;
 mod events;
+mod export;
 mod handle;
+mod history;
 mod open;
 mod protocol;
 mod registry;
 mod repaint;
 mod session;
 
+pub use export::Export;
 pub use handle::{EngineConfig, EngineError, EngineHandle};
 pub use protocol::{
     Command, ConsoleId, Event, PasswordUpdate, RunId, RunOutcome, SessionState, StatementFailure,
-    StatementSummary,
+    StatementSummary, TransactionEnd, TransactionMode,
 };
 pub use repaint::Repaint;

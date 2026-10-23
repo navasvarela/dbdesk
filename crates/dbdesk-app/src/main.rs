@@ -9,8 +9,11 @@ mod data_source_form;
 mod definition_window;
 mod delete_dialog;
 mod explorer;
+mod export_dialog;
 mod hazard_dialog;
+mod history_window;
 mod log_console;
+mod rollback_dialog;
 mod state;
 mod telemetry;
 mod theme;
@@ -20,7 +23,7 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, anyhow};
 use dbdesk_engine::EngineConfig;
-use dbdesk_store::{APP_NAME, AppPaths, DataSourceFile, Keychain};
+use dbdesk_store::{APP_NAME, AppPaths, ConsoleFiles, DataSourceFile, HistoryFile, Keychain};
 
 use crate::app::DbDeskApp;
 
@@ -35,6 +38,8 @@ fn main() -> anyhow::Result<()> {
     let engine_config = EngineConfig {
         data_sources: DataSourceFile::new(paths.data_sources_file()),
         secrets: Arc::new(Keychain),
+        consoles: ConsoleFiles::new(paths.consoles_dir()),
+        history: HistoryFile::new(paths.history_file()),
     };
 
     let options = eframe::NativeOptions {

@@ -93,6 +93,12 @@ impl AppState {
             }
             // The dialogs, the definition window and the consoles track these themselves.
             Event::DataSourceSaveFailed { .. }
+            | Event::ConsolesLoaded(_)
+            | Event::HistoryFound { .. }
+            | Event::ExportFinished { .. }
+            | Event::TransactionChanged { .. }
+            | Event::TransactionEnded { .. }
+            | Event::ConsoleSaveFailed { .. }
             | Event::ConnectionTested { .. }
             | Event::DefinitionLoaded { .. }
             | Event::ConsoleSessionChanged { .. }

@@ -2,15 +2,18 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use dbdesk_core::{DataSource, DataSourceId, describe_error};
-use dbdesk_store::{SecretError, SecretStore};
+use dbdesk_store::{ConsoleFiles, SecretError, SecretStore};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::task::{JoinError, JoinSet};
 
+use crate::console_files;
 use crate::events::EventSink;
+use crate::export;
+use crate::history::HistoryLog;
 use crate::open::test_connection;
 use crate::registry::{Registry, RegistryError};
-use crate::session::{Session, SessionOwner, SessionRequest};
-use crate::{Command, ConsoleId, EngineConfig, Event, PasswordUpdate, RunId, RunOutcome};
+use crate::session::{Script, Services, Session, SessionOwner, SessionRequest};
+use crate::{Command, ConsoleId, EngineConfig, Event, PasswordUpdate, RunOutcome};
 
 #[derive(Debug, thiserror::Error)]
 enum SaveError {
@@ -32,10 +35,14 @@ pub(crate) async fn run(
     events.send(Event::Started);
     let registry = Registry::load(config.data_sources).await;
     events.send(registry.loaded_event());
+    events.send(console_files::load(&config.consoles).await);
+    let (history, history_task) = HistoryLog::start(config.history, events.clone());
 
     let mut engine = Engine {
+        history,
         registry,
         secrets: config.secrets,
+        console_files: config.consoles,
         events,
         sessions: HashMap::new(),
         consoles: HashMap::new(),
@@ -44,7 +51,12 @@ pub(crate) async fn run(
     while let Some(command) = commands.recv().await {
         engine.handle(command).await;
     }
+    // Sessions hold history handles too, so the history thread ends only once they have
+    // stopped and their last statements are recorded.
     engine.shut_down().await;
+    if let Err(error) = history_task.await {
+        tracing::error!("the history thread failed: {error}");
+    }
     tracing::info!("engine stopped");
 }
 
@@ -55,7 +67,9 @@ struct ConsoleSession {
 
 struct Engine {
     registry: Registry,
+    history: HistoryLog,
     secrets: Arc<dyn SecretStore>,
+    console_files: ConsoleFiles,
     events: EventSink,
     /// The explorer's sessions, one per data source.
     sessions: HashMap<DataSourceId, Session>,
@@ -66,7 +80,8 @@ struct Engine {
 }
 
 impl Engine {
-    /// Saves and deletes are awaited here, so they apply in the order the UI sent them.
+    /// Saves and deletes (of data sources and console files) are awaited here, so they apply
+    /// in the order the UI sent them.
     /// Anything that waits on a network (connecting, testing) runs in its own task.
     async fn handle(&mut self, command: Command) {
         match command {
@@ -99,7 +114,21 @@ impl Engine {
                 data_source,
                 run,
                 statements,
-            } => self.execute(console, data_source, run, statements),
+                transactions,
+            } => self.execute(
+                console,
+                data_source,
+                Script {
+                    run,
+                    statements,
+                    transactions,
+                },
+            ),
+            Command::EndTransaction { console, end } => {
+                if let Some(console) = self.consoles.get(&console) {
+                    console.session.request(SessionRequest::EndTransaction(end));
+                }
+            }
             Command::FetchMore { console, run } => {
                 if let Some(console) = self.consoles.get(&console) {
                     console.session.request(SessionRequest::FetchMore(run));
@@ -111,6 +140,20 @@ impl Engine {
                 }
             }
             Command::CloseConsole(console) => self.close_console(console),
+            Command::SaveConsole { key, text } => {
+                if let Some(failed) = console_files::save(&self.console_files, key, text).await {
+                    self.events.send(failed);
+                }
+            }
+            Command::DeleteConsoleFile(key) => {
+                console_files::delete(&self.console_files, key).await;
+            }
+            Command::ExportRows { console, export } => {
+                tokio::spawn(export::run(console, export, self.events.clone()));
+            }
+            Command::SearchHistory { data_source, text } => {
+                self.history.search(data_source, text);
+            }
         }
     }
 
@@ -149,15 +192,6 @@ impl Engine {
 
     async fn delete(&mut self, id: DataSourceId) {
         self.disconnect(id);
-        let consoles: Vec<ConsoleId> = self
-            .consoles
-            .iter()
-            .filter(|(_, console)| console.data_source == id)
-            .map(|(console, _)| *console)
-            .collect();
-        for console in consoles {
-            self.close_console(console);
-        }
         match self.registry.remove(id).await {
             Ok(true) => {
                 self.delete_password(id).await;
@@ -199,21 +233,14 @@ impl Engine {
         let session = Session::start(
             data_source.clone(),
             SessionOwner::Explorer(id),
-            Arc::clone(&self.secrets),
-            self.events.clone(),
+            self.services(),
         );
         self.sessions.insert(id, session);
     }
 
     /// Queues a run on the console's session, (re)connecting it if it isn't connected to
     /// `data_source`.
-    fn execute(
-        &mut self,
-        console: ConsoleId,
-        data_source: DataSourceId,
-        run: RunId,
-        statements: Vec<String>,
-    ) {
+    fn execute(&mut self, console: ConsoleId, data_source: DataSourceId, script: Script) {
         let reusable = self.consoles.get(&console).is_some_and(|existing| {
             existing.data_source == data_source && !existing.session.is_finished()
         });
@@ -222,7 +249,7 @@ impl Engine {
             let Some(config) = self.registry.get(data_source) else {
                 tracing::warn!(%data_source, "run requested for an unknown data source");
                 self.events.send(Event::RunFinished {
-                    run,
+                    run: script.run,
                     outcome: RunOutcome::Failed,
                     elapsed: std::time::Duration::ZERO,
                 });
@@ -231,8 +258,7 @@ impl Engine {
             let session = Session::start(
                 config.clone(),
                 SessionOwner::Console(console),
-                Arc::clone(&self.secrets),
-                self.events.clone(),
+                self.services(),
             );
             self.consoles.insert(
                 console,
@@ -243,9 +269,15 @@ impl Engine {
             );
         }
         if let Some(console) = self.consoles.get(&console) {
-            console
-                .session
-                .request(SessionRequest::Execute { run, statements });
+            console.session.request(SessionRequest::Execute(script));
+        }
+    }
+
+    fn services(&self) -> Services {
+        Services {
+            secrets: Arc::clone(&self.secrets),
+            events: self.events.clone(),
+            history: self.history.clone(),
         }
     }
 
@@ -268,9 +300,19 @@ impl Engine {
         if let Some(session) = self.sessions.remove(&id) {
             self.closing.spawn(session.stop());
         }
+        let consoles: Vec<ConsoleId> = self
+            .consoles
+            .iter()
+            .filter(|(_, console)| console.data_source == id)
+            .map(|(console, _)| *console)
+            .collect();
+        for console in consoles {
+            self.close_console(console);
+        }
     }
 
     async fn shut_down(mut self) {
+        drop(self.history);
         for (_, session) in self.sessions.drain() {
             self.closing.spawn(session.stop());
         }

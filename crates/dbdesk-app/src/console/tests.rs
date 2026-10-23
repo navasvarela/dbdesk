@@ -3,7 +3,10 @@ use super::*;
 fn console(text: &str) -> QueryConsole {
     QueryConsole::new(
         ConsoleId(1),
-        DataSourceId::generate(),
+        ConsoleKey {
+            data_source: DataSourceId::generate(),
+            name: dbdesk_store::ConsoleName::numbered(1),
+        },
         "test".to_owned(),
         Dialect::Postgres,
         text.to_owned(),
@@ -119,4 +122,59 @@ fn a_lost_connection_fails_the_running_statement() {
     assert!(!console.is_running());
     let first = &console.run.as_ref().unwrap().statements[0];
     assert!(matches!(&first.result, Some(Err(failure)) if failure.message.contains("refused")));
+}
+
+#[test]
+fn inserts_a_statement_on_a_line_of_its_own_at_the_cursor() {
+    let cases: [(&str, Range<usize>, &str, &str); 3] = [
+        ("", 0..0, "select 1", "select 1;\n"),
+        ("select 1;", 9..9, "select 2;", "select 1;\nselect 2;\n"),
+        // A selection is replaced.
+        ("select 1;\nold;\n", 10..14, "new  ", "select 1;\nnew;\n\n"),
+    ];
+    for (text, selection, sql, expected) in cases {
+        let mut console = console(text);
+        console.selection = selection;
+
+        console.insert_statement(sql, Instant::now());
+
+        assert_eq!(console.text, expected, "{text:?}");
+        assert_eq!(console.pending_cursor, Some(console.selection.end));
+        assert!(console.file.unsaved_since.is_some());
+    }
+}
+
+#[test]
+fn explains_the_statement_at_the_cursor_and_marks_errors_in_it() {
+    let text = "select 1;\nselect broken from;";
+    let second = text.find("select broken").unwrap();
+    let mut console = console(text);
+    console.selection = second..second;
+
+    let statements = console.statements_to_run(RunScope::Explain);
+
+    assert_eq!(sqls(&statements), ["EXPLAIN select broken from"]);
+    console.begin_run(RunId(1), &statements);
+    console.apply(&Event::StatementFinished {
+        run: RunId(1),
+        statement: 0,
+        result: Err(StatementFailure {
+            message: "syntax error".to_owned(),
+            position: Some("EXPLAIN select broken ".len()),
+        }),
+    });
+    assert_eq!(&text[console.error_marker.clone().unwrap()], "from");
+}
+
+#[test]
+fn shades_the_statement_at_the_cursor_unless_text_is_selected() {
+    let text = "select 1;\nselect 2;";
+    let second = text.find("select 2").unwrap();
+    let mut console = console(text);
+
+    console.selection = second + 3..second + 3;
+    assert_eq!(console.current_statement(), Some(second..text.len() - 1));
+
+    console.selection = 0..4;
+    assert_eq!(console.current_statement(), None);
 }

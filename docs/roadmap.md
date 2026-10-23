@@ -125,6 +125,47 @@ Follow-ups left out of M3 (most belong to M4 anyway):
 
 **Exit:** I use dbdesk instead of DataGrip for a week, and keep a list of what I missed.
 
+**Demo note:** built; the exit criterion (a week of real use) is still to be tried.
+- **Consoles are files:** each console is `consoles/<data-source-id>/console.sql` (then
+  `console_2.sql`, …), saved a second after typing stops and on quit. Quit with consoles open
+  and they come back with their text. Closed consoles you typed in are under the data source's
+  **Open saved console** menu.
+- **History:** **History** in a console searches every statement run on its data source, with
+  time, outcome, duration and rows; **Insert** puts one back at the cursor.
+- **Transactions:** switch a console to **Manual commit**, run an `INSERT`, and the toolbar
+  shows "● Transaction open" until **Commit** or **Rollback**. Closing the console,
+  disconnecting or quitting first asks whether to roll it back.
+- **Explain:** ⌥⌘E (or **Explain**) shows the plan of the statement at the cursor.
+- **Grid:** click, shift-click or drag to select cells, ⌘C copies them as TSV; click a header to
+  sort and type to filter the loaded rows (labelled as such); double-click or Space opens a
+  cell in a viewer that pretty-prints JSON; **Export → CSV…/JSON…** saves the rows as shown.
+- **Editor:** line numbers, and the statement ⌘↵ would run is shaded.
+
+Covered by:
+- Store tests for console files, the history (ordering, `LIKE` escaping) and CSV/JSON export.
+- A driver check for transaction status on PostgreSQL 17 and SQLite.
+- Headless engine tests: console files across a restart, history records and search, manual
+  mode with rollback, a user's own `BEGIN` and disconnecting, committing a failed PostgreSQL
+  transaction, and exports.
+- Console and grid state tests (sorting, filtering, selection, TSV, statement insertion,
+  Explain error positions), and UI tests that restore a console from its file and save an
+  edit, insert from the history, roll back in manual mode and confirm closing, explain, and
+  sort, view and export rows.
+
+Writing those UI tests found two older layout bugs: the default layout gave the explorer 80% of
+the width (egui_dock's split fraction is the first node's share), and in a short console the
+resizable results panel drew its contents under the editor, which took their clicks. Editor
+and results are now split by hand.
+
+Follow-ups left out of M4:
+
+- Renaming consoles, and deleting saved ones from the UI.
+- Pruning old history entries; searching all data sources at once.
+- "Commit and close" in the rollback warning.
+- Sorting and filtering in the database (re-running the query with `ORDER BY`/`WHERE`).
+- Copying a selection with its column headers; exporting all rows, not only loaded ones.
+- A visual check of the editor gutter and grid under the new theme (UI tests can't see paint).
+
 ## M5 — Personalisation
 
 Picked from the "what I missed" list, likely:

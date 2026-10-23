@@ -1,8 +1,13 @@
+use std::path::PathBuf;
 use std::time::Duration;
 
 use dbdesk_core::{
     CatalogNode, CatalogPath, ColumnInfo, DataSource, DataSourceId, Password, Row, ServerInfo,
+    TransactionStatus,
 };
+use dbdesk_store::{ConsoleKey, HistoryEntry, SavedConsole};
+
+use crate::Export;
 
 /// Identifies a query console. Chosen by the UI, unique for the app's lifetime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -34,6 +39,8 @@ pub enum Command {
         password: PasswordUpdate,
     },
     Connect(DataSourceId),
+    /// Disconnects the explorer's connection and every console's connection to the data
+    /// source, rolling back their open transactions.
     Disconnect(DataSourceId),
     /// Lists the children of a catalog node, connecting first if needed.
     /// Answered by [`Event::ChildrenLoaded`].
@@ -55,6 +62,13 @@ pub enum Command {
         data_source: DataSourceId,
         run: RunId,
         statements: Vec<String>,
+        transactions: TransactionMode,
+    },
+    /// Commits or rolls back the console's open transaction. Answered by
+    /// [`Event::TransactionEnded`].
+    EndTransaction {
+        console: ConsoleId,
+        end: TransactionEnd,
     },
     /// Reads the next page of the run's last statement.
     FetchMore {
@@ -66,8 +80,44 @@ pub enum Command {
         console: ConsoleId,
         run: RunId,
     },
-    /// Disconnects the console's connection.
+    /// Disconnects the console's connection, which rolls back its open transaction.
     CloseConsole(ConsoleId),
+    /// Writes a console's text to its file. Saves are applied in the order sent. A failure is
+    /// reported as [`Event::ConsoleSaveFailed`].
+    SaveConsole {
+        key: ConsoleKey,
+        text: String,
+    },
+    /// Removes a console's file, if it exists.
+    DeleteConsoleFile(ConsoleKey),
+    /// Writes rows a console shows to a file. Answered by [`Event::ExportFinished`].
+    ExportRows {
+        console: ConsoleId,
+        export: Export,
+    },
+    /// Looks up the data source's past statements containing `text`, newest first.
+    /// Answered by [`Event::HistoryFound`].
+    SearchHistory {
+        data_source: DataSourceId,
+        text: String,
+    },
+}
+
+/// How a console's statements are committed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TransactionMode {
+    /// Each statement commits on its own, unless the user opens a transaction with `BEGIN`.
+    #[default]
+    Auto,
+    /// A transaction is started before the first statement that changes anything, and stays
+    /// open until committed or rolled back.
+    Manual,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransactionEnd {
+    Commit,
+    Rollback,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,6 +147,25 @@ pub enum Event {
         error: String,
     },
     DataSourceDeleted(DataSourceId),
+    /// Every saved console file, read once at start-up, right after the data sources.
+    ConsolesLoaded(Vec<SavedConsole>),
+    ConsoleSaveFailed {
+        key: ConsoleKey,
+        error: String,
+    },
+    /// The answer to [`Command::ExportRows`]: how many rows were written, or why none were.
+    ExportFinished {
+        console: ConsoleId,
+        path: PathBuf,
+        result: Result<usize, String>,
+    },
+    /// The answer to [`Command::SearchHistory`], echoing what was searched for so the UI can
+    /// drop answers to searches it has moved on from.
+    HistoryFound {
+        data_source: DataSourceId,
+        text: String,
+        result: Result<Vec<HistoryEntry>, String>,
+    },
     SessionChanged {
         id: DataSourceId,
         state: SessionState,
@@ -118,6 +187,19 @@ pub enum Event {
     ConsoleSessionChanged {
         console: ConsoleId,
         state: SessionState,
+    },
+    /// The console's connection entered or left a transaction, by any statement or by
+    /// [`Command::EndTransaction`]. A new connection starts outside one, and closing one ends
+    /// its transaction, so neither is reported.
+    TransactionChanged {
+        console: ConsoleId,
+        status: TransactionStatus,
+    },
+    /// The answer to [`Command::EndTransaction`]: what actually happened, which is a rollback
+    /// when committing a transaction that had failed.
+    TransactionEnded {
+        console: ConsoleId,
+        result: Result<TransactionEnd, String>,
     },
     /// A statement that returns rows has started; its rows follow as [`Event::RowsFetched`].
     StatementStarted {

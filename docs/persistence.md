@@ -10,9 +10,9 @@ dbdesk/
 ├── keymap.toml           # M5
 ├── actions.toml          # M5, custom catalog actions
 ├── app.ron               # eframe storage: window size, egui_dock layout, open tabs
-├── consoles/
+├── consoles/             # M4
 │   └── <data-source-id>/<console-name>.sql
-├── history.sqlite        # query history
+├── history.sqlite        # M4, query history
 └── logs/dbdesk.<date>.log # daily rolling file log, last 7 kept
 ```
 
@@ -61,15 +61,29 @@ read_only = true
 - Later: support `~/.pgpass` and `PG*` environment variables for Postgres, which is what other
   tools on the machine already use.
 
+## Query consoles
+
+- One plain `.sql` file per console: `consoles/<data-source-id>/<name>.sql`, readable and
+  editable with any editor (while dbdesk is closed). Names are `console`, `console_2`, … as
+  DataGrip numbers them; any other `.sql` file put in the folder shows up as a saved console
+  named after the file.
+- Owned by the engine (`ConsoleFiles` in `dbdesk-store`): read once at start-up, right after the
+  data sources, and written atomically (temporary file, then rename) on `SaveConsole`. The UI
+  sends a save a second after typing stops, and for every unsaved console on quit; the engine
+  handles queued commands before it stops, so the last edit is written.
+- A file that can't be read is logged and left alone; its tab is dropped from the layout.
+- Closing a console's tab removes its file if nobody typed in it, and keeps it otherwise.
+- Deleting a data source leaves its console folder in place: the SQL in it is the user's.
+
 ## Query history
 
-SQLite table:
+SQLite table, in `history.sqlite`, created on first start:
 
 ```sql
 CREATE TABLE history (
     id            INTEGER PRIMARY KEY,
     data_source   TEXT NOT NULL,
-    executed_at   TEXT NOT NULL,      -- RFC 3339
+    executed_at   TEXT NOT NULL,      -- RFC 3339, UTC, always millisecond precision
     sql           TEXT NOT NULL,
     duration_ms   INTEGER,
     rows          INTEGER,
@@ -78,7 +92,17 @@ CREATE TABLE history (
 CREATE INDEX history_by_source ON history (data_source, executed_at DESC);
 ```
 
-Searchable from a history dialog per data source. Results themselves are not stored.
+- `executed_at` always has three fraction digits (`2026-10-22T09:15:02.500Z`) so the text sorts
+  in time order: with a variable number of digits, `…:02Z` would sort after `…:02.5Z`.
+- One row per statement a console runs, written when it finishes. `rows` is what the database
+  reports (rows changed, or returned once fully read), `duration_ms` the time until the
+  statement completed or its first page arrived.
+- Searchable from the History window of a console (by data source, substring of the SQL,
+  newest first, at most 500 rows). Results themselves are not stored.
+- Owned by one engine thread from the blocking pool, so writes and searches never block the
+  UI and searches see every earlier write. If the database can't be opened, history is
+  disabled for the session and the History window shows why.
+- Nothing is ever deleted yet; pruning old entries is a follow-up if the file grows.
 
 ## Layout
 
@@ -87,5 +111,6 @@ eframe's own storage (`app.ron`, written on exit and every 30 seconds) and resto
 A saved layout that no longer deserializes (for example after a `Tab` variant is removed) is
 replaced by the default layout; **View → Reset layout** does the same on demand.
 
-Tabs will refer to consoles by id, so a console whose file was deleted is dropped from the
-layout instead of failing to start.
+Console tabs refer to their console's file (data source id and name), so they reopen on start.
+A tab whose file or data source is gone is dropped from the layout instead of failing to start;
+until the engine has read the files, restored tabs show "Loading…".

@@ -3,18 +3,23 @@
 //! This module holds the state and its rules (what to run, how events update a run); `view`
 //! and `results` draw it. See `docs/features/sql-runner.md`.
 
+mod cell_viewer;
+mod grid;
 mod highlight;
 mod results;
 mod view;
 
 use std::ops::Range;
-use std::time::Duration;
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
-use dbdesk_core::{ColumnInfo, DataSourceId, DriverKind, Row};
+use dbdesk_core::{Cell, ColumnInfo, DataSourceId, DriverKind, Row, TransactionStatus};
 use dbdesk_engine::{
-    ConsoleId, Event, RunId, RunOutcome, SessionState, StatementFailure, StatementSummary,
+    Command, ConsoleId, Event, Export, RunId, RunOutcome, SessionState, StatementFailure,
+    StatementSummary, TransactionEnd, TransactionMode,
 };
-use dbdesk_sql::{Dialect, split_statements, statement_at};
+use dbdesk_sql::{Dialect, explain_prefix, split_statements, statement_at};
+use dbdesk_store::{ConsoleKey, ExportFormat};
 
 pub use view::{ConsoleAction, show};
 
@@ -31,6 +36,9 @@ pub struct SubmittedStatement {
     pub sql: String,
     /// Byte range in the console's text, to place error markers.
     pub range: Range<usize>,
+    /// How many bytes at the start of `sql` aren't in the console's text, such as an
+    /// `EXPLAIN` prefix. Error positions are shifted back by this much.
+    pub prefix_len: usize,
 }
 
 /// Which statements a run covers.
@@ -40,11 +48,15 @@ pub enum RunScope {
     Current,
     /// Every statement in the console.
     All,
+    /// The statement under the cursor (or the first one selected), explained rather than run.
+    Explain,
 }
 
 pub struct QueryConsole {
+    /// The engine session's id, new every time the app starts.
     id: ConsoleId,
-    data_source: DataSourceId,
+    /// The console's file, which outlives the app.
+    key: ConsoleKey,
     title: String,
     dialect: Dialect,
     text: String,
@@ -52,9 +64,33 @@ pub struct QueryConsole {
     selection: Range<usize>,
     /// The state of the console's own connection.
     session: SessionState,
+    transactions: TransactionMode,
+    transaction: TransactionStatus,
+    /// How the last Commit or Rollback went, until the next run.
+    transaction_ended: Option<Result<TransactionEnd, String>>,
     run: Option<RunView>,
     /// Where the last failure points in `text`; underlined until the text changes.
     error_marker: Option<Range<usize>>,
+    /// A byte offset to move the editor's cursor to on the next frame, after the text was
+    /// changed from outside the editor.
+    pending_cursor: Option<usize>,
+    /// The cell shown in full in the cell viewer window.
+    viewed_cell: Option<ViewedCell>,
+    /// How the last export went: where the rows went, or why they didn't.
+    export_status: Option<Result<String, String>>,
+    file: FileState,
+}
+
+/// How the console's text relates to its file.
+#[derive(Debug, Default)]
+struct FileState {
+    /// When the text was first changed since it was last written; `None` if it is saved.
+    unsaved_since: Option<Instant>,
+    /// Whether closing the tab keeps the file, so the console can be reopened. False for
+    /// consoles nobody typed in, such as a fresh one or one opened by Open data.
+    keep: bool,
+    /// Why the last save failed, until a later one succeeds.
+    save_error: Option<String>,
 }
 
 pub struct RunView {
@@ -77,6 +113,7 @@ pub enum RunState {
 pub struct StatementView {
     sql: String,
     range: Range<usize>,
+    prefix_len: usize,
     columns: Vec<ColumnInfo>,
     rows: Vec<Row>,
     /// More rows can be fetched.
@@ -84,31 +121,148 @@ pub struct StatementView {
     /// A fetch is in flight, so the grid doesn't ask twice.
     fetching: bool,
     result: Option<Result<StatementSummary, StatementFailure>>,
+    grid: grid::GridView,
+}
+
+/// A copy of one cell, so the viewer stays open while new rows arrive or a new run starts.
+pub struct ViewedCell {
+    column: String,
+    value: Cell,
 }
 
 impl QueryConsole {
     pub fn new(
         id: ConsoleId,
-        data_source: DataSourceId,
+        key: ConsoleKey,
         title: String,
         dialect: Dialect,
         text: String,
     ) -> Self {
         Self {
             id,
-            data_source,
+            key,
             title,
             dialect,
             text,
             selection: 0..0,
             session: SessionState::Disconnected,
+            transactions: TransactionMode::Auto,
+            transaction: TransactionStatus::Idle,
+            transaction_ended: None,
             run: None,
             error_marker: None,
+            pending_cursor: None,
+            viewed_cell: None,
+            export_status: None,
+            file: FileState::default(),
         }
     }
 
+    /// A console reopened from its file, which closing it again must keep.
+    pub fn reopened(mut self) -> Self {
+        self.file.keep = true;
+        self
+    }
+
+    pub fn id(&self) -> ConsoleId {
+        self.id
+    }
+
     pub fn data_source(&self) -> DataSourceId {
-        self.data_source
+        self.key.data_source
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// The export of the rows the grid shows for the selected statement, in the order and
+    /// with the filter it shows them. `None` if there are no rows to export.
+    pub fn export(&self, format: ExportFormat, path: PathBuf) -> Option<Command> {
+        let run = self.run.as_ref()?;
+        let statement = run.statements.get(run.selected)?;
+        if statement.columns.is_empty() {
+            return None;
+        }
+        Some(Command::ExportRows {
+            console: self.id,
+            export: Export {
+                path,
+                format,
+                columns: statement
+                    .columns
+                    .iter()
+                    .map(|column| column.name.clone())
+                    .collect(),
+                rows: statement.grid.shown_rows(&statement.rows),
+            },
+        })
+    }
+
+    /// Puts `sql` at the cursor, replacing the selection, as a statement on a line of its own,
+    /// and moves the cursor past it.
+    pub fn insert_statement(&mut self, sql: &str, now: Instant) {
+        let (start, end) = ordered(&self.selection);
+        let sql = sql.trim_end();
+        let mut inserted = String::new();
+        if !self.text[..start].is_empty() && !self.text[..start].ends_with('\n') {
+            inserted.push('\n');
+        }
+        inserted.push_str(sql);
+        if !sql.ends_with(';') {
+            inserted.push(';');
+        }
+        inserted.push('\n');
+        self.text.replace_range(start..end, &inserted);
+        let cursor = start + inserted.len();
+        self.selection = cursor..cursor;
+        self.pending_cursor = Some(cursor);
+        self.edited(now);
+    }
+
+    /// Records that the user changed the text at `now`.
+    pub fn edited(&mut self, now: Instant) {
+        self.error_marker = None;
+        self.file.keep = true;
+        self.file.unsaved_since.get_or_insert(now);
+    }
+
+    /// The save to send if the text has been unsaved for at least `delay` (or at all, for a
+    /// zero delay), marking it saved. Otherwise how long until it would be due.
+    pub fn take_save(
+        &mut self,
+        now: Instant,
+        delay: Duration,
+    ) -> Result<Command, Option<Duration>> {
+        let since = self.file.unsaved_since.ok_or(None)?;
+        let waited = now.saturating_duration_since(since);
+        if waited < delay {
+            return Err(Some(delay - waited));
+        }
+        self.file.unsaved_since = None;
+        self.file.save_error = None;
+        Ok(Command::SaveConsole {
+            key: self.key.clone(),
+            text: self.text.clone(),
+        })
+    }
+
+    /// What to do with the file when the tab closes: write the last edits, or remove a file
+    /// nobody typed anything into.
+    pub fn file_on_close(&mut self) -> Option<Command> {
+        if !self.file.keep || self.text.trim().is_empty() {
+            return Some(Command::DeleteConsoleFile(self.key.clone()));
+        }
+        self.take_save(Instant::now(), Duration::ZERO).ok()
+    }
+
+    /// Whether the file is kept once the tab closes.
+    pub fn keeps_file(&self) -> bool {
+        self.file.keep && !self.text.trim().is_empty()
+    }
+
+    pub fn save_error(&self) -> Option<&str> {
+        self.file.save_error.as_deref()
     }
 
     pub fn title(&self) -> &str {
@@ -119,10 +273,31 @@ impl QueryConsole {
         self.dialect
     }
 
+    pub fn transaction_mode(&self) -> TransactionMode {
+        self.transactions
+    }
+
+    /// Whether the console's connection has uncommitted work that closing it would roll
+    /// back.
+    pub fn has_open_transaction(&self) -> bool {
+        self.transaction != TransactionStatus::Idle
+    }
+
     pub fn is_running(&self) -> bool {
         self.run
             .as_ref()
             .is_some_and(|run| run.state == RunState::Running)
+    }
+
+    /// The statement ⌘↵ would run, to shade in the editor: the one at the cursor, unless text
+    /// is selected (the selection is what runs then, and is already highlighted).
+    pub fn current_statement(&self) -> Option<Range<usize>> {
+        let (start, end) = ordered(&self.selection);
+        if start != end {
+            return None;
+        }
+        let ranges = split_statements(&self.text, self.dialect);
+        statement_at(&ranges, end).map(|index| ranges[index].clone())
     }
 
     /// What `scope` would run right now. Empty if there is nothing but whitespace and
@@ -135,6 +310,7 @@ impl QueryConsole {
                 .map(|range| SubmittedStatement {
                     sql: source[range.clone()].to_owned(),
                     range: range.start + offset..range.end + offset,
+                    prefix_len: 0,
                 })
                 .collect::<Vec<_>>()
         };
@@ -149,11 +325,24 @@ impl QueryConsole {
                 submit(0, current.into_iter().collect(), &self.text)
             }
             RunScope::All => submit(0, split_statements(&self.text, self.dialect), &self.text),
+            RunScope::Explain => {
+                let prefix = explain_prefix(self.dialect);
+                self.statements_to_run(RunScope::Current)
+                    .into_iter()
+                    .take(1)
+                    .map(|statement| SubmittedStatement {
+                        sql: format!("{prefix}{}", statement.sql),
+                        prefix_len: prefix.len(),
+                        ..statement
+                    })
+                    .collect()
+            }
         }
     }
 
     pub fn begin_run(&mut self, run: RunId, statements: &[SubmittedStatement]) {
         self.error_marker = None;
+        self.transaction_ended = None;
         self.run = Some(RunView {
             id: run,
             statements: statements
@@ -161,11 +350,13 @@ impl QueryConsole {
                 .map(|statement| StatementView {
                     sql: statement.sql.clone(),
                     range: statement.range.clone(),
+                    prefix_len: statement.prefix_len,
                     columns: Vec::new(),
                     rows: Vec::new(),
                     more: false,
                     fetching: false,
                     result: None,
+                    grid: grid::GridView::default(),
                 })
                 .collect(),
             state: RunState::Running,
@@ -196,6 +387,28 @@ impl QueryConsole {
         match event {
             Event::ConsoleSessionChanged { console, state } if *console == self.id => {
                 self.session_changed(state);
+            }
+            Event::TransactionChanged { console, status } if *console == self.id => {
+                self.transaction = *status;
+            }
+            Event::TransactionEnded { console, result } if *console == self.id => {
+                self.transaction_ended = Some(result.clone());
+            }
+            Event::ExportFinished {
+                console,
+                path,
+                result,
+            } if *console == self.id => {
+                self.export_status = Some(
+                    result
+                        .as_ref()
+                        .map(|rows| format!("Exported {rows} rows to {}", path.display()))
+                        .map_err(Clone::clone),
+                );
+            }
+            Event::ConsoleSaveFailed { key, error } if *key == self.key => {
+                // Shown until the next save is sent; that one writes the whole text again.
+                self.file.save_error = Some(error.clone());
             }
             Event::StatementStarted {
                 run,
@@ -269,7 +482,9 @@ impl QueryConsole {
             ..
         }) = result
         {
-            let offset = statement_view.range.start + position;
+            // A position inside an added prefix points at no text; mark the statement's start.
+            let offset =
+                statement_view.range.start + position.saturating_sub(statement_view.prefix_len);
             self.error_marker = Some(highlight::error_marker(&self.text, self.dialect, offset));
         }
         if result.is_err() {
@@ -280,6 +495,10 @@ impl QueryConsole {
     /// A connection that fails or closes ends whatever the console was doing with it.
     fn session_changed(&mut self, state: &SessionState) {
         self.session = state.clone();
+        if matches!(state, SessionState::Disconnected | SessionState::Failed(_)) {
+            // The database rolls back whatever a closed connection left uncommitted.
+            self.transaction = TransactionStatus::Idle;
+        }
         let failure = match state {
             SessionState::Failed(error) => error.clone(),
             SessionState::Disconnected => "the connection closed".to_owned(),

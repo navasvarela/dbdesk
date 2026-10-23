@@ -1,13 +1,21 @@
+use std::path::PathBuf;
+use std::time::Instant;
+
 use dbdesk_core::{CatalogPath, DataSourceId};
 use dbdesk_engine::{Command, EngineConfig, EngineError, EngineHandle, Event, Repaint};
+use dbdesk_store::{ConsoleKey, ExportFormat};
 use egui_dock::{DockArea, DockState, Style};
 
+use crate::console::ConsoleAction;
 use crate::consoles::Consoles;
 use crate::data_source_dialog::{DataSourceDialog, DialogAction};
 use crate::definition_window::DefinitionWindow;
 use crate::delete_dialog::{DeleteChoice, DeleteConfirmation};
 use crate::explorer::{ExplorerAction, ExplorerOptions};
+use crate::export_dialog;
+use crate::history_window::{HistoryAction, HistoryWindow};
 use crate::log_console::{LogConsole, LogFeed};
+use crate::rollback_dialog::{Closing, RollbackChoice, RollbackConfirmation};
 use crate::state::{AppState, EngineStatus};
 use crate::workspace::{self, Panels, Tab};
 
@@ -23,6 +31,12 @@ pub struct DbDeskApp {
     data_source_dialog: Option<DataSourceDialog>,
     delete_confirmation: Option<DeleteConfirmation>,
     definition_window: Option<DefinitionWindow>,
+    history_window: Option<HistoryWindow>,
+    rollback_confirmation: Option<RollbackConfirmation>,
+    /// Set once quitting may roll back open transactions, so the close isn't asked again.
+    quit_confirmed: bool,
+    /// Asks where to export rows. The platform's save dialog, except in tests.
+    pick_export_path: Box<dyn Fn(ExportFormat) -> Option<PathBuf>>,
     consoles: Consoles,
 }
 
@@ -35,7 +49,7 @@ impl DbDeskApp {
         let dock = cc
             .storage
             .and_then(|storage| eframe::get_value(storage, LAYOUT_STORAGE_KEY))
-            .map_or_else(workspace::default_layout, workspace::without_consoles);
+            .unwrap_or_else(workspace::default_layout);
         let engine = EngineHandle::start(engine_config, EguiRepaint(cc.egui_ctx.clone()))?;
 
         Ok(Self {
@@ -47,6 +61,10 @@ impl DbDeskApp {
             data_source_dialog: None,
             delete_confirmation: None,
             definition_window: None,
+            history_window: None,
+            rollback_confirmation: None,
+            quit_confirmed: false,
+            pick_export_path: Box::new(export_dialog::pick_export_path),
             consoles: Consoles::default(),
         })
     }
@@ -80,7 +98,51 @@ impl DbDeskApp {
         if let Some(window) = &mut self.definition_window {
             window.apply(event);
         }
+        if let Some(window) = &mut self.history_window {
+            window.apply(event);
+        }
+        // The run's statements are recorded by now; show them.
+        if matches!(event, Event::RunFinished { .. })
+            && let Some(window) = &self.history_window
+        {
+            self.send(window.search_command());
+        }
         self.consoles.apply(event);
+        if matches!(event, Event::ConsolesLoaded(_)) {
+            self.restore_console_tabs();
+        }
+    }
+
+    /// Reopens the consoles whose tabs the saved layout holds. The engine reports the data
+    /// sources before the console files, so both are known by now.
+    fn restore_console_tabs(&mut self) {
+        let Self {
+            dock,
+            consoles,
+            state,
+            ..
+        } = self;
+        workspace::restore_consoles(dock, |key| {
+            state
+                .data_source(key.data_source)
+                .and_then(|entry| consoles.reopen(&entry.data_source, key))
+                .is_some()
+        });
+    }
+
+    fn send_all(&self, commands: impl IntoIterator<Item = Command>) {
+        for command in commands {
+            self.send(command);
+        }
+    }
+
+    /// Writes the consoles whose edits have settled, and wakes up when the next ones will.
+    fn save_consoles(&mut self, ctx: &egui::Context) {
+        let (saves, next_due) = self.consoles.due_saves(Instant::now());
+        self.send_all(saves);
+        if let Some(delay) = next_due {
+            ctx.request_repaint_after(delay);
+        }
     }
 
     fn send_if(&self, command: Option<Command>) {
@@ -108,7 +170,7 @@ impl DbDeskApp {
         self.state.engine_status = EngineStatus::Stopped;
     }
 
-    fn handle_explorer_action(&mut self, action: ExplorerAction) {
+    fn handle_explorer_action(&mut self, action: ExplorerAction, ctx: &egui::Context) {
         match action {
             ExplorerAction::New(driver) => {
                 self.data_source_dialog = Some(DataSourceDialog::create(driver));
@@ -124,7 +186,7 @@ impl DbDeskApp {
                 }
             }
             ExplorerAction::Connect(id) => self.send(Command::Connect(id)),
-            ExplorerAction::Disconnect(id) => self.send(Command::Disconnect(id)),
+            ExplorerAction::Disconnect(id) => self.close_connections(Closing::Disconnect(id), ctx),
             ExplorerAction::Expand(id, path) => {
                 let needs_loading = self
                     .state
@@ -150,7 +212,16 @@ impl DbDeskApp {
             }
             ExplorerAction::NewConsole(id) => {
                 if let Some(entry) = self.state.data_source(id) {
-                    let console = self.consoles.open(entry, String::new());
+                    let console = self.consoles.open(&entry.data_source, String::new());
+                    workspace::open_console_tab(&mut self.dock, console);
+                }
+            }
+            ExplorerAction::OpenSavedConsole(key) => {
+                let reopened = self
+                    .state
+                    .data_source(key.data_source)
+                    .and_then(|entry| self.consoles.reopen(&entry.data_source, &key));
+                if let Some(console) = reopened {
                     workspace::open_console_tab(&mut self.dock, console);
                 }
             }
@@ -158,7 +229,7 @@ impl DbDeskApp {
                 let opened = self
                     .state
                     .data_source(id)
-                    .and_then(|entry| self.consoles.open_data(entry, &path));
+                    .and_then(|entry| self.consoles.open_data(&entry.data_source, &path));
                 if let Some((console, command)) = opened {
                     workspace::open_console_tab(&mut self.dock, console);
                     self.send(command);
@@ -208,6 +279,92 @@ impl DbDeskApp {
         }
     }
 
+    /// Does what `closing` asks, first asking whether to roll back the open transactions it
+    /// would end, if there are any.
+    fn close_connections(&mut self, closing: Closing, ctx: &egui::Context) {
+        let rolled_back = self.consoles.rolled_back_by(&closing);
+        if rolled_back.is_empty() {
+            self.finish_closing(closing, ctx);
+        } else if self.rollback_confirmation.is_none() {
+            self.rollback_confirmation = Some(RollbackConfirmation::new(closing, rolled_back));
+        }
+    }
+
+    fn finish_closing(&mut self, closing: Closing, ctx: &egui::Context) {
+        match closing {
+            Closing::Console(key) => {
+                let commands = self.consoles.close(&key);
+                self.send_all(commands);
+                workspace::close_console_tab(&mut self.dock, &key);
+            }
+            Closing::Disconnect(id) => self.send(Command::Disconnect(id)),
+            Closing::Quit => {
+                self.quit_confirmed = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        }
+    }
+
+    /// Holds the window open while quitting would roll back transactions the user hasn't
+    /// agreed to lose.
+    fn confirm_quit(&mut self, ctx: &egui::Context) {
+        if !ctx.input(|input| input.viewport().close_requested()) || self.quit_confirmed {
+            return;
+        }
+        if !self.consoles.rolled_back_by(&Closing::Quit).is_empty() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.close_connections(Closing::Quit, ctx);
+        }
+    }
+
+    fn show_rollback_confirmation(&mut self, ctx: &egui::Context) {
+        let Some(choice) = self
+            .rollback_confirmation
+            .as_ref()
+            .and_then(|confirmation| confirmation.show(ctx))
+        else {
+            return;
+        };
+        let Some(confirmation) = self.rollback_confirmation.take() else {
+            return;
+        };
+        if let RollbackChoice::Proceed = choice {
+            self.finish_closing(confirmation.closing, ctx);
+        }
+    }
+
+    fn export(&self, console: &ConsoleKey, format: ExportFormat) {
+        if let Some(path) = (self.pick_export_path)(format) {
+            self.send_if(self.consoles.export(console, format, path));
+        }
+    }
+
+    fn open_history(&mut self, console: ConsoleKey) {
+        let Some(entry) = self.state.data_source(console.data_source) else {
+            return;
+        };
+        let (window, search) = HistoryWindow::open(console, entry.data_source.name.clone());
+        self.history_window = Some(window);
+        self.send(search);
+    }
+
+    fn show_history_window(&mut self, ctx: &egui::Context) {
+        let Some(action) = self
+            .history_window
+            .as_mut()
+            .and_then(|window| window.show(ctx))
+        else {
+            return;
+        };
+        match action {
+            HistoryAction::Search(command) => self.send(command),
+            HistoryAction::Insert { console, sql } => {
+                self.consoles.insert_statement(&console, &sql);
+            }
+            HistoryAction::Close => self.history_window = None,
+        }
+    }
+
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("View", |ui| {
@@ -240,7 +397,8 @@ impl eframe::App for DbDeskApp {
 
         let mut explorer_actions = Vec::new();
         let mut console_actions = Vec::new();
-        let mut closed_consoles = Vec::new();
+        let mut close_requests = Vec::new();
+        let (open_consoles, saved_consoles) = self.consoles.open_and_saved_mut();
         DockArea::new(&mut self.dock)
             .style(Style::from_egui(ui.style()))
             .show_inside(
@@ -248,26 +406,35 @@ impl eframe::App for DbDeskApp {
                 &mut Panels {
                     log_console: &mut self.log_console,
                     data_sources: &self.state.data_sources,
+                    saved_consoles,
                     explorer_options: &mut self.explorer_options,
                     explorer_actions: &mut explorer_actions,
-                    consoles: self.consoles.open_mut(),
+                    consoles: open_consoles,
                     console_actions: &mut console_actions,
-                    closed_consoles: &mut closed_consoles,
+                    close_requests: &mut close_requests,
                 },
             );
+        let ctx = ui.ctx().clone();
         for action in explorer_actions {
-            self.handle_explorer_action(action);
+            self.handle_explorer_action(action, &ctx);
         }
         for (console, action) in console_actions {
-            let command = self.consoles.handle(console, action);
-            self.send_if(command);
+            match action {
+                ConsoleAction::ShowHistory => self.open_history(console),
+                ConsoleAction::Export(format) => self.export(&console, format),
+                action => {
+                    let command = self.consoles.handle(&console, action);
+                    self.send_if(command);
+                }
+            }
         }
-        for console in closed_consoles {
-            let command = self.consoles.close(console);
-            self.send(command);
+        for console in close_requests {
+            self.close_connections(Closing::Console(console), &ctx);
         }
+        self.confirm_quit(&ctx);
+        self.show_rollback_confirmation(&ctx);
 
-        let ctx = ui.ctx().clone();
+        self.save_consoles(&ctx);
         let confirmed = self.consoles.show_hazard_confirmation(&ctx);
         self.send_if(confirmed);
         self.show_data_source_dialog(&ctx);
@@ -279,6 +446,7 @@ impl eframe::App for DbDeskApp {
         {
             self.definition_window = None;
         }
+        self.show_history_window(&ctx);
 
         // Entries logged on the UI thread don't wake the UI (see `UiWaker`), so collect any
         // logged during this frame and ask for one more frame to show them.
@@ -292,6 +460,9 @@ impl eframe::App for DbDeskApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // Sent before the engine stops: it handles every queued command before shutting down.
+        let unsaved = self.consoles.unsaved();
+        self.send_all(unsaved);
         self.shut_down_engine();
     }
 }
@@ -309,10 +480,12 @@ impl Repaint for EguiRepaint {
 mod tests {
     use std::path::Path;
     use std::sync::Arc;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     use dbdesk_core::{DataSourceId, Password};
-    use dbdesk_store::{DataSourceFile, SecretError, SecretStore};
+    use dbdesk_store::{
+        ConsoleFiles, ConsoleName, DataSourceFile, HistoryFile, SecretError, SecretStore,
+    };
     use egui::accesskit::Role;
     use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
@@ -340,23 +513,63 @@ mod tests {
         }
     }
 
-    fn start_app(dir: &Path, log_feed: LogFeed) -> Harness<'static, DbDeskApp> {
-        let config = EngineConfig {
+    fn engine_config(dir: &Path) -> EngineConfig {
+        EngineConfig {
             data_sources: DataSourceFile::new(dir.join("data_sources.toml")),
             secrets: Arc::new(NoSecrets),
-        };
+            consoles: ConsoleFiles::new(dir.join("consoles")),
+            history: HistoryFile::new(dir.join("history.sqlite")),
+        }
+    }
+
+    fn start_app(dir: &Path, log_feed: LogFeed) -> Harness<'static, DbDeskApp> {
+        let config = engine_config(dir);
         Harness::new_eframe(|cc| DbDeskApp::new(cc, log_feed, config).unwrap())
     }
 
-    /// Steps the app until a label containing `text` appears; engine events arrive
-    /// asynchronously, so a fixed number of steps would be flaky.
-    fn step_until_visible(harness: &mut Harness<'_, DbDeskApp>, text: &str) {
-        let deadline = Instant::now() + WAIT_TIMEOUT;
-        while harness.query_by_label_contains(text).is_none() {
-            assert!(Instant::now() < deadline, "{text:?} never appeared");
+    /// Steps the app until `done` holds; engine events arrive asynchronously, so a fixed
+    /// number of steps would be flaky.
+    fn step_until(
+        harness: &mut Harness<'_, DbDeskApp>,
+        what: &str,
+        done: impl Fn(&Harness<'_, DbDeskApp>) -> bool,
+    ) {
+        let deadline = std::time::Instant::now() + WAIT_TIMEOUT;
+        while !done(harness) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{what} never happened"
+            );
             std::thread::sleep(Duration::from_millis(10));
             harness.step();
         }
+    }
+
+    fn step_until_visible(harness: &mut Harness<'_, DbDeskApp>, text: &str) {
+        step_until(harness, &format!("{text:?} appearing"), |harness| {
+            harness.query_by_label_contains(text).is_some()
+        });
+    }
+
+    /// Saves one SQLite data source named `shop`, over a database with `schema`.
+    fn save_shop(dir: &Path, schema: &str) -> dbdesk_core::DataSource {
+        let database = dir.join("shop.db");
+        rusqlite::Connection::open(&database)
+            .unwrap()
+            .execute_batch(schema)
+            .unwrap();
+        let data_source = dbdesk_core::DataSource {
+            id: DataSourceId::generate(),
+            name: "shop".to_owned(),
+            config: dbdesk_core::ConnectionConfig::Sqlite(dbdesk_core::SqliteConfig {
+                path: database,
+                read_only: false,
+            }),
+        };
+        DataSourceFile::new(dir.join("data_sources.toml"))
+            .save(std::slice::from_ref(&data_source))
+            .unwrap();
+        data_source
     }
 
     #[test]
@@ -410,21 +623,10 @@ mod tests {
     #[test]
     fn browses_a_sqlite_catalog_down_to_columns() {
         let dir = tempfile::tempdir().unwrap();
-        let database = dir.path().join("shop.db");
-        rusqlite::Connection::open(&database)
-            .unwrap()
-            .execute_batch("CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT NOT NULL)")
-            .unwrap();
-        DataSourceFile::new(dir.path().join("data_sources.toml"))
-            .save(&[dbdesk_core::DataSource {
-                id: DataSourceId::generate(),
-                name: "shop".to_owned(),
-                config: dbdesk_core::ConnectionConfig::Sqlite(dbdesk_core::SqliteConfig {
-                    path: database,
-                    read_only: true,
-                }),
-            }])
-            .unwrap();
+        save_shop(
+            dir.path(),
+            "CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT NOT NULL)",
+        );
         let (_layer, feed) = log_console::pipeline();
         let mut harness = start_app(dir.path(), feed);
 
@@ -446,39 +648,216 @@ mod tests {
     #[test]
     fn opens_table_data_in_a_console_and_loads_more_rows() {
         let dir = tempfile::tempdir().unwrap();
-        let database = dir.path().join("shop.db");
-        rusqlite::Connection::open(&database)
-            .unwrap()
-            .execute_batch(
-                "CREATE TABLE orders (id INTEGER PRIMARY KEY);
-                 WITH RECURSIVE s(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM s WHERE n < 600)
-                 INSERT INTO orders SELECT n FROM s;",
-            )
-            .unwrap();
-        DataSourceFile::new(dir.path().join("data_sources.toml"))
-            .save(&[dbdesk_core::DataSource {
-                id: DataSourceId::generate(),
-                name: "shop".to_owned(),
-                config: dbdesk_core::ConnectionConfig::Sqlite(dbdesk_core::SqliteConfig {
-                    path: database,
-                    read_only: true,
-                }),
-            }])
-            .unwrap();
+        save_shop(
+            dir.path(),
+            "CREATE TABLE orders (id INTEGER PRIMARY KEY);
+             WITH RECURSIVE s(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM s WHERE n < 600)
+             INSERT INTO orders SELECT n FROM s;",
+        );
         let (_layer, feed) = log_console::pipeline();
         let mut harness = start_app(dir.path(), feed);
+
+        open_orders(&mut harness, "500 rows, more available");
+        harness.get_by_label("Load more rows").click();
+        step_until_visible(&mut harness, "600 rows ·");
+    }
+
+    #[test]
+    fn restores_console_tabs_from_their_files_and_saves_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let shop = save_shop(dir.path(), "CREATE TABLE orders (id INTEGER PRIMARY KEY)");
+        let files = ConsoleFiles::new(dir.path().join("consoles"));
+        let saved = ConsoleKey {
+            data_source: shop.id,
+            name: ConsoleName::numbered(1),
+        };
+        files.save(&saved, "select 41;").unwrap();
+        let deleted = ConsoleKey {
+            data_source: shop.id,
+            name: ConsoleName::numbered(2),
+        };
+        let (_layer, feed) = log_console::pipeline();
+        let config = engine_config(dir.path());
+        // As if the saved layout held both tabs, though one file has since been deleted.
+        let mut harness = Harness::new_eframe(|cc| {
+            let mut app = DbDeskApp::new(cc, feed, config).unwrap();
+            workspace::open_console_tab(&mut app.dock, saved.clone());
+            workspace::open_console_tab(&mut app.dock, deleted.clone());
+            app
+        });
+
+        let editor = || {
+            |node: &egui_kittest::kittest::AccessKitNode<'_>| {
+                node.role() == Role::MultilineTextInput
+                    && node
+                        .value()
+                        .is_some_and(|text| text.starts_with("select 41;"))
+            }
+        };
+        step_until(&mut harness, "the console reopening", |harness| {
+            harness.query_by(editor()).is_some()
+        });
+        assert_eq!(
+            workspace::console_tabs(&harness.state().dock),
+            std::slice::from_ref(&saved)
+        );
+
+        harness.get_by(editor()).focus();
+        harness.run();
+        harness.get_by(editor()).type_text(" select 42;");
+        step_until(&mut harness, "the edit being saved", |_| {
+            std::fs::read_to_string(files.path(&saved))
+                .unwrap()
+                .contains("select 42;")
+        });
+    }
+
+    #[test]
+    fn inserts_a_statement_from_the_history_into_the_console() {
+        let dir = tempfile::tempdir().unwrap();
+        save_shop(dir.path(), "CREATE TABLE orders (id INTEGER PRIMARY KEY)");
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        open_orders(&mut harness, "0 rows");
+
+        harness.get_by_label("History").click();
+        step_until(&mut harness, "the history loading", |harness| {
+            harness.query_by_label("Insert").is_some()
+        });
+        harness.get_by_label("Insert").click();
+        harness.run();
+
+        let query = "SELECT * FROM main.orders;\n";
+        harness.get_by_value(&query.repeat(2));
+    }
+
+    fn count_orders(dir: &Path) -> i64 {
+        rusqlite::Connection::open(dir.join("shop.db"))
+            .unwrap()
+            .query_row("SELECT count(*) FROM orders", [], |row| row.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn manual_commit_mode_holds_changes_until_rolled_back_and_warns_before_closing() {
+        let dir = tempfile::tempdir().unwrap();
+        save_shop(dir.path(), "CREATE TABLE orders (id INTEGER PRIMARY KEY)");
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "Expand shop");
+        harness.get_by_label("shop").click_secondary();
+        harness.run();
+        harness.get_by_label("New query console").click();
+        harness.run();
+        harness
+            .get_by(|node| {
+                node.role() == Role::ComboBox && node.value().as_deref() == Some("Auto-commit")
+            })
+            .click();
+        harness.run();
+        harness.get_by_label("Manual commit").click();
+        harness.run();
+        let editor = harness.get_by_role(Role::MultilineTextInput);
+        editor.focus();
+        harness.run();
+        harness
+            .get_by_role(Role::MultilineTextInput)
+            .type_text("INSERT INTO orders VALUES (1)");
+        harness.run();
+
+        let run_and_wait_for_transaction = |harness: &mut Harness<'_, DbDeskApp>| {
+            harness.get_by_label("Run").click();
+            step_until_visible(harness, "Transaction open");
+        };
+        run_and_wait_for_transaction(&mut harness);
+        harness.get_by_label("Rollback").click();
+        step_until_visible(&mut harness, "Rolled back");
+        assert_eq!(count_orders(dir.path()), 0);
+
+        run_and_wait_for_transaction(&mut harness);
+        let key = workspace::console_tabs(&harness.state().dock)[0].clone();
+        let ctx = harness.ctx.clone();
+        harness
+            .state_mut()
+            .close_connections(Closing::Console(key), &ctx);
+        step_until_visible(&mut harness, "Roll back open transactions?");
+        // The modal is measured on its first frame and placed on the next; a click aimed at
+        // the first frame's button lands outside it and dismisses the modal.
+        harness.run();
+        assert_eq!(workspace::console_tabs(&harness.state().dock).len(), 1);
+        harness.get_by_label("Roll back and close").click();
+        harness.run();
+
+        assert!(workspace::console_tabs(&harness.state().dock).is_empty());
+        step_until(&mut harness, "the connection closing", |_| {
+            count_orders(dir.path()) == 0
+        });
+    }
+
+    /// Opens the `orders` table of a saved `shop` data source in a console, which runs
+    /// `SELECT * FROM main.orders`, and waits for its rows.
+    fn open_orders(harness: &mut Harness<'_, DbDeskApp>, rows_shown: &str) {
         for expand in ["Expand shop", "Expand main", "Expand tables"] {
-            step_until_visible(&mut harness, expand);
+            step_until_visible(harness, expand);
             harness.get_by_label(expand).click();
         }
-        step_until_visible(&mut harness, "Expand orders");
-
+        step_until_visible(harness, "Expand orders");
         harness.get_by_label("orders").click_secondary();
         harness.run();
         harness.get_by_label("Open data").click();
+        step_until_visible(harness, rows_shown);
+    }
 
-        step_until_visible(&mut harness, "500 rows, more available");
-        harness.get_by_label("Load more rows").click();
-        step_until_visible(&mut harness, "600 rows ·");
+    #[test]
+    fn explains_the_statement_at_the_cursor() {
+        let dir = tempfile::tempdir().unwrap();
+        save_shop(dir.path(), "CREATE TABLE orders (id INTEGER PRIMARY KEY)");
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        open_orders(&mut harness, "0 rows");
+
+        harness.get_by_label("Explain").click();
+
+        // SQLite's query plan for a full table scan.
+        step_until_visible(&mut harness, "SCAN main.orders");
+    }
+
+    #[test]
+    fn sorts_views_and_exports_the_loaded_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        save_shop(
+            dir.path(),
+            r#"CREATE TABLE orders (id INTEGER PRIMARY KEY, note TEXT);
+               INSERT INTO orders VALUES (1, 'plain'), (2, '{"gift":true}'), (3, NULL);"#,
+        );
+        let export_path = dir.path().join("orders.csv");
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        let picked = export_path.clone();
+        harness.state_mut().pick_export_path = Box::new(move |_| Some(picked.clone()));
+        open_orders(&mut harness, "3 rows");
+
+        harness.get_by_label("id").click();
+        harness.run();
+        harness.get_by_label("id ▲").click();
+        harness.run();
+        harness.get_by_label("id ▼");
+        harness.get_by_label_contains("Sorted and filtered here, not by the database: 3 of 3");
+
+        harness.get_by_label(r#"{"gift":true}"#).click();
+        harness.run();
+        harness.key_press(egui::Key::Space);
+        harness.run();
+        harness.get_by_label("Value of note");
+        harness.get_by_value("{\n  \"gift\": true\n}");
+
+        harness.get_by_label("Export").click();
+        harness.run();
+        harness.get_by_label("CSV…").click();
+        step_until_visible(&mut harness, "Exported 3 rows");
+        assert_eq!(
+            std::fs::read_to_string(&export_path).unwrap(),
+            "id,note\r\n3,\r\n2,\"{\"\"gift\"\":true}\"\r\n1,plain\r\n"
+        );
     }
 }

@@ -8,9 +8,9 @@
 use std::pin::Pin;
 
 use async_trait::async_trait;
-use dbdesk_core::{CancelHandle, ColumnInfo, DriverError, ResultCursor, Row};
+use dbdesk_core::{CancelHandle, ColumnInfo, DriverError, ResultCursor, Row, TransactionStatus};
 use futures_util::StreamExt;
-use tokio_postgres::error::ErrorPosition;
+use tokio_postgres::error::{ErrorPosition, SqlState};
 use tokio_postgres::{CancelToken, Client, NoTls, SimpleQueryMessage, SimpleQueryStream};
 
 use crate::connection_error;
@@ -30,6 +30,38 @@ pub(crate) async fn execute(
     };
     cursor.read_header().await?;
     Ok(Box::new(cursor))
+}
+
+/// Asks the server whether a transaction block is open.
+///
+/// The protocol reports this after every statement (`ReadyForQuery`), but tokio-postgres
+/// doesn't expose it, so this asks with a query instead. Inside a transaction block `now()`
+/// is when the block started, earlier than this statement; outside one, every statement is
+/// its own transaction and the two are equal. In a failed block the query itself is refused
+/// with `in_failed_sql_transaction`.
+///
+/// The query counts as the transaction's first statement, so in a `REPEATABLE READ` block
+/// opened just before, it is what takes the snapshot, a moment earlier than the user's next
+/// statement would have.
+pub(crate) async fn transaction_status(client: &Client) -> Result<TransactionStatus, DriverError> {
+    let messages = match client
+        .simple_query("SELECT now() <> statement_timestamp()")
+        .await
+    {
+        Ok(messages) => messages,
+        Err(error) if error.code() == Some(&SqlState::IN_FAILED_SQL_TRANSACTION) => {
+            return Ok(TransactionStatus::Failed);
+        }
+        Err(error) => return Err(connection_error(error)),
+    };
+    let in_block = messages.iter().find_map(|message| match message {
+        SimpleQueryMessage::Row(row) => row.get(0),
+        _ => None,
+    });
+    Ok(match in_block {
+        Some("t") => TransactionStatus::InTransaction,
+        _ => TransactionStatus::Idle,
+    })
 }
 
 /// Maps a server error to [`DriverError::Statement`], converting PostgreSQL's 1-based

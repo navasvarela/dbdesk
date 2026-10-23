@@ -13,7 +13,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use dbdesk_core::{
     BoxError, CancelHandle, CatalogNode, CatalogPath, Connection, DriverError, NodeKind, Password,
-    PostgresConfig, ResultCursor, ServerInfo,
+    PostgresConfig, ResultCursor, ServerInfo, TransactionStatus,
 };
 use tokio::task::{JoinError, JoinHandle};
 use tokio_postgres::tls::NoTlsStream;
@@ -203,6 +203,10 @@ impl Connection for PostgresConnection {
     /// so there is no other database to pick.
     async fn execute(&mut self, sql: &str) -> Result<Box<dyn ResultCursor>, DriverError> {
         execution::execute(&self.primary.client, sql).await
+    }
+
+    async fn transaction_status(&mut self) -> Result<TransactionStatus, DriverError> {
+        execution::transaction_status(&self.primary.client).await
     }
 
     fn cancel_handle(&self) -> Arc<dyn CancelHandle> {
@@ -425,6 +429,7 @@ mod tests {
         let mut connection = connect(&config, password.as_ref()).await.unwrap();
 
         conformance::check_execution(&mut connection).await;
+        conformance::check_transactions(&mut connection).await;
         conformance::check_cancel(&mut connection, "SELECT pg_sleep(60)").await;
 
         Box::new(connection).close().await.unwrap();
