@@ -71,5 +71,6 @@ UI: **egui** (via `eframe`) with **egui_dock** for DataGrip-style dockable panel
 | [Testing](docs/testing.md) | Driver conformance suite, UI testing strategy, screenshots, the manual's build |
 | [Brand](docs/brand.md) | The logo, its files, and the colour palette |
 | [Look and feel](docs/features/look-and-feel.md) | Themes, panels, fonts, icons, data source colours |
-| [Roadmap](docs/roadmap.md) | Milestones M0–M5 with exit criteria |
+| [Roadmap](docs/roadmap.md) | Milestones M0–M5, and the design and documentation track (D1–D4), with exit criteria |
+| [Contributing](CONTRIBUTING.md) | How commits, branches and pull requests are named |
 | [ADRs](docs/adr/README.md) | Architecture decision records |
