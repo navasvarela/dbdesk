@@ -12,8 +12,8 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use dbdesk_core::{
-    BoxError, CancelHandle, CatalogNode, CatalogPath, Connection, DriverError, RelationName,
-    ResultCursor, ServerInfo, SqliteConfig, TableDescription, TransactionStatus,
+    BoxError, CancelHandle, CatalogNode, CatalogPath, Connection, DriverError, Rejection,
+    RelationName, ResultCursor, ServerInfo, SqliteConfig, TableDescription, TransactionStatus,
 };
 use rusqlite::OpenFlags;
 
@@ -177,6 +177,12 @@ impl Connection for SqliteConnection {
     ) -> Result<Option<TableDescription>, DriverError> {
         let table = table.clone();
         self.run_blocking(move |connection| table::describe_table(connection, &table))
+            .await
+    }
+
+    async fn validate(&mut self, sql: &str) -> Result<Option<Rejection>, DriverError> {
+        let sql = sql.to_owned();
+        self.run_blocking(move |connection| execution::validate(connection, &sql))
             .await
     }
 
@@ -392,6 +398,7 @@ mod tests {
         conformance::check_execution(&mut connection).await;
         conformance::check_transactions(&mut connection).await;
         conformance::check_describe_table(&mut connection).await;
+        conformance::check_validate(&mut connection).await;
         // Counts an endless sequence: only an interrupt stops it.
         conformance::check_cancel(
             &mut connection,
