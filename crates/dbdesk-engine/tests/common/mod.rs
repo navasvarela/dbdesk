@@ -15,7 +15,10 @@ use dbdesk_core::{
     ConnectionConfig, DataSource, DataSourceId, MysqlConfig, Password, PostgresConfig,
     ServerConfig, SqliteConfig, TlsMode,
 };
-use dbdesk_engine::{Command, EngineConfig, EngineHandle, Event, Repaint, SessionState};
+use dbdesk_engine::{
+    Command, EngineConfig, EngineHandle, Event, Release, ReleaseError, ReleaseFeed, Repaint,
+    SessionState,
+};
 use dbdesk_store::{
     ConsoleFiles, DataSourceFile, HistoryFile, KeymapBindings, KeymapFile, SecretError,
     SecretStore, Settings, SettingsFile,
@@ -48,6 +51,15 @@ impl SecretStore for MemorySecrets {
     }
 }
 
+/// A release feed that answers without a network: with this release, or that there is none.
+pub struct FixedReleases(pub Option<Release>);
+
+impl ReleaseFeed for FixedReleases {
+    fn latest(&self) -> Result<Release, ReleaseError> {
+        self.0.clone().ok_or(ReleaseError::NoReleases)
+    }
+}
+
 pub struct SignalRepaint(mpsc::Sender<()>);
 
 impl Repaint for SignalRepaint {
@@ -64,6 +76,14 @@ pub struct TestEngine {
 
 impl TestEngine {
     pub fn start(data_sources_file: &Path, secrets: Arc<MemorySecrets>) -> Self {
+        Self::start_with_releases(data_sources_file, secrets, FixedReleases(None))
+    }
+
+    pub fn start_with_releases(
+        data_sources_file: &Path,
+        secrets: Arc<MemorySecrets>,
+        releases: FixedReleases,
+    ) -> Self {
         let (sender, repaints) = mpsc::channel();
         let dir = data_sources_file.parent().unwrap_or(Path::new("."));
         let config = EngineConfig {
@@ -73,6 +93,7 @@ impl TestEngine {
             history: HistoryFile::new(dir.join("history.sqlite")),
             keymap: KeymapFile::new(dir.join("keymap.toml")),
             settings: SettingsFile::new(dir.join("settings.toml")),
+            releases: Arc::new(releases),
         };
         let engine = EngineHandle::start(config, SignalRepaint(sender)).unwrap();
         Self { engine, repaints }

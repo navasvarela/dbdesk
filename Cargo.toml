@@ -54,6 +54,8 @@ rusqlite = { version = "0.40.2", features = ["bundled", "column_decltype"] }
 # docs/releasing.md), and the ring provider builds with only a C compiler, where aws-lc-rs
 # also wants CMake and NASM on Windows.
 rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+# Compares the running version with the newest release's tag, for the update check.
+semver = "1.0.28"
 serde = { version = "1.0.229", features = ["derive"] }
 # The syntax checker's parser, for PostgreSQL and SQLite statements.
 sqlparser = "0.63.0"
@@ -68,6 +70,10 @@ toml = "1.1.8"
 tracing = "0.1.44"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "registry", "std", "tracing-log"] }
+# The update check's one HTTPS request. Blocking and small; it runs on the engine's blocking
+# pool. Its rustls feature uses the ring provider and webpki-roots, both already built for
+# PostgreSQL TLS.
+ureq = { version = "3.5.0", default-features = false, features = ["rustls"] }
 uuid = { version = "1.28.0", features = ["v4", "serde"] }
 # The public web authorities, trusted by `verify-full` when no CA file is given.
 webpki-roots = "1.0.9"

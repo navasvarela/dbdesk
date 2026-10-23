@@ -205,7 +205,8 @@ amendment.
   `Vec<Cell>`.
 - `ColumnInfo`: name, plus the declared type when the driver knows it cheaply (SQLite does;
   PostgreSQL's simple protocol doesn't).
-- Rows travel in pages of 500 (DataGrip's default) as `RowsFetched` events.
+- Rows travel in pages of 500 as `RowsFetched` events, within the range other tools default
+  to (DBeaver fetches 200 rows, DataGrip 500, pgAdmin 1,000).
 - `CatalogNode`: `{ path, label, detail, has_children, has_definition, system }`. Its kind is the
   last segment of its `CatalogPath` (`Database`, `Schema`, `Folder(..)`, `Table`, `View`,
   `MaterializedView`, `Function`, `Sequence`, `Column`, `Index`, `Constraint`, `Trigger`), so

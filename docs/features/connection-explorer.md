@@ -137,5 +137,7 @@ run = true
 
 - Generating full `CREATE TABLE` DDL for Postgres is non-trivial (no `pg_get_tabledef`).
   Defer, or shell out to `pg_dump --schema-only -t`?
+  Proposed answer: rebuild it from `describe_table` and the loaded constraints, through the DDL
+  builder of [Creating and changing database objects](../entity-helpers.md) (E1).
 - Should the tree show row-count estimates (`reltuples`) next to tables? Cheap on Postgres,
   expensive on SQLite.

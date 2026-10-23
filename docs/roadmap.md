@@ -124,7 +124,8 @@ Follow-ups left out of M3 (most belong to M4 anyway):
 - Copy as TSV, export CSV/JSON.
 - `EXPLAIN` action.
 
-**Exit:** I use dbdesk instead of DataGrip for a week, and keep a list of what I missed.
+**Exit:** I use dbdesk instead of my usual database tool for a week, and keep a list of what I
+missed.
 
 **Demo note:** built; the exit criterion (a week of real use) is still to be tried.
 - **Consoles are files:** each console is `consoles/<data-source-id>/console.sql` (then
@@ -255,6 +256,16 @@ plan, including the decisions it needs first, is in [Releasing](releasing.md).
   generated release notes.
 - **R3 — Updates:** an in-app update notice, then automatic updates.
 
+**Update notice demo note:** built, ahead of R2. Start a build older than the newest release,
+and the status bar says "dbdesk 0.2.0 is available"; click it for the version you have and
+**Open release page**. **Help › Check for updates…** asks on demand and says "You're up to
+date" otherwise. The check at start-up can be switched off in **View → Settings…**
+(`[updates] check_on_start` in `settings.toml`); a failed automatic check is only logged. The
+engine asks GitHub's `releases/latest` through a `ReleaseFeed` trait, so tests use a fixed feed
+and never the network. Covered by version comparison and state tests, an engine test of both
+answers, a dialog test, and a UI test that finds a newer release at start-up and an up-to-date
+one on request.
+
 ## Database track
 
 More engines, in order of how many people use them. The full plan, with the rankings, what
@@ -270,7 +281,9 @@ each engine needs and the open decisions, is in [More databases](databases.md).
 - **DB2 — SQL Server:** `tiberius`, SQL Server logins first, `GO` batches, XML plans.
 - **DB3 — DuckDB:** files and in-memory data sources for querying CSV and Parquet, if the
   bundled engine keeps the downloads small enough.
-- **DB4 — Oracle:** after R2, because its client needs Oracle's own library installed
+- **DB4 — ClickHouse:** the official `clickhouse` crate over HTTP and HTTPS, results streamed
+  in a self-describing format, cancel by `query_id`, no transactions and a read-only grid.
+- **DB5 — Oracle:** after R2, because its client needs Oracle's own library installed
   separately.
 
 **DB0 demo note:** built in #26, #27 and #28. Run `docker compose up -d --wait`: besides the
@@ -289,6 +302,29 @@ new server engine reuses. CI starts every compose service and exports the URLs l
 TLS driver tests against both servers (encrypted per `pg_stat_ssl`, cancel and browsing over
 TLS, each refusal), serde tests for old and new files, form tests for every TLS mode, and a UI
 test that picks `verify-full` with a CA file and saves it.
+
+## Object helpers track
+
+Dialogs that write, show and run the SQL to create and change tables, views and users, from a
+**New** submenu and object actions in the explorer. The full plan is in
+[Creating and changing database objects](entity-helpers.md).
+
+- **E0 — Groundwork:**
+  - object specs and a DDL builder per dialect in `dbdesk-sql`;
+  - each dialect's capabilities;
+  - a review-and-run panel that shows the SQL before anything runs;
+  - `ApplyDdl` in one transaction where the engine allows it;
+  - confirmations for destructive actions.
+- **E1 — Tables:** New table (columns, keys, checks), Rename, Truncate, Drop, and Copy DDL,
+  which also gives PostgreSQL tables their missing `CREATE TABLE`.
+- **E2 — Views:** New view and materialized view with the console's editor, Edit, Refresh,
+  Rename, Drop.
+- **E3 — Users and roles (PostgreSQL):**
+  - a Roles folder in the tree;
+  - New user and New role, with passwords hashed into a SCRAM verifier and kept out of the
+    history and logs;
+  - Edit, Rename, Drop.
+- **E4 — Modify table:** `ALTER TABLE` from a changed table, with SQLite's table rebuild last.
 
 ## Design and documentation track
 

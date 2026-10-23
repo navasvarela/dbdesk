@@ -16,7 +16,8 @@ use dbdesk_sql::controls_transactions;
 use super::{Disconnected, Script, SessionContext, Worker, cancel_running_statement, transaction};
 use crate::{Event, RunId, RunOutcome, StatementFailure, StatementSummary};
 
-/// Rows per page: DataGrip's default. Plenty to look at, few enough to arrive at once.
+/// Rows per page. Plenty to look at, few enough to arrive at once; other database tools
+/// default to between 200 and 1,000.
 const PAGE_SIZE: usize = 500;
 /// How much of a statement the log console shows.
 const LOG_PREVIEW_CHARS: usize = 80;

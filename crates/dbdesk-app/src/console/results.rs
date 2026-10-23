@@ -610,7 +610,7 @@ fn fill_header_cell(ui: &Ui, fill: egui::Color32) {
     ui.painter().rect_filled(rect, 0.0, fill);
 }
 
-/// Right-align numbers, the way spreadsheets and DataGrip do. A text heuristic, because the
+/// Right-align numbers, the way spreadsheets and database tools do. A text heuristic, because the
 /// text protocol doesn't say which columns are numeric.
 fn looks_numeric(text: &str) -> bool {
     !text.is_empty() && text.parse::<f64>().is_ok()

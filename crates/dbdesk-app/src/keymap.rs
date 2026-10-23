@@ -87,23 +87,23 @@ impl Action {
         Self::ALL.into_iter().find(|action| action.id() == id)
     }
 
-    /// DataGrip's keys where it has one for the action, on macOS.
+    /// The keys IDEs and database tools commonly use for the action, on macOS.
     fn default_bindings(self) -> Vec<KeyboardShortcut> {
         let shortcut = |modifiers, key| vec![KeyboardShortcut::new(modifiers, key)];
         match self {
-            // DataGrip's basic completion, on every platform.
+            // The usual completion key in IDEs, on every platform.
             Self::Complete => shortcut(Modifiers::CTRL, Key::Space),
             Self::RunCurrent => shortcut(Modifiers::COMMAND, Key::Enter),
             Self::RunAll => shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::Enter),
             Self::Explain => shortcut(Modifiers::COMMAND | Modifiers::ALT, Key::E),
             Self::Cancel => shortcut(Modifiers::COMMAND, Key::Period),
-            // DataGrip's Reformat Code, and the same with ⇧ for the whole console.
+            // A common reformat key in IDEs, and the same with ⇧ for the whole console.
             Self::Format => shortcut(Modifiers::COMMAND | Modifiers::ALT, Key::L),
             Self::FormatAll => shortcut(
                 Modifiers::COMMAND | Modifiers::ALT | Modifiers::SHIFT,
                 Key::L,
             ),
-            // VS Code's keys: F2, JetBrains' choice, edits a grid cell here.
+            // VS Code's keys. F2, which some IDEs use for this, edits a grid cell here.
             Self::NextProblem => shortcut(Modifiers::NONE, Key::F8),
             Self::PreviousProblem => shortcut(Modifiers::SHIFT, Key::F8),
             Self::ViewCell => shortcut(Modifiers::NONE, Key::Space),
