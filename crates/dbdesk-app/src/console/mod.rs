@@ -25,7 +25,9 @@ use dbdesk_engine::{
     Command, ConsoleId, EditFailure, Event, Export, RunId, RunOutcome, SessionState,
     StatementFailure, StatementSummary, TransactionEnd, TransactionMode,
 };
-use dbdesk_sql::{Dialect, explain_prefix, split_statements, statement_at};
+use dbdesk_sql::{
+    Dialect, FormatOptions, explain_prefix, format_ranges, split_statements, statement_at, tokenize,
+};
 use dbdesk_store::{ConsoleKey, ExportFormat};
 
 use edit::Editability;
@@ -49,6 +51,15 @@ pub struct SubmittedStatement {
     /// How many bytes at the start of `sql` aren't in the console's text, such as an
     /// `EXPLAIN` prefix. Error positions are shifted back by this much.
     pub prefix_len: usize,
+}
+
+/// What a format covers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FormatScope {
+    /// The selection if there is one, otherwise the statement under the cursor.
+    Current,
+    /// Every statement in the console.
+    All,
 }
 
 /// Which statements a run covers.
@@ -84,6 +95,11 @@ pub struct QueryConsole {
     /// A byte offset to move the editor's cursor to on the next frame, after the text was
     /// changed from outside the editor.
     pending_cursor: Option<usize>,
+    /// The text before it was formatted, for the editor to record as an undo point next to
+    /// the formatted text, so one undo takes the whole format back.
+    format_undo: Option<String>,
+    /// Why the last format was refused, until the text changes.
+    format_error: Option<String>,
     /// The cell shown in full in the cell viewer window.
     viewed_cell: Option<ViewedCell>,
     /// The completion list, while it is open.
@@ -180,6 +196,8 @@ impl QueryConsole {
             run: None,
             error_marker: None,
             pending_cursor: None,
+            format_undo: None,
+            format_error: None,
             viewed_cell: None,
             completion: None,
             export_status: None,
@@ -447,9 +465,66 @@ impl QueryConsole {
         self.edited(now);
     }
 
+    /// Formats what `scope` covers, keeping the cursor on the token it was on. Leaves the
+    /// text alone (and says why) if formatting would change what it does.
+    pub fn format(&mut self, scope: FormatScope, options: &FormatOptions, now: Instant) {
+        let ranges = self.ranges_to_format(scope);
+        let formatted = match format_ranges(&self.text, &ranges, self.dialect, options) {
+            Ok(formatted) => formatted,
+            Err(error) => {
+                self.format_error = Some(error.to_string());
+                return;
+            }
+        };
+        self.format_error = None;
+        if formatted.text() == self.text {
+            return;
+        }
+        let cursor = formatted.map_offset(self.selection.end);
+        self.format_undo = Some(std::mem::replace(&mut self.text, formatted.into_text()));
+        self.selection = cursor..cursor;
+        self.pending_cursor = Some(cursor);
+        self.edited(now);
+    }
+
+    /// The statements `scope` formats. A selection is narrowed to the tokens wholly inside
+    /// it, and split where statements end, so a selection that starts or ends inside a
+    /// string never formats half of it.
+    fn ranges_to_format(&self, scope: FormatScope) -> Vec<Range<usize>> {
+        let statements = split_statements(&self.text, self.dialect);
+        let (start, end) = ordered(&self.selection);
+        match scope {
+            FormatScope::All => statements,
+            FormatScope::Current if start == end => statement_at(&statements, end)
+                .map(|index| statements[index].clone())
+                .into_iter()
+                .collect(),
+            FormatScope::Current => {
+                let inside: Vec<Range<usize>> = tokenize(&self.text, self.dialect)
+                    .into_iter()
+                    .filter(|token| {
+                        !token.kind.is_trivia()
+                            && token.range.start >= start
+                            && token.range.end <= end
+                    })
+                    .map(|token| token.range)
+                    .collect();
+                let (Some(first), Some(last)) = (inside.first(), inside.last()) else {
+                    return Vec::new();
+                };
+                statements
+                    .into_iter()
+                    .map(|statement| statement.start.max(first.start)..statement.end.min(last.end))
+                    .filter(|range| range.start < range.end)
+                    .collect()
+            }
+        }
+    }
+
     /// Records that the user changed the text at `now`.
     pub fn edited(&mut self, now: Instant) {
         self.error_marker = None;
+        self.format_error = None;
         self.file.keep = true;
         self.file.unsaved_since.get_or_insert(now);
     }

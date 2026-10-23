@@ -38,6 +38,11 @@ impl AppPaths {
         self.dirs.config_dir().join("keymap.toml")
     }
 
+    /// Preferences, such as how SQL is formatted. Not guaranteed to exist.
+    pub fn settings_file(&self) -> PathBuf {
+        self.dirs.config_dir().join("settings.toml")
+    }
+
     /// The query history database. Not guaranteed to exist yet.
     pub fn history_file(&self) -> PathBuf {
         self.dirs.config_dir().join("history.sqlite")

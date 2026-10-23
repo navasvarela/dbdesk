@@ -1,6 +1,10 @@
 use super::*;
 
 fn console(text: &str) -> QueryConsole {
+    console_with(text, Dialect::Postgres)
+}
+
+fn console_with(text: &str, dialect: Dialect) -> QueryConsole {
     QueryConsole::new(
         ConsoleId(1),
         ConsoleKey {
@@ -8,7 +12,7 @@ fn console(text: &str) -> QueryConsole {
             name: dbdesk_store::ConsoleName::numbered(1),
         },
         "test".to_owned(),
-        Dialect::Postgres,
+        dialect,
         text.to_owned(),
     )
 }
@@ -202,4 +206,59 @@ fn completion_replaces_the_typed_prefix_and_closes() {
         console.completion.is_none(),
         "nothing starts with SELECT but SELECT itself"
     );
+}
+
+#[test]
+fn formats_the_statement_at_the_cursor_and_keeps_the_cursor_on_its_token() {
+    let text = "select 1;\nselect a,b from t where x=1;";
+    let mut console = console(text);
+    let cursor = text.find("from").unwrap() + 2;
+    console.selection = cursor..cursor;
+
+    console.format(
+        FormatScope::Current,
+        &FormatOptions::default(),
+        Instant::now(),
+    );
+
+    let expected = "select 1;\nSELECT\n    a,\n    b\nFROM t\nWHERE x = 1;";
+    assert_eq!(console.text, expected);
+    let moved = expected.find("FROM").unwrap() + 2;
+    assert_eq!(console.selection, moved..moved);
+    assert_eq!(console.pending_cursor, Some(moved));
+    assert_eq!(console.format_undo.as_deref(), Some(text));
+    assert!(console.file.unsaved_since.is_some());
+}
+
+#[test]
+fn formats_everything_or_only_whole_tokens_of_the_selection() {
+    let text = "select 'a,  b', c from t; select d,e from u";
+    let mut console = console(text);
+    console.format(FormatScope::All, &FormatOptions::default(), Instant::now());
+    assert_eq!(
+        console.text,
+        "SELECT\n    'a,  b',\n    c\nFROM t; SELECT\n    d,\n    e\nFROM u"
+    );
+
+    // A selection starting inside the string formats from the token after it; a fragment
+    // that isn't a whole query only has its keywords' case changed.
+    let mut console = console_with(text, Dialect::Postgres);
+    let start = text.find("  b").unwrap();
+    console.selection = start..text.find(';').unwrap();
+    console.format(
+        FormatScope::Current,
+        &FormatOptions::default(),
+        Instant::now(),
+    );
+    assert_eq!(console.text, "select 'a,  b', c FROM t; select d,e from u");
+}
+
+#[test]
+fn a_format_that_changes_nothing_leaves_no_undo_point() {
+    let text = "SELECT 1";
+    let mut console = console(text);
+    console.format(FormatScope::All, &FormatOptions::default(), Instant::now());
+    assert_eq!(console.text, text);
+    assert!(console.format_undo.is_none());
+    assert!(console.pending_cursor.is_none());
 }

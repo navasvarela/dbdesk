@@ -1,7 +1,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use dbdesk_store::{ConsoleFiles, DataSourceFile, HistoryFile, KeymapFile, SecretStore};
+use dbdesk_store::{
+    ConsoleFiles, DataSourceFile, HistoryFile, KeymapFile, SecretStore, SettingsFile,
+};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender, error::TryRecvError};
 use tokio::task::{JoinError, JoinHandle};
@@ -35,6 +37,7 @@ pub struct EngineConfig {
     pub consoles: ConsoleFiles,
     pub history: HistoryFile,
     pub keymap: KeymapFile,
+    pub settings: SettingsFile,
 }
 
 /// The UI's connection to a running engine.

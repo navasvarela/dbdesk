@@ -16,7 +16,8 @@ use dbdesk_core::{
 };
 use dbdesk_engine::{Command, EngineConfig, EngineHandle, Event, Repaint, SessionState};
 use dbdesk_store::{
-    ConsoleFiles, DataSourceFile, HistoryFile, KeymapBindings, KeymapFile, SecretError, SecretStore,
+    ConsoleFiles, DataSourceFile, HistoryFile, KeymapBindings, KeymapFile, SecretError,
+    SecretStore, Settings, SettingsFile,
 };
 
 pub const EVENT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -70,6 +71,7 @@ impl TestEngine {
             consoles: ConsoleFiles::new(dir.join("consoles")),
             history: HistoryFile::new(dir.join("history.sqlite")),
             keymap: KeymapFile::new(dir.join("keymap.toml")),
+            settings: SettingsFile::new(dir.join("settings.toml")),
         };
         let engine = EngineHandle::start(config, SignalRepaint(sender)).unwrap();
         Self { engine, repaints }
@@ -98,6 +100,7 @@ impl TestEngine {
     pub fn expect_started(&mut self, data_sources: Vec<DataSource>) {
         self.expect(Event::Started);
         self.expect_keymap(Ok(KeymapBindings::new()));
+        self.expect_settings(Ok(Settings::default()));
         self.expect(Event::DataSourcesLoaded(data_sources));
         self.expect(Event::ConsolesLoaded(vec![]));
     }
@@ -110,6 +113,17 @@ impl TestEngine {
                 (other, expected) => panic!("expected keymap {expected:?}, got {other:?}"),
             },
             other => panic!("expected the keymap, got {other:?}"),
+        }
+    }
+
+    pub fn expect_settings(&mut self, expected: Result<Settings, String>) {
+        match self.next_event() {
+            Event::SettingsLoaded { result, .. } => match (result, expected) {
+                (Ok(settings), Ok(expected)) => assert_eq!(settings, expected),
+                (Err(_), Err(_)) => {}
+                (other, expected) => panic!("expected settings {expected:?}, got {other:?}"),
+            },
+            other => panic!("expected the settings, got {other:?}"),
         }
     }
 

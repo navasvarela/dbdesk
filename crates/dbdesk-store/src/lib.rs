@@ -11,6 +11,7 @@ mod history;
 mod keymap;
 mod paths;
 mod secrets;
+mod settings;
 
 pub use consoles::{
     ConsoleFiles, ConsoleKey, ConsoleName, ConsoleStoreError, InvalidConsoleName, SavedConsole,
@@ -21,3 +22,4 @@ pub use history::{History, HistoryEntry, HistoryError, HistoryFile, HistoryOutco
 pub use keymap::{KeymapBindings, KeymapError, KeymapFile};
 pub use paths::{APP_NAME, AppPaths};
 pub use secrets::{Keychain, SecretError, SecretStore};
+pub use settings::{FormatSettings, KeywordCase, Settings, SettingsError, SettingsFile};

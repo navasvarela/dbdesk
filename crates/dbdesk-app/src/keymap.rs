@@ -19,12 +19,14 @@ pub enum Action {
     ShowHistory,
     Commit,
     Rollback,
+    Format,
+    FormatAll,
     ViewCell,
     EditCell,
 }
 
 impl Action {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 12] = [
         Self::Complete,
         Self::RunCurrent,
         Self::RunAll,
@@ -33,6 +35,8 @@ impl Action {
         Self::ShowHistory,
         Self::Commit,
         Self::Rollback,
+        Self::Format,
+        Self::FormatAll,
         Self::ViewCell,
         Self::EditCell,
     ];
@@ -47,6 +51,8 @@ impl Action {
             Self::ShowHistory => "console.history",
             Self::Commit => "console.commit",
             Self::Rollback => "console.rollback",
+            Self::Format => "console.format",
+            Self::FormatAll => "console.format-all",
             Self::ViewCell => "grid.view-cell",
             Self::EditCell => "grid.edit-cell",
         }
@@ -62,6 +68,8 @@ impl Action {
             Self::ShowHistory => "Open the data source's query history",
             Self::Commit => "Commit the console's transaction",
             Self::Rollback => "Roll back the console's transaction",
+            Self::Format => "Format the selection, or the statement at the cursor",
+            Self::FormatAll => "Format every statement in the console",
             Self::ViewCell => "Show the selected cell in the cell viewer",
             Self::EditCell => "Edit the selected cell, if its table can be edited",
         }
@@ -81,6 +89,12 @@ impl Action {
             Self::RunAll => shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::Enter),
             Self::Explain => shortcut(Modifiers::COMMAND | Modifiers::ALT, Key::E),
             Self::Cancel => shortcut(Modifiers::COMMAND, Key::Period),
+            // DataGrip's Reformat Code, and the same with ⇧ for the whole console.
+            Self::Format => shortcut(Modifiers::COMMAND | Modifiers::ALT, Key::L),
+            Self::FormatAll => shortcut(
+                Modifiers::COMMAND | Modifiers::ALT | Modifiers::SHIFT,
+                Key::L,
+            ),
             Self::ViewCell => shortcut(Modifiers::NONE, Key::Space),
             Self::EditCell => vec![
                 KeyboardShortcut::new(Modifiers::NONE, Key::F2),

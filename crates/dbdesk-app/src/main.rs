@@ -22,6 +22,8 @@ mod log_console;
 mod rollback_dialog;
 #[cfg(test)]
 mod screenshots;
+mod settings;
+mod settings_window;
 mod state;
 mod telemetry;
 #[cfg(test)]
@@ -37,6 +39,7 @@ use anyhow::{Context as _, anyhow};
 use dbdesk_engine::EngineConfig;
 use dbdesk_store::{
     APP_NAME, AppPaths, ConsoleFiles, DataSourceFile, HistoryFile, Keychain, KeymapFile,
+    SettingsFile,
 };
 
 use crate::app::DbDeskApp;
@@ -56,6 +59,7 @@ fn main() -> anyhow::Result<()> {
         consoles: ConsoleFiles::new(paths.consoles_dir()),
         history: HistoryFile::new(paths.history_file()),
         keymap: KeymapFile::new(paths.keymap_file()),
+        settings: SettingsFile::new(paths.settings_file()),
     };
 
     let mut viewport = egui::ViewportBuilder::default()
