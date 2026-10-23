@@ -27,7 +27,7 @@ flowchart LR
 | Crate | Responsibility | Depends on |
 | --- | --- | --- |
 | `dbdesk-core` | Domain types (`DataSource`, `ConnectionConfig`, `Password`, …) and the `Connection` trait. No I/O. | — |
-| `dbdesk-sql` | A forgiving SQL lexer: statement splitting, statement at the cursor, highlighting tokens, the UPDATE/DELETE-without-WHERE check, the formatter, and the syntax checker (`sqlparser`) and lint rules. | sqlparser |
+| `dbdesk-sql` | A forgiving SQL lexer: statement splitting, statement at the cursor, highlighting tokens, the UPDATE/DELETE-without-WHERE check, the formatter, and the syntax checker (`sqlparser`) and lint rules. What differs between dialects lives in its `dialect` module. | core, sqlparser |
 | `dbdesk-driver-postgres` | `tokio-postgres` implementation of `Connection`. | core |
 | `dbdesk-driver-sqlite` | `rusqlite` implementation, run on `spawn_blocking`. | core |
 | `dbdesk-engine` | Session lifecycle, command handling, cancellation, transactions, event emission. | core, sql, store, drivers |

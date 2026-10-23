@@ -110,7 +110,9 @@ fn unknown_table(
     dialect: Dialect,
     catalog: &dyn CatalogSource,
 ) -> Option<Problem> {
-    if is_system_name(reference, dialect) || !catalog.tables_loaded(reference.schema.as_deref()) {
+    if dialect.is_system_name(reference.schema.as_deref(), &reference.table)
+        || !catalog.tables_loaded(reference.schema.as_deref())
+    {
         return None;
     }
     let tables = catalog.tables();
@@ -133,27 +135,6 @@ fn unknown_table(
         reference.range.clone(),
         format!("No table or view {name} in the explorer's catalog (refresh it if {name} is new)"),
     ))
-}
-
-/// System catalogs, which the explorer doesn't list: PostgreSQL's `pg_*` tables (always on the
-/// search path) and its catalog schemas, SQLite's `sqlite_*` tables and `pragma_*` functions.
-fn is_system_name(reference: &TableRef, dialect: Dialect) -> bool {
-    let table = reference.table.to_ascii_lowercase();
-    let schema = reference.schema.as_deref().map(str::to_ascii_lowercase);
-    match dialect {
-        Dialect::Postgres => {
-            table.starts_with("pg_")
-                || matches!(
-                    schema.as_deref(),
-                    Some("pg_catalog" | "information_schema" | "pg_toast")
-                )
-        }
-        Dialect::Sqlite => {
-            table.starts_with("sqlite_")
-                || table.starts_with("pragma_")
-                || schema.as_deref() == Some("temp")
-        }
-    }
 }
 
 /// Whether the reference names a table: not a table function (`generate_series(1, 3)`), and

@@ -12,9 +12,8 @@
 //! and the same tokens also drive syntax highlighting.
 
 mod check;
-mod explain;
+mod dialect;
 mod format;
-mod functions;
 mod keywords;
 mod lexer;
 mod projection;
@@ -23,11 +22,10 @@ mod split;
 mod transaction;
 
 pub use check::{LintRule, Problem, ProblemSource, Severity, check_statement, is_checkable};
-pub use explain::explain_prefix;
+pub use dialect::Dialect;
 pub use format::{FormatError, FormatOptions, Formatted, KeywordCase, format_ranges, same_meaning};
-pub use functions::builtin_functions;
 pub use keywords::{is_keyword, keywords};
-pub use lexer::{Dialect, Token, TokenKind, first_word, tokenize};
+pub use lexer::{Token, TokenKind, first_word, tokenize};
 pub use projection::{ProjectionItem, projection};
 pub use safety::{Hazard, hazard};
 pub use split::{split_statements, statement_at};

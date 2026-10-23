@@ -4,10 +4,10 @@
 use sqlparser::ast::{
     Expr, ObjectNamePart, Query, SelectItem, SelectItemQualifiedWildcardKind, SetExpr, Statement,
 };
-use sqlparser::dialect::{PostgreSqlDialect, SQLiteDialect};
 use sqlparser::parser::Parser;
 
-use crate::lexer::{Dialect, Token, TokenKind, tokenize};
+use crate::dialect::Dialect;
+use crate::lexer::{Token, TokenKind, tokenize};
 
 /// One item of a query's select list.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,10 +24,7 @@ pub enum ProjectionItem {
 /// `sqlparser` when it parses the query, which is the usual case for a finished CTE; otherwise
 /// (a query still being typed) from its tokens, between the first `SELECT` and its `FROM`.
 pub fn projection(query: &str, dialect: Dialect) -> Vec<ProjectionItem> {
-    let parsed = match dialect {
-        Dialect::Postgres => Parser::parse_sql(&PostgreSqlDialect {}, query),
-        Dialect::Sqlite => Parser::parse_sql(&SQLiteDialect {}, query),
-    };
+    let parsed = Parser::parse_sql(dialect.sqlparser_dialect(), query);
     match parsed.ok().as_deref() {
         Some([Statement::Query(parsed)]) => from_query(parsed),
         _ => from_tokens(query, dialect),

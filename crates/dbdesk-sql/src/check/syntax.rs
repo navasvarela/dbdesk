@@ -1,29 +1,14 @@
-//! Syntax errors, from `sqlparser` with its PostgreSQL and SQLite dialects.
+//! Syntax errors, from `sqlparser` with the dialect's own parser dialect.
 //!
-//! `sqlparser` reads most of both dialects' queries, but not all: the constructs it rejects
-//! although the database accepts them are listed in [`KNOWN_GAPS`] and [`has_known_gap`], and
-//! a statement using one is not checked. That list came from running a corpus of valid
-//! statements through the parser (`check::tests`); a statement the parser wrongly rejects is a
-//! bug to add there.
+//! `sqlparser` reads most of each dialect's queries, but not all: the constructs it rejects
+//! although the database accepts them are the dialect's [`ParserGap`]s, and a statement using
+//! one is not checked.
 
-use sqlparser::dialect::{PostgreSqlDialect, SQLiteDialect};
 use sqlparser::parser::Parser;
 
 use super::{Problem, ProblemSource, Severity, is_checkable, token_at};
-use crate::lexer::{Dialect, Token, TokenKind, tokenize};
-
-/// Word sequences `sqlparser` 0.63 rejects in valid statements, per dialect.
-const KNOWN_GAPS: &[(Dialect, &[&str])] = &[
-    // `SELECT * FROM ROWS FROM (f(), g())`
-    (Dialect::Postgres, &["rows", "from"]),
-    // `FOR NO KEY UPDATE`, `FOR KEY SHARE`
-    (Dialect::Postgres, &["no", "key"]),
-    (Dialect::Postgres, &["key", "share"]),
-    (Dialect::Postgres, &["between", "symmetric"]),
-    // `FROM t INDEXED BY i`, `FROM t NOT INDEXED`
-    (Dialect::Sqlite, &["indexed", "by"]),
-    (Dialect::Sqlite, &["not", "indexed"]),
-];
+use crate::dialect::{Dialect, ParserGap};
+use crate::lexer::{Token, TokenKind, tokenize};
 
 /// What may follow `IS` (or `IS NOT`) for `sqlparser`; SQLite also accepts any expression
 /// there (`a IS b`).
@@ -37,10 +22,7 @@ pub(super) fn problem(statement: &str, dialect: Dialect) -> Option<Problem> {
     if !is_checkable(statement, dialect) || has_known_gap(statement, dialect) {
         return None;
     }
-    let parsed = match dialect {
-        Dialect::Postgres => Parser::parse_sql(&PostgreSqlDialect {}, statement),
-        Dialect::Sqlite => Parser::parse_sql(&SQLiteDialect {}, statement),
-    };
+    let parsed = Parser::parse_sql(dialect.sqlparser_dialect(), statement);
     let error = parsed.err()?.to_string();
     let error = error.strip_prefix("sql parser error: ").unwrap_or(&error);
     let (message, location) = match error.rsplit_once(" at Line: ") {
@@ -90,53 +72,81 @@ fn describe(message: &str) -> String {
 }
 
 fn has_known_gap(statement: &str, dialect: Dialect) -> bool {
-    let tokens: Vec<Token> = tokenize(statement, dialect)
-        .into_iter()
-        .filter(|token| !token.kind.is_trivia())
-        .collect();
-    let word = |index: usize| {
-        tokens
+    let tokens = Tokens::new(statement, dialect);
+    (0..tokens.len()).any(|index| {
+        dialect
+            .parser_gaps()
+            .iter()
+            .any(|gap| tokens.has_gap_at(index, *gap))
+    })
+}
+
+/// A statement's meaningful tokens, read by position.
+struct Tokens<'a> {
+    statement: &'a str,
+    tokens: Vec<Token>,
+}
+
+impl<'a> Tokens<'a> {
+    fn new(statement: &'a str, dialect: Dialect) -> Self {
+        let tokens = tokenize(statement, dialect)
+            .into_iter()
+            .filter(|token| !token.kind.is_trivia())
+            .collect();
+        Self { statement, tokens }
+    }
+
+    fn len(&self) -> usize {
+        self.tokens.len()
+    }
+
+    /// The token at `index`, lowercased, if it is a word.
+    fn word(&self, index: usize) -> Option<String> {
+        self.tokens
             .get(index)
             .filter(|token| token.kind == TokenKind::Word)
-            .map(|token| statement[token.range.clone()].to_ascii_lowercase())
-    };
-    let text = |index: usize| {
-        tokens
+            .map(|token| self.statement[token.range.clone()].to_ascii_lowercase())
+    }
+
+    fn text(&self, index: usize) -> Option<&'a str> {
+        self.tokens
             .get(index)
-            .map(|token| &statement[token.range.clone()])
-    };
-    (0..tokens.len()).any(|index| {
-        let sequence = KNOWN_GAPS
-            .iter()
-            .filter(|(gap_dialect, _)| *gap_dialect == dialect)
-            .any(|(_, words)| {
-                words
-                    .iter()
-                    .enumerate()
-                    .all(|(offset, expected)| word(index + offset).as_deref() == Some(expected))
-            });
-        let current = word(index);
-        // PostgreSQL's XML functions take keyword arguments: `xmlelement(name foo)`.
-        let xml_function = dialect == Dialect::Postgres
-            && current
-                .as_deref()
-                .is_some_and(|word| word.starts_with("xml"))
-            && text(index + 1) == Some("(");
-        // `JOIN t USING (id) AS j` (PostgreSQL 14) names the join's columns.
-        let using_alias = dialect == Dialect::Postgres
-            && current.as_deref() == Some("using")
-            && text(index + 1) == Some("(")
-            && (index + 2..tokens.len())
-                .find(|&close| text(close) == Some(")"))
-                .is_some_and(|close| word(close + 1).as_deref() == Some("as"));
-        let is_expression = dialect == Dialect::Sqlite && current.as_deref() == Some("is") && {
-            let next = if word(index + 1).as_deref() == Some("not") {
-                index + 2
-            } else {
-                index + 1
-            };
-            !word(next).is_some_and(|word| AFTER_IS.contains(&word.as_str()))
-        };
-        sequence || xml_function || using_alias || is_expression
-    })
+            .map(|token| &self.statement[token.range.clone()])
+    }
+
+    /// Whether the construct `gap` starts at token `index`.
+    fn has_gap_at(&self, index: usize, gap: ParserGap) -> bool {
+        let current = self.word(index);
+        match gap {
+            ParserGap::Words(words) => words
+                .iter()
+                .enumerate()
+                .all(|(offset, expected)| self.word(index + offset).as_deref() == Some(expected)),
+            ParserGap::XmlFunctionArguments => {
+                current
+                    .as_deref()
+                    .is_some_and(|word| word.starts_with("xml"))
+                    && self.text(index + 1) == Some("(")
+            }
+            ParserGap::JoinUsingAlias => {
+                current.as_deref() == Some("using")
+                    && self.text(index + 1) == Some("(")
+                    && (index + 2..self.len())
+                        .find(|&close| self.text(close) == Some(")"))
+                        .is_some_and(|close| self.word(close + 1).as_deref() == Some("as"))
+            }
+            ParserGap::IsAnyExpression => {
+                current.as_deref() == Some("is") && {
+                    let next = if self.word(index + 1).as_deref() == Some("not") {
+                        index + 2
+                    } else {
+                        index + 1
+                    };
+                    !self
+                        .word(next)
+                        .is_some_and(|word| AFTER_IS.contains(&word.as_str()))
+                }
+            }
+        }
+    }
 }

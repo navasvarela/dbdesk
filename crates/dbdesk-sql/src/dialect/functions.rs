@@ -1,9 +1,7 @@
-use crate::lexer::Dialect;
-
 /// Built-in functions completion offers, per dialect: the common ones, not every function
 /// either database has (the explorer's catalog adds the database's own). Kept sorted; a test
 /// checks that.
-const POSTGRES: &[&str] = &[
+pub(super) const POSTGRES: &[&str] = &[
     "abs",
     "age",
     "array_agg",
@@ -107,7 +105,7 @@ const POSTGRES: &[&str] = &[
     "upper",
 ];
 
-const SQLITE: &[&str] = &[
+pub(super) const SQLITE: &[&str] = &[
     "abs",
     "avg",
     "changes",
@@ -183,14 +181,6 @@ const SQLITE: &[&str] = &[
     "upper",
     "zeroblob",
 ];
-
-/// The built-in functions completion offers for `dialect`, lowercase and sorted.
-pub fn builtin_functions(dialect: Dialect) -> &'static [&'static str] {
-    match dialect {
-        Dialect::Postgres => POSTGRES,
-        Dialect::Sqlite => SQLITE,
-    }
-}
 
 #[cfg(test)]
 mod tests {

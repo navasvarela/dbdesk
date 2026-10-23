@@ -69,8 +69,9 @@ becomes the bottleneck, the plan is a dedicated editor widget in its own crate.
   left out. `VALUES` lists are `column1`, `column2`, … as both databases name them.
 - **Functions**: the database's own, from the explorer's cached catalog where it has loaded a
   schema's functions (PostgreSQL lists them with their arguments, shown as the detail), then
-  the common built-ins of the dialect (`dbdesk_sql::builtin_functions`). They are inserted
-  with their parentheses, the cursor between them, and only offered once something is typed.
+  the common built-ins of the dialect (`Dialect::builtin_functions` in `dbdesk-sql`). They
+  are inserted with their parentheses, the cursor between them, and only offered once
+  something is typed.
 - **Ranking** (`console/completion/ranking.rs`): candidates starting with the typed prefix,
   ignoring case, come first; then fuzzy matches, whose letters appear in order and whose
   skips land on the start of a word (`cid` → `customer_id`, `cus` doesn't match

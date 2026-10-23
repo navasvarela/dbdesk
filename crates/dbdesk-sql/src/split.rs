@@ -1,6 +1,7 @@
 use std::ops::Range;
 
-use crate::lexer::{Dialect, TokenKind, tokenize};
+use crate::dialect::Dialect;
+use crate::lexer::{TokenKind, tokenize};
 
 /// Splits a console's text into statements at top-level semicolons.
 ///

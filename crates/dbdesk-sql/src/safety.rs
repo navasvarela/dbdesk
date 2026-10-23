@@ -1,4 +1,5 @@
-use crate::lexer::{Dialect, TokenKind, tokenize};
+use crate::dialect::Dialect;
+use crate::lexer::{TokenKind, tokenize};
 
 /// A statement that changes every row of a table, which is rarely what was meant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

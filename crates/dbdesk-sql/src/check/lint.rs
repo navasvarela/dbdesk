@@ -3,7 +3,8 @@
 use std::ops::Range;
 
 use super::{Problem, ProblemSource, Severity};
-use crate::lexer::{Dialect, Token, TokenKind, first_word, tokenize};
+use crate::dialect::Dialect;
+use crate::lexer::{Token, TokenKind, first_word, tokenize};
 use crate::safety::{Hazard, hazard};
 
 /// A lint rule. Its id is what `settings.toml` names to switch it off, so ids never change
@@ -184,7 +185,7 @@ fn missing_where(statement: &str, dialect: Dialect, tokens: &[Token]) -> Option<
 /// has them.
 fn select_star_in_insert(statement: &str, dialect: Dialect, tokens: &[Token]) -> Option<Problem> {
     let verb = first_word(statement, dialect)?;
-    if verb != "insert" && !(verb == "replace" && dialect == Dialect::Sqlite) {
+    if !dialect.insert_verbs().contains(&verb.as_str()) {
         return None;
     }
     let mut depth = 0usize;

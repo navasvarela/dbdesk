@@ -1,6 +1,7 @@
 use super::{Gap, Item, KeywordCase, items, removable, splittable};
+use crate::dialect::Dialect;
 use crate::keywords::is_keyword;
-use crate::lexer::{Dialect, TokenKind};
+use crate::lexer::TokenKind;
 
 /// Whether `after` is `before` with only whitespace and keyword case changed, in ways that
 /// can't change how the database reads it.

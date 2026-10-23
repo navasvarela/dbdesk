@@ -7,11 +7,11 @@ use std::time::{Duration, Instant};
 
 use dbdesk_core::{CatalogPath, DataSource, DataSourceId};
 use dbdesk_engine::{Command, ConsoleId, Event, RunId};
-use dbdesk_sql::FormatOptions;
+use dbdesk_sql::{Dialect, FormatOptions};
 use dbdesk_store::{ConsoleKey, ConsoleName, ExportFormat};
 
 use crate::console::{
-    self, ConsoleAction, FormatScope, QueryConsole, RecentCompletions, RunScope, SubmittedStatement,
+    ConsoleAction, FormatScope, QueryConsole, RecentCompletions, RunScope, SubmittedStatement,
 };
 use crate::hazard_dialog::{self, HazardChoice, HazardConfirmation, Review};
 use crate::rollback_dialog::Closing;
@@ -112,7 +112,7 @@ impl Consoles {
     ) -> QueryConsole {
         self.next_console += 1;
         let title = title(&data_source.name, &key.name);
-        let dialect = console::dialect_for(data_source.config.driver());
+        let dialect = Dialect::from(data_source.config.driver());
         QueryConsole::new(ConsoleId(self.next_console), key, title, dialect, text)
     }
 
