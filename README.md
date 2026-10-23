@@ -63,5 +63,6 @@ UI: **egui** (via `eframe`) with **egui_dock** for DataGrip-style dockable panel
 | [Keymap](docs/features/keymap.md) | `keymap.toml`: action ids and rebinding keys |
 | [Persistence](docs/persistence.md) | Config files, secrets, history, layout state |
 | [Testing](docs/testing.md) | Driver conformance suite, UI testing strategy |
-| [Roadmap](docs/roadmap.md) | Milestones M0–M5 with exit criteria |
+| [Roadmap](docs/roadmap.md) | Milestones M0–M5, and the design and documentation track (D1–D4), with exit criteria |
+| [Contributing](CONTRIBUTING.md) | How commits, branches and pull requests are named |
 | [ADRs](docs/adr/README.md) | Architecture decision records |
