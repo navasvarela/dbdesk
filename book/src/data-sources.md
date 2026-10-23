@@ -34,8 +34,20 @@ connection will refuse it. See [Troubleshooting](troubleshooting.md#the-server-r
 
 **SQLite** adds:
 
-- **File** — the full path to the database file. The file must already exist: dbdesk never
-  creates one, so a typo is an error rather than a new, empty database.
+![The New SQLite data source dialog](images/sqlite-data-source-dialog.png)
+
+- **File** — the full path to the database file. Type or paste it, or use the buttons under the
+  field:
+  - **Browse…** opens your system's file dialog to pick an existing database. It shows every
+    file, because SQLite databases end in `.db`, `.sqlite`, `.sqlite3` or nothing at all.
+  - **New…** opens your system's Save dialog and creates an empty database file where you
+    choose, then fills in the path and clears **Read-only**. The message under the form says
+    whether it worked; click **Save** to keep the data source. dbdesk never overwrites an
+    existing file, even if the Save dialog asked whether to replace it and you said yes: pick
+    another name instead.
+
+  Connecting never creates a file, so a typo in the path is an error rather than a new, empty
+  database. **New…** is the only way dbdesk creates one.
 - **Read-only** — opens the file read-only. Statements that would change it fail with SQLite's
   error.
 
