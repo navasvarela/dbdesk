@@ -2,7 +2,7 @@
 
 ## Where to look first
 
-The **log console** at the bottom of the window shows what dbdesk did and what went wrong, with
+The **log console**, under the consoles, shows what dbdesk did and what went wrong, with
 the newest entries at the bottom. The drop-down on its left picks how much detail to show
 (Error, Warn, Info, Debug, Trace); the search box filters entries by text; the bin icon clears
 the list. It keeps the latest 10,000 entries.

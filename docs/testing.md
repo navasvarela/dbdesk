@@ -63,8 +63,9 @@ against a real server, such as a cancel arriving after the last row.
   is drawn on, in both themes, for WCAG AA contrast (4.5:1).
 
 Hard-learned from the M4 UI tests: `egui_kittest` clicks at the centre of a widget's last
-known rectangle. The app tests run in a window of the app's default size, 1280×800, because
-egui_kittest's own 800×600 is too narrow for the console with the bundled fonts. A widget laid
+known rectangle. The app tests run in a window of the app's default size (`DEFAULT_WINDOW_SIZE`,
+1440×900), because egui_kittest's own 800×600 is too narrow for the console with the bundled
+fonts. A widget laid
 out off-screen, or covered by another one that egui hit-tests first, simply doesn't get the
 click, and the test only notices when the expected effect never happens. When a click seems
 ignored, print the widget's rect and egui's `interaction_snapshot` before suspecting the code

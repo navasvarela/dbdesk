@@ -26,14 +26,14 @@ const TAB_TITLE_SIZE: f32 = 12.5;
 /// The band in a console's data source colour along the top of the console.
 const SOURCE_BAND_HEIGHT: f32 = 2.0;
 
-/// Share of the window height for the explorer and query consoles; the log console gets the
-/// rest, spanning the full width as DataGrip's bottom tool windows do.
-const UPPER_AREA_SHARE: f32 = 0.72;
-/// Share of the upper area's width for query consoles; the explorer gets the rest.
-const CONSOLES_SHARE_OF_UPPER_AREA: f32 = 0.8;
+/// Share of the window's width for the explorer, a full-height column on the left. The rest
+/// is the main area, where consoles run, with the log console underneath.
+///
 /// egui_dock's split `fraction` is the share of the first (left or top) node, whatever its
-/// docs say about "the old node", so consoles to the right of the explorer take the rest.
-const EXPLORER_SHARE_OF_UPPER_AREA: f32 = 1.0 - CONSOLES_SHARE_OF_UPPER_AREA;
+/// docs say about "the old node".
+const EXPLORER_SHARE: f32 = 0.2;
+/// Share of the main area's height for the consoles; the log console gets the rest.
+const CONSOLES_SHARE_OF_MAIN_AREA: f32 = 0.75;
 
 /// Every kind of tab the dock can hold.
 ///
@@ -82,13 +82,10 @@ pub fn open_console_tab(layout: &mut DockState<Tab>, key: ConsoleKey) {
     let tree = layout.main_surface_mut();
     match tree.find_tab_from(|tab| matches!(tab, Tab::QueryConsole(_) | Tab::Welcome)) {
         Some((node, _)) => tree[node].append_tab(tab.clone()),
-        // The consoles' area was closed; give them a new one beside everything else.
+        // The consoles' area was closed; give them a new one beside everything else, taking
+        // what the main area would.
         None => {
-            tree.split_right(
-                NodeIndex::root(),
-                EXPLORER_SHARE_OF_UPPER_AREA,
-                vec![tab.clone()],
-            );
+            tree.split_right(NodeIndex::root(), EXPLORER_SHARE, vec![tab.clone()]);
         }
     }
     if let Some(path) = layout.find_tab(&tab) {
@@ -100,12 +97,12 @@ pub fn open_console_tab(layout: &mut DockState<Tab>, key: ConsoleKey) {
 pub fn default_layout() -> DockState<Tab> {
     let mut dock = DockState::new(vec![Tab::Welcome]);
     let tree = dock.main_surface_mut();
-    let [upper_area, _log_console] =
-        tree.split_below(NodeIndex::root(), UPPER_AREA_SHARE, vec![Tab::LogConsole]);
-    tree.split_left(
-        upper_area,
-        EXPLORER_SHARE_OF_UPPER_AREA,
-        vec![Tab::Explorer],
+    let [main_area, _explorer] =
+        tree.split_left(NodeIndex::root(), EXPLORER_SHARE, vec![Tab::Explorer]);
+    tree.split_below(
+        main_area,
+        CONSOLES_SHARE_OF_MAIN_AREA,
+        vec![Tab::LogConsole],
     );
     dock
 }
@@ -274,6 +271,18 @@ fn source_band(ui: &mut Ui, color: Color32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explorer_is_a_column_beside_the_consoles_and_the_log_console() {
+        let dock = default_layout();
+        let tree = dock.main_surface();
+        let tabs_at = |node: NodeIndex| tree[node].tabs().unwrap_or_default().to_vec();
+        let main_area = NodeIndex::root().right();
+
+        assert_eq!(tabs_at(NodeIndex::root().left()), [Tab::Explorer]);
+        assert_eq!(tabs_at(main_area.left()), [Tab::Welcome]);
+        assert_eq!(tabs_at(main_area.right()), [Tab::LogConsole]);
+    }
 
     #[test]
     fn default_layout_has_every_tab_once() {

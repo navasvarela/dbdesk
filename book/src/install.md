@@ -42,7 +42,7 @@ things to do:
   one.
 - **Open the manual** — opens this manual in your browser.
 
-The log console at the bottom shows `engine started`, and the status bar reads
+The log console under the Welcome tab shows `engine started`, and the status bar reads
 `Engine running · 0 connected`. If it says the engine is stopped, see
 [Troubleshooting](troubleshooting.md).
 
@@ -52,6 +52,8 @@ dbdesk follows your system's light or dark setting. To choose one yourself, open
 **View → Theme** and pick **Match system**, **Light** or **Dark**. The choice is remembered.
 
 ## The layout
+
+dbdesk opens maximized the first time; after that it remembers the window's size and position.
 
 Every panel is a tab you can drag: onto another panel's tab bar to join it, or onto the edge of
 a panel to split it. Drag the gaps between panels to resize them. dbdesk remembers the layout
