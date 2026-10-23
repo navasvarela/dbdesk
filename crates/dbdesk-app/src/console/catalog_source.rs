@@ -2,7 +2,6 @@
 //! loaded.
 
 use dbdesk_core::{CatalogNode, CatalogPath, ConnectionConfig, FolderKind, NodeKind};
-use dbdesk_sql::Dialect;
 
 use super::completion::{CatalogSource, ColumnEntry, FunctionEntry, TableEntry, TableRef};
 use crate::catalog_tree::{CatalogTree, Children};
@@ -35,7 +34,7 @@ pub struct TreeCatalog<'a> {
     /// The node whose children are the schemas: the configured database on PostgreSQL (the
     /// one a console connects to), the root on SQLite.
     schemas_parent: CatalogPath,
-    default_schema: &'static str,
+    default_schema: String,
 }
 
 impl<'a> TreeCatalog<'a> {
@@ -47,7 +46,7 @@ impl<'a> TreeCatalog<'a> {
         Self {
             tree,
             schemas_parent,
-            default_schema: Dialect::from(config.driver()).default_schema(),
+            default_schema: config.default_schema().to_owned(),
         }
     }
 
@@ -130,7 +129,7 @@ impl<'a> TreeCatalog<'a> {
             None => self
                 .relations()
                 .filter(named)
-                .find(|(owner, _)| in_schema(self.default_schema, owner))
+                .find(|(owner, _)| in_schema(&self.default_schema, owner))
                 .or_else(|| self.relations().find(named)),
         };
         found.map(|(_, relation)| relation)
@@ -139,7 +138,7 @@ impl<'a> TreeCatalog<'a> {
 
 impl CatalogSource for TreeCatalog<'_> {
     fn default_schema(&self) -> &str {
-        self.default_schema
+        &self.default_schema
     }
 
     fn schemas(&self) -> Vec<String> {

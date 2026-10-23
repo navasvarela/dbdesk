@@ -117,6 +117,15 @@ impl ConnectionConfig {
         }
     }
 
+    /// The schema unqualified names resolve to, as a new connection sees it. A fact of the
+    /// configuration rather than of the dialect: on MySQL it is the database connected to.
+    pub fn default_schema(&self) -> &str {
+        match self {
+            Self::Postgres(_) => "public",
+            Self::Sqlite(_) => "main",
+        }
+    }
+
     /// A name for a data source the user didn't name: `database@host`, or the file name.
     pub fn default_name(&self) -> String {
         match self {

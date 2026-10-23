@@ -1,8 +1,9 @@
 //! The connection explorer panel: data sources and their catalogs as a lazily loaded tree.
 //! It only reports what the user asked for; the app turns that into engine commands.
 
-use dbdesk_core::{CatalogNode, CatalogPath, DataSourceId, DriverKind, NodeKind};
+use dbdesk_core::{CatalogNode, CatalogPath, DataSourceId, DriverKind, NodeKind, Quoting};
 use dbdesk_engine::SessionState;
+use dbdesk_sql::Dialect;
 use dbdesk_store::ConsoleKey;
 use egui::{
     Color32, CornerRadius, Id, Label, Rect, Response, ScrollArea, Sense, Shape, TextEdit,
@@ -198,6 +199,7 @@ fn data_source_tree(
         let tree = TreeView {
             id,
             catalog: &entry.catalog,
+            quoting: Dialect::from(entry.data_source.config.driver()).quoting(),
         };
         ui.indent(Id::new(id), |ui| {
             children(ui, &tree, &root, filter, actions)
@@ -243,6 +245,8 @@ fn data_source_menu(
 struct TreeView<'a> {
     id: DataSourceId,
     catalog: &'a CatalogTree,
+    /// For the names the context menu copies.
+    quoting: Quoting,
 }
 
 /// Which loaded nodes to draw.
@@ -370,7 +374,7 @@ fn node_row(
     if node.has_children && response.double_clicked() {
         actions.push(toggle_expansion(tree.id, &node.path, expanded));
     }
-    response.context_menu(|ui| node_menu(ui, tree.id, node, actions));
+    response.context_menu(|ui| node_menu(ui, tree, node, actions));
     if expanded {
         ui.indent(Id::new((tree.id, &node.path)), |ui| {
             children(ui, tree, &node.path, filter, actions);
@@ -378,7 +382,13 @@ fn node_row(
     }
 }
 
-fn node_menu(ui: &mut Ui, id: DataSourceId, node: &CatalogNode, actions: &mut Vec<ExplorerAction>) {
+fn node_menu(
+    ui: &mut Ui,
+    tree: &TreeView<'_>,
+    node: &CatalogNode,
+    actions: &mut Vec<ExplorerAction>,
+) {
+    let id = tree.id;
     let holds_rows = matches!(
         node.kind(),
         Some(NodeKind::Table | NodeKind::View | NodeKind::MaterializedView)
@@ -386,7 +396,7 @@ fn node_menu(ui: &mut Ui, id: DataSourceId, node: &CatalogNode, actions: &mut Ve
     if holds_rows && widgets::menu_item(ui, icons::TABLE, "Open data").clicked() {
         actions.push(ExplorerAction::OpenData(id, node.path.clone()));
     }
-    if let Some(name) = node.path.qualified_name()
+    if let Some(name) = node.path.qualified_name(tree.quoting)
         && widgets::menu_item(ui, icons::COPY, "Copy name").clicked()
     {
         ui.ctx().copy_text(name);

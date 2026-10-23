@@ -9,7 +9,7 @@ mod ranking;
 
 use std::ops::Range;
 
-use dbdesk_core::quote_identifier;
+use dbdesk_core::Quoting;
 use dbdesk_sql::{Dialect, Token, TokenKind, is_keyword, keywords, tokenize};
 
 use context::Context;
@@ -290,6 +290,7 @@ pub fn candidates(input: &CompletionInput<'_>) -> Vec<Candidate> {
         references: &references,
         derived: &derived,
         catalog: input.catalog,
+        quoting: input.dialect.quoting(),
     };
     let found = match &input.point.qualifier {
         Some(qualifier) => names.qualified(qualifier),
@@ -310,6 +311,7 @@ struct Names<'a> {
     references: &'a [TableRef],
     derived: &'a [DerivedTable],
     catalog: &'a dyn CatalogSource,
+    quoting: Quoting,
 }
 
 impl Names<'_> {
@@ -337,7 +339,7 @@ impl Names<'_> {
             Some(schema) => tables
                 .iter()
                 .filter(|table| table.schema == schema)
-                .map(|table| table_candidate(table, quote_identifier(&table.name)))
+                .map(|table| table_candidate(table, self.quoting.identifier_if_needed(&table.name)))
                 .collect(),
             None => Vec::new(),
         }
@@ -352,11 +354,11 @@ impl Names<'_> {
                 .find(|derived| derived.name.eq_ignore_ascii_case(table))
         });
         if let Some(Some(derived)) = derived {
-            return Some(derived_columns(derived));
+            return Some(derived_columns(derived, self.quoting));
         }
         let tables = self.catalog.tables();
         let entry = resolve(schema, table, &tables, self.catalog)?;
-        Some(column_candidates(entry, self.catalog))
+        Some(column_candidates(entry, self.catalog, self.quoting))
     }
 
     fn unqualified(&self, context: &Context, input: &CompletionInput<'_>) -> Vec<Candidate> {
@@ -405,7 +407,7 @@ impl Names<'_> {
             .derived
             .iter()
             .filter(|derived| derived.kind == DerivedKind::Subquery)
-            .map(derived_columns);
+            .map(|derived| derived_columns(derived, self.quoting));
         for column in referenced.chain(subqueries).flatten() {
             if !found.iter().any(|seen| seen.label == column.label) {
                 found.push(column);
@@ -428,7 +430,7 @@ impl Names<'_> {
             .chain(subqueries)
             .map(|(alias, detail)| Candidate {
                 kind: CandidateKind::Alias,
-                insert: quote_identifier(&alias),
+                insert: self.quoting.identifier_if_needed(&alias),
                 label: alias,
                 detail: Some(detail),
                 cursor_back: 0,
@@ -442,7 +444,7 @@ impl Names<'_> {
             .filter(|derived| derived.kind == DerivedKind::Cte)
             .map(|cte| Candidate {
                 kind: CandidateKind::Derived,
-                insert: quote_identifier(&cte.name),
+                insert: self.quoting.identifier_if_needed(&cte.name),
                 label: cte.name.clone(),
                 detail: Some("CTE".to_owned()),
                 cursor_back: 0,
@@ -458,12 +460,12 @@ impl Names<'_> {
             .iter()
             .map(|table| {
                 let insert = if table.schema == default_schema {
-                    quote_identifier(&table.name)
+                    self.quoting.identifier_if_needed(&table.name)
                 } else {
                     format!(
                         "{}.{}",
-                        quote_identifier(&table.schema),
-                        quote_identifier(&table.name)
+                        self.quoting.identifier_if_needed(&table.schema),
+                        self.quoting.identifier_if_needed(&table.name)
                     )
                 };
                 table_candidate(table, insert)
@@ -477,7 +479,7 @@ impl Names<'_> {
             .into_iter()
             .map(|schema| Candidate {
                 kind: CandidateKind::Schema,
-                insert: quote_identifier(&schema),
+                insert: self.quoting.identifier_if_needed(&schema),
                 label: schema,
                 detail: Some("schema".to_owned()),
                 cursor_back: 0,
@@ -531,7 +533,7 @@ fn function_candidates(input: &CompletionInput<'_>) -> Vec<Candidate> {
         .into_iter()
         .map(|function| Candidate {
             kind: CandidateKind::Function,
-            insert: call(&quote_identifier(&function.name)),
+            insert: call(&input.dialect.quoting().identifier_if_needed(&function.name)),
             detail: Some(format!(
                 "function · {}{}",
                 function.schema,
@@ -565,7 +567,7 @@ fn function_candidates(input: &CompletionInput<'_>) -> Vec<Candidate> {
     found
 }
 
-fn derived_columns(derived: &DerivedTable) -> Vec<Candidate> {
+fn derived_columns(derived: &DerivedTable, quoting: Quoting) -> Vec<Candidate> {
     let detail = match derived.kind {
         DerivedKind::Cte => format!("{} · CTE", derived.name),
         DerivedKind::Subquery => format!("{} · subquery", derived.name),
@@ -575,7 +577,7 @@ fn derived_columns(derived: &DerivedTable) -> Vec<Candidate> {
         .iter()
         .map(|column| Candidate {
             kind: CandidateKind::Column,
-            insert: quote_identifier(column),
+            insert: quoting.identifier_if_needed(column),
             label: column.clone(),
             detail: Some(detail.clone()),
             cursor_back: 0,
@@ -605,14 +607,18 @@ pub(super) fn resolve<'a>(
     }
 }
 
-fn column_candidates(table: &TableEntry, catalog: &dyn CatalogSource) -> Vec<Candidate> {
+fn column_candidates(
+    table: &TableEntry,
+    catalog: &dyn CatalogSource,
+    quoting: Quoting,
+) -> Vec<Candidate> {
     catalog
         .columns(table)
         .unwrap_or_default()
         .into_iter()
         .map(|column| Candidate {
             kind: CandidateKind::Column,
-            insert: quote_identifier(&column.name),
+            insert: quoting.identifier_if_needed(&column.name),
             detail: Some(match column.detail {
                 Some(detail) => format!("{detail} · {}", table.name),
                 None => table.name.clone(),

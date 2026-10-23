@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use common::{TestEngine, postgres_test_server, sqlite_data_source, sqlite_database};
 use dbdesk_core::{ConnectionConfig, DataSource, DataSourceId, Identifier, RelationName};
-use dbdesk_core::{RejectionKind, TransactionStatus};
+use dbdesk_core::{Quoting, RejectionKind, TransactionStatus};
 use dbdesk_engine::{
     Command, ConsoleId, EditFailure, Event, PasswordUpdate, RunId, RunOutcome, SessionState,
     StatementCheck, StatementFailure, TransactionEnd, TransactionMode,
@@ -472,7 +472,10 @@ fn describes_a_table_on_the_explorers_connection() {
             result: Ok(Some(description)),
         } => {
             assert_eq!((data_source, described_table), (id, table));
-            assert_eq!(description.qualified_name(), "\"main\".\"t\"");
+            assert_eq!(
+                description.qualified_name(Quoting::STANDARD),
+                "\"main\".\"t\""
+            );
             assert_eq!(description.primary_key, ["id"]);
         }
         other => panic!("expected the table's description, got {other:?}"),

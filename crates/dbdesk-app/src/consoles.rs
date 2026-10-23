@@ -122,7 +122,8 @@ impl Consoles {
         data_source: &DataSource,
         path: &CatalogPath,
     ) -> Option<(ConsoleKey, Command)> {
-        let name = path.qualified_name()?;
+        let quoting = Dialect::from(data_source.config.driver()).quoting();
+        let name = path.qualified_name(quoting)?;
         let key = self.open(data_source, format!("SELECT * FROM {name};\n"));
         let statements = self.open.get(&key)?.statements_to_run(RunScope::All);
         let command = self.start_run(&key, statements)?;

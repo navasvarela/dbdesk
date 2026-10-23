@@ -2,6 +2,8 @@
 
 use std::fmt;
 
+use crate::Quoting;
+
 /// Where a node sits in the catalog tree, from the data source down. The empty path is the
 /// data source itself.
 ///
@@ -144,26 +146,27 @@ impl CatalogPath {
     /// The name to use in SQL for the object at this path: schema-qualified for schema objects
     /// (`public.users`, `"My Schema"."Order Items"`), bare for columns, constraints and
     /// triggers. `None` for databases, schemas and folders.
-    pub fn qualified_name(&self) -> Option<String> {
+    pub fn qualified_name(&self, quoting: Quoting) -> Option<String> {
         let object = self.last()?;
+        let quote = |name: &str| quoting.identifier_if_needed(name);
         match object.kind {
             NodeKind::Table
             | NodeKind::View
             | NodeKind::MaterializedView
             | NodeKind::Sequence
-            | NodeKind::Index => Some(self.schema_qualified(&quote_identifier(&object.name))),
+            | NodeKind::Index => Some(self.schema_qualified(&quote(&object.name), quoting)),
             // Function names already carry their argument list, e.g. `add(integer, integer)`.
-            NodeKind::Function => Some(self.schema_qualified(&object.name)),
+            NodeKind::Function => Some(self.schema_qualified(&object.name, quoting)),
             NodeKind::Column | NodeKind::Constraint | NodeKind::Trigger => {
-                Some(quote_identifier(&object.name))
+                Some(quote(&object.name))
             }
             NodeKind::Database | NodeKind::Schema | NodeKind::Folder(_) => None,
         }
     }
 
-    fn schema_qualified(&self, object_name: &str) -> String {
+    fn schema_qualified(&self, object_name: &str, quoting: Quoting) -> String {
         match self.name_of(NodeKind::Schema) {
-            Some(schema) => format!("{}.{object_name}", quote_identifier(schema)),
+            Some(schema) => format!("{}.{object_name}", quoting.identifier_if_needed(schema)),
             None => object_name.to_owned(),
         }
     }
@@ -173,21 +176,6 @@ impl fmt::Display for CatalogPath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let names: Vec<&str> = self.0.iter().map(|s| s.name.as_str()).collect();
         write!(f, "/{}", names.join("/"))
-    }
-}
-
-/// Quotes an identifier with double quotes (standard SQL; both PostgreSQL and SQLite accept
-/// it) unless it is a plain lowercase identifier that needs no quoting.
-pub fn quote_identifier(name: &str) -> String {
-    let mut chars = name.chars();
-    let plain = chars
-        .next()
-        .is_some_and(|first| first.is_ascii_lowercase() || first == '_')
-        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
-    if plain {
-        name.to_owned()
-    } else {
-        format!("\"{}\"", name.replace('"', "\"\""))
     }
 }
 
@@ -220,7 +208,11 @@ mod tests {
         ];
 
         for (path, expected) in cases {
-            assert_eq!(path.qualified_name().as_deref(), expected, "{path}");
+            assert_eq!(
+                path.qualified_name(Quoting::STANDARD).as_deref(),
+                expected,
+                "{path}"
+            );
         }
     }
 

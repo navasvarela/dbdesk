@@ -1,6 +1,6 @@
 //! Describing a table for editing its rows.
 
-use dbdesk_core::{DriverError, RelationName, TableDescription};
+use dbdesk_core::{DriverError, Quoting, RelationName, TableDescription};
 use tokio_postgres::Client;
 
 use crate::connection_error;
@@ -14,7 +14,7 @@ pub(crate) async fn describe_table(
     client: &Client,
     table: &RelationName,
 ) -> Result<Option<TableDescription>, DriverError> {
-    let written = table.to_sql();
+    let written = table.to_sql(Quoting::STANDARD);
     let found = client
         .query(
             "SELECT n.nspname, c.relname, c.relkind::text \
