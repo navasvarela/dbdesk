@@ -308,55 +308,25 @@ impl Repaint for EguiRepaint {
 #[cfg(test)]
 mod tests {
     use std::path::Path;
-    use std::sync::Arc;
-    use std::time::{Duration, Instant};
 
-    use dbdesk_core::{DataSourceId, Password};
-    use dbdesk_store::{DataSourceFile, SecretError, SecretStore};
+    use dbdesk_core::DataSourceId;
+    use dbdesk_store::DataSourceFile;
     use egui::accesskit::Role;
-    use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
+    use egui_kittest::{Harness, HarnessBuilder};
     use tracing_subscriber::layer::SubscriberExt;
 
     use super::*;
     use crate::log_console;
-
-    const WAIT_TIMEOUT: Duration = Duration::from_secs(10);
-
-    /// The tests never need a password, and must not touch the real keychain.
-    struct NoSecrets;
-
-    impl SecretStore for NoSecrets {
-        fn password(&self, _: DataSourceId) -> Result<Option<Password>, SecretError> {
-            Ok(None)
-        }
-
-        fn set_password(&self, _: DataSourceId, _: &Password) -> Result<(), SecretError> {
-            Ok(())
-        }
-
-        fn delete_password(&self, _: DataSourceId) -> Result<(), SecretError> {
-            Ok(())
-        }
-    }
+    use crate::test_support::{MemorySecrets, step_until_visible};
 
     fn start_app(dir: &Path, log_feed: LogFeed) -> Harness<'static, DbDeskApp> {
-        let config = EngineConfig {
-            data_sources: DataSourceFile::new(dir.join("data_sources.toml")),
-            secrets: Arc::new(NoSecrets),
-        };
-        Harness::new_eframe(|cc| DbDeskApp::new(cc, log_feed, config).unwrap())
-    }
-
-    /// Steps the app until a label containing `text` appears; engine events arrive
-    /// asynchronously, so a fixed number of steps would be flaky.
-    fn step_until_visible(harness: &mut Harness<'_, DbDeskApp>, text: &str) {
-        let deadline = Instant::now() + WAIT_TIMEOUT;
-        while harness.query_by_label_contains(text).is_none() {
-            assert!(Instant::now() < deadline, "{text:?} never appeared");
-            std::thread::sleep(Duration::from_millis(10));
-            harness.step();
-        }
+        crate::test_support::start_app(
+            HarnessBuilder::default(),
+            dir,
+            log_feed,
+            MemorySecrets::default(),
+        )
     }
 
     #[test]

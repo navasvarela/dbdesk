@@ -12,8 +12,12 @@ mod delete_dialog;
 mod explorer;
 mod hazard_dialog;
 mod log_console;
+#[cfg(test)]
+mod screenshots;
 mod state;
 mod telemetry;
+#[cfg(test)]
+mod test_support;
 mod theme;
 mod workspace;
 

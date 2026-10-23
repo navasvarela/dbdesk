@@ -13,6 +13,8 @@ use tracing::Level;
 
 pub use entry::LogEntry;
 use filter::LogFilter;
+#[cfg(test)]
+pub use pipeline::LogConsoleLayer;
 pub use pipeline::{LogFeed, pipeline};
 
 /// Entries kept in memory before the oldest are dropped. Large enough for a long working
