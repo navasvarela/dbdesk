@@ -280,10 +280,11 @@ Decisions, including why icons have a font family of their own, are in
 
 **Exit:** the manual covers everything up to the current milestone, and builds in CI.
 
-**Demo note:** built in #11, covering everything up to M3, with all eleven images rendered by
-one ignored test (`screenshots::regenerate_screenshots`). CI builds the book with
-`mdbook-linkcheck2`. Still to write: the M4 and M5 features (saved consoles, history,
-transactions, Explain, export, the keymap, completion and grid editing).
+**Demo note:** built in #11, covering everything up to M5: data sources and the keychain,
+the explorer, consoles (saved consoles, transactions, history, completion, sorting, filtering,
+export and grid editing), the keymap, files and troubleshooting. All eleven images are rendered
+by one ignored test (`screenshots::regenerate_screenshots`), and CI builds the book with
+`mdbook-linkcheck2`.
 
 ### D4 — Website on GitHub Pages
 
