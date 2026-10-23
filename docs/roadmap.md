@@ -200,3 +200,106 @@ The original candidates:
 - SSH tunnels (`russh`).
 - Editing data in the grid.
 - MySQL driver; a driver for the `db-data-structures` engine.
+
+## Design and documentation track
+
+Runs alongside the feature milestones rather than after them: each item is usable on its own.
+They build on each other in this order, because each one reuses what the one before it made:
+
+```mermaid
+flowchart LR
+    D1[D1 Logo and palette] --> D2[D2 Vibrant UI]
+    D1 --> D4[D4 Website]
+    D2 --> D3[D3 User manual]
+    D3 --> D4
+```
+
+### D1 — Logo and brand palette
+
+- A logo mark that works from 16 px (tab icon, favicon) up to a hero image: a simple, bold
+  shape, readable in one colour, drawn as SVG.
+- A small palette derived from it: one primary accent, one secondary accent, and the success,
+  warning and error colours, each with light- and dark-theme variants. D2 builds the UI theme
+  from these values, so the logo and the app clearly belong together.
+- Exports: `assets/brand/logo.svg` (full colour), `logo-mono.svg` (one colour), a PNG set for
+  the window icon (eframe's `ViewportBuilder::with_icon`) and the macOS `.icns`.
+- Process: three or four concepts side by side, pick one, refine it.
+
+**Exit:** the dbdesk window, the README and the repository's social preview show the logo.
+
+**Demo note:** built in #7. The mark is "Strata", a database cylinder cut into a lid and two
+slabs, picked from four concepts; [brand.md](brand.md) has its construction, the files and the
+palette with its contrast ratios. `assets/brand/export.sh` regenerates every PNG and the
+`.icns` reproducibly. The window and the README show the logo. The social preview is a
+repository setting rather than a file: upload `assets/brand/social-preview.png` under
+**Settings → General → Social preview**.
+
+### D2 — A more colourful, vibrant UI
+
+egui's default look is deliberately neutral grey. This replaces it with a theme of dbdesk's own:
+
+- **Theme module.** `Visuals` built from the D1 palette for light and dark mode: accent-tinted
+  selection, hover and active states, panel and tab-bar colours, and an `egui_dock` style to
+  match. The theme follows the system setting, with an override in the View menu.
+- **Colour that carries meaning:**
+  - A colour per data source, shown on its explorer row, its console tabs and a band along the
+    top of the console (the colour planned in M1's follow-ups; it lands here).
+  - Coloured icons per catalog node kind.
+  - Status dots and run status in the palette's success, warning and error colours.
+- **Icons.** An icon font (Phosphor, via `egui-phosphor`) for toolbar buttons, tree nodes and
+  menus, instead of text-only buttons.
+- **Typography.** Inter for the UI and JetBrains Mono for SQL and results, bundled (both
+  under the SIL Open Font License).
+- **Syntax and grid colours** retuned to the palette; a zebra-striped grid with a tinted
+  header.
+- **Contrast:** text stays at WCAG AA contrast against its background in both themes, checked
+  by a unit test over the palette.
+
+**Exit:** before/after screenshots of each panel in both themes are in the PR, and the app
+still reads well in both.
+
+**Demo note:** built in #10, with before/after screenshots of each panel in both themes.
+Decisions, including why icons have a font family of their own, are in
+[look-and-feel.md](features/look-and-feel.md).
+
+### D3 — User manual
+
+- **mdBook** in `book/`, written for someone who has never seen dbdesk. Chapters:
+  1. Install and first launch
+  2. Data sources: adding, testing, passwords and the keychain
+  3. Explorer: browsing, filtering, definitions
+  4. Query consoles: running, results, cancelling, errors
+  5. Keyboard shortcuts
+  6. Where dbdesk keeps its files
+  7. Troubleshooting (TLS, keychain prompts, logs)
+- **Screenshots generated, not hand-taken.** egui_kittest's snapshot feature renders the
+  app headlessly (wgpu), against a fixture database. Running one test regenerates every image,
+  so they never go stale.
+- **Kept in step with the code.** Each milestone's PR updates the chapters it affects, and CI
+  builds the book (`mdbook build`, plus a link check) so a broken page fails the PR.
+
+**Exit:** the manual covers everything up to the current milestone, and builds in CI.
+
+**Demo note:** built in #11, covering everything up to M3, with all eleven images rendered by
+one ignored test (`screenshots::regenerate_screenshots`). CI builds the book with
+`mdbook-linkcheck2`. Still to write: the M4 and M5 features (saved consoles, history,
+transactions, Explain, export, the keymap, completion and grid editing).
+
+### D4 — Website on GitHub Pages
+
+- A landing page with the logo, a one-paragraph pitch, screenshots from D3, and links to the
+  manual, the source and (later) downloads. Plain HTML/CSS in `site/`, styled with the D1
+  palette. No framework needed for one page.
+- The manual (D3) is published under `/manual/` on the same site.
+- **Deployment:** a GitHub Actions workflow builds the landing page and the book on every push
+  to `main` and publishes them with `actions/deploy-pages`. PRs only build, so a broken site
+  fails the PR without going live.
+- **Decision needed first.** This repository is private, and a GitHub Pages site is always
+  public. Pages from a private repository needs a paid GitHub plan; on the free plan it needs a
+  public repository. The options:
+  1. Make this repository public.
+  2. Keep it private and publish from a paid plan; the site is public, the code isn't.
+  3. Keep it private and publish the site from a separate public repository (e.g.
+     `dbdesk-site`), pushed to by this repository's CI.
+
+**Exit:** the site is live, linked from the README, and redeploys on every merge to `main`.
