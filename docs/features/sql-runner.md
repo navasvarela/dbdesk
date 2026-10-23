@@ -12,7 +12,7 @@ Status: implemented in M3 and M4, except where marked *planned*.
   other consoles. A long query or a half-read result in one tab never blocks another. The
   connection opens on the first run, and closing the tab closes it.
 - Titled with the data source's name, numbered if there are several (`shop`, `shop (2)`).
-- Toolbar: **Run**, **Run all**, **Explain**, **Cancel**, **History**, and the run status
+- Toolbar: **Run**, **Run all**, **Explain**, **Cancel**, **History**, **Format**, and the run status
   (connecting, running, done in N ms, failed, cancelled). A second row holds the transaction
   mode (see [Transactions](#transactions)).
 - **Saved as a file.** Each console is `consoles/<data-source-id>/<name>.sql` (`console.sql`,
@@ -62,7 +62,54 @@ becomes the bottleneck, the plan is a dedicated editor widget in its own crate.
 - System schemas (`pg_catalog`, `information_schema`) aren't offered. Names are quoted when
   they need it, with the same rule as Open data.
 
-*Planned*: bracket matching, formatting, completing functions and their arguments.
+*Planned*: bracket matching, completing functions and their arguments.
+
+### Formatting
+
+| Action | Key | What it formats |
+| --- | --- | --- |
+| Format (`console.format`) | ⌥⌘L | The selection, else the statement at the cursor |
+| Format all (`console.format-all`) | ⇧⌥⌘L | Every statement in the console |
+
+Also on the toolbar (**Format**) and in the **Code** menu, which acts on the console whose tab
+has focus.
+
+- **Layout.** Queries and data changes (`SELECT`, `WITH`, `INSERT`, `UPDATE`, `DELETE`,
+  `VALUES`) go clause by clause: each clause starts a line; a clause with several items
+  (`SELECT a, b`, `SET`, `GROUP BY`, `VALUES` rows) puts each on its own line, one level in;
+  `WHERE` and `HAVING` start a line per top-level `AND`/`OR`; subqueries are indented inside
+  their parentheses; a `CASE` with several branches puts each `WHEN`/`ELSE` on its own line.
+  Comparisons written without spaces get them (`a=1` → `a = 1`), and commas are followed by a
+  space. Other statements (DDL, `DO` blocks, `GRANT`, …) keep their line breaks, except that a
+  `CREATE TABLE`'s columns go one per line and a query after `AS` is laid out as above.
+- **Settings** (View → Settings…, saved in `settings.toml`): keyword case (upper, lower, as
+  typed) and indent width (1 to 8 spaces).
+- **What never changes.** The formatter works on `dbdesk-sql`'s tokens and only changes the
+  whitespace between them and the case of keywords. Strings, dollar-quoted bodies, quoted
+  names and comments come out byte for byte; a line comment always ends its line. Whitespace
+  is never put between two operator characters (`::`, `->>`, `<=`), between a word and a
+  string or quoted name that may be its prefix (`B'1010'`, `x'ff'`, `U&"…"`), or inside a
+  parameter (`$1`, `:name`), and only removed before `,`, `;`, `)` and after `(`.
+- **Checked before it is applied.** The output is lexed again and compared with the input
+  (`dbdesk_sql::same_meaning`): same tokens, keywords ignoring case, and the spacing rules
+  above. If they differ, nothing changes and the toolbar says **Not formatted**. A test runs
+  this over a corpus of PostgreSQL and SQLite statements in every setting, and checks that
+  formatting twice changes nothing.
+- **Selections** are narrowed to the tokens wholly inside them, so a selection that starts in
+  the middle of a string never formats half of it. A selection that isn't a whole query (say,
+  `c FROM t`) only gets its keywords' case changed.
+- **The cursor stays on its token**, at the same distance from its start.
+- **One undo step.** The text before and after are recorded as undo points, so ⌘Z restores
+  the console as it was.
+
+**Why not `sqlformat`.** The `sqlformat` crate (0.5) was evaluated first. It changes what some
+statements mean: it reformats dollar-quoted function bodies, puts spaces inside string literals
+(`ESCAPE '\'` becomes `ESCAPE ' \ '`), splits prefixed literals (`B '1010'`, `U & 'd\0061t'`)
+and SQLite's bracketed names (`[ my col ]`), and loses its layout after operators it doesn't
+know (`#>>`). It also gives no way to keep the cursor on its token. Our own formatter is a few
+hundred lines over the lexer that already highlights and splits statements, so what it
+treats as a string is exactly what the editor shows as one. The trade-off: its layout rules
+are fewer than `sqlformat`'s, and statements other than queries keep their line breaks.
 
 ## Running SQL
 

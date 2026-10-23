@@ -14,6 +14,7 @@ dbdesk keeps everything in one folder per platform:
 | `consoles/<data source id>/*.sql` (settings folder) | Your query consoles, one file each. See [Query consoles](consoles.md#consoles-are-saved). |
 | `history.sqlite` (settings folder) | Every statement your consoles ran, with its time, duration and outcome. |
 | `keymap.toml` (settings folder) | Your shortcuts, if you changed any. See [Keyboard shortcuts](shortcuts.md#changing-them). |
+| `settings.toml` (settings folder) | Your choices in **View → Settings…**, such as how SQL is formatted. |
 | `app.ron` (window state folder) | The window's size and position, the panel layout, the theme you picked. |
 | `logs/dbdesk.YYYY-MM-DD.log` (window state folder) | One log file per day. The last seven are kept. |
 
@@ -57,6 +58,7 @@ Fix the file and restart dbdesk.
 ## Starting over
 
 To reset the layout, use **View → Reset layout**. To go back to the default shortcuts, delete
-`keymap.toml` and click **Reload** in **View → Keymap…**. To forget everything, quit dbdesk and
+`keymap.toml` and click **Reload** in **View → Keymap…**; for the default settings, delete
+`settings.toml` and click **Reload** in **View → Settings…**. To forget everything, quit dbdesk and
 delete its folders; the passwords stay in the keychain until you delete the `dbdesk` entries
 there too.
