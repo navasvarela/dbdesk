@@ -55,22 +55,33 @@ against a real server, such as a cancel arriving after the last row.
 ### Screenshots
 
 `screenshots::regenerate_screenshots` renders the app with egui_kittest's `wgpu` renderer and
-writes PNGs, every scene in the light and the dark theme, at 2x:
+writes every picture in the user manual, at 2x, into `book/src/images`:
 
 ```bash
-DBDESK_SCREENSHOTS_DIR=/tmp/shots cargo test -p dbdesk-app regenerate_screenshots -- --ignored
+cargo test -p dbdesk-app regenerate_screenshots -- --ignored
 ```
+
+`DBDESK_SCREENSHOTS_DIR` writes them somewhere else, and `DBDESK_SCREENSHOTS_THEMES=light,dark`
+renders each scene in both themes (with a `-light` / `-dark` suffix), which is what design
+reviews want. Regenerate the manual's images after a visible UI change, and run it with
+`DBDESK_TEST_POSTGRES_URL` set so the workspace picture includes the PostgreSQL data source.
 
 It is ignored by default because it needs a GPU adapter and rewrites files. Each scene starts a
 fresh app against a SQLite fixture (a small shop database built from SQL in the test) and drives
 it the way a user would: expanding nodes, opening a console, typing and running SQL. With
-`DBDESK_TEST_POSTGRES_URL` set, a PostgreSQL data source joins the fixture. Without
-`DBDESK_SCREENSHOTS_DIR` the images go to `target/screenshots`. Engine logs reach the log
+`DBDESK_TEST_POSTGRES_URL` set, a PostgreSQL data source joins the fixture. Engine logs reach the log
 console through one global `tracing` subscriber whose layer is swapped per scene.
+
+## User manual
+
+The manual in `book/` is an mdBook. `mdbook build book` builds it into `book/book/html` and,
+through the `mdbook-linkcheck2` backend, fails on a link to a page or image that doesn't exist.
+Install both with `cargo install mdbook --version 0.5.4` and
+`cargo install mdbook-linkcheck2 --version 0.13.0`.
 
 ## CI
 
 GitHub Actions: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`
-on macOS and Linux. On Linux the workflow starts the compose Postgres and sets
+on macOS and Linux, and the mdBook build with its link check. On Linux the workflow starts the compose Postgres and sets
 `DBDESK_TEST_POSTGRES_URL`. GitHub can't run containers on macOS runners, so the Postgres tests
 skip there.
