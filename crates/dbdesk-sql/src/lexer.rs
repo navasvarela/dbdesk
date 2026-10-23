@@ -105,16 +105,15 @@ impl Lexer<'_> {
                 self.bump_while(char::is_whitespace);
                 TokenKind::Whitespace
             }
-            ('-', Some('-')) => {
-                self.bump_while(|c| c != '\n');
-                TokenKind::LineComment
-            }
+            ('-', Some('-')) if self.dashes_start_comment() => self.line_comment(),
+            ('#', _) if self.rules.hash_comments => self.line_comment(),
             ('/', Some('*')) => self.block_comment(),
             ('\'', _) => self.quoted('\'', TokenKind::String),
             ('e' | 'E', Some('\'')) if self.rules.escape_strings => {
                 self.bump();
                 self.escape_string()
             }
+            ('"', _) if self.rules.double_quoted_strings => self.quoted('"', TokenKind::String),
             ('"', _) => self.quoted('"', TokenKind::QuotedIdentifier),
             ('`', _) if self.rules.backtick_identifiers => {
                 self.quoted('`', TokenKind::QuotedIdentifier)
@@ -145,6 +144,21 @@ impl Lexer<'_> {
         }
     }
 
+    /// `--` is a comment, except in a dialect where it needs whitespace (or the end of the
+    /// text) after it: there `1--1` is one minus minus one.
+    fn dashes_start_comment(&self) -> bool {
+        !self.rules.dash_comments_need_space
+            || self.rest()[2..]
+                .chars()
+                .next()
+                .is_none_or(char::is_whitespace)
+    }
+
+    fn line_comment(&mut self) -> TokenKind {
+        self.bump_while(|c| c != '\n');
+        TokenKind::LineComment
+    }
+
     /// `/* … */`, nested or ending at the first `*/` as the dialect has it.
     fn block_comment(&mut self) -> TokenKind {
         self.position += 2;
@@ -163,11 +177,15 @@ impl Lexer<'_> {
         TokenKind::BlockComment
     }
 
-    /// Text between `quote`s, where a doubled quote stands for itself (`'it''s'`).
+    /// Text between `quote`s, where a doubled quote stands for itself (`'it''s'`), and, in a
+    /// string of a dialect with backslash escapes, `\` escapes the next character.
     fn quoted(&mut self, quote: char, kind: TokenKind) -> TokenKind {
+        let backslash_escapes = kind == TokenKind::String && self.rules.backslash_escapes;
         self.bump();
         while let Some(c) = self.bump() {
-            if c == quote {
+            if c == '\\' && backslash_escapes {
+                self.bump();
+            } else if c == quote {
                 if self.peek() == Some(quote) {
                     self.bump();
                 } else {
@@ -229,7 +247,7 @@ fn is_word_start(c: char) -> bool {
 }
 
 fn is_word_part(c: char, rules: LexicalRules) -> bool {
-    is_plain_word_part(c) || (c == '$' && rules.dollar_quoting)
+    is_plain_word_part(c) || (c == '$' && rules.dollar_in_identifiers)
 }
 
 /// A character of an identifier in every dialect; also what a `$tag$` is made of.
@@ -268,7 +286,7 @@ mod tests {
     #[test]
     fn recognises_dialect_specific_quoting() {
         use TokenKind::*;
-        let cases: [Case; 6] = [
+        let cases: [Case; 9] = [
             (
                 "$fn$ a; $x$ b $fn$ ;",
                 Dialect::Postgres,
@@ -309,10 +327,61 @@ mod tests {
                 Dialect::Sqlite,
                 vec![(String, "'unterminated; string")],
             ),
+            (
+                r#"select 'it\'s', "a \"b\"", `my``col`, a$b"#,
+                Dialect::Mysql,
+                vec![
+                    (Word, "select"),
+                    (String, r"'it\'s'"),
+                    (Punctuation, ","),
+                    (String, r#""a \"b\"""#),
+                    (Punctuation, ","),
+                    (QuotedIdentifier, "`my``col`"),
+                    (Punctuation, ","),
+                    (Word, "a$b"),
+                ],
+            ),
+            (
+                "# note\nselect 1--1, 2 -- end\n",
+                Dialect::Mysql,
+                vec![
+                    (LineComment, "# note"),
+                    (Word, "select"),
+                    (Number, "1"),
+                    (Punctuation, "-"),
+                    (Punctuation, "-"),
+                    (Number, "1"),
+                    (Punctuation, ","),
+                    (Number, "2"),
+                    (LineComment, "-- end"),
+                ],
+            ),
+            (
+                r"'C:\\' x",
+                Dialect::Mysql,
+                vec![(String, r"'C:\\'"), (Word, "x")],
+            ),
         ];
 
         for (sql, dialect, expected) in cases {
             assert_eq!(kinds(sql, dialect), expected, "{sql}");
+        }
+    }
+
+    /// What dbdesk generates must read back as one token in its own dialect: a quoted name
+    /// as one identifier, a literal as one string, whatever quotes and backslashes they hold.
+    #[test]
+    fn generated_quoting_reads_back_as_one_token() {
+        let awkward = r#"it's "a" `b` \ c"#;
+        for dialect in Dialect::ALL {
+            let quoting = dialect.quoting();
+            let cases = [
+                (quoting.identifier(awkward), TokenKind::QuotedIdentifier),
+                (quoting.string_literal(awkward), TokenKind::String),
+            ];
+            for (sql, kind) in cases {
+                assert_eq!(kinds(&sql, dialect), [(kind, sql.as_str())], "{dialect:?}");
+            }
         }
     }
 }

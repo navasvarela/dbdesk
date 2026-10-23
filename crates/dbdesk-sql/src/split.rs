@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use crate::dialect::Dialect;
-use crate::lexer::{TokenKind, tokenize};
+use crate::lexer::{Token, TokenKind, tokenize};
 
 /// Splits a console's text into statements at top-level semicolons.
 ///
@@ -11,42 +11,143 @@ use crate::lexer::{TokenKind, tokenize};
 ///
 /// Semicolons inside strings, quoted identifiers, comments and dollar-quoted bodies don't
 /// split. Neither do semicolons inside a `BEGIN … END` block of a `CREATE` statement (SQLite
-/// trigger bodies, PostgreSQL `BEGIN ATOMIC` functions), or inside `CASE … END`. An
-/// unclosed block therefore runs to the end of the text, as the database would read it.
+/// trigger bodies, PostgreSQL `BEGIN ATOMIC` functions, MySQL procedures), or inside
+/// `CASE … END`. An unclosed block therefore runs to the end of the text, as the database
+/// would read it.
+///
+/// In a dialect with the client-side `DELIMITER` command (MySQL), a line starting with it
+/// isn't a statement: it sets what ends the statements after it, until the next one, and
+/// with a delimiter other than `;`, semicolons never split.
 pub fn split_statements(sql: &str, dialect: Dialect) -> Vec<Range<usize>> {
-    let mut statements = Vec::new();
-    let mut current: Option<Range<usize>> = None;
-    let mut first_word: Option<String> = None;
-    let mut block_depth = 0usize;
+    let tokens: Vec<Token> = tokenize(sql, dialect)
+        .into_iter()
+        .filter(|token| !token.kind.is_trivia())
+        .collect();
+    let mut splitter = Splitter {
+        sql,
+        tokens: &tokens,
+        statements: Vec::new(),
+        current: None,
+        first_word: None,
+        block_depth: 0,
+        delimiter: None,
+    };
+    let mut index = 0;
+    while index < tokens.len() {
+        index = if dialect.has_delimiter_command() && splitter.starts_delimiter_command(index) {
+            splitter.delimiter_command(index)
+        } else {
+            splitter.step(index)
+        };
+    }
+    splitter.statements.extend(splitter.current);
+    splitter.statements
+}
 
-    for token in tokenize(sql, dialect) {
-        match token.kind {
-            kind if kind.is_trivia() => {}
-            TokenKind::Semicolon if block_depth == 0 => {
-                statements.extend(current.take());
-                first_word = None;
+struct Splitter<'a> {
+    sql: &'a str,
+    /// The meaningful tokens: no whitespace or comments.
+    tokens: &'a [Token],
+    statements: Vec<Range<usize>>,
+    current: Option<Range<usize>>,
+    first_word: Option<String>,
+    block_depth: usize,
+    /// What `DELIMITER` set, when it isn't `;`.
+    delimiter: Option<String>,
+}
+
+/// After `END`, these close a block that didn't open with `BEGIN` or `CASE`, so they mustn't
+/// close one that did: `END IF` inside a MySQL procedure's `BEGIN … END`.
+const END_OF_CONTROL_FLOW: &[&str] = &["if", "loop", "repeat", "while"];
+
+impl Splitter<'_> {
+    fn word(&self, index: usize) -> Option<String> {
+        self.tokens
+            .get(index)
+            .filter(|token| token.kind == TokenKind::Word)
+            .map(|token| self.sql[token.range.clone()].to_ascii_lowercase())
+    }
+
+    fn starts_delimiter_command(&self, index: usize) -> bool {
+        self.current.is_none() && self.word(index).as_deref() == Some("delimiter")
+    }
+
+    /// Reads `DELIMITER <text>` up to the end of its line, and returns the index of the first
+    /// token after that line.
+    fn delimiter_command(&mut self, index: usize) -> usize {
+        let Some(command) = self.tokens.get(index) else {
+            return index + 1;
+        };
+        let rest = &self.sql[command.range.end..];
+        let line_end = command.range.end + rest.find('\n').unwrap_or(rest.len());
+        let delimiter = self.sql[command.range.end..line_end].trim();
+        self.delimiter = (!delimiter.is_empty() && delimiter != ";").then(|| delimiter.to_owned());
+        self.first_token_from(line_end)
+    }
+
+    fn first_token_from(&self, offset: usize) -> usize {
+        self.tokens
+            .iter()
+            .position(|token| token.range.start >= offset)
+            .unwrap_or(self.tokens.len())
+    }
+
+    /// Takes in the token at `index` and returns the index of the next one to read.
+    fn step(&mut self, index: usize) -> usize {
+        let Some(token) = self.tokens.get(index) else {
+            return index + 1;
+        };
+        if let Some(delimiter) = &self.delimiter {
+            if self.sql[token.range.start..].starts_with(delimiter.as_str()) {
+                let end = token.range.start + delimiter.len();
+                self.end_statement();
+                return self.first_token_from(end);
             }
+            self.extend(token.range.clone());
+            return index + 1;
+        }
+        match token.kind {
+            TokenKind::Semicolon if self.block_depth == 0 => self.end_statement(),
             kind => {
                 if kind == TokenKind::Word {
-                    let word = sql[token.range.clone()].to_ascii_lowercase();
-                    let starts_block = word == "case"
-                        || (word == "begin" && first_word.as_deref() == Some("create"));
-                    if starts_block {
-                        block_depth += 1;
-                    } else if word == "end" {
-                        block_depth = block_depth.saturating_sub(1);
-                    }
-                    first_word.get_or_insert(word);
+                    self.track_blocks(index);
                 }
-                current = Some(match current {
-                    Some(range) => range.start..token.range.end,
-                    None => token.range,
-                });
+                self.extend(token.range.clone());
             }
         }
+        index + 1
     }
-    statements.extend(current);
-    statements
+
+    fn track_blocks(&mut self, index: usize) {
+        let Some(word) = self.word(index) else {
+            return;
+        };
+        let starts_block =
+            word == "case" || (word == "begin" && self.first_word.as_deref() == Some("create"));
+        let ends_block = word == "end"
+            && !self
+                .word(index + 1)
+                .is_some_and(|next| END_OF_CONTROL_FLOW.contains(&next.as_str()));
+        if starts_block {
+            self.block_depth += 1;
+        } else if ends_block {
+            self.block_depth = self.block_depth.saturating_sub(1);
+        }
+        self.first_word.get_or_insert(word);
+    }
+
+    fn extend(&mut self, range: Range<usize>) {
+        self.current = Some(match self.current.take() {
+            Some(current) => current.start..range.end,
+            None => range,
+        });
+    }
+
+    fn end_statement(&mut self) {
+        self.statements.extend(self.current.take());
+        self.first_word = None;
+        self.block_depth = 0;
+    }
 }
 
 /// The index of the statement to run for a cursor at byte offset `cursor`: the statement
@@ -114,6 +215,48 @@ mod tests {
                 &["select 'unterminated; select 2"],
             ),
             ("", Dialect::Sqlite, &[]),
+        ];
+
+        for (sql, dialect, expected) in cases {
+            assert_eq!(statements(sql, dialect), expected, "{sql}");
+        }
+    }
+
+    #[test]
+    fn follows_mysql_delimiter_commands_and_control_flow_blocks() {
+        let script = "DELIMITER //\n\
+            CREATE PROCEDURE p() BEGIN SELECT 1; SELECT 2; END//\n\
+            CALL p()//\n\
+            delimiter ;\n\
+            SELECT 3; SELECT 4";
+        let block = "CREATE PROCEDURE q(n INT) BEGIN IF n > 0 THEN SELECT 1; END IF; \
+            WHILE n > 0 DO SET n = n - 1; END WHILE; END; SELECT 5";
+        let cases: [(&str, Dialect, &[&str]); 3] = [
+            (
+                script,
+                Dialect::Mysql,
+                &[
+                    "CREATE PROCEDURE p() BEGIN SELECT 1; SELECT 2; END",
+                    "CALL p()",
+                    "SELECT 3",
+                    "SELECT 4",
+                ],
+            ),
+            (
+                block,
+                Dialect::Mysql,
+                &[
+                    "CREATE PROCEDURE q(n INT) BEGIN IF n > 0 THEN SELECT 1; END IF; \
+                    WHILE n > 0 DO SET n = n - 1; END WHILE; END",
+                    "SELECT 5",
+                ],
+            ),
+            // Only MySQL has the command; elsewhere it is an ordinary word.
+            (
+                "delimiter //\nselect 1; select 2",
+                Dialect::Postgres,
+                &["delimiter //\nselect 1", "select 2"],
+            ),
         ];
 
         for (sql, dialect, expected) in cases {

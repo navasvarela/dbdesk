@@ -53,6 +53,45 @@ select * from pragma_table_info('t');
 select a from t where a match 'x';
 "#;
 
+const VALID_MYSQL: &str = r#"
+select `id`, name from `shop`.`users` where active = true and created_at >= now() - interval 7 day order by 1 desc limit 10;
+select "double", 'it\'s', 'C:\\temp', x'1F', b'1010', _utf8mb4'text' collate utf8mb4_bin from t # trailing comment
+;
+select a from t limit 5, 10;
+select a from t limit 10 offset 5;
+select sql_calc_found_rows * from t;
+select json_extract(doc, '$.a'), doc->'$.b', doc->>'$.c' from docs;
+select count(*), group_concat(distinct name order by name separator ', ') from t group by k with rollup;
+select * from a left join b on a.id = b.a_id straight_join c on c.id = b.c_id;
+select * from t force index (idx_a) where a = 1;
+select * from t use index (idx_a) ignore index (idx_b);
+select * from t where a regexp '^x' and b rlike 'y' and c sounds like 'z';
+select if(a > 1, 'big', 'small'), ifnull(b, 0), case when c then 1 else 2 end from t;
+select @row := @row + 1, @@session.sql_mode from t;
+select * from t where match (title, body) against ('db' in boolean mode);
+select * from t for update nowait;
+select * from t lock in share mode;
+select * from t partition (p0);
+with recursive n(i) as (select 1 union all select i + 1 from n where i < 5) select * from n;
+select row_number() over w from t window w as (order by a);
+select a div 2, a mod 3, a xor b, a <=> b from t;
+select cast(a as unsigned), convert(b, char), convert(c using utf8mb4) from t;
+select date_add(now(), interval 1 month), timestampdiff(day, a, b) from t;
+insert into t (a, b) values (1, 'x'), (2, 'y') on duplicate key update b = values(b);
+insert into t set a = 1, b = 2;
+insert ignore into t (a) values (1);
+insert into t (a) select a from u;
+replace into kv (k, v) values ('a', 1);
+replace into kv set k = 'b', v = 2;
+update t set a = a + 1 where id = 1 order by id limit 1;
+update low_priority ignore t set a = 1;
+update a join b on a.id = b.a_id set a.x = b.x;
+delete from t where id = 1 order by id limit 1;
+delete a from a join b on a.id = b.a_id where b.gone;
+delete quick ignore from t where id = 2;
+values row(1, 'a'), row(2, 'b');
+"#;
+
 fn syntax_errors(corpus: &str, dialect: Dialect) -> Vec<(String, Problem)> {
     split_statements(corpus, dialect)
         .into_iter()
@@ -70,6 +109,7 @@ fn syntax_errors(corpus: &str, dialect: Dialect) -> Vec<(String, Problem)> {
 fn valid_statements_get_no_syntax_error() {
     assert_eq!(syntax_errors(VALID_POSTGRES, Dialect::Postgres), []);
     assert_eq!(syntax_errors(VALID_SQLITE, Dialect::Sqlite), []);
+    assert_eq!(syntax_errors(VALID_MYSQL, Dialect::Mysql), []);
 }
 
 #[test]
@@ -186,4 +226,21 @@ fn rule_ids_read_back() {
         assert_eq!(LintRule::from_id(rule.id()), Some(rule));
     }
     assert_eq!(LintRule::from_id("no-such-rule"), None);
+}
+
+#[test]
+fn still_reports_mysql_syntax_errors_around_its_gaps() {
+    for sql in [
+        "select a from t where",
+        "select a, from t",
+        "update t set where id = 1",
+    ] {
+        let problems = check_statement(sql, Dialect::Mysql);
+        assert!(
+            problems
+                .iter()
+                .any(|problem| problem.source == ProblemSource::Syntax),
+            "{sql}: {problems:?}"
+        );
+    }
 }
