@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use dbdesk_core::{DataSource, DataSourceId, describe_error};
-use dbdesk_store::{ConsoleFiles, SecretError, SecretStore};
+use dbdesk_store::{ConsoleFiles, KeymapFile, SecretError, SecretStore};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::task::{JoinError, JoinSet};
 
@@ -10,6 +10,7 @@ use crate::console_files;
 use crate::events::EventSink;
 use crate::export;
 use crate::history::HistoryLog;
+use crate::keymap;
 use crate::open::test_connection;
 use crate::registry::{Registry, RegistryError};
 use crate::session::{Script, Services, Session, SessionOwner, SessionRequest};
@@ -33,6 +34,7 @@ pub(crate) async fn run(
 ) {
     tracing::info!("engine started");
     events.send(Event::Started);
+    events.send(keymap::load(&config.keymap).await);
     let registry = Registry::load(config.data_sources).await;
     events.send(registry.loaded_event());
     events.send(console_files::load(&config.consoles).await);
@@ -43,6 +45,7 @@ pub(crate) async fn run(
         registry,
         secrets: config.secrets,
         console_files: config.consoles,
+        keymap_file: config.keymap,
         events,
         sessions: HashMap::new(),
         consoles: HashMap::new(),
@@ -70,6 +73,7 @@ struct Engine {
     history: HistoryLog,
     secrets: Arc<dyn SecretStore>,
     console_files: ConsoleFiles,
+    keymap_file: KeymapFile,
     events: EventSink,
     /// The explorer's sessions, one per data source.
     sessions: HashMap<DataSourceId, Session>,
@@ -147,6 +151,11 @@ impl Engine {
             }
             Command::DeleteConsoleFile(key) => {
                 console_files::delete(&self.console_files, key).await;
+            }
+            Command::ReloadKeymap => self.events.send(keymap::load(&self.keymap_file).await),
+            Command::CreateKeymap { text } => {
+                self.events
+                    .send(keymap::create(&self.keymap_file, text).await);
             }
             Command::ExportRows { console, export } => {
                 tokio::spawn(export::run(console, export, self.events.clone()));

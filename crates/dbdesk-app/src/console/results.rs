@@ -10,6 +10,7 @@ use egui_extras::{Column, TableBuilder};
 
 use super::grid::{CellPos, GridView, SortKey};
 use super::{ConsoleAction, QueryConsole, RunState, StatementView, ViewedCell};
+use crate::keymap::{Action, Keymap};
 
 const COLUMN_WIDTH: f32 = 140.0;
 const MIN_COLUMN_WIDTH: f32 = 40.0;
@@ -20,7 +21,12 @@ const FILTER_WIDTH: f32 = 180.0;
 /// reports 0 or nothing meaningful.
 const DATA_CHANGING: &[&str] = &["insert", "update", "delete", "merge", "replace", "copy"];
 
-pub fn show(ui: &mut Ui, console: &mut QueryConsole, actions: &mut Vec<ConsoleAction>) {
+pub fn show(
+    ui: &mut Ui,
+    console: &mut QueryConsole,
+    keymap: &Keymap,
+    actions: &mut Vec<ConsoleAction>,
+) {
     let dialect = console.dialect;
     let Some(run) = console.run.as_mut() else {
         ui.weak("Run the statement at the cursor with ⌘↵, or the whole console with ⇧⌘↵.");
@@ -38,7 +44,7 @@ pub fn show(ui: &mut Ui, console: &mut QueryConsole, actions: &mut Vec<ConsoleAc
     let mut grid_output = GridOutput::default();
     if !statement.columns.is_empty() {
         grid_toolbar(ui, statement, console.export_status.as_ref(), actions);
-        grid_output = grid(ui, run_id, statement);
+        grid_output = grid(ui, run_id, statement, keymap);
     }
     if let Some(viewed) = grid_output.viewed {
         console.viewed_cell = Some(viewed);
@@ -197,7 +203,7 @@ enum CellInput {
     View(CellPos),
 }
 
-fn grid(ui: &mut Ui, run: RunId, statement: &mut StatementView) -> GridOutput {
+fn grid(ui: &mut Ui, run: RunId, statement: &mut StatementView, keymap: &Keymap) -> GridOutput {
     let StatementView {
         columns,
         rows,
@@ -288,7 +294,9 @@ fn grid(ui: &mut Ui, run: RunId, statement: &mut StatementView) -> GridOutput {
     copy_selection_on_request(ui, grid, rows);
     if let Some(cell) = grid.selected_cell()
         && no_text_field_focused(ui)
-        && ui.input(|input| input.key_pressed(egui::Key::Space))
+        && !ui
+            .input_mut(|input| keymap.consume(input, &[Action::ViewCell]))
+            .is_empty()
     {
         output.viewed = viewed_cell(columns, rows, grid, cell);
     }

@@ -5,7 +5,7 @@ use dbdesk_core::{
     CatalogNode, CatalogPath, ColumnInfo, DataSource, DataSourceId, Password, Row, ServerInfo,
     TransactionStatus,
 };
-use dbdesk_store::{ConsoleKey, HistoryEntry, SavedConsole};
+use dbdesk_store::{ConsoleKey, HistoryEntry, KeymapBindings, SavedConsole};
 
 use crate::Export;
 
@@ -90,6 +90,13 @@ pub enum Command {
     },
     /// Removes a console's file, if it exists.
     DeleteConsoleFile(ConsoleKey),
+    /// Reads `keymap.toml` again. Answered by [`Event::KeymapLoaded`].
+    ReloadKeymap,
+    /// Writes a new `keymap.toml` holding `text`, unless one exists, then reads it.
+    /// Answered by [`Event::KeymapLoaded`].
+    CreateKeymap {
+        text: String,
+    },
     /// Writes rows a console shows to a file. Answered by [`Event::ExportFinished`].
     ExportRows {
         console: ConsoleId,
@@ -149,6 +156,12 @@ pub enum Event {
     DataSourceDeleted(DataSourceId),
     /// Every saved console file, read once at start-up, right after the data sources.
     ConsolesLoaded(Vec<SavedConsole>),
+    /// The bindings `keymap.toml` sets, read at start-up (before the data sources) and on
+    /// request. Empty if there is no file.
+    KeymapLoaded {
+        path: PathBuf,
+        result: Result<KeymapBindings, String>,
+    },
     ConsoleSaveFailed {
         key: ConsoleKey,
         error: String,

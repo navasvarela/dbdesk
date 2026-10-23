@@ -14,6 +14,8 @@ use crate::delete_dialog::{DeleteChoice, DeleteConfirmation};
 use crate::explorer::{ExplorerAction, ExplorerOptions};
 use crate::export_dialog;
 use crate::history_window::{HistoryAction, HistoryWindow};
+use crate::keymap::{self, Keymap};
+use crate::keymap_window::{self, KeymapWindowAction};
 use crate::log_console::{LogConsole, LogFeed};
 use crate::rollback_dialog::{Closing, RollbackChoice, RollbackConfirmation};
 use crate::state::{AppState, EngineStatus};
@@ -35,6 +37,10 @@ pub struct DbDeskApp {
     rollback_confirmation: Option<RollbackConfirmation>,
     /// Set once quitting may roll back open transactions, so the close isn't asked again.
     quit_confirmed: bool,
+    keymap: Keymap,
+    /// Where `keymap.toml` is, once the engine has reported it.
+    keymap_path: Option<PathBuf>,
+    keymap_window_open: bool,
     /// Asks where to export rows. The platform's save dialog, except in tests.
     pick_export_path: Box<dyn Fn(ExportFormat) -> Option<PathBuf>>,
     consoles: Consoles,
@@ -65,6 +71,9 @@ impl DbDeskApp {
             rollback_confirmation: None,
             quit_confirmed: false,
             pick_export_path: Box::new(export_dialog::pick_export_path),
+            keymap: Keymap::default(),
+            keymap_path: None,
+            keymap_window_open: false,
             consoles: Consoles::default(),
         })
     }
@@ -108,6 +117,13 @@ impl DbDeskApp {
             self.send(window.search_command());
         }
         self.consoles.apply(event);
+        if let Event::KeymapLoaded { path, result } = event {
+            self.keymap = match result {
+                Ok(bindings) => Keymap::from_file(bindings),
+                Err(error) => Keymap::unreadable(error.clone()),
+            };
+            self.keymap_path = Some(path.clone());
+        }
         if matches!(event, Event::ConsolesLoaded(_)) {
             self.restore_console_tabs();
         }
@@ -368,6 +384,9 @@ impl DbDeskApp {
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("View", |ui| {
+                if ui.button("Keymap…").clicked() {
+                    self.keymap_window_open = true;
+                }
                 if ui.button("Reset layout").clicked() {
                     self.dock = workspace::default_layout();
                     tracing::info!("layout reset");
@@ -376,12 +395,42 @@ impl DbDeskApp {
         });
     }
 
-    fn status_bar(&self, ui: &mut egui::Ui) {
-        ui.label(format!(
-            "Engine {} · {} connected",
-            self.state.engine_status.label(),
-            self.state.connected_count()
-        ));
+    fn status_bar(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label(format!(
+                "Engine {} · {} connected",
+                self.state.engine_status.label(),
+                self.state.connected_count()
+            ));
+            let problems = self.keymap.problems().len();
+            if problems > 0
+                && ui
+                    .link(
+                        egui::RichText::new(match problems {
+                            1 => "keymap.toml: 1 problem".to_owned(),
+                            n => format!("keymap.toml: {n} problems"),
+                        })
+                        .color(ui.visuals().warn_fg_color),
+                    )
+                    .clicked()
+            {
+                self.keymap_window_open = true;
+            }
+        });
+    }
+
+    fn show_keymap_window(&mut self, ctx: &egui::Context) {
+        if !self.keymap_window_open {
+            return;
+        }
+        match keymap_window::show(ctx, &self.keymap, self.keymap_path.as_deref()) {
+            Some(KeymapWindowAction::Reload) => self.send(Command::ReloadKeymap),
+            Some(KeymapWindowAction::Create) => self.send(Command::CreateKeymap {
+                text: keymap::template(),
+            }),
+            Some(KeymapWindowAction::Close) => self.keymap_window_open = false,
+            None => {}
+        }
     }
 }
 
@@ -410,6 +459,7 @@ impl eframe::App for DbDeskApp {
                     explorer_options: &mut self.explorer_options,
                     explorer_actions: &mut explorer_actions,
                     consoles: open_consoles,
+                    keymap: &self.keymap,
                     console_actions: &mut console_actions,
                     close_requests: &mut close_requests,
                 },
@@ -447,6 +497,7 @@ impl eframe::App for DbDeskApp {
             self.definition_window = None;
         }
         self.show_history_window(&ctx);
+        self.show_keymap_window(&ctx);
 
         // Entries logged on the UI thread don't wake the UI (see `UiWaker`), so collect any
         // logged during this frame and ask for one more frame to show them.
@@ -484,7 +535,8 @@ mod tests {
 
     use dbdesk_core::{DataSourceId, Password};
     use dbdesk_store::{
-        ConsoleFiles, ConsoleName, DataSourceFile, HistoryFile, SecretError, SecretStore,
+        ConsoleFiles, ConsoleName, DataSourceFile, HistoryFile, KeymapFile, SecretError,
+        SecretStore,
     };
     use egui::accesskit::Role;
     use egui_kittest::Harness;
@@ -519,6 +571,7 @@ mod tests {
             secrets: Arc::new(NoSecrets),
             consoles: ConsoleFiles::new(dir.join("consoles")),
             history: HistoryFile::new(dir.join("history.sqlite")),
+            keymap: KeymapFile::new(dir.join("keymap.toml")),
         }
     }
 
@@ -859,5 +912,36 @@ mod tests {
             std::fs::read_to_string(&export_path).unwrap(),
             "id,note\r\n3,\r\n2,\"{\"\"gift\"\":true}\"\r\n1,plain\r\n"
         );
+    }
+
+    #[test]
+    fn runs_with_the_shortcut_keymap_toml_binds_and_reports_its_problems() {
+        let dir = tempfile::tempdir().unwrap();
+        save_shop(dir.path(), "CREATE TABLE orders (id INTEGER PRIMARY KEY)");
+        std::fs::write(
+            dir.path().join("keymap.toml"),
+            "[bindings]\n\"console.run\" = \"f5\"\n\"console.walk\" = \"f6\"\n",
+        )
+        .unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "keymap.toml: 1 problem");
+        harness.get_by_label("shop").click_secondary();
+        harness.run();
+        harness.get_by_label("New query console").click();
+        harness.run();
+        harness.get_by_role(Role::MultilineTextInput).focus();
+        harness.run();
+        harness
+            .get_by_role(Role::MultilineTextInput)
+            .type_text("SELECT 42 AS answer");
+        harness.run();
+
+        harness.key_press(egui::Key::F5);
+
+        step_until_visible(&mut harness, "1 rows");
+        harness.get_by_label("keymap.toml: 1 problem").click();
+        harness.run();
+        harness.get_by_label_contains("\"console.walk\" is not an action");
     }
 }

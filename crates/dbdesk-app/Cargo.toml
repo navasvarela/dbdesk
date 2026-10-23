@@ -33,6 +33,7 @@ tracing-subscriber.workspace = true
 egui_kittest = { workspace = true, features = ["eframe"] }
 rusqlite.workspace = true
 tempfile.workspace = true
+toml.workspace = true
 
 [lints]
 workspace = true

@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::console::{self, ConsoleAction, QueryConsole};
 use crate::consoles::SavedConsoles;
 use crate::explorer::{self, ExplorerAction, ExplorerOptions};
+use crate::keymap::Keymap;
 use crate::log_console::LogConsole;
 use crate::state::DataSources;
 
@@ -107,6 +108,7 @@ pub struct Panels<'a> {
     /// What the user asked for in the explorer this frame, for the app to act on.
     pub explorer_actions: &'a mut Vec<ExplorerAction>,
     pub consoles: &'a mut BTreeMap<ConsoleKey, QueryConsole>,
+    pub keymap: &'a Keymap,
     /// What the user asked of each console this frame.
     pub console_actions: &'a mut Vec<(ConsoleKey, ConsoleAction)>,
     /// Consoles whose tabs the user asked to close this frame. The tabs stay until the app
@@ -150,7 +152,7 @@ impl TabViewer for Panels<'_> {
             Tab::QueryConsole(key) => match self.consoles.get_mut(key) {
                 Some(query_console) => {
                     let mut actions = Vec::new();
-                    console::show(ui, query_console, &mut actions);
+                    console::show(ui, query_console, self.keymap, &mut actions);
                     self.console_actions
                         .extend(actions.into_iter().map(|action| (key.clone(), action)));
                 }
