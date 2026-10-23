@@ -130,8 +130,11 @@ jobs:
         run: |
           cargo packager -p dbdesk-app --release --formats appimage,deb \
             --out-dir "$GITHUB_WORKSPACE/dist"
-          mv dist/*.AppImage "dist/dbdesk-$VERSION-x86_64.AppImage"
-          mv dist/*.deb "dist/dbdesk_${VERSION}_amd64.deb"
+          # Rename to the names the release notes and manual use. cargo-packager's .deb name
+          # already matches, and `mv` refuses to move a file onto itself.
+          rename() { [[ "$1" == "$2" ]] || mv "$1" "$2"; }
+          rename dist/*.AppImage "dist/dbdesk-$VERSION-x86_64.AppImage"
+          rename dist/*.deb "dist/dbdesk_${VERSION}_amd64.deb"
       - name: Smoke test the AppImage and the .deb
         run: |
           "dist/dbdesk-$VERSION-x86_64.AppImage" --appimage-extract-and-run --version | tee appimage.txt
