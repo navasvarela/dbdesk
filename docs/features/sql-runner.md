@@ -54,7 +54,8 @@ becomes the bottleneck, the plan is a dedicated editor widget in its own crate.
 | Explain | ⌥⌘E | The statement at the cursor (or the first one selected), prefixed with `EXPLAIN` (PostgreSQL) or `EXPLAIN QUERY PLAN` (SQLite) |
 
 Shortcuts work while the console's editor has focus, and are taken before the editor sees
-them, so ⌘↵ runs instead of inserting a newline.
+them, so ⌘↵ runs instead of inserting a newline. These are the defaults; `keymap.toml` can
+change them (see [Keymap](keymap.md)).
 
 **Statement splitting** lives in `dbdesk-sql` and works on text as typed, without parsing:
 - Semicolons inside strings, quoted identifiers, comments and PostgreSQL dollar-quoted bodies

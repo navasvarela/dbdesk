@@ -168,7 +168,16 @@ Follow-ups left out of M4:
 
 ## M5 — Personalisation
 
-Picked from the "what I missed" list, likely:
+Picked after M4, in this order, one PR each: `keymap.toml`, autocompletion from the cached
+catalog, editing data in the grid.
+
+**Keymap demo note:** built. **View → Keymap…** lists every action with its id and shortcut;
+**Create keymap.toml** writes a file with every default commented out, and **Reload** applies
+edits. A typo in the file is listed as a problem (and counted in the status bar) instead of
+discarding the rest. Covered by store and engine tests for reading, creating and reloading the
+file, parser and conflict tests, and a UI test that runs a statement with a rebound key.
+
+The original candidates:
 
 - `keymap.toml`, themes, fonts.
 - Custom catalog actions (`actions.toml`) and snippets.

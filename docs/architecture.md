@@ -75,6 +75,8 @@ pub enum Command {
     DeleteConsoleFile(ConsoleKey),                           // M4
     SearchHistory { data_source: DataSourceId, text: String },                  // M4
     ExportRows { console: ConsoleId, export: Export },       // M4
+    ReloadKeymap,                                            // M5
+    CreateKeymap { text: String },                           // M5
 }
 
 pub enum Event {
@@ -99,6 +101,7 @@ pub enum Event {
     TransactionEnded { console: ConsoleId, result: Result<TransactionEnd, String> }, // M4
     HistoryFound { data_source: DataSourceId, text: String, result: Result<Vec<HistoryEntry>, String> }, // M4
     ExportFinished { console: ConsoleId, path: PathBuf, result: Result<usize, String> }, // M4
+    KeymapLoaded { path: PathBuf, result: Result<KeymapBindings, String> },     // M5
 }
 ```
 

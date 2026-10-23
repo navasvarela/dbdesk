@@ -7,7 +7,7 @@ All state lives in the platform config directory from the `directories` crate
 dbdesk/
 ├── data_sources.toml     # data source configs, no secrets
 ├── settings.toml         # app settings: page size, theme, fonts
-├── keymap.toml           # M5
+├── keymap.toml           # M5, key bindings (see features/keymap.md)
 ├── actions.toml          # M5, custom catalog actions
 ├── app.ron               # eframe storage: window size, egui_dock layout, open tabs
 ├── consoles/             # M4
@@ -60,6 +60,12 @@ read_only = true
   password on connect and keeping it in memory for the session only. Never write secrets to disk.
 - Later: support `~/.pgpass` and `PG*` environment variables for Postgres, which is what other
   tools on the machine already use.
+
+## Keymap
+
+- `keymap.toml`, only if the user writes one (or creates it from View → Keymap…, which never
+  replaces an existing file). Format and action ids: [Keymap](features/keymap.md).
+- Read by the engine at start-up and on Reload; dbdesk never writes to an existing file.
 
 ## Query consoles
 

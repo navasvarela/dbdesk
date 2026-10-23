@@ -60,6 +60,7 @@ UI: **egui** (via `eframe`) with **egui_dock** for DataGrip-style dockable panel
 | [Connection explorer](docs/features/connection-explorer.md) | Data sources, catalog tree, introspection |
 | [SQL runner](docs/features/sql-runner.md) | Editor, execution, result grid, cancellation |
 | [Log console](docs/features/log-console.md) | Logging pipeline and what gets logged |
+| [Keymap](docs/features/keymap.md) | `keymap.toml`: action ids and rebinding keys |
 | [Persistence](docs/persistence.md) | Config files, secrets, history, layout state |
 | [Testing](docs/testing.md) | Driver conformance suite, UI testing strategy |
 | [Roadmap](docs/roadmap.md) | Milestones M0–M5 with exit criteria |
