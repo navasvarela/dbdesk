@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use dbdesk_core::{
-    CatalogNode, CatalogPath, ColumnInfo, DataSource, DataSourceId, Password, Row, ServerInfo,
-    TransactionStatus,
+    CatalogNode, CatalogPath, ColumnInfo, DataSource, DataSourceId, Password, RelationName, Row,
+    ServerInfo, TableDescription, TransactionStatus,
 };
 use dbdesk_store::{ConsoleKey, HistoryEntry, KeymapBindings, SavedConsole};
 
@@ -90,6 +90,20 @@ pub enum Command {
     },
     /// Removes a console's file, if it exists.
     DeleteConsoleFile(ConsoleKey),
+    /// Resolves and describes a table on the explorer's connection, connecting first if
+    /// needed, so a console's open result isn't disturbed. Answered by
+    /// [`Event::TableDescribed`].
+    DescribeTable {
+        data_source: DataSourceId,
+        table: RelationName,
+    },
+    /// Runs generated `UPDATE`s on the console's connection, all or none: each must change
+    /// exactly one row. Inside an open transaction they stay part of it (behind a savepoint);
+    /// otherwise they commit together. Answered by [`Event::EditsApplied`].
+    ApplyEdits {
+        console: ConsoleId,
+        statements: Vec<String>,
+    },
     /// Reads `keymap.toml` again. Answered by [`Event::KeymapLoaded`].
     ReloadKeymap,
     /// Writes a new `keymap.toml` holding `text`, unless one exists, then reads it.
@@ -165,6 +179,17 @@ pub enum Event {
     ConsoleSaveFailed {
         key: ConsoleKey,
         error: String,
+    },
+    /// The answer to [`Command::DescribeTable`]: `None` if there is no such plain table.
+    TableDescribed {
+        data_source: DataSourceId,
+        table: RelationName,
+        result: Result<Option<TableDescription>, String>,
+    },
+    /// The answer to [`Command::ApplyEdits`].
+    EditsApplied {
+        console: ConsoleId,
+        result: Result<(), EditFailure>,
     },
     /// The answer to [`Command::ExportRows`]: how many rows were written, or why none were.
     ExportFinished {
@@ -249,6 +274,15 @@ pub struct StatementSummary {
     pub elapsed: Duration,
     /// Whether rows were left unread.
     pub truncated: bool,
+}
+
+/// Why edits weren't applied. Nothing was: the changes were rolled back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditFailure {
+    /// The index of the statement that failed, if one did (rather than starting or ending
+    /// the transaction around them).
+    pub statement: Option<usize>,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

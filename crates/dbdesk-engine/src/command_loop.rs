@@ -14,7 +14,7 @@ use crate::keymap;
 use crate::open::test_connection;
 use crate::registry::{Registry, RegistryError};
 use crate::session::{Script, Services, Session, SessionOwner, SessionRequest};
-use crate::{Command, ConsoleId, EngineConfig, Event, PasswordUpdate, RunOutcome};
+use crate::{Command, ConsoleId, EditFailure, EngineConfig, Event, PasswordUpdate, RunOutcome};
 
 #[derive(Debug, thiserror::Error)]
 enum SaveError {
@@ -152,6 +152,24 @@ impl Engine {
             Command::DeleteConsoleFile(key) => {
                 console_files::delete(&self.console_files, key).await;
             }
+            Command::DescribeTable { data_source, table } => {
+                self.request(data_source, SessionRequest::DescribeTable(table));
+            }
+            Command::ApplyEdits {
+                console,
+                statements,
+            } => match self.consoles.get(&console) {
+                Some(session) => session
+                    .session
+                    .request(SessionRequest::ApplyEdits(statements)),
+                None => self.events.send(Event::EditsApplied {
+                    console,
+                    result: Err(EditFailure {
+                        statement: None,
+                        message: "the console isn't connected; run its query again".to_owned(),
+                    }),
+                }),
+            },
             Command::ReloadKeymap => self.events.send(keymap::load(&self.keymap_file).await),
             Command::CreateKeymap { text } => {
                 self.events

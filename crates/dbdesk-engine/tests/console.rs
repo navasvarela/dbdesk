@@ -8,10 +8,10 @@ use std::sync::Arc;
 
 use common::{TestEngine, postgres_test_server, sqlite_data_source, sqlite_database};
 use dbdesk_core::TransactionStatus;
-use dbdesk_core::{ConnectionConfig, DataSource, DataSourceId};
+use dbdesk_core::{ConnectionConfig, DataSource, DataSourceId, Identifier, RelationName};
 use dbdesk_engine::{
-    Command, ConsoleId, Event, PasswordUpdate, RunId, RunOutcome, SessionState, StatementFailure,
-    TransactionEnd, TransactionMode,
+    Command, ConsoleId, EditFailure, Event, PasswordUpdate, RunId, RunOutcome, SessionState,
+    StatementFailure, TransactionEnd, TransactionMode,
 };
 use dbdesk_store::HistoryOutcome;
 
@@ -406,4 +406,193 @@ fn committing_a_failed_postgres_transaction_rolls_it_back() {
             result: Ok(TransactionEnd::Rollback),
         }
     );
+}
+
+/// The next event that isn't a connection state change of the console or the explorer.
+fn next_answer(engine: &mut TestEngine) -> Event {
+    loop {
+        match engine.next_event() {
+            Event::ConsoleSessionChanged { .. } | Event::SessionChanged { .. } => {}
+            event => return event,
+        }
+    }
+}
+
+fn names(dir: &std::path::Path) -> Vec<(i64, String)> {
+    let connection = rusqlite::Connection::open(dir.join("app.db")).unwrap();
+    let mut statement = connection
+        .prepare("SELECT id, name FROM people ORDER BY id")
+        .unwrap();
+    statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect()
+}
+
+fn edits(engine: &TestEngine, statements: &[&str]) {
+    engine.send(Command::ApplyEdits {
+        console: CONSOLE,
+        statements: statements.iter().map(|s| (*s).to_owned()).collect(),
+    });
+}
+
+fn expect_edits(engine: &mut TestEngine) -> Result<(), EditFailure> {
+    loop {
+        match next_run_event(engine) {
+            Event::EditsApplied { console, result } if console == CONSOLE => return result,
+            Event::TransactionChanged { .. } => {}
+            other => panic!("expected the edits' outcome, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn describes_a_table_on_the_explorers_connection() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut engine, id) = engine_with_sqlite(dir.path());
+    let table = RelationName {
+        schema: None,
+        name: Identifier {
+            name: "T".to_owned(),
+            quoted: false,
+        },
+    };
+
+    engine.send(Command::DescribeTable {
+        data_source: id,
+        table: table.clone(),
+    });
+
+    match next_answer(&mut engine) {
+        Event::TableDescribed {
+            data_source,
+            table: described_table,
+            result: Ok(Some(description)),
+        } => {
+            assert_eq!((data_source, described_table), (id, table));
+            assert_eq!(description.qualified_name(), "\"main\".\"t\"");
+            assert_eq!(description.primary_key, ["id"]);
+        }
+        other => panic!("expected the table's description, got {other:?}"),
+    }
+}
+
+#[test]
+fn applies_edits_all_or_none_in_their_own_transaction_or_a_savepoint() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut engine, id) = engine_with_sqlite(dir.path());
+    execute(
+        &engine,
+        id,
+        1,
+        &[
+            "CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT)",
+            "INSERT INTO people VALUES (1, 'ada'), (2, 'bob')",
+        ],
+    );
+    finish_run(&mut engine, 1);
+
+    edits(&engine, &["UPDATE people SET name = 'Ada' WHERE id = 1"]);
+    assert_eq!(expect_edits(&mut engine), Ok(()));
+    edits(
+        &engine,
+        &[
+            "UPDATE people SET name = 'Bob' WHERE id = 2",
+            "UPDATE people SET name = 'nobody' WHERE id = 3",
+        ],
+    );
+    let failure = expect_edits(&mut engine).unwrap_err();
+    assert_eq!(failure.statement, Some(1));
+    assert!(
+        failure.message.contains("changed 0 rows"),
+        "{}",
+        failure.message
+    );
+    assert_eq!(
+        names(dir.path()),
+        [(1, "Ada".to_owned()), (2, "bob".to_owned())]
+    );
+
+    // Inside the console's own transaction, a failure undoes only the edits.
+    execute_in(
+        &engine,
+        id,
+        2,
+        &["UPDATE people SET name = 'pending' WHERE id = 1"],
+        TransactionMode::Manual,
+    );
+    finish_run(&mut engine, 2);
+    edits(
+        &engine,
+        &[
+            "UPDATE people SET name = 'Bob' WHERE id = 2",
+            "UPDATE nowhere SET x = 1",
+        ],
+    );
+    assert_eq!(expect_edits(&mut engine).unwrap_err().statement, Some(1));
+    edits(&engine, &["UPDATE people SET name = 'Bob' WHERE id = 2"]);
+    assert_eq!(expect_edits(&mut engine), Ok(()));
+    engine.send(Command::EndTransaction {
+        console: CONSOLE,
+        end: TransactionEnd::Commit,
+    });
+    while !matches!(next_run_event(&mut engine), Event::TransactionEnded { .. }) {}
+
+    assert_eq!(
+        names(dir.path()),
+        [(1, "pending".to_owned()), (2, "Bob".to_owned())]
+    );
+}
+
+/// Needs `DBDESK_TEST_POSTGRES_URL`; skipped without it.
+#[test]
+fn applies_and_rolls_back_edits_on_postgres() {
+    let Some(server) = postgres_test_server() else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    engine.expect_started(vec![]);
+    let data_source = DataSource {
+        id: DataSourceId::generate(),
+        name: "test server".to_owned(),
+        config: ConnectionConfig::Postgres(server.config),
+    };
+    let id = data_source.id;
+    engine.send(Command::SaveDataSource {
+        data_source,
+        password: PasswordUpdate::Set(server.password),
+    });
+    assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
+    // A temporary table lives on the console's own connection, where edits run.
+    execute(
+        &engine,
+        id,
+        1,
+        &[
+            "CREATE TEMP TABLE people (id integer PRIMARY KEY, name text)",
+            "INSERT INTO people VALUES (1, 'ada')",
+        ],
+    );
+    finish_run(&mut engine, 1);
+
+    edits(&engine, &["UPDATE people SET name = 'Ada' WHERE id = 1"]);
+    assert_eq!(expect_edits(&mut engine), Ok(()));
+    edits(
+        &engine,
+        &[
+            "UPDATE people SET name = 'gone' WHERE id = 1",
+            "UPDATE people SET name = 1 / 0 WHERE id = 1",
+        ],
+    );
+    assert_eq!(expect_edits(&mut engine).unwrap_err().statement, Some(1));
+    execute(&engine, id, 2, &["SELECT name FROM people"]);
+
+    loop {
+        if let Event::RowsFetched { rows, .. } = next_run_event(&mut engine) {
+            assert_eq!(rows, [[Some("Ada".to_owned())]]);
+            break;
+        }
+    }
 }
