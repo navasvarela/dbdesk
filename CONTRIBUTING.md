@@ -78,9 +78,9 @@ and docs is `feat/…`.
   `feat(console): save consoles between runs`.
 - A pull request that stacks on another one targets that branch, and says so in its
   description.
-- `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --all-features -- -D
-  warnings` and `cargo test --workspace` pass before review; see [testing](docs/testing.md)
-  for the PostgreSQL tests.
+- `just lint` and `just test` pass before review. They run `cargo fmt --all --check`,
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings` and
+  `cargo test --workspace`. See [testing](docs/testing.md) for the PostgreSQL tests.
 
 Commits and branches from before this convention (`M4: …`, `m4-daily-driver`) keep their
 names; history isn't rewritten.
