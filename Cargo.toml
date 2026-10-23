@@ -30,7 +30,8 @@ eframe = { version = "0.36.2", default-features = false, features = [
 # egui_dock 0.21 is built against egui 0.36; bump the egui family only together with it.
 egui = "0.36.2"
 egui_dock = { version = "0.21.1", features = ["serde"] }
-egui_extras = { version = "0.36.2", features = ["image"] }
+# "svg" renders the database logos (assets/icons/databases) with resvg.
+egui_extras = { version = "0.36.2", features = ["image", "svg"] }
 egui_kittest = "0.36.2"
 # Icon font; 0.14 is the release built against egui 0.36.
 egui-phosphor = "0.14.0"
