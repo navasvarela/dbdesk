@@ -77,8 +77,9 @@ UI: **egui** (via `eframe`) with **egui_dock** for dockable panels.
 | [Testing](docs/testing.md) | Driver conformance suite, UI testing strategy, screenshots, the manual's build |
 | [Brand](docs/brand.md) | The logo, its files, and the colour palette |
 | [Look and feel](docs/features/look-and-feel.md) | Themes, panels, fonts, icons, data source colours |
-| [Roadmap](docs/roadmap.md) | Milestones M0–M5, and the design and documentation track (D1–D4), with exit criteria |
+| [Roadmap](docs/roadmap.md) | Milestones M0–M5, and the release (R1–R3), database (DB0–DB4) and design and documentation (D1–D4) tracks, with exit criteria |
 | [Releasing](docs/releasing.md) | Plan for downloadable builds: packaging, signing, the release workflow (proposed) |
+| [More databases](docs/databases.md) | Which engines come next (MySQL/MariaDB, SQL Server, DuckDB, Oracle later) and what each needs (proposed) |
 | [Contributing](CONTRIBUTING.md) | How commits, branches and pull requests are named |
 | [ADRs](docs/adr/README.md) | Architecture decision records |
 
