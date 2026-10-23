@@ -12,6 +12,7 @@ use super::edit::{CellEditor, EditSession, Editability};
 use super::grid::{CellPos, GridView, SortKey};
 use super::{ConsoleAction, QueryConsole, RunState, StatementView, ViewedCell};
 use crate::keymap::{Action, Keymap};
+use crate::theme::{GRID_HEADER_TINT, Palette};
 
 const COLUMN_WIDTH: f32 = 140.0;
 const MIN_COLUMN_WIDTH: f32 = 40.0;
@@ -272,6 +273,8 @@ fn grid(ui: &mut Ui, run: RunId, statement: &mut StatementView, keymap: &Keymap)
         ..
     } = statement;
     let row_height = ui.spacing().interact_size.y;
+    let palette = Palette::for_visuals(ui.visuals());
+    let header_fill = palette.tint(palette.primary, GRID_HEADER_TINT);
     let mut output = GridOutput::default();
     let mut inputs = Vec::new();
     let mut sort_clicked = None;
@@ -293,10 +296,12 @@ fn grid(ui: &mut Ui, run: RunId, statement: &mut StatementView, keymap: &Keymap)
     table
         .header(row_height, |mut header| {
             header.col(|ui| {
+                fill_header_cell(ui, header_fill);
                 ui.weak("#");
             });
             for (index, column) in columns.iter().enumerate() {
                 header.col(|ui| {
+                    fill_header_cell(ui, header_fill);
                     if column_header(ui, column, sort_arrow(grid_view.sort(), index)) {
                         sort_clicked = Some(index);
                     }
@@ -310,7 +315,11 @@ fn grid(ui: &mut Ui, run: RunId, statement: &mut StatementView, keymap: &Keymap)
                 let loaded_index = order[position];
                 let values = &rows[loaded_index];
                 table_row.col(|ui| {
-                    ui.weak((loaded_index + 1).to_string());
+                    ui.label(
+                        RichText::new((loaded_index + 1).to_string())
+                            .monospace()
+                            .color(ui.visuals().weak_text_color()),
+                    );
                 });
                 for (column, value) in values.iter().enumerate() {
                     let cell_pos = CellPos {
@@ -499,17 +508,27 @@ fn cell(ui: &mut Ui, pos: CellPos, loaded: &Cell, context: &CellContext<'_>) -> 
     let sense = Sense::click_and_drag();
     let response = match value {
         None => ui.add(
-            Label::new(RichText::new("NULL").italics().weak())
+            Label::new(RichText::new("NULL").monospace().italics().weak())
                 .selectable(false)
                 .sense(sense),
         ),
         Some(text) if looks_numeric(text) => {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.add(Label::new(text).selectable(false).truncate().sense(sense))
+                ui.add(
+                    Label::new(RichText::new(text).monospace())
+                        .selectable(false)
+                        .truncate()
+                        .sense(sense),
+                )
             })
             .inner
         }
-        Some(text) => ui.add(Label::new(text).selectable(false).truncate().sense(sense)),
+        Some(text) => ui.add(
+            Label::new(RichText::new(text).monospace())
+                .selectable(false)
+                .truncate()
+                .sense(sense),
+        ),
     };
     let (mut view, mut edit, mut set_null) = (false, false, false);
     response.context_menu(|ui| {
@@ -581,6 +600,14 @@ fn copy_selection_on_request(ui: &Ui, grid: &GridView, rows: &[Row]) {
     {
         ui.ctx().copy_text(tsv);
     }
+}
+
+/// Tints a header cell, extending over the column gaps so the header reads as one band.
+fn fill_header_cell(ui: &Ui, fill: egui::Color32) {
+    let rect = ui
+        .max_rect()
+        .expand2(egui::vec2(ui.spacing().item_spacing.x, 0.0));
+    ui.painter().rect_filled(rect, 0.0, fill);
 }
 
 /// Right-align numbers, the way spreadsheets and DataGrip do. A text heuristic, because the

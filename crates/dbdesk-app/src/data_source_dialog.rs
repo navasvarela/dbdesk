@@ -1,16 +1,22 @@
 //! The modal dialog for creating or editing a data source, with "Test connection".
 
-use dbdesk_core::{DataSource, DataSourceId, DriverKind, ServerInfo};
+use dbdesk_core::{DataSource, DataSourceId, DriverKind, ServerInfo, SourceColor};
 use dbdesk_engine::{Event, PasswordUpdate};
-use egui::{Align, Button, Grid, Id, Layout, Modal, TextEdit, Ui};
+use egui::{
+    Align, Button, Color32, Grid, Id, Layout, Modal, RichText, Sense, Stroke, TextEdit, Ui,
+    WidgetInfo, WidgetType, vec2,
+};
 
 use crate::data_source_form::{
     DataSourceForm, DriverFields, FormError, PostgresFields, SqliteFields,
 };
-use crate::theme::SUCCESS_COLOR;
+use crate::icons;
+use crate::theme::Palette;
+use crate::widgets;
 
 const DIALOG_WIDTH: f32 = 420.0;
 const FIELD_WIDTH: f32 = 280.0;
+const SWATCH_RADIUS: f32 = 8.0;
 
 pub enum DialogAction {
     Test(DataSource, PasswordUpdate),
@@ -80,7 +86,11 @@ impl DataSourceDialog {
 
     fn contents(&mut self, ui: &mut Ui) -> Option<DialogAction> {
         ui.set_width(DIALOG_WIDTH);
-        ui.heading(self.title());
+        let palette = Palette::for_visuals(ui.visuals());
+        ui.horizontal(|ui| {
+            ui.heading(icons::driver(self.form.driver()).rich_text(palette));
+            ui.heading(self.title());
+        });
         ui.add_space(ui.spacing().item_spacing.y);
         self.fields(ui);
         ui.add_space(ui.spacing().item_spacing.y);
@@ -105,6 +115,9 @@ impl DataSourceDialog {
             .num_columns(2)
             .show(ui, |ui| {
                 text_row(ui, "Name", &mut self.form.name, "optional");
+                ui.label("Colour");
+                color_picker(ui, &mut self.form.color);
+                ui.end_row();
                 match &mut self.form.fields {
                     DriverFields::Postgres(fields) => postgres_rows(ui, fields),
                     DriverFields::Sqlite(fields) => sqlite_rows(ui, fields),
@@ -124,7 +137,8 @@ impl DataSourceDialog {
     }
 
     fn status_line(&self, ui: &mut Ui) {
-        let error_color = ui.visuals().error_fg_color;
+        let palette = Palette::for_visuals(ui.visuals());
+        let error_color = palette.error;
         match &self.status {
             Status::Editing => {}
             Status::Invalid(error) => {
@@ -137,7 +151,12 @@ impl DataSourceDialog {
                 });
             }
             Status::Tested(Ok(server)) => {
-                ui.colored_label(SUCCESS_COLOR, format!("Connected to {server}."));
+                widgets::status(
+                    ui,
+                    icons::CHECK_CIRCLE,
+                    palette.success,
+                    &format!("Connected to {server}."),
+                );
             }
             Status::Tested(Err(error)) => {
                 ui.colored_label(error_color, error);
@@ -163,7 +182,10 @@ impl DataSourceDialog {
                     .add_enabled(!testing && !saving, Button::new("Test connection"))
                     .clicked();
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let save = ui.add_enabled(!saving, Button::new("Save")).clicked();
+                    let palette = Palette::for_visuals(ui.visuals());
+                    let save_button = Button::new(RichText::new("Save").color(palette.on_primary))
+                        .fill(palette.primary);
+                    let save = ui.add_enabled(!saving, save_button).clicked();
                     let cancel = ui.button("Cancel").clicked();
                     (test, save, cancel)
                 })
@@ -211,6 +233,62 @@ fn sqlite_rows(ui: &mut Ui, fields: &mut SqliteFields) {
     ui.label("");
     ui.checkbox(&mut fields.read_only, "Read-only");
     ui.end_row();
+}
+
+/// "None" and one swatch per [`SourceColor`], like radio buttons.
+fn color_picker(ui: &mut Ui, selected: &mut Option<SourceColor>) {
+    let palette = Palette::for_visuals(ui.visuals());
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let choices = std::iter::once(None).chain(SourceColor::ALL.map(Some));
+        for choice in choices {
+            if swatch(ui, choice, *selected == choice, palette).clicked() {
+                *selected = choice;
+            }
+        }
+    });
+}
+
+/// A filled circle in `color`, or a struck-out empty one for "no colour". The selected one
+/// gets a ring.
+fn swatch(
+    ui: &mut Ui,
+    color: Option<SourceColor>,
+    selected: bool,
+    palette: &Palette,
+) -> egui::Response {
+    let size = vec2(SWATCH_RADIUS * 2.0 + 6.0, SWATCH_RADIUS * 2.0 + 6.0);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let name = color.map_or("No colour", SourceColor::display_name);
+    response.widget_info(|| WidgetInfo::selected(WidgetType::RadioButton, true, selected, name));
+    let center = rect.center();
+    let painter = ui.painter();
+    match color {
+        Some(color) => {
+            painter.circle_filled(center, SWATCH_RADIUS, palette.source(color));
+        }
+        None => {
+            painter.circle_stroke(
+                center,
+                SWATCH_RADIUS - 0.5,
+                Stroke::new(1.0, palette.text_weak),
+            );
+            let offset = vec2(SWATCH_RADIUS, -SWATCH_RADIUS) * std::f32::consts::FRAC_1_SQRT_2;
+            painter.line_segment(
+                [center - offset, center + offset],
+                Stroke::new(1.0, palette.text_weak),
+            );
+        }
+    }
+    let ring = if selected {
+        Stroke::new(2.0, palette.text)
+    } else if response.hovered() {
+        Stroke::new(1.0, palette.text_weak)
+    } else {
+        Stroke::new(0.0, Color32::TRANSPARENT)
+    };
+    painter.circle_stroke(center, SWATCH_RADIUS + 2.5, ring);
+    response.on_hover_text(name)
 }
 
 /// A label and a text field, linked so screen readers (and UI tests) find the field by label.

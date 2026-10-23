@@ -1,9 +1,17 @@
-//! The dbdesk mark, embedded for the window icon. The sources and the script that renders them
-//! live in `assets/brand/`.
+//! The dbdesk mark, embedded for the window icon and the Welcome tab. The sources and the
+//! script that renders them live in `assets/brand/`.
 
 /// The app icon at 256 px: large enough for a sharp macOS Dock icon at 2x, small enough that
 /// decoding it at start-up costs nothing noticeable.
 const WINDOW_ICON_PNG: &[u8] = include_bytes!("../../../assets/brand/icon-256.png");
+
+/// The bare mark at 256 px, sharp at the Welcome tab's size on 2x screens.
+const LOGO_PNG: &[u8] = include_bytes!("../../../assets/brand/logo-256.png");
+
+/// The mark as an image widget. Needs egui_extras' image loaders, installed at start-up.
+pub fn logo() -> egui::Image<'static> {
+    egui::Image::from_bytes("bytes://dbdesk-logo.png", LOGO_PNG)
+}
 
 /// The window and Dock icon, or `None` if the embedded PNG doesn't decode, in which case the
 /// window falls back to the platform's default icon rather than refusing to start.

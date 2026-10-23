@@ -56,8 +56,27 @@ against a real server, such as a cancel arriving after the last row.
 ## UI
 
 - `AppState` reducers (applying an `Event` to state) are pure functions with plain unit tests.
-- Widgets get smoke tests through `egui_kittest`, which drives egui headlessly and supports
-  snapshot images. Used sparingly, for the result grid and explorer tree.
+- Widgets get smoke tests through `egui_kittest`, which drives egui headlessly. The app tests
+  share their harness (a real engine, a temporary data source file, in-memory passwords) through
+  `test_support`, and run at the app's default window size.
+- `theme::tests::text_colours_meet_wcag_aa` checks every text colour against the backgrounds it
+  is drawn on, in both themes, for WCAG AA contrast (4.5:1).
+
+### Screenshots
+
+`screenshots::regenerate_screenshots` renders the app with egui_kittest's `wgpu` renderer and
+writes PNGs, every scene in the light and the dark theme, at 2x:
+
+```bash
+DBDESK_SCREENSHOTS_DIR=/tmp/shots cargo test -p dbdesk-app regenerate_screenshots -- --ignored
+```
+
+It is ignored by default because it needs a GPU adapter and rewrites files. Each scene starts a
+fresh app against a SQLite fixture (a small shop database built from SQL in the test) and drives
+it the way a user would: expanding nodes, opening a console, typing and running SQL. With
+`DBDESK_TEST_POSTGRES_URL` set, a PostgreSQL data source joins the fixture. Without
+`DBDESK_SCREENSHOTS_DIR` the images go to `target/screenshots`. Engine logs reach the log
+console through one global `tracing` subscriber whose layer is swapped per scene.
 
 Hard-learned from the M4 UI tests: `egui_kittest` clicks at the centre of a widget's last
 known rectangle, in an 800×600 window. A widget laid out off-screen, or covered by another one

@@ -28,6 +28,13 @@ for size in 16 32 64 256 512; do
     resvg --width "${size}" --height "${size}" logo.svg "logo-${size}.png"
 done
 
+# The repository's social preview (GitHub shows it on links to the repository). Its text is
+# set in the bundled Inter, so it renders the same on every machine.
+resvg --width 1280 --height 640 --skip-system-fonts \
+    --use-font-file ../fonts/inter/Inter-Regular.ttf \
+    --use-font-file ../fonts/inter/Inter-SemiBold.ttf \
+    social-preview.svg social-preview.png
+
 if ! command -v iconutil >/dev/null; then
     echo "iconutil not found (it ships with macOS); skipping dbdesk.icns" >&2
     exit 0

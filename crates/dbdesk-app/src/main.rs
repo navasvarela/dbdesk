@@ -11,15 +11,23 @@ mod definition_window;
 mod delete_dialog;
 mod explorer;
 mod export_dialog;
+mod fonts;
 mod hazard_dialog;
 mod history_window;
+mod icons;
 mod keymap;
 mod keymap_window;
 mod log_console;
 mod rollback_dialog;
+#[cfg(test)]
+mod screenshots;
 mod state;
 mod telemetry;
+#[cfg(test)]
+mod test_support;
 mod theme;
+mod welcome;
+mod widgets;
 mod workspace;
 
 use std::sync::Arc;
@@ -32,6 +40,7 @@ use dbdesk_store::{
 
 use crate::app::DbDeskApp;
 
+/// Also the size UI tests run at, so they see the layout a new user sees.
 const DEFAULT_WINDOW_SIZE: [f32; 2] = [1280.0, 800.0];
 
 fn main() -> anyhow::Result<()> {

@@ -37,8 +37,55 @@ impl FromStr for DataSourceId {
 pub struct DataSource {
     pub id: DataSourceId,
     pub name: String,
+    /// Tints the data source's explorer row and its consoles, so production stands out from
+    /// a local copy at a glance. Optional, and absent from files written before it existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<SourceColor>,
     #[serde(flatten)]
     pub config: ConnectionConfig,
+}
+
+/// The colours a data source can be marked with.
+///
+/// A fixed set of names rather than free-form RGB: the app picks each one's shade per theme,
+/// so a colour chosen in the dark theme still reads in the light one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SourceColor {
+    Red,
+    Orange,
+    Yellow,
+    Green,
+    Teal,
+    Blue,
+    Violet,
+    Pink,
+}
+
+impl SourceColor {
+    pub const ALL: [Self; 8] = [
+        Self::Red,
+        Self::Orange,
+        Self::Yellow,
+        Self::Green,
+        Self::Teal,
+        Self::Blue,
+        Self::Violet,
+        Self::Pink,
+    ];
+
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Red => "Red",
+            Self::Orange => "Orange",
+            Self::Yellow => "Yellow",
+            Self::Green => "Green",
+            Self::Teal => "Teal",
+            Self::Blue => "Blue",
+            Self::Violet => "Violet",
+            Self::Pink => "Pink",
+        }
+    }
 }
 
 /// Engine-specific connection settings.
@@ -153,6 +200,7 @@ mod tests {
                 DataSource {
                     id: DataSourceId::generate(),
                     name: "local".to_owned(),
+                    color: None,
                     config: ConnectionConfig::Postgres(PostgresConfig {
                         host: "localhost".to_owned(),
                         port: 5432,
@@ -163,6 +211,7 @@ mod tests {
                 DataSource {
                     id: DataSourceId::generate(),
                     name: "chinook".to_owned(),
+                    color: None,
                     config: ConnectionConfig::Sqlite(SqliteConfig {
                         path: "/tmp/chinook.db".into(),
                         read_only: true,
@@ -174,6 +223,26 @@ mod tests {
         let text = toml::to_string(&file).unwrap();
         assert!(text.contains("driver = \"postgres\""), "{text}");
         assert!(text.contains("driver = \"sqlite\""), "{text}");
+        assert_eq!(toml::from_str::<File>(&text).unwrap(), file);
+    }
+
+    #[test]
+    fn colour_is_optional_and_written_only_when_set() {
+        let without = r#"
+            [[data_source]]
+            id = "4b5f9a3e-8a52-4a7e-9c6b-1f0f2b0c9d11"
+            name = "chinook"
+            driver = "sqlite"
+            path = "/tmp/chinook.db"
+        "#;
+        let mut file: File = toml::from_str(without).unwrap();
+        assert_eq!(file.data_source[0].color, None);
+        assert!(!toml::to_string(&file).unwrap().contains("color"));
+
+        file.data_source[0].color = Some(SourceColor::Violet);
+        let text = toml::to_string(&file).unwrap();
+
+        assert!(text.contains("color = \"violet\""), "{text}");
         assert_eq!(toml::from_str::<File>(&text).unwrap(), file);
     }
 

@@ -66,5 +66,6 @@ UI: **egui** (via `eframe`) with **egui_dock** for DataGrip-style dockable panel
 | [Persistence](docs/persistence.md) | Config files, secrets, history, layout state |
 | [Testing](docs/testing.md) | Driver conformance suite, UI testing strategy |
 | [Brand](docs/brand.md) | The logo, its files, and the colour palette |
+| [Look and feel](docs/features/look-and-feel.md) | Themes, panels, fonts, icons, data source colours |
 | [Roadmap](docs/roadmap.md) | Milestones M0–M5 with exit criteria |
 | [ADRs](docs/adr/README.md) | Architecture decision records |

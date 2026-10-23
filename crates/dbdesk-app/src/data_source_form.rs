@@ -2,7 +2,8 @@
 //! the rules are testable without a UI.
 
 use dbdesk_core::{
-    ConnectionConfig, DataSource, DataSourceId, DriverKind, Password, PostgresConfig, SqliteConfig,
+    ConnectionConfig, DataSource, DataSourceId, DriverKind, Password, PostgresConfig, SourceColor,
+    SqliteConfig,
 };
 use dbdesk_engine::PasswordUpdate;
 
@@ -29,6 +30,7 @@ pub enum FormError {
 pub struct DataSourceForm {
     /// Optional: an empty name becomes [`ConnectionConfig::default_name`].
     pub name: String,
+    pub color: Option<SourceColor>,
     pub fields: DriverFields,
     /// Empty means "keep the saved password" (or none, for a new data source).
     pub password: String,
@@ -70,6 +72,7 @@ impl DataSourceForm {
         };
         Self {
             name: String::new(),
+            color: None,
             fields,
             password: String::new(),
         }
@@ -90,6 +93,7 @@ impl DataSourceForm {
         };
         Self {
             name: data_source.name.clone(),
+            color: data_source.color,
             fields,
             password: String::new(),
         }
@@ -111,7 +115,12 @@ impl DataSourceForm {
             "" => config.default_name(),
             name => name.to_owned(),
         };
-        Ok(DataSource { id, name, config })
+        Ok(DataSource {
+            id,
+            name,
+            color: self.color,
+            config,
+        })
     }
 
     pub fn password_update(&self) -> PasswordUpdate {
@@ -213,6 +222,7 @@ mod tests {
         let data_source = DataSource {
             id: DataSourceId::generate(),
             name: "chinook".to_owned(),
+            color: Some(SourceColor::Teal),
             config: ConnectionConfig::Sqlite(SqliteConfig {
                 path: "/data/chinook.db".into(),
                 read_only: true,

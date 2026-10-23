@@ -368,6 +368,7 @@ fn committing_a_failed_postgres_transaction_rolls_it_back() {
     let data_source = DataSource {
         id: DataSourceId::generate(),
         name: "test server".to_owned(),
+        color: None,
         config: ConnectionConfig::Postgres(server.config),
     };
     let id = data_source.id;
@@ -557,6 +558,7 @@ fn applies_and_rolls_back_edits_on_postgres() {
     let data_source = DataSource {
         id: DataSourceId::generate(),
         name: "test server".to_owned(),
+        color: None,
         config: ConnectionConfig::Postgres(server.config),
     };
     let id = data_source.id;
