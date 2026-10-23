@@ -15,7 +15,10 @@ use crate::open::{create_sqlite_database, test_connection};
 use crate::registry::{Registry, RegistryError};
 use crate::session::{Script, Services, Session, SessionOwner, SessionRequest};
 use crate::settings;
-use crate::{Command, ConsoleId, EditFailure, EngineConfig, Event, PasswordUpdate, RunOutcome};
+use crate::{
+    Command, ConsoleId, EditFailure, EngineConfig, Event, PasswordUpdate, RunOutcome,
+    StatementCheck,
+};
 
 #[derive(Debug, thiserror::Error)]
 enum SaveError {
@@ -175,6 +178,21 @@ impl Engine {
                         statement: None,
                         message: "the console isn't connected; run its query again".to_owned(),
                     }),
+                }),
+            },
+            Command::ValidateStatements {
+                console,
+                statements,
+            } => match self.consoles.get(&console) {
+                Some(session) if !session.session.is_finished() => session
+                    .session
+                    .request(SessionRequest::Validate(statements)),
+                _ => self.events.send(Event::StatementsValidated {
+                    console,
+                    results: statements
+                        .into_iter()
+                        .map(|sql| (sql, StatementCheck::Skipped))
+                        .collect(),
                 }),
             },
             Command::ReloadKeymap => self.events.send(keymap::load(&self.keymap_file).await),

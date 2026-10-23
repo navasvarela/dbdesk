@@ -199,6 +199,7 @@ fn saves_and_reloads_the_settings_and_reports_a_broken_file() {
             keyword_case: KeywordCase::Lower,
             indent_width: 2,
         },
+        ..Settings::default()
     };
 
     engine.send(Command::SaveSettings(lower.clone()));
