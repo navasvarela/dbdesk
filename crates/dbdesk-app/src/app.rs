@@ -24,7 +24,12 @@ use crate::theme::{self, Palette};
 use crate::workspace::{self, Panels, Tab};
 use crate::{fonts, icons, widgets};
 
-const LAYOUT_STORAGE_KEY: &str = "dock_layout";
+/// Where the dock layout is saved. Versioned so a change to the default layout reaches people
+/// who already have one saved: layouts under an older key are ignored once, and the default
+/// takes their place. Version 2: the explorer became a full-height column, and layouts saved
+/// before it could give the explorer four fifths of the window. Open console tabs aren't
+/// restored after a version change, but their files are, under Open saved console.
+const LAYOUT_STORAGE_KEY: &str = "dock_layout_v2";
 
 pub struct DbDeskApp {
     /// `None` once the engine has been shut down, at exit or after it stopped unexpectedly.
@@ -47,6 +52,9 @@ pub struct DbDeskApp {
     /// Asks where to export rows. The platform's save dialog, except in tests.
     pick_export_path: Box<dyn Fn(ExportFormat) -> Option<PathBuf>>,
     consoles: Consoles,
+    /// Set on first launch until the window has been asked to maximize. After that, eframe
+    /// restores whatever size the user left it at.
+    maximize_window: bool,
 }
 
 impl DbDeskApp {
@@ -55,10 +63,13 @@ impl DbDeskApp {
         log_feed: LogFeed,
         engine_config: EngineConfig,
     ) -> Result<Self, EngineError> {
-        let dock = cc
+        let saved_layout: Option<DockState<Tab>> = cc
             .storage
-            .and_then(|storage| eframe::get_value(storage, LAYOUT_STORAGE_KEY))
-            .unwrap_or_else(workspace::default_layout);
+            .and_then(|storage| eframe::get_value(storage, LAYOUT_STORAGE_KEY));
+        // No saved layout means a first launch (or a layout version change): maximize the
+        // window rather than keep the small default size.
+        let maximize_window = saved_layout.is_none();
+        let dock = saved_layout.unwrap_or_else(workspace::default_layout);
         let engine = EngineHandle::start(engine_config, EguiRepaint(cc.egui_ctx.clone()))?;
         fonts::install(&cc.egui_ctx);
         theme::install(&cc.egui_ctx);
@@ -81,6 +92,7 @@ impl DbDeskApp {
             keymap_path: None,
             keymap_window_open: false,
             consoles: Consoles::default(),
+            maximize_window,
         })
     }
 
@@ -180,6 +192,18 @@ impl DbDeskApp {
         };
         if let Err(error) = engine.send(command) {
             tracing::error!("{error}");
+        }
+    }
+
+    /// Maximizes the window, once, on first launch.
+    ///
+    /// Why not size it from the monitor: with several screens, egui reported another screen's
+    /// size than the one the window opened on (a laptop's 1512×982 for a window on a 2560×1440
+    /// display), so the window came out barely bigger and on the wrong screen. Maximizing lets
+    /// the OS fill whichever screen the window is on.
+    fn maximize_window_once(&mut self, ctx: &egui::Context) {
+        if std::mem::take(&mut self.maximize_window) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
         }
     }
 
@@ -465,7 +489,8 @@ impl DbDeskApp {
 }
 
 impl eframe::App for DbDeskApp {
-    fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.maximize_window_once(ctx);
         self.drain_engine_events();
         self.log_console.drain();
     }

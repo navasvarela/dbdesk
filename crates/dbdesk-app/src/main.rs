@@ -41,7 +41,7 @@ use dbdesk_store::{
 use crate::app::DbDeskApp;
 
 /// Also the size UI tests run at, so they see the layout a new user sees.
-const DEFAULT_WINDOW_SIZE: [f32; 2] = [1280.0, 800.0];
+const DEFAULT_WINDOW_SIZE: [f32; 2] = [1440.0, 900.0];
 
 fn main() -> anyhow::Result<()> {
     let paths = AppPaths::discover()

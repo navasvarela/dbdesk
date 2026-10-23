@@ -11,10 +11,10 @@ export the results, and edit rows.
 
 The window has three areas, which you can drag around and resize:
 
-- **Explorer**, on the left: your saved connections ("data sources") and, under each, its
-  databases, schemas, tables and so on.
-- **Consoles**, on the right: the Welcome tab and one tab per query console.
-- **Log console**, along the bottom: what dbdesk is doing — connections opening and closing,
+- **Explorer**, a column down the left: your saved connections ("data sources") and, under
+  each, its databases, schemas, tables and so on.
+- **Consoles**, the main area on the right: the Welcome tab and one tab per query console.
+- **Log console**, under the consoles: what dbdesk is doing — connections opening and closing,
   queries running and how long they took, errors.
 
 The thin bar at the very bottom shows whether dbdesk's background engine is running and how
