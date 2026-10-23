@@ -65,3 +65,12 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 expect_used = "deny"
 unwrap_used = "deny"
+
+# What release builds ship. Thin LTO with one codegen unit trades a slower release build for a
+# smaller binary, and debug symbols are stripped from what ships. Measured on an Apple-silicon
+# Mac when this was added (R1): the binary went from 19.5 MB to 14.6 MB, and a clean release
+# build of the app from about 51 s to 63 s.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
