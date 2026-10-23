@@ -1,0 +1,251 @@
+/* The dbdesk website. Colours are the app's palette (crates/dbdesk-app/src/theme.rs and
+   docs/brand.md), dark first, with the light theme when the visitor's system asks for it. */
+
+@font-face {
+  font-family: "Inter";
+  src: url("assets/fonts/Inter-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("assets/fonts/Inter-SemiBold.ttf") format("truetype");
+  font-weight: 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("assets/fonts/JetBrainsMono-Regular.ttf") format("truetype");
+  font-display: swap;
+}
+
+:root {
+  --base: #131418;
+  --panel: #1e1f24;
+  --field: #191a1e;
+  --border: #30323a;
+  --text: #dfe2e8;
+  --text-weak: #959ba8;
+  --primary: #2dd4bf;
+  --secondary: #9a8bff;
+  --on-primary: #0e1f1c;
+  --postgresql: #7fa2f5;
+  --sqlite: #5ab0e0;
+  --glow-strength: 0.22;
+  --radius: 12px;
+  --font: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --base: #e4e6ec;
+    --panel: #fafbfc;
+    --field: #ffffff;
+    --border: #d3d7df;
+    --text: #1d1f26;
+    --text-weak: #5c6270;
+    --primary: #0a7a6c;
+    --secondary: #5b3fe0;
+    --on-primary: #ffffff;
+    --postgresql: #4169e1;
+    --sqlite: #003b57;
+    --glow-strength: 0.16;
+    color-scheme: light;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  position: relative;
+  background: var(--base);
+  color: var(--text);
+  font: 400 16px/1.6 var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The same two glows as the app's Welcome tab, behind the top of the page: the secondary on
+   the left, the primary on the right, fading into the base. Spans the page's own width, so it
+   can't make a narrow screen scroll sideways. */
+body::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 720px;
+  z-index: -1;
+  background:
+    radial-gradient(40% 80% at 30% 0%, rgb(154 139 255 / var(--glow-strength)), transparent 70%),
+    radial-gradient(40% 80% at 70% 0%, rgb(45 212 191 / var(--glow-strength)), transparent 70%);
+  pointer-events: none;
+}
+
+a { color: var(--primary); text-underline-offset: 3px; }
+a:focus-visible, .button:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+
+code, pre { font-family: var(--mono); font-size: 0.9em; }
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 16px max(20px, env(safe-area-inset-left));
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 1.15rem;
+}
+.topbar nav { display: flex; gap: 20px; flex-wrap: wrap; }
+.topbar nav a { color: var(--text-weak); text-decoration: none; }
+.topbar nav a:hover { color: var(--text); }
+
+main {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 0 max(20px, env(safe-area-inset-left)) 64px;
+  display: grid;
+  gap: 56px;
+}
+
+/* Grid items don't shrink below their content by default, so the code block's longest line
+   would widen the whole page on a phone. */
+main > * { min-width: 0; }
+
+.hero {
+  text-align: center;
+  padding: 56px 0 8px;
+}
+.hero h1 {
+  margin: 20px 0 12px;
+  font-size: clamp(2.2rem, 6vw, 3.6rem);
+  line-height: 1.1;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+.lede {
+  max-width: 62ch;
+  margin: 0 auto;
+  color: var(--text-weak);
+  font-size: 1.1rem;
+  text-wrap: pretty;
+}
+.actions {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 28px;
+}
+.button {
+  display: inline-block;
+  padding: 10px 22px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  text-decoration: none;
+  font-weight: 600;
+}
+.button:hover { border-color: var(--primary); }
+.button.primary { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+.note { margin-top: 14px; color: var(--text-weak); font-size: 0.9rem; }
+
+/* The screenshot, framed as a window. */
+.window {
+  margin: 0;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--panel);
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgb(0 0 0 / 0.35);
+}
+.window-bar { display: flex; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.window-bar span { width: 12px; height: 12px; border-radius: 50%; background: var(--border); }
+.window img { display: block; width: 100%; height: auto; }
+
+h2 { margin: 0 0 20px; font-size: 1.6rem; font-weight: 600; letter-spacing: -0.01em; }
+h3 { margin: 0 0 8px; font-size: 1.05rem; font-weight: 600; }
+
+.databases { text-align: center; }
+.engine-list {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.engine-list li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  font-weight: 600;
+}
+/* The logos are white SVGs (see assets/icons/databases/README.md), so they're used as masks
+   and take each theme's shade from the background colour, as the app tints them. */
+.engine-logo {
+  width: 28px;
+  height: 28px;
+  -webkit-mask: var(--logo) center / contain no-repeat;
+  mask: var(--logo) center / contain no-repeat;
+}
+.engine-logo.postgresql { --logo: url("assets/databases/postgresql.svg"); background: var(--postgresql); }
+.engine-logo.sqlite { --logo: url("assets/databases/sqlite.svg"); background: var(--sqlite); }
+.planned { color: var(--text-weak); margin: 16px 0 0; }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: 16px;
+}
+.grid article {
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.grid p { margin: 0; color: var(--text-weak); }
+
+.start pre {
+  margin: 12px 0;
+  padding: 16px 18px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--field);
+  line-height: 1.5;
+}
+.start p { margin: 0; }
+
+footer {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 24px max(20px, env(safe-area-inset-left)) 40px;
+  border-top: 1px solid var(--border);
+  color: var(--text-weak);
+  font-size: 0.85rem;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .button { transition: border-color 120ms ease; }
+}
+
+@media (max-width: 480px) {
+  .topbar nav { gap: 14px; font-size: 0.95rem; }
+}

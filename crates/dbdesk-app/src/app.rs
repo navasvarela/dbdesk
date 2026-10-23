@@ -1402,8 +1402,12 @@ mod tests {
         );
         harness.get_by_label("Submit").click();
 
+        // Submit swaps "1 changed cell" for "Saving…" at once; only when that goes too has the
+        // engine written the UPDATE. Waiting on the first label alone raced the database read
+        // below, and lost on the slower Linux and Windows CI runners.
         step_until(&mut harness, "the edit being saved", |harness| {
             harness.query_by_label("1 changed cell").is_none()
+                && harness.query_by_label("Saving…").is_none()
         });
         harness.get_by_label("Ada Lovelace");
         let saved: String = rusqlite::Connection::open(dir.path().join("shop.db"))

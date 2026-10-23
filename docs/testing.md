@@ -103,9 +103,16 @@ through the `mdbook-linkcheck2` backend, fails on a link to a page or image that
 Install both with `cargo install mdbook --version 0.5.4` and
 `cargo install mdbook-linkcheck2 --version 0.13.0`.
 
+## Website
+
+`site/build.sh` assembles the website (`site/` plus the manual) into `target/site`; preview it
+with `python3 -m http.server -d target/site`. The Pages workflow checks the landing page's links
+with `lychee --offline`, which fails on a link to a file the build didn't produce.
+
 ## CI
 
 GitHub Actions: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`
-on macOS and Linux, and the mdBook build with its link check. On Linux the workflow starts the compose Postgres and sets
+on macOS and Linux, and the mdBook build with its link check. A separate Pages workflow builds
+the website and manual on pull requests that touch them, and publishes them from `main`. On Linux the workflow starts the compose Postgres and sets
 `DBDESK_TEST_POSTGRES_URL`. GitHub can't run containers on macOS runners, so the Postgres tests
 skip there.

@@ -1,0 +1,58 @@
+name: Pages
+
+# Builds the website (site/) and the user manual (book/), and publishes them to GitHub Pages
+# from main. Pull requests that touch either only build them, so a broken site fails the PR
+# without going live.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - .github/workflows/pages.yml
+      - site/**
+      - book/**
+      - assets/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deployment at a time; a newer push supersedes a queued one, but never cancels a
+# deployment already running.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: mdbook@0.5.4,mdbook-linkcheck2@0.13.0
+      - run: site/build.sh _site
+      # The manual's links are checked by its own build; this checks the landing page's links
+      # to its assets and into the manual. Web links aren't followed, as in the manual.
+      - uses: lycheeverse/lychee-action@v2
+        with:
+          args: --offline --no-progress --root-dir "${{ github.workspace }}/_site" _site/index.html
+          fail: true
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
