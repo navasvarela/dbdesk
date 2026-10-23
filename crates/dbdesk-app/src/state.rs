@@ -104,6 +104,7 @@ impl AppState {
             | Event::ConsoleSaveFailed { .. }
             | Event::ConnectionTested { .. }
             | Event::DefinitionLoaded { .. }
+            | Event::SqliteDatabaseCreated { .. }
             | Event::ConsoleSessionChanged { .. }
             | Event::StatementStarted { .. }
             | Event::RowsFetched { .. }

@@ -294,6 +294,9 @@ impl DbDeskApp {
                 data_source,
                 password,
             }),
+            DialogAction::CreateSqliteDatabase(path) => {
+                self.send(Command::CreateSqliteDatabase(path));
+            }
             DialogAction::Close => self.data_source_dialog = None,
         }
     }
@@ -736,6 +739,9 @@ mod tests {
         harness.run();
         harness.get_by_label("SQLite").click();
         harness.run();
+        // The native open and save dialogs can't be driven headlessly; check they're offered.
+        harness.get_by_label("Browse…");
+        harness.get_by_label("New…");
         let file_field = harness.get_by_role_and_label(Role::TextInput, "File");
         file_field.focus();
         harness.run();

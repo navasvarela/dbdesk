@@ -11,6 +11,7 @@ mod definition_window;
 mod delete_dialog;
 mod explorer;
 mod export_dialog;
+mod file_picker;
 mod fonts;
 mod hazard_dialog;
 mod history_window;

@@ -150,6 +150,11 @@ const SCENES: &[Scene] = &[
         play: data_source_dialog,
     },
     Scene {
+        name: "sqlite-data-source-dialog",
+        data_sources: FixtureSources::Shop,
+        play: sqlite_data_source_dialog,
+    },
+    Scene {
         name: "explorer-menu",
         data_sources: FixtureSources::Shop,
         play: explorer_menu,
@@ -389,13 +394,21 @@ fn settle(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
 }
 
 fn data_source_dialog(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    open_new_data_source_dialog(harness, "PostgreSQL");
+}
+
+fn sqlite_data_source_dialog(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    open_new_data_source_dialog(harness, "SQLite");
+}
+
+fn open_new_data_source_dialog(harness: &mut Harness<'static, DbDeskApp>, driver: &str) {
     harness
         .get_all_by_label("New data source")
         .next()
         .unwrap()
         .click();
     harness.run_ok();
-    harness.get_by_label("PostgreSQL").click();
+    harness.get_by_label(driver).click();
     harness.run_ok();
 }
 

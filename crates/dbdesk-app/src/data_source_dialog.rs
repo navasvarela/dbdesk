@@ -1,5 +1,7 @@
 //! The modal dialog for creating or editing a data source, with "Test connection".
 
+use std::path::{Path, PathBuf};
+
 use dbdesk_core::{DataSource, DataSourceId, DriverKind, ServerInfo, SourceColor};
 use dbdesk_engine::{Event, PasswordUpdate};
 use egui::{
@@ -10,6 +12,7 @@ use egui::{
 use crate::data_source_form::{
     DataSourceForm, DriverFields, FormError, PostgresFields, SqliteFields,
 };
+use crate::file_picker;
 use crate::icons;
 use crate::theme::Palette;
 use crate::widgets;
@@ -21,6 +24,8 @@ const SWATCH_RADIUS: f32 = 8.0;
 pub enum DialogAction {
     Test(DataSource, PasswordUpdate),
     Save(DataSource, PasswordUpdate),
+    /// Create an empty SQLite database at this path, chosen in the Save dialog.
+    CreateSqliteDatabase(PathBuf),
     Close,
 }
 
@@ -38,6 +43,8 @@ enum Status {
     Tested(Result<ServerInfo, String>),
     Saving,
     SaveFailed(String),
+    Creating,
+    Created(Result<(), String>),
 }
 
 impl DataSourceDialog {
@@ -72,8 +79,19 @@ impl DataSourceDialog {
                 false
             }
             Event::DataSourceSaved(data_source) => data_source.id == self.id,
+            Event::SqliteDatabaseCreated { path, result } if self.is_sqlite_path(path) => {
+                self.status = Status::Created(result.clone());
+                false
+            }
             _ => false,
         }
+    }
+
+    fn is_sqlite_path(&self, path: &Path) -> bool {
+        let DriverFields::Sqlite(fields) = &self.form.fields else {
+            return false;
+        };
+        Path::new(fields.path.trim()) == path
     }
 
     pub fn show(&mut self, ctx: &egui::Context) -> Option<DialogAction> {
@@ -92,11 +110,18 @@ impl DataSourceDialog {
             ui.heading(self.title());
         });
         ui.add_space(ui.spacing().item_spacing.y);
-        self.fields(ui);
+        let new_database = self.fields(ui);
         ui.add_space(ui.spacing().item_spacing.y);
         self.status_line(ui);
         ui.separator();
-        self.buttons(ui)
+        let action = self.buttons(ui);
+        match new_database {
+            Some(path) => {
+                self.status = Status::Creating;
+                Some(DialogAction::CreateSqliteDatabase(path))
+            }
+            None => action,
+        }
     }
 
     fn title(&self) -> String {
@@ -108,7 +133,8 @@ impl DataSourceDialog {
         }
     }
 
-    fn fields(&mut self, ui: &mut Ui) {
+    /// Draws the form. Returns a path if the user chose to create a new SQLite database there.
+    fn fields(&mut self, ui: &mut Ui) -> Option<PathBuf> {
         let uses_password = self.form.driver().uses_password();
         let password_hint = if self.is_new { "none" } else { "unchanged" };
         Grid::new("data_source_fields")
@@ -118,10 +144,13 @@ impl DataSourceDialog {
                 ui.label("Colour");
                 color_picker(ui, &mut self.form.color);
                 ui.end_row();
-                match &mut self.form.fields {
-                    DriverFields::Postgres(fields) => postgres_rows(ui, fields),
+                let new_database = match &mut self.form.fields {
+                    DriverFields::Postgres(fields) => {
+                        postgres_rows(ui, fields);
+                        None
+                    }
                     DriverFields::Sqlite(fields) => sqlite_rows(ui, fields),
-                }
+                };
                 if uses_password {
                     let label = ui.label("Password");
                     ui.add(
@@ -133,7 +162,9 @@ impl DataSourceDialog {
                     .labelled_by(label.id);
                     ui.end_row();
                 }
-            });
+                new_database
+            })
+            .inner
     }
 
     fn status_line(&self, ui: &mut Ui) {
@@ -169,6 +200,23 @@ impl DataSourceDialog {
             }
             Status::SaveFailed(error) => {
                 ui.colored_label(error_color, format!("Could not save: {error}"));
+            }
+            Status::Creating => {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label("Creating the database file…");
+                });
+            }
+            Status::Created(Ok(())) => {
+                widgets::status(
+                    ui,
+                    icons::CHECK_CIRCLE,
+                    palette.success,
+                    "Created an empty database. Save to keep this data source.",
+                );
+            }
+            Status::Created(Err(error)) => {
+                ui.colored_label(error_color, format!("Could not create the file: {error}"));
             }
         }
     }
@@ -228,11 +276,43 @@ fn postgres_rows(ui: &mut Ui, fields: &mut PostgresFields) {
     text_row(ui, "User", &mut fields.user, "postgres");
 }
 
-fn sqlite_rows(ui: &mut Ui, fields: &mut SqliteFields) {
+/// The file field, then Browse… (open an existing database) and New… (create one). Returns the
+/// path of a database to create, if New… was used; the engine creates it.
+fn sqlite_rows(ui: &mut Ui, fields: &mut SqliteFields) -> Option<PathBuf> {
     text_row(ui, "File", &mut fields.path, "/path/to/database.db");
+    ui.label("");
+    let new_database = ui
+        .horizontal(|ui| {
+            let palette = Palette::for_visuals(ui.visuals());
+            if file_button(ui, icons::FOLDER_OPEN, palette.warning, "Browse…")
+                .on_hover_text("Open an existing database file")
+                .clicked()
+                && let Some(path) = file_picker::pick_sqlite_file(&fields.path)
+            {
+                fields.path = path.display().to_string();
+            }
+            let new_path = file_button(ui, icons::FILE_PLUS, palette.success, "New…")
+                .on_hover_text("Create a new, empty database file")
+                .clicked()
+                .then(|| file_picker::pick_new_sqlite_file(&fields.path))
+                .flatten()?;
+            fields.path = new_path.display().to_string();
+            // A database you just created is one you mean to write to.
+            fields.read_only = false;
+            Some(new_path)
+        })
+        .inner;
+    ui.end_row();
     ui.label("");
     ui.checkbox(&mut fields.read_only, "Read-only");
     ui.end_row();
+    new_database
+}
+
+/// A button with a coloured icon before its text, named by the text alone.
+fn file_button(ui: &mut Ui, glyph: &str, icon_color: Color32, text: &str) -> egui::Response {
+    let label = widgets::icon_text(ui, glyph, icon_color, text);
+    widgets::name(ui.button(label), WidgetType::Button, text, true)
 }
 
 /// "None" and one swatch per [`SourceColor`], like radio buttons.
