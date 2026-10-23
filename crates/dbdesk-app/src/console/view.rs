@@ -5,7 +5,9 @@ use egui::text::CCursorRange;
 use egui::{Id, Key, KeyboardShortcut, Modifiers, ScrollArea, TextBuffer, TextEdit, Ui, vec2};
 
 use super::{QueryConsole, RunScope, RunState, SubmittedStatement, highlight, results};
-use crate::theme::SUCCESS_COLOR;
+use crate::icons;
+use crate::theme::Palette;
+use crate::widgets::{self, IconButton};
 use dbdesk_engine::{RunId, RunOutcome, SessionState};
 
 const RUN_CURRENT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Enter);
@@ -68,46 +70,55 @@ fn push_run(console: &QueryConsole, scope: RunScope, actions: &mut Vec<ConsoleAc
 }
 
 fn toolbar(ui: &mut Ui, console: &QueryConsole, actions: &mut Vec<ConsoleAction>) {
-    ui.horizontal(|ui| {
+    let palette = Palette::for_visuals(ui.visuals());
+    widgets::toolbar(ui, |ui| {
         let running = console.is_running();
-        if ui
-            .add_enabled(!running, egui::Button::new("Run"))
-            .on_hover_text(format!(
+        if IconButton::new(icons::PLAY, "Run")
+            .color(palette.success)
+            .enabled(!running)
+            .tooltip(format!(
                 "Run the selection or the statement at the cursor ({})",
                 ui.ctx().format_shortcut(&RUN_CURRENT)
             ))
+            .show(ui)
             .clicked()
         {
             push_run(console, RunScope::Current, actions);
         }
-        if ui
-            .add_enabled(!running, egui::Button::new("Run all"))
-            .on_hover_text(format!(
+        if IconButton::new(icons::FAST_FORWARD, "Run all")
+            .color(palette.success)
+            .enabled(!running)
+            .tooltip(format!(
                 "Run every statement in the console ({})",
                 ui.ctx().format_shortcut(&RUN_ALL)
             ))
+            .show(ui)
             .clicked()
         {
             push_run(console, RunScope::All, actions);
         }
         let cancellable = console.cancellable_run();
-        if ui
-            .add_enabled(cancellable.is_some(), egui::Button::new("Cancel"))
-            .on_hover_text(format!(
+        if IconButton::new(icons::STOP, "Cancel")
+            .color(palette.error)
+            .enabled(cancellable.is_some())
+            .tooltip(format!(
                 "Stop the running statement or discard unread rows ({})",
                 ui.ctx().format_shortcut(&CANCEL)
             ))
+            .show(ui)
             .clicked()
             && let Some(run) = cancellable
         {
             actions.push(ConsoleAction::Cancel(run));
         }
+        ui.add_space(6.0);
         ui.separator();
-        run_status(ui, console);
+        ui.add_space(6.0);
+        run_status(ui, console, palette);
     });
 }
 
-fn run_status(ui: &mut Ui, console: &QueryConsole) {
+fn run_status(ui: &mut Ui, console: &QueryConsole, palette: &Palette) {
     match (&console.session, console.run.as_ref().map(|run| run.state)) {
         (SessionState::Connecting, _) => {
             ui.spinner();
@@ -119,17 +130,16 @@ fn run_status(ui: &mut Ui, console: &QueryConsole) {
         }
         (_, Some(RunState::Finished { outcome, elapsed })) => {
             let millis = elapsed.as_millis();
-            match outcome {
-                RunOutcome::Completed => {
-                    ui.colored_label(SUCCESS_COLOR, format!("Done in {millis} ms"));
-                }
-                RunOutcome::Failed => {
-                    ui.colored_label(ui.visuals().error_fg_color, "Failed");
-                }
-                RunOutcome::Cancelled => {
-                    ui.colored_label(ui.visuals().warn_fg_color, "Cancelled");
-                }
-            }
+            let (glyph, color, text) = match outcome {
+                RunOutcome::Completed => (
+                    icons::CHECK_CIRCLE,
+                    palette.success,
+                    format!("Done in {millis} ms"),
+                ),
+                RunOutcome::Failed => (icons::X_CIRCLE, palette.error, "Failed".to_owned()),
+                RunOutcome::Cancelled => (icons::PROHIBIT, palette.warning, "Cancelled".to_owned()),
+            };
+            widgets::status(ui, glyph, color, &text);
         }
         (SessionState::Connected(server), None) => {
             ui.weak(format!("Connected to {server}"));

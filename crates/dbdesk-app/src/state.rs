@@ -1,4 +1,4 @@
-use dbdesk_core::{DataSource, DataSourceId};
+use dbdesk_core::{DataSource, DataSourceId, SourceColor};
 use dbdesk_engine::{Event, SessionState};
 
 use crate::catalog_tree::CatalogTree;
@@ -131,6 +131,14 @@ impl DataSources {
             Self::Loaded(entries) => entries,
             Self::Loading | Self::Unavailable(_) => &[],
         }
+    }
+
+    pub fn color_of(&self, id: DataSourceId) -> Option<SourceColor> {
+        self.entries()
+            .iter()
+            .find(|entry| entry.data_source.id == id)?
+            .data_source
+            .color
     }
 
     fn entry_mut(&mut self, id: DataSourceId) -> Option<&mut DataSourceEntry> {

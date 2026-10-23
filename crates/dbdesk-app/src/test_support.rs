@@ -69,3 +69,19 @@ pub fn step_until_visible(harness: &mut Harness<'_, DbDeskApp>, text: &str) {
         harness.step();
     }
 }
+
+/// `Harness::new_ui` with dbdesk's fonts, which widgets that draw icons need. egui applies new
+/// fonts from the next frame on, so the first frame only installs them.
+pub fn ui_harness<'a>(mut app: impl FnMut(&mut egui::Ui) + 'a) -> Harness<'a> {
+    let mut fonts_installed = false;
+    let mut harness = Harness::new_ui(move |ui| {
+        if fonts_installed {
+            app(ui);
+        } else {
+            crate::fonts::install(ui.ctx());
+            fonts_installed = true;
+        }
+    });
+    harness.run();
+    harness
+}

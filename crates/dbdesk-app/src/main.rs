@@ -10,7 +10,9 @@ mod data_source_form;
 mod definition_window;
 mod delete_dialog;
 mod explorer;
+mod fonts;
 mod hazard_dialog;
+mod icons;
 mod log_console;
 #[cfg(test)]
 mod screenshots;
@@ -19,6 +21,8 @@ mod telemetry;
 #[cfg(test)]
 mod test_support;
 mod theme;
+mod welcome;
+mod widgets;
 mod workspace;
 
 use std::sync::Arc;

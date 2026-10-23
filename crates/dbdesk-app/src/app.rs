@@ -1,6 +1,7 @@
 use dbdesk_core::{CatalogPath, DataSourceId};
 use dbdesk_engine::{Command, EngineConfig, EngineError, EngineHandle, Event, Repaint};
-use egui_dock::{DockArea, DockState, Style};
+use egui::{Frame, Margin, RichText, ThemePreference};
+use egui_dock::{DockArea, DockState};
 
 use crate::consoles::Consoles;
 use crate::data_source_dialog::{DataSourceDialog, DialogAction};
@@ -9,7 +10,9 @@ use crate::delete_dialog::{DeleteChoice, DeleteConfirmation};
 use crate::explorer::{ExplorerAction, ExplorerOptions};
 use crate::log_console::{LogConsole, LogFeed};
 use crate::state::{AppState, EngineStatus};
+use crate::theme::{self, Palette};
 use crate::workspace::{self, Panels, Tab};
+use crate::{fonts, icons, widgets};
 
 const LAYOUT_STORAGE_KEY: &str = "dock_layout";
 
@@ -37,6 +40,9 @@ impl DbDeskApp {
             .and_then(|storage| eframe::get_value(storage, LAYOUT_STORAGE_KEY))
             .map_or_else(workspace::default_layout, workspace::without_consoles);
         let engine = EngineHandle::start(engine_config, EguiRepaint(cc.egui_ctx.clone()))?;
+        fonts::install(&cc.egui_ctx);
+        theme::install(&cc.egui_ctx);
+        egui_extras::install_image_loaders(&cc.egui_ctx);
 
         Ok(Self {
             engine: Some(engine),
@@ -211,6 +217,7 @@ impl DbDeskApp {
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("View", |ui| {
+                ui.menu_button("Theme", theme_menu);
                 if ui.button("Reset layout").clicked() {
                     self.dock = workspace::default_layout();
                     tracing::info!("layout reset");
@@ -220,11 +227,24 @@ impl DbDeskApp {
     }
 
     fn status_bar(&self, ui: &mut egui::Ui) {
-        ui.label(format!(
-            "Engine {} · {} connected",
-            self.state.engine_status.label(),
-            self.state.connected_count()
-        ));
+        let palette = Palette::for_visuals(ui.visuals());
+        let dot = match self.state.engine_status {
+            EngineStatus::Starting => palette.warning,
+            EngineStatus::Running => palette.success,
+            EngineStatus::Stopped => palette.error,
+        };
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("●").small().color(dot));
+            ui.label(
+                RichText::new(format!(
+                    "Engine {} · {} connected",
+                    self.state.engine_status.label(),
+                    self.state.connected_count()
+                ))
+                .small()
+                .color(palette.text_weak),
+            );
+        });
     }
 }
 
@@ -235,17 +255,32 @@ impl eframe::App for DbDeskApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        egui::Panel::top("menu_bar").show(ui, |ui| self.menu_bar(ui));
-        egui::Panel::bottom("status_bar").show(ui, |ui| self.status_bar(ui));
+        // The base colour shows in the gaps between the dock's islands.
+        ui.painter()
+            .rect_filled(ui.max_rect(), 0.0, ui.visuals().panel_fill);
+        let bar = Frame::new()
+            .fill(ui.visuals().panel_fill)
+            .inner_margin(Margin::symmetric(10, 2));
+        egui::Panel::top("menu_bar")
+            .frame(bar)
+            .show(ui, |ui| self.menu_bar(ui));
+        egui::Panel::bottom("status_bar")
+            .frame(bar)
+            .show(ui, |ui| self.status_bar(ui));
 
         let mut explorer_actions = Vec::new();
         let mut console_actions = Vec::new();
         let mut closed_consoles = Vec::new();
+        let palette = Palette::for_visuals(ui.visuals());
         DockArea::new(&mut self.dock)
-            .style(Style::from_egui(ui.style()))
+            .style(theme::dock_style(ui.style()))
+            // Calmer tab bars: tabs close one at a time, and panels don't fold away.
+            .show_leaf_collapse_buttons(false)
+            .show_leaf_close_all_buttons(false)
             .show_inside(
                 ui,
                 &mut Panels {
+                    palette,
                     log_console: &mut self.log_console,
                     data_sources: &self.state.data_sources,
                     explorer_options: &mut self.explorer_options,
@@ -296,6 +331,28 @@ impl eframe::App for DbDeskApp {
     }
 }
 
+/// Follow the OS, or force light or dark. egui keeps the choice with its own saved state.
+fn theme_menu(ui: &mut egui::Ui) {
+    let current = ui.ctx().options(|options| options.theme_preference);
+    for (preference, glyph, label) in [
+        (ThemePreference::System, icons::MONITOR, "Match system"),
+        (ThemePreference::Light, icons::SUN, "Light"),
+        (ThemePreference::Dark, icons::MOON, "Dark"),
+    ] {
+        let text = widgets::icon_text(ui, glyph, egui::Color32::PLACEHOLDER, label);
+        let response = widgets::name(
+            ui.selectable_label(current == preference, text),
+            egui::WidgetType::RadioButton,
+            label,
+            true,
+        );
+        if response.clicked() {
+            ui.ctx().set_theme(preference);
+            ui.close();
+        }
+    }
+}
+
 /// Lets the engine wake egui without depending on it.
 struct EguiRepaint(egui::Context);
 
@@ -343,7 +400,7 @@ mod tests {
         step_until_visible(&mut harness, "No data sources yet.");
 
         // egui_dock doesn't expose tab titles to accessibility, so check each panel's content.
-        harness.get_by_label_contains("Query consoles open here");
+        harness.get_by_label_contains("Welcome to dbdesk");
         harness.get_by_label_contains("logged before the window opened");
     }
 
@@ -356,7 +413,12 @@ mod tests {
         let mut harness = start_app(dir.path(), feed);
         step_until_visible(&mut harness, "No data sources yet.");
 
-        harness.get_by_label("+").click();
+        // The explorer's toolbar and the Welcome tab both offer it; either opens the menu.
+        harness
+            .get_all_by_label("New data source")
+            .next()
+            .unwrap()
+            .click();
         harness.run();
         harness.get_by_label("SQLite").click();
         harness.run();

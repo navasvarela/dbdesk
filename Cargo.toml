@@ -30,8 +30,12 @@ eframe = { version = "0.36.2", default-features = false, features = [
 # egui_dock 0.21 is built against egui 0.36; bump the egui family only together with it.
 egui = "0.36.2"
 egui_dock = { version = "0.21.1", features = ["serde"] }
-egui_extras = "0.36.2"
+egui_extras = { version = "0.36.2", features = ["image"] }
 egui_kittest = "0.36.2"
+# Icon font; 0.14 is the release built against egui 0.36.
+egui-phosphor = "0.14.0"
+# Decodes the PNGs egui_extras loads (the logo on the Welcome tab).
+image = { version = "0.25.10", default-features = false, features = ["png"] }
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 jiff = "0.2.38"
 keyring = "4.2.0"

@@ -5,7 +5,7 @@ The left-hand panel. It lists data sources and lets you browse what each one con
 ## Data sources
 
 A data source is a saved `ConnectionConfig`. M1 implements name, host/port/database/user,
-password, and SQLite file + read-only. The other rows are still planned:
+password, and SQLite file + read-only; D2 added the colour. The other rows are still planned:
 
 | Field | Postgres | SQLite |
 | --- | --- | --- |
@@ -17,7 +17,7 @@ password, and SQLite file + read-only. The other rows are still planned:
 | default schema / search_path | ✓ | — |
 | connect timeout, application_name | ✓ | — |
 
-Dialog flow: **+** → pick driver → form → **Test connection** (runs `TestConnection`; the result
+Dialog flow: **+** (New data source) → pick driver → form → **Test connection** (runs `TestConnection`; the result
 is shown inline and in the log console) → **Save**. The dialog stays open until the engine
 confirms the save, and shows the error if it fails. Edit and delete (with confirmation) are in
 the context menu, as are Connect and Disconnect. Duplicate is still to do; it's handy
@@ -31,7 +31,7 @@ for "same server, other database".
 ## Tree
 
 ```
-▸ my-postgres (●)                 data source, status dot: grey/amber/green/red
+▸ my-postgres ●                   data source, status dot: none/amber/green/red
   ▸ app_db                        database
     ▸ public                      schema
       ▸ tables (12)               folder
@@ -44,7 +44,7 @@ for "same server, other database".
       ▸ materialized views
       ▸ functions
       ▸ sequences
-▸ local.sqlite (●)
+▸ local.sqlite ●
   ▸ main                          schema (plus any attached databases)
     ▸ tables
       ▸ orders
@@ -52,7 +52,8 @@ for "same server, other database".
     ▸ views
 ```
 
-Folders don't show counts yet. Columns show their type and `not null` / `primary key` next to
+Loaded folders show a count badge (`tables 4`). Every row has an icon for its driver or node
+kind, coloured by kind; see [look-and-feel.md](look-and-feel.md#icons-and-colour). Columns show their type and `not null` / `primary key` next to
 the name; indexes and constraints show their kind.
 
 - **Lazy loading**: expanding a node sends `LoadChildren { id, path }`. Children appear when
@@ -71,8 +72,8 @@ the name; indexes and constraints show their kind.
   they don't match themselves. It never triggers loading of unloaded subtrees (that would hit
   the server for every keystroke).
 - **System objects**: `pg_catalog`, `information_schema`, `pg_toast*`, `pg_temp_*`, SQLite's
-  `temp` schema and `sqlite_*` tables are hidden by default. The **System** checkbox in the
-  toolbar shows them. It is global for now, not per data source.
+  `temp` schema and `sqlite_*` tables are hidden by default. The eye button in the toolbar
+  ("Show system schemas and tables") shows them. It is global for now, not per data source.
 
 ## Introspection queries
 

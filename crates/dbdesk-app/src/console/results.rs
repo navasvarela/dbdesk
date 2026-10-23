@@ -7,6 +7,7 @@ use egui::{Align, Label, Layout, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
 
 use super::{ConsoleAction, QueryConsole, RunState, StatementView};
+use crate::theme::{GRID_HEADER_TINT, Palette};
 
 const COLUMN_WIDTH: f32 = 140.0;
 const MIN_COLUMN_WIDTH: f32 = 40.0;
@@ -126,6 +127,8 @@ fn row_count(statement: &StatementView, summary: Option<&StatementSummary>) -> S
 /// exist) is the cue to load the next page: scrolling to the bottom loads more.
 fn grid(ui: &mut Ui, run: RunId, statement: &StatementView) -> bool {
     let row_height = ui.spacing().interact_size.y;
+    let palette = Palette::for_visuals(ui.visuals());
+    let header_fill = palette.tint(palette.primary, GRID_HEADER_TINT);
     let mut last_row_visible = false;
     let mut table = TableBuilder::new(ui)
         .id_salt(("results_grid", run.0, statement.range.start))
@@ -144,10 +147,12 @@ fn grid(ui: &mut Ui, run: RunId, statement: &StatementView) -> bool {
     table
         .header(row_height, |mut header| {
             header.col(|ui| {
+                fill_header_cell(ui, header_fill);
                 ui.weak("#");
             });
             for column in &statement.columns {
                 header.col(|ui| {
+                    fill_header_cell(ui, header_fill);
                     let label = ui.strong(&column.name);
                     if let Some(type_name) = &column.type_name {
                         label.on_hover_text(type_name);
@@ -160,7 +165,11 @@ fn grid(ui: &mut Ui, run: RunId, statement: &StatementView) -> bool {
                 let index = row.index();
                 let values = &statement.rows[index];
                 row.col(|ui| {
-                    ui.weak((index + 1).to_string());
+                    ui.label(
+                        RichText::new((index + 1).to_string())
+                            .monospace()
+                            .color(ui.visuals().weak_text_color()),
+                    );
                 });
                 for value in values {
                     row.col(|ui| cell(ui, value, values));
@@ -177,17 +186,25 @@ fn grid(ui: &mut Ui, run: RunId, statement: &StatementView) -> bool {
 fn cell(ui: &mut Ui, value: &Cell, row: &Row) {
     let response = match value {
         None => ui.add(
-            Label::new(RichText::new("NULL").italics().weak())
+            Label::new(RichText::new("NULL").monospace().italics().weak())
                 .selectable(false)
                 .sense(egui::Sense::click()),
         ),
         Some(text) if looks_numeric(text) => {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.add(Label::new(text).truncate().sense(egui::Sense::click()))
+                ui.add(
+                    Label::new(RichText::new(text).monospace())
+                        .truncate()
+                        .sense(egui::Sense::click()),
+                )
             })
             .inner
         }
-        Some(text) => ui.add(Label::new(text).truncate().sense(egui::Sense::click())),
+        Some(text) => ui.add(
+            Label::new(RichText::new(text).monospace())
+                .truncate()
+                .sense(egui::Sense::click()),
+        ),
     };
     response.context_menu(|ui| {
         if ui.button("Copy value").clicked() {
@@ -197,6 +214,14 @@ fn cell(ui: &mut Ui, value: &Cell, row: &Row) {
             ui.ctx().copy_text(row_as_tsv(row));
         }
     });
+}
+
+/// Tints a header cell, extending over the column gaps so the header reads as one band.
+fn fill_header_cell(ui: &Ui, fill: egui::Color32) {
+    let rect = ui
+        .max_rect()
+        .expand2(egui::vec2(ui.spacing().item_spacing.x, 0.0));
+    ui.painter().rect_filled(rect, 0.0, fill);
 }
 
 /// Right-align numbers, the way spreadsheets and DataGrip do. A text heuristic, because the

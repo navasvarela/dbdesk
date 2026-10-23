@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use dbdesk_core::{
-    ConnectionConfig, DataSource, DataSourceId, Password, PostgresConfig, SqliteConfig,
+    ConnectionConfig, DataSource, DataSourceId, Password, PostgresConfig, SourceColor, SqliteConfig,
 };
 use dbdesk_store::DataSourceFile;
 use egui::accesskit::Role;
@@ -178,7 +178,7 @@ impl Fixture {
         let mut data_sources = vec![DataSource {
             id: DataSourceId::generate(),
             name: "shop".to_owned(),
-            color: None,
+            color: Some(SourceColor::Orange),
             config: ConnectionConfig::Sqlite(SqliteConfig {
                 path: shop,
                 read_only: false,
@@ -219,7 +219,7 @@ fn postgres_data_source(url: &str) -> (DataSource, Password) {
     let data_source = DataSource {
         id: DataSourceId::generate(),
         name: "warehouse".to_owned(),
-        color: None,
+        color: Some(SourceColor::Red),
         config: ConnectionConfig::Postgres(PostgresConfig {
             host: host.to_owned(),
             port: port.parse().unwrap(),
@@ -262,7 +262,12 @@ fn expand(harness: &mut Harness<'static, DbDeskApp>, labels: &[&str]) {
 fn open_console(harness: &mut Harness<'static, DbDeskApp>, data_source: &str, sql: &str) {
     harness.get_by_label(data_source).click_secondary();
     harness.run_ok();
-    harness.get_by_label("New query console").click();
+    // The Welcome tab has a card of the same name; the context menu comes first.
+    harness
+        .get_all_by_label("New query console")
+        .next()
+        .unwrap()
+        .click();
     harness.run_ok();
     let editor = harness.get_by_role(Role::MultilineTextInput);
     editor.focus();
@@ -295,7 +300,11 @@ fn console_error(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
 }
 
 fn data_source_dialog(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
-    harness.get_by_label("+").click();
+    harness
+        .get_all_by_label("New data source")
+        .next()
+        .unwrap()
+        .click();
     harness.run_ok();
     harness.get_by_label("PostgreSQL").click();
     harness.run_ok();

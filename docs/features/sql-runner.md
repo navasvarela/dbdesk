@@ -123,6 +123,7 @@ sequenceDiagram
   DELETE, MERGE, REPLACE, COPY), `Done` for DDL, or the error.
 - Virtualized rows (`egui_extras::TableBuilder`): only visible rows are laid out, so many
   thousands of loaded rows scroll smoothly. Resizable columns and a row-number column.
+- A header row tinted with the primary colour, striped rows, and cells in JetBrains Mono.
 - `NULL` in weak italics, numbers right-aligned (by looking at the text, because the text
   protocol doesn't say which columns are numeric), long text truncated with the full value on
   hover.
