@@ -270,7 +270,9 @@ each engine needs and the open decisions, is in [More databases](databases.md).
 - **DB2 — SQL Server:** `tiberius`, SQL Server logins first, `GO` batches, XML plans.
 - **DB3 — DuckDB:** files and in-memory data sources for querying CSV and Parquet, if the
   bundled engine keeps the downloads small enough.
-- **DB4 — Oracle:** after R2, because its client needs Oracle's own library installed
+- **DB4 — ClickHouse:** the official `clickhouse` crate over HTTP and HTTPS, results streamed
+  in a self-describing format, cancel by `query_id`, no transactions and a read-only grid.
+- **DB5 — Oracle:** after R2, because its client needs Oracle's own library installed
   separately.
 
 **DB0 demo note:** built in #26, #27 and #28. Run `docker compose up -d --wait`: besides the

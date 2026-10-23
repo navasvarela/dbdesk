@@ -1,6 +1,7 @@
 # More databases
 
-Status: **DB0 built**; DB1 onwards planned. Order agreed on 2026-10-23.
+Status: **DB0 built**; DB1 onwards planned. Order agreed on 2026-10-23; ClickHouse added
+after DuckDB the same day.
 
 dbdesk speaks PostgreSQL and SQLite. This plan adds the next engines in order of how many
 people would use them, and starts with the groundwork that makes each one cheaper than the
@@ -19,7 +20,11 @@ Two popularity measures, as of October 2026:
 | SQLite | outside the top five | 37.5% |
 
 DB-Engines scores search interest, job offers and discussion; the survey counts what developers
-say they use. Sources: [DB-Engines ranking](https://db-engines.com/en/ranking),
+say they use. Further down, the two analytics engines disagree: ClickHouse is 26th on
+DB-Engines and DuckDB 42nd, but 2.4% of developers use ClickHouse and 3.3% DuckDB. Sources:
+[DB-Engines ranking](https://db-engines.com/en/ranking) (the September 2026 positions of
+ClickHouse and DuckDB from
+[Bytebase's snapshot](https://www.bytebase.com/database-periodic-table.md) of it),
 [Stack Overflow Developer Survey 2025](https://survey.stackoverflow.co/2025/technology/).
 
 The order, with the reason for each place:
@@ -32,7 +37,11 @@ The order, with the reason for each place:
 3. **DuckDB.** Small in both rankings but much loved for analytics, and it can query CSV and
    Parquet files directly. It is a file like SQLite, so it fits the file picker; the price is a
    larger download, because its engine is compiled into dbdesk.
-4. **Oracle, later.** First on DB-Engines, but far less used by the developers dbdesk is for,
+4. **ClickHouse.** Ahead of DuckDB on DB-Engines, behind it among developers, and the
+   column store teams run for analytics on large event and log data. It comes after DuckDB
+   because fewer developers use it and, being a server, it is the larger job: a new protocol
+   (HTTP), no transactions, and a different idea of updating rows.
+5. **Oracle, later.** First on DB-Engines, but far less used by the developers dbdesk is for,
    and its Rust client needs Oracle's own client library installed separately, which breaks the
    "download and run" install the [release track](releasing.md) just built. Planned, not
    scheduled.
@@ -174,7 +183,52 @@ a row in the grid, and the conformance suite passes on both in CI.
 **Exit:** I open a DuckDB file and query a Parquet file from an in-memory data source, and the
 release packages stay within the size budget agreed below.
 
-### DB4 — Oracle (planned, not scheduled)
+### DB4 — ClickHouse
+
+- **Client: the official `clickhouse` crate**, which speaks ClickHouse's HTTP interface on
+  hyper, with rustls (its `rustls-tls-ring` feature, so no OpenSSL). Rows normally decode into
+  Rust structs known at compile time, which a console can't have; `Query::fetch_bytes` instead
+  streams any query in a named output format, so each statement runs with
+  `FORMAT JSONCompactEachRowWithNamesAndTypes`: the first two lines are the column names and
+  types, then one JSON array per row, read lazily, so paging works as on the other servers.
+  The native TCP protocol (port 9000) has no maintained Rust client.
+- **Connection:** HTTP is stateless, so a "connection" is a client plus a `session_id`
+  setting, which keeps `USE`, `SET` and temporary tables between statements as a console
+  expects.
+- **TLS:** HTTPS on its own port (8443 by default), not an upgrade of the HTTP one, so
+  `prefer` can't fall back on the same port. The form offers `disable`, `require` and
+  `verify-full` for ClickHouse, with the port following the choice.
+- **Cancel:** each statement runs with its own `query_id`, and ⌘. sends
+  `KILL QUERY WHERE query_id = '…'` on a second request. Dropping the HTTP request isn't
+  enough: ClickHouse only stops a query when its client disconnects if
+  `cancel_http_readonly_queries_on_client_close` is on, and never stops writes that way.
+- **Catalog:** databases, then tables, views, materialized views and dictionaries (told apart
+  by `system.tables.engine`), columns from `system.columns`, and the database's own functions
+  from `system.functions`. Definitions come from `SHOW CREATE`.
+- **Dialect:**
+  - `` `backtick` `` and `"double-quoted"` identifiers;
+  - backslash escapes inside `'…'` strings;
+  - `--` and `#` comments;
+  - `sqlparser`'s ClickHouse dialect for the syntax check, which reads less of ClickHouse
+    than of the others, so expect a longer known-gaps list.
+- **Transactions:** none in practice (ClickHouse's are experimental), so
+  `transaction_status` is always idle, and manual commit mode isn't offered for ClickHouse
+  consoles.
+- **Grid editing:** off at first. `ALTER TABLE … UPDATE` is an asynchronous mutation that
+  rewrites data parts, nothing like a row edit; the lightweight `UPDATE` of recent servers
+  is closer, and worth trying once it is generally available on the versions people run.
+- **Explain:** `EXPLAIN` returns the plan as text rows, shown as is.
+- **Validate:** `EXPLAIN PLAN` resolves tables and columns without reading data, for data
+  queries.
+- **CI:** the official `clickhouse/clickhouse-server` container, on Linux runners like
+  PostgreSQL, through the same conformance suite. The suite's transaction check doesn't apply
+  and is skipped for ClickHouse.
+
+**Exit:** I connect to a ClickHouse server over HTTP and HTTPS, browse its databases and
+tables, run a query over millions of rows and page through it, cancel a long one, and the
+conformance suite (without transactions) passes in CI.
+
+### DB5 — Oracle (planned, not scheduled)
 
 Waits until after R2 (signed installs).
 
@@ -196,8 +250,9 @@ Proposed defaults; each is confirmed when its milestone starts.
 | One MySQL driver or two | **One**, with MariaDB differences keyed off the server version. | A single crate and data source type; the form says "MySQL / MariaDB". |
 | DuckDB bundled or system library | **Bundled**, if it adds less than about 30 MB to the downloads. | No install step. Otherwise, link a system `libduckdb`, which Linux packages can depend on and macOS users would install with Homebrew. |
 | SQL Server authentication | **SQL Server logins first**, Entra ID next, Windows integrated last. | Covers Docker, most on-premises servers and Azure SQL with a SQL login. |
+| ClickHouse protocol | **HTTP**, through the official `clickhouse` crate. | Pure Rust, maintained by ClickHouse, works through proxies and ClickHouse Cloud. Slightly more overhead per statement than the native protocol, which no maintained Rust client speaks. |
 | Oracle | **After R2**, not scheduled. | Nothing built for Oracle until the release track is done. |
-| Logos for MySQL, MariaDB, SQL Server, DuckDB | From Simple Icons where it still has them, as for the current two; a neutral glyph otherwise. | The `assets/icons/databases` README records each one's source. |
+| Logos for MySQL, MariaDB, SQL Server, DuckDB, ClickHouse | From Simple Icons where it still has them, as for the current two; a neutral glyph otherwise. | The `assets/icons/databases` README records each one's source. |
 
 ## Risks
 
@@ -205,8 +260,8 @@ Proposed defaults; each is confirmed when its milestone starts.
   backslash escapes, SQL Server's `GO`) that can break statement splitting in ways tests miss.
   Each dialect gets a corpus of real statements that must split, format and lint identically
   before and after.
-- **Cancel that can't be guaranteed.** On MySQL and SQL Server, cancel can need a second
-  connection and a permission. When it fails, the console says so instead of spinning.
+- **Cancel that can't be guaranteed.** On MySQL, SQL Server and ClickHouse, cancel can need a
+  second connection (or request) and a permission. When it fails, the console says so instead of spinning.
 - **CI time.** Each server container adds a minute or two to the Linux job. If the job grows
   past about 15 minutes, engines other than PostgreSQL move to a separate job that runs in
   parallel.
