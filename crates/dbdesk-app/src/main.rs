@@ -12,6 +12,8 @@ mod explorer;
 mod export_dialog;
 mod hazard_dialog;
 mod history_window;
+mod keymap;
+mod keymap_window;
 mod log_console;
 mod rollback_dialog;
 mod state;
@@ -23,7 +25,9 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, anyhow};
 use dbdesk_engine::EngineConfig;
-use dbdesk_store::{APP_NAME, AppPaths, ConsoleFiles, DataSourceFile, HistoryFile, Keychain};
+use dbdesk_store::{
+    APP_NAME, AppPaths, ConsoleFiles, DataSourceFile, HistoryFile, Keychain, KeymapFile,
+};
 
 use crate::app::DbDeskApp;
 
@@ -40,6 +44,7 @@ fn main() -> anyhow::Result<()> {
         secrets: Arc::new(Keychain),
         consoles: ConsoleFiles::new(paths.consoles_dir()),
         history: HistoryFile::new(paths.history_file()),
+        keymap: KeymapFile::new(paths.keymap_file()),
     };
 
     let options = eframe::NativeOptions {

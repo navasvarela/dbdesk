@@ -5,25 +5,28 @@ use std::time::Instant;
 
 use egui::text::{CCursor, CCursorRange};
 use egui::text_edit::TextEditState;
-use egui::{
-    Id, Key, KeyboardShortcut, Margin, Modifiers, ScrollArea, TextBuffer, TextEdit, Ui, vec2,
-};
+use egui::{Id, Margin, ScrollArea, TextBuffer, TextEdit, Ui, vec2};
 
 use super::highlight::Marks;
 use super::{
     QueryConsole, RunScope, RunState, SubmittedStatement, cell_viewer, highlight, results,
 };
+use crate::keymap::{Action, Keymap};
 use crate::theme::SUCCESS_COLOR;
 use dbdesk_core::TransactionStatus;
 use dbdesk_engine::{RunId, RunOutcome, SessionState, TransactionEnd, TransactionMode};
 use dbdesk_store::ExportFormat;
 
-const RUN_CURRENT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Enter);
-const RUN_ALL: KeyboardShortcut =
-    KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::Enter);
-const CANCEL: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Period);
-const EXPLAIN: KeyboardShortcut =
-    KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::ALT), Key::E);
+/// What the console's keys can do while its editor has focus.
+const EDITOR_ACTIONS: [Action; 7] = [
+    Action::RunCurrent,
+    Action::RunAll,
+    Action::Explain,
+    Action::Cancel,
+    Action::ShowHistory,
+    Action::Commit,
+    Action::Rollback,
+];
 
 /// Height the results start at; the user can drag the line above them.
 const RESULTS_HEIGHT: f32 = 280.0;
@@ -45,11 +48,16 @@ pub enum ConsoleAction {
     ShowHistory,
 }
 
-pub fn show(ui: &mut Ui, console: &mut QueryConsole, actions: &mut Vec<ConsoleAction>) {
+pub fn show(
+    ui: &mut Ui,
+    console: &mut QueryConsole,
+    keymap: &Keymap,
+    actions: &mut Vec<ConsoleAction>,
+) {
     let editor_id = Id::new(("console_editor", console.id.0));
-    shortcuts(ui, console, editor_id, actions);
-    toolbar(ui, console, actions);
-    transaction_bar(ui, console, actions);
+    shortcuts(ui, console, keymap, editor_id, actions);
+    toolbar(ui, console, keymap, actions);
+    transaction_bar(ui, console, keymap, actions);
     ui.separator();
     let (editor_height, results_height) = split_heights(ui, console);
     let width = ui.available_width();
@@ -58,7 +66,7 @@ pub fn show(ui: &mut Ui, console: &mut QueryConsole, actions: &mut Vec<ConsoleAc
     });
     splitter(ui, console);
     ui.allocate_ui(vec2(width, results_height), |ui| {
-        results::show(ui, console, actions);
+        results::show(ui, console, keymap, actions);
     });
     cell_viewer::show(ui.ctx(), console);
 }
@@ -106,87 +114,93 @@ fn splitter(ui: &mut Ui, console: &QueryConsole) {
 /// editor sees them, so ⌘↵ runs instead of inserting a newline.
 fn shortcuts(
     ui: &mut Ui,
-    console: &mut QueryConsole,
+    console: &QueryConsole,
+    keymap: &Keymap,
     editor_id: Id,
     actions: &mut Vec<ConsoleAction>,
 ) {
     if !ui.memory(|memory| memory.has_focus(editor_id)) {
         return;
     }
-    // Checked before RUN_CURRENT, which would also match ⇧⌘↵.
-    if ui.input_mut(|input| input.consume_shortcut(&RUN_ALL)) {
-        push_run(console, RunScope::All, actions);
-    } else if ui.input_mut(|input| input.consume_shortcut(&RUN_CURRENT)) {
-        push_run(console, RunScope::Current, actions);
-    }
-    if ui.input_mut(|input| input.consume_shortcut(&EXPLAIN)) {
-        push_run(console, RunScope::Explain, actions);
-    }
-    if ui.input_mut(|input| input.consume_shortcut(&CANCEL))
-        && let Some(run) = console.cancellable_run()
-    {
-        actions.push(ConsoleAction::Cancel(run));
+    for action in ui.input_mut(|input| keymap.consume(input, &EDITOR_ACTIONS)) {
+        perform(console, action, actions);
     }
 }
 
-fn push_run(console: &QueryConsole, scope: RunScope, actions: &mut Vec<ConsoleAction>) {
+/// Does what a toolbar button or a shortcut asks, if it can be done now.
+fn perform(console: &QueryConsole, action: Action, actions: &mut Vec<ConsoleAction>) {
+    if !is_enabled(console, action) {
+        return;
+    }
+    let scope = match action {
+        Action::RunCurrent => RunScope::Current,
+        Action::RunAll => RunScope::All,
+        Action::Explain => RunScope::Explain,
+        Action::Cancel => {
+            actions.extend(console.cancellable_run().map(ConsoleAction::Cancel));
+            return;
+        }
+        Action::ShowHistory => {
+            actions.push(ConsoleAction::ShowHistory);
+            return;
+        }
+        Action::Commit => {
+            actions.push(ConsoleAction::EndTransaction(TransactionEnd::Commit));
+            return;
+        }
+        Action::Rollback => {
+            actions.push(ConsoleAction::EndTransaction(TransactionEnd::Rollback));
+            return;
+        }
+        // The grid handles its own keys.
+        Action::ViewCell => return,
+    };
     let statements = console.statements_to_run(scope);
     if !statements.is_empty() {
         actions.push(ConsoleAction::Run(statements));
     }
 }
 
-fn toolbar(ui: &mut Ui, console: &QueryConsole, actions: &mut Vec<ConsoleAction>) {
+fn is_enabled(console: &QueryConsole, action: Action) -> bool {
+    match action {
+        Action::RunCurrent | Action::RunAll | Action::Explain => !console.is_running(),
+        Action::Cancel => console.cancellable_run().is_some(),
+        Action::Commit | Action::Rollback => console.has_open_transaction(),
+        Action::ShowHistory | Action::ViewCell => true,
+    }
+}
+
+/// A toolbar button for `action`, described with its shortcut, if it has one.
+fn action_button(
+    ui: &mut Ui,
+    console: &QueryConsole,
+    keymap: &Keymap,
+    (label, action): (&str, Action),
+    actions: &mut Vec<ConsoleAction>,
+) {
+    let hint = match keymap.hint(ui.ctx(), action) {
+        Some(shortcut) => format!("{} ({shortcut})", action.description()),
+        None => action.description().to_owned(),
+    };
+    if ui
+        .add_enabled(is_enabled(console, action), egui::Button::new(label))
+        .on_hover_text(hint)
+        .clicked()
+    {
+        perform(console, action, actions);
+    }
+}
+
+fn toolbar(ui: &mut Ui, console: &QueryConsole, keymap: &Keymap, actions: &mut Vec<ConsoleAction>) {
     ui.horizontal(|ui| {
-        let running = console.is_running();
-        if ui
-            .add_enabled(!running, egui::Button::new("Run"))
-            .on_hover_text(format!(
-                "Run the selection or the statement at the cursor ({})",
-                ui.ctx().format_shortcut(&RUN_CURRENT)
-            ))
-            .clicked()
-        {
-            push_run(console, RunScope::Current, actions);
-        }
-        if ui
-            .add_enabled(!running, egui::Button::new("Run all"))
-            .on_hover_text(format!(
-                "Run every statement in the console ({})",
-                ui.ctx().format_shortcut(&RUN_ALL)
-            ))
-            .clicked()
-        {
-            push_run(console, RunScope::All, actions);
-        }
-        if ui
-            .add_enabled(!running, egui::Button::new("Explain"))
-            .on_hover_text(format!(
-                "Show how the database would run the statement at the cursor ({})",
-                ui.ctx().format_shortcut(&EXPLAIN)
-            ))
-            .clicked()
-        {
-            push_run(console, RunScope::Explain, actions);
-        }
-        let cancellable = console.cancellable_run();
-        if ui
-            .add_enabled(cancellable.is_some(), egui::Button::new("Cancel"))
-            .on_hover_text(format!(
-                "Stop the running statement or discard unread rows ({})",
-                ui.ctx().format_shortcut(&CANCEL)
-            ))
-            .clicked()
-            && let Some(run) = cancellable
-        {
-            actions.push(ConsoleAction::Cancel(run));
-        }
-        if ui
-            .button("History")
-            .on_hover_text("Search the statements run on this data source")
-            .clicked()
-        {
-            actions.push(ConsoleAction::ShowHistory);
+        for button in [
+            ("Run", Action::RunCurrent),
+            ("Run all", Action::RunAll),
+            ("Explain", Action::Explain),
+            ("Cancel", Action::Cancel),
+            ("History", Action::ShowHistory),
+        ] {
+            action_button(ui, console, keymap, button, actions);
         }
         ui.separator();
         run_status(ui, console);
@@ -200,7 +214,12 @@ fn toolbar(ui: &mut Ui, console: &QueryConsole, actions: &mut Vec<ConsoleAction>
 /// The transaction mode, Commit and Rollback, and whether a transaction is pending. The
 /// buttons show in manual mode, or whenever a transaction is open (one the user began with
 /// their own `BEGIN`, say).
-fn transaction_bar(ui: &mut Ui, console: &mut QueryConsole, actions: &mut Vec<ConsoleAction>) {
+fn transaction_bar(
+    ui: &mut Ui,
+    console: &mut QueryConsole,
+    keymap: &Keymap,
+    actions: &mut Vec<ConsoleAction>,
+) {
     ui.horizontal(|ui| {
         let open = console.has_open_transaction();
         ui.add_enabled_ui(!open, |ui| {
@@ -215,13 +234,8 @@ fn transaction_bar(ui: &mut Ui, console: &mut QueryConsole, actions: &mut Vec<Co
         .response
         .on_disabled_hover_text("Commit or roll back the open transaction first");
         if console.transactions == TransactionMode::Manual || open {
-            for (label, end) in [
-                ("Commit", TransactionEnd::Commit),
-                ("Rollback", TransactionEnd::Rollback),
-            ] {
-                if ui.add_enabled(open, egui::Button::new(label)).clicked() {
-                    actions.push(ConsoleAction::EndTransaction(end));
-                }
+            for button in [("Commit", Action::Commit), ("Rollback", Action::Rollback)] {
+                action_button(ui, console, keymap, button, actions);
             }
         }
         transaction_status(ui, console);

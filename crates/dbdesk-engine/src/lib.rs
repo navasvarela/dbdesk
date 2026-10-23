@@ -11,6 +11,7 @@ mod events;
 mod export;
 mod handle;
 mod history;
+mod keymap;
 mod open;
 mod protocol;
 mod registry;

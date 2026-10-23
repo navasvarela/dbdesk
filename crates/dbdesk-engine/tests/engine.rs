@@ -16,7 +16,9 @@ use dbdesk_core::{
     PostgresConfig,
 };
 use dbdesk_engine::{Command, ConsoleId, Event, Export, PasswordUpdate, SessionState};
-use dbdesk_store::{ConsoleKey, ConsoleName, DataSourceFile, ExportFormat, SavedConsole};
+use dbdesk_store::{
+    ConsoleKey, ConsoleName, DataSourceFile, ExportFormat, KeymapBindings, SavedConsole,
+};
 
 #[test]
 fn saves_connects_disconnects_and_deletes_a_data_source() {
@@ -111,6 +113,7 @@ fn saves_console_files_in_order_and_reloads_them_after_a_restart() {
 
     let mut restarted = TestEngine::start(&file, Arc::default());
     restarted.expect(Event::Started);
+    restarted.expect_keymap(Ok(KeymapBindings::new()));
     restarted.expect(Event::DataSourcesLoaded(vec![]));
     restarted.expect(Event::ConsolesLoaded(vec![SavedConsole {
         key: key("console"),
@@ -155,6 +158,35 @@ fn exports_rows_to_a_file_and_reports_failures() {
 }
 
 #[test]
+fn creates_and_reloads_the_keymap_but_never_overwrites_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    engine.expect_started(vec![]);
+    let bindings = |shortcut: &str| {
+        KeymapBindings::from([("console.run".to_owned(), vec![shortcut.to_owned()])])
+    };
+
+    engine.send(Command::CreateKeymap {
+        text: "[bindings]\n\"console.run\" = \"cmd+r\"\n".to_owned(),
+    });
+    engine.expect_keymap(Ok(bindings("cmd+r")));
+    std::fs::write(
+        dir.path().join("keymap.toml"),
+        "[bindings]\n\"console.run\" = \"f5\"\n",
+    )
+    .unwrap();
+    engine.send(Command::ReloadKeymap);
+    engine.expect_keymap(Ok(bindings("f5")));
+    engine.send(Command::CreateKeymap {
+        text: "[bindings]\n".to_owned(),
+    });
+
+    engine.expect_keymap(Err(String::new()));
+    engine.send(Command::ReloadKeymap);
+    engine.expect_keymap(Ok(bindings("f5")));
+}
+
+#[test]
 fn reports_failed_tests_and_connections() {
     let dir = tempfile::tempdir().unwrap();
     let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
@@ -192,6 +224,7 @@ fn never_overwrites_an_unreadable_data_sources_file() {
     std::fs::write(&file, broken).unwrap();
     let mut engine = TestEngine::start(&file, Arc::default());
     engine.expect(Event::Started);
+    engine.expect_keymap(Ok(KeymapBindings::new()));
     assert!(matches!(
         engine.next_event(),
         Event::DataSourcesUnavailable { .. }
