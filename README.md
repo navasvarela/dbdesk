@@ -18,8 +18,9 @@ until you commit. The grid selects, copies, sorts and filters loaded rows, shows
 exports CSV or JSON, and edits a table's rows. Console and grid shortcuts can be changed in
 `keymap.toml`, and the interface comes in light and dark themes.
 
-The [user manual](book/src/SUMMARY.md) explains how to install and use dbdesk. Build it with
-`mdbook serve book` to read it in a browser.
+Website: **<https://navasvarela.github.io/dbdesk/>**, with the
+[user manual](https://navasvarela.github.io/dbdesk/manual/), which explains how to install and
+use dbdesk. Its sources are in `book/`; `mdbook serve book` shows it locally.
 
 ## Building and running
 

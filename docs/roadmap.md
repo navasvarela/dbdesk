@@ -329,3 +329,12 @@ by one ignored test (`screenshots::regenerate_screenshots`), and CI builds the b
   (While it was private, Pages would have needed a paid plan or a separate public repository.)
 
 **Exit:** the site is live, linked from the README, and redeploys on every merge to `main`.
+
+**Demo note:** built. <https://navasvarela.github.io/dbdesk/> is one hand-written page in
+`site/` (HTML and CSS, the app's palette and bundled fonts, dark first with a light theme), with
+the manual under `/manual/`. `site/build.sh` assembles both, copying the logo, fonts and database
+logos from `assets/` rather than keeping second copies. `.github/workflows/pages.yml` builds it
+on pull requests that touch it (checking the landing page's links with lychee, offline, and the
+manual's with mdbook-linkcheck2) and publishes it on every push to `main`. The Welcome tab's
+**Open the manual** now opens the published manual. The Download button goes to the releases
+page, which is empty until the first release is published.

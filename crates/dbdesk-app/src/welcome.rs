@@ -17,8 +17,9 @@ use crate::state::DataSources;
 use crate::theme::Palette;
 use crate::widgets;
 
-/// Where "Open the manual" goes: the user manual's sources, readable on GitHub.
-const MANUAL_URL: &str = "https://github.com/navasvarela/dbdesk/blob/main/book/src/SUMMARY.md";
+/// Where "Open the manual" goes: the user manual on dbdesk's website, published from `book/`
+/// by `.github/workflows/pages.yml`.
+const MANUAL_URL: &str = "https://navasvarela.github.io/dbdesk/manual/";
 
 const LOGO_SIZE: f32 = 64.0;
 const CARD_SIZE: Vec2 = vec2(132.0, 104.0);
