@@ -22,4 +22,6 @@ pub use history::{History, HistoryEntry, HistoryError, HistoryFile, HistoryOutco
 pub use keymap::{KeymapBindings, KeymapError, KeymapFile};
 pub use paths::{APP_NAME, AppPaths};
 pub use secrets::{Keychain, SecretError, SecretStore};
-pub use settings::{FormatSettings, KeywordCase, Settings, SettingsError, SettingsFile};
+pub use settings::{
+    FormatSettings, KeywordCase, LintSettings, Settings, SettingsError, SettingsFile,
+};

@@ -20,6 +20,10 @@ pub trait CatalogSource {
     fn tables(&self) -> Vec<TableEntry>;
     /// `None` if the table's columns haven't been loaded.
     fn columns(&self, table: &TableEntry) -> Option<Vec<ColumnEntry>>;
+    /// Whether every table and view of `schema` has been loaded, or with `None`, of every
+    /// schema (and the list of schemas itself): only then is a name missing from
+    /// [`CatalogSource::tables`] really missing.
+    fn tables_loaded(&self, schema: Option<&str>) -> bool;
 }
 
 /// A data source with nothing cached: completion offers keywords only.
@@ -40,6 +44,10 @@ impl CatalogSource for NoCatalog {
 
     fn columns(&self, _: &TableEntry) -> Option<Vec<ColumnEntry>> {
         None
+    }
+
+    fn tables_loaded(&self, _: Option<&str>) -> bool {
+        false
     }
 }
 
@@ -93,6 +101,8 @@ pub struct TableRef {
     pub schema: Option<String>,
     pub table: String,
     pub alias: Option<String>,
+    /// The bytes of `[schema.]table` in the statement.
+    pub range: Range<usize>,
 }
 
 /// The completion point for a cursor at byte `cursor` of `text`, or `None` where nothing
@@ -161,7 +171,13 @@ pub fn table_references(statement: &str, dialect: Dialect) -> Vec<TableRef> {
     let mut references = Vec::new();
     let mut index = 0;
     while index < tokens.len() {
-        let introduces = word(index).is_some_and(|w| TABLE_INTRODUCERS.contains(&w.as_str()));
+        // `DO UPDATE SET` (an upsert) and `FOR [NO KEY] UPDATE` (locking) name no table.
+        let not_a_statement = index
+            .checked_sub(1)
+            .and_then(word)
+            .is_some_and(|before| matches!(before.as_str(), "do" | "for" | "key"));
+        let introduces = word(index).is_some_and(|w| TABLE_INTRODUCERS.contains(&w.as_str()))
+            && !(not_a_statement && word(index).as_deref() == Some("update"));
         index += 1;
         if !introduces {
             continue;
@@ -207,11 +223,15 @@ fn read_reference(text: &str, tokens: &[Token], index: usize) -> Option<(TableRe
     if alias.is_some() {
         next += 1;
     }
+    let name_end = tokens[if schema.is_some() { index + 2 } else { index }]
+        .range
+        .end;
     Some((
         TableRef {
             schema,
             table,
             alias,
+            range: tokens[index].range.start..name_end,
         },
         next,
     ))
@@ -343,7 +363,7 @@ fn unqualified(
 
 /// The catalog's table for a reference: in its schema if it names one, else in the default
 /// schema, else in whichever schema has it.
-fn resolve<'a>(
+pub(super) fn resolve<'a>(
     schema: Option<&str>,
     name: &str,
     tables: &'a [TableEntry],
@@ -437,6 +457,10 @@ mod tests {
                 "Order Items" => Some(vec![column("order_id"), column("Quantity")]),
                 _ => None,
             }
+        }
+
+        fn tables_loaded(&self, _: Option<&str>) -> bool {
+            true
         }
     }
 

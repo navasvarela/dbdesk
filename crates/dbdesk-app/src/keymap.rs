@@ -21,12 +21,14 @@ pub enum Action {
     Rollback,
     Format,
     FormatAll,
+    NextProblem,
+    PreviousProblem,
     ViewCell,
     EditCell,
 }
 
 impl Action {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 14] = [
         Self::Complete,
         Self::RunCurrent,
         Self::RunAll,
@@ -37,6 +39,8 @@ impl Action {
         Self::Rollback,
         Self::Format,
         Self::FormatAll,
+        Self::NextProblem,
+        Self::PreviousProblem,
         Self::ViewCell,
         Self::EditCell,
     ];
@@ -53,6 +57,8 @@ impl Action {
             Self::Rollback => "console.rollback",
             Self::Format => "console.format",
             Self::FormatAll => "console.format-all",
+            Self::NextProblem => "console.next-problem",
+            Self::PreviousProblem => "console.previous-problem",
             Self::ViewCell => "grid.view-cell",
             Self::EditCell => "grid.edit-cell",
         }
@@ -70,6 +76,8 @@ impl Action {
             Self::Rollback => "Roll back the console's transaction",
             Self::Format => "Format the selection, or the statement at the cursor",
             Self::FormatAll => "Format every statement in the console",
+            Self::NextProblem => "Go to the next syntax error or warning",
+            Self::PreviousProblem => "Go to the previous syntax error or warning",
             Self::ViewCell => "Show the selected cell in the cell viewer",
             Self::EditCell => "Edit the selected cell, if its table can be edited",
         }
@@ -95,6 +103,9 @@ impl Action {
                 Modifiers::COMMAND | Modifiers::ALT | Modifiers::SHIFT,
                 Key::L,
             ),
+            // VS Code's keys: F2, JetBrains' choice, edits a grid cell here.
+            Self::NextProblem => shortcut(Modifiers::NONE, Key::F8),
+            Self::PreviousProblem => shortcut(Modifiers::SHIFT, Key::F8),
             Self::ViewCell => shortcut(Modifiers::NONE, Key::Space),
             Self::EditCell => vec![
                 KeyboardShortcut::new(Modifiers::NONE, Key::F2),

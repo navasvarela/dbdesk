@@ -4,7 +4,9 @@
 use std::path::PathBuf;
 
 use dbdesk_engine::Event;
-use dbdesk_sql::{FormatOptions, KeywordCase};
+
+use crate::console::LintOptions;
+use dbdesk_sql::{FormatOptions, KeywordCase, LintRule};
 use dbdesk_store::{FormatSettings, Settings};
 
 /// The indent widths the formatter accepts; a file asking for more or less gets the nearest.
@@ -57,6 +59,30 @@ impl AppSettings {
     pub fn format_options(&self) -> FormatOptions {
         format_options(&self.settings.format)
     }
+
+    pub fn lint_options(&self) -> LintOptions {
+        LintOptions {
+            disabled: self
+                .settings
+                .lint
+                .disabled
+                .iter()
+                .filter_map(|id| LintRule::from_id(id))
+                .collect(),
+            ask_database: self.settings.lint.ask_database,
+        }
+    }
+
+    /// What in the file couldn't be used: rule ids that name no rule.
+    pub fn problems(&self) -> Vec<String> {
+        self.settings
+            .lint
+            .disabled
+            .iter()
+            .filter(|id| LintRule::from_id(id).is_none())
+            .map(|id| format!("lint.disabled: {id:?} is not a lint rule"))
+            .collect()
+    }
 }
 
 fn format_options(settings: &FormatSettings) -> FormatOptions {
@@ -86,6 +112,7 @@ mod tests {
                 keyword_case: dbdesk_store::KeywordCase::Lower,
                 indent_width: 40,
             },
+            ..Settings::default()
         };
         settings.apply(&Event::SettingsLoaded {
             path: "settings.toml".into(),
