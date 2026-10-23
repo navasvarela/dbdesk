@@ -3,7 +3,7 @@
 
 use dbdesk_core::{CatalogNode, CatalogPath, ConnectionConfig, FolderKind, NodeKind};
 
-use super::completion::{CatalogSource, ColumnEntry, TableEntry, TableRef};
+use super::completion::{CatalogSource, ColumnEntry, FunctionEntry, TableEntry, TableRef};
 use crate::catalog_tree::{CatalogTree, Children};
 
 /// Folders whose objects complete as tables (views among them).
@@ -179,6 +179,31 @@ impl CatalogSource for TreeCatalog<'_> {
                 })
                 .collect(),
         )
+    }
+
+    /// Functions are labelled with their arguments, `add(integer, integer)`, on PostgreSQL.
+    fn functions(&self) -> Vec<FunctionEntry> {
+        self.schema_nodes()
+            .filter_map(|schema| {
+                let folder = self.folder(&schema.path, FolderKind::Functions)?;
+                let functions = self.tree.loaded_children(&folder.path)?;
+                Some(functions.iter().map(|function| {
+                    let (name, arguments) = match function.label.find('(') {
+                        Some(open) => (
+                            function.label[..open].to_owned(),
+                            Some(function.label[open..].to_owned()),
+                        ),
+                        None => (function.label.clone(), None),
+                    };
+                    FunctionEntry {
+                        schema: schema.label.clone(),
+                        name,
+                        arguments,
+                    }
+                }))
+            })
+            .flatten()
+            .collect()
     }
 
     fn tables_loaded(&self, schema: Option<&str>) -> bool {

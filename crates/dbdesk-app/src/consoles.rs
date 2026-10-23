@@ -11,7 +11,7 @@ use dbdesk_sql::FormatOptions;
 use dbdesk_store::{ConsoleKey, ConsoleName, ExportFormat};
 
 use crate::console::{
-    self, ConsoleAction, FormatScope, QueryConsole, RunScope, SubmittedStatement,
+    self, ConsoleAction, FormatScope, QueryConsole, RecentCompletions, RunScope, SubmittedStatement,
 };
 use crate::hazard_dialog::{self, HazardChoice, HazardConfirmation, Review};
 use crate::rollback_dialog::Closing;
@@ -23,6 +23,8 @@ pub const SAVE_DELAY: Duration = Duration::from_secs(1);
 #[derive(Default)]
 pub struct Consoles {
     open: BTreeMap<ConsoleKey, QueryConsole>,
+    /// Completions accepted in any console, which rank first in all of them.
+    recent_completions: RecentCompletions,
     saved: SavedConsoles,
     next_console: u64,
     next_run: u64,
@@ -46,11 +48,16 @@ impl SavedConsoles {
 }
 
 impl Consoles {
-    /// The open consoles to draw, and the saved ones the explorer offers, borrowed at once.
+    /// The open consoles to draw, the saved ones the explorer offers, and the recent
+    /// completions, borrowed at once.
     pub fn open_and_saved_mut(
         &mut self,
-    ) -> (&mut BTreeMap<ConsoleKey, QueryConsole>, &SavedConsoles) {
-        (&mut self.open, &self.saved)
+    ) -> (
+        &mut BTreeMap<ConsoleKey, QueryConsole>,
+        &SavedConsoles,
+        &RecentCompletions,
+    ) {
+        (&mut self.open, &self.saved, &self.recent_completions)
     }
 
     #[cfg(test)]
@@ -220,6 +227,10 @@ impl Consoles {
                 console: id,
                 statements,
             }),
+            ConsoleAction::CompletionAccepted(candidate) => {
+                self.recent_completions.record(&candidate);
+                None
+            }
             // The app opens a window or a file dialog, or updates the catalog, for these.
             ConsoleAction::ShowHistory
             | ConsoleAction::Export(_)

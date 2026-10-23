@@ -5,8 +5,12 @@ use std::time::Instant;
 use egui::text_edit::TextEditOutput;
 use egui::{Area, Frame, Id, Key, Label, Modifiers, Order, RichText, ScrollArea, Ui};
 
+use dbdesk_core::NodeKind;
+
 use super::QueryConsole;
 use super::completion::CandidateKind;
+use crate::icons::{self, Icon};
+use crate::theme::Palette;
 
 const MAX_HEIGHT: f32 = 220.0;
 const WIDTH: f32 = 320.0;
@@ -84,16 +88,21 @@ pub fn show(ui: &Ui, console: &mut QueryConsole, output: &TextEditOutput) {
                     });
                     return;
                 }
+                let palette = Palette::for_visuals(ui.visuals());
+                // An area sizes itself from the frame before, so without a minimum the list
+                // would never grow past the height of its first, shorter content.
                 ScrollArea::vertical()
                     .max_height(MAX_HEIGHT)
+                    .min_scrolled_height(MAX_HEIGHT)
                     .show(ui, |ui| {
                         for (index, candidate) in open.candidates.iter().enumerate() {
-                            let text =
-                                format!("{} {}", kind_marker(candidate.kind), candidate.label);
                             let selected = index == open.selected;
                             let row = ui.horizontal(|ui| {
-                                let label =
-                                    ui.selectable_label(selected, RichText::new(text).monospace());
+                                ui.label(kind_icon(candidate.kind).rich_text(palette));
+                                let label = ui.selectable_label(
+                                    selected,
+                                    RichText::new(&candidate.label).monospace(),
+                                );
                                 if let Some(detail) = &candidate.detail {
                                     ui.add(Label::new(RichText::new(detail).weak()).truncate());
                                 }
@@ -120,13 +129,16 @@ pub fn show(ui: &Ui, console: &mut QueryConsole, output: &TextEditOutput) {
     }
 }
 
-/// A one-letter tag for what a candidate is, as DataGrip's icons tell them apart.
-fn kind_marker(kind: CandidateKind) -> &'static str {
+/// The icon a candidate's kind is shown with: the explorer's icon for catalog objects.
+fn kind_icon(kind: CandidateKind) -> Icon {
     match kind {
-        CandidateKind::Column => "c",
-        CandidateKind::Table => "t",
-        CandidateKind::View => "v",
-        CandidateKind::Schema => "s",
-        CandidateKind::Keyword => "k",
+        CandidateKind::Column => icons::node(NodeKind::Column),
+        CandidateKind::Table => icons::node(NodeKind::Table),
+        CandidateKind::View => icons::node(NodeKind::View),
+        CandidateKind::Schema => icons::node(NodeKind::Schema),
+        CandidateKind::Function => icons::node(NodeKind::Function),
+        CandidateKind::Derived => icons::derived_table(),
+        CandidateKind::Alias => icons::alias(),
+        CandidateKind::Keyword => icons::keyword(),
     }
 }

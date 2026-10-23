@@ -47,12 +47,41 @@ becomes the bottleneck, the plan is a dedicated editor widget in its own crate.
 - Typing a name (or a `.`) opens a list at the cursor; ⌃Space (`console.complete` in the
   [keymap](keymap.md)) opens it anywhere. ↑/↓ pick, Enter or Tab accept, Escape closes; a
   click elsewhere or typing a non-name character closes it too.
-- What it offers, matching the typed prefix ignoring case (a name typed in full isn't offered
-  again, so Enter still breaks the line):
-  - after `alias.` or `table.`: that table's columns; after `schema.`: that schema's tables;
-  - otherwise: the columns of the tables the statement names (after `FROM`, `JOIN`,
-    `UPDATE`, `INTO`, with their aliases), then tables and views (schema-qualified outside
-    `public`/`main`), schemas, and keywords (in the case you're typing).
+- **What the clause calls for** (`console/completion/context.rs`, read from the lexer's
+  tokens up to the cursor, so half-typed SQL works):
+
+  | Where | Offered |
+  | --- | --- |
+  | after `alias.` or `table.` | that table's columns (a CTE's or subquery's too) |
+  | after `schema.` | that schema's tables and views |
+  | `SELECT`, `WHERE`, `ON`, `GROUP BY`, `ORDER BY`, `HAVING`, `SET`, `RETURNING`, and inside their parentheses | columns of the statement's tables and subqueries, its aliases, functions, keywords |
+  | `FROM`, `JOIN`, `UPDATE`, `INTO`, after a comma in `FROM` | CTEs, tables and views (schema-qualified outside `public`/`main`), schemas, keywords |
+  | `INSERT INTO t (…)` | the columns of `t` |
+  | right after a table and its alias | keywords (`WHERE`, `JOIN`, …) |
+  | anywhere else (a statement's first word) | everything |
+
+- **The statement's own names**: table aliases declared anywhere in the statement, CTEs
+  (`WITH name [(columns)] AS (…)`), and subqueries in `FROM`/`JOIN` (`(…) [AS] alias
+  [(columns)]`). Their columns are the explicit column list, or the query's select list:
+  read by `sqlparser` (the syntax checker's parser) when the query parses, which a finished
+  CTE usually does, and otherwise from its tokens (`expr AS name`, `t.name`, `expr name`).
+  `*` and `t.*` expand to the catalog columns of the query's tables; unnamed expressions are
+  left out. `VALUES` lists are `column1`, `column2`, … as both databases name them.
+- **Functions**: the database's own, from the explorer's cached catalog where it has loaded a
+  schema's functions (PostgreSQL lists them with their arguments, shown as the detail), then
+  the common built-ins of the dialect (`dbdesk_sql::builtin_functions`). They are inserted
+  with their parentheses, the cursor between them, and only offered once something is typed.
+- **Ranking** (`console/completion/ranking.rs`): candidates starting with the typed prefix,
+  ignoring case, come first; then fuzzy matches, whose letters appear in order and whose
+  skips land on the start of a word (`cid` → `customer_id`, `cus` doesn't match
+  `cume_dist`), the fewer skipped letters the better. Within those, what was accepted lately
+  (in any console, the last 50) comes first, then the order above. A name typed in full isn't
+  offered again, so Enter still breaks the line. Keywords and functions follow the case being
+  typed.
+- **The list** shows each candidate with the explorer's icon for its kind (column, table,
+  view, schema, function; keywords, aliases and CTEs have their own), and its detail: a
+  column's type and table (`integer, primary key · customers`), `table · public`,
+  `function · public(integer)`, `alias · orders`, `CTE`.
 - Names come from the **explorer's cached catalog** for the console's data source, never from
   a query of their own. When the list needs a level that isn't cached (the schemas, a schema's
   tables, a referenced table's columns), the app loads it into that cache in the background,
@@ -62,7 +91,7 @@ becomes the bottleneck, the plan is a dedicated editor widget in its own crate.
 - System schemas (`pg_catalog`, `information_schema`) aren't offered. Names are quoted when
   they need it, with the same rule as Open data.
 
-*Planned*: bracket matching, completing functions and their arguments.
+*Planned*: bracket matching, argument hints for functions.
 
 ### Formatting
 

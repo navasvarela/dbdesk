@@ -122,6 +122,9 @@ struct Scene {
     data_sources: FixtureSources,
     /// Drives a freshly started app into the state to capture.
     play: fn(&mut Harness<'static, DbDeskApp>, &Fixture),
+    /// Leaves the pointer where the scene put it, for a tooltip; otherwise it is taken away,
+    /// so no cursor or hover highlight ends up in the image.
+    keeps_pointer: bool,
 }
 
 /// Which data sources a scene's app starts with.
@@ -138,61 +141,85 @@ const SCENES: &[Scene] = &[
         name: "first-launch",
         data_sources: FixtureSources::None,
         play: settle,
+        keeps_pointer: false,
     },
     Scene {
         name: "welcome",
         data_sources: FixtureSources::Shop,
         play: settle,
+        keeps_pointer: false,
     },
     Scene {
         name: "data-source-dialog",
         data_sources: FixtureSources::Shop,
         play: data_source_dialog,
+        keeps_pointer: false,
     },
     Scene {
         name: "sqlite-data-source-dialog",
         data_sources: FixtureSources::Shop,
         play: sqlite_data_source_dialog,
+        keeps_pointer: false,
     },
     Scene {
         name: "explorer-menu",
         data_sources: FixtureSources::Shop,
         play: explorer_menu,
+        keeps_pointer: false,
     },
     Scene {
         name: "explorer-filter",
         data_sources: FixtureSources::Shop,
         play: explorer_filter,
+        keeps_pointer: false,
     },
     Scene {
         name: "definition",
         data_sources: FixtureSources::Shop,
         play: definition,
+        keeps_pointer: false,
     },
     Scene {
         name: "workspace",
         data_sources: FixtureSources::Shop,
         play: workspace,
+        keeps_pointer: false,
     },
     Scene {
         name: "results-paging",
         data_sources: FixtureSources::Shop,
         play: results_paging,
+        keeps_pointer: false,
     },
     Scene {
         name: "multiple-statements",
         data_sources: FixtureSources::Shop,
         play: multiple_statements,
+        keeps_pointer: false,
     },
     Scene {
         name: "console-error",
         data_sources: FixtureSources::Shop,
         play: console_error,
+        keeps_pointer: false,
     },
     Scene {
         name: "run-anyway",
         data_sources: FixtureSources::Shop,
         play: run_anyway,
+        keeps_pointer: false,
+    },
+    Scene {
+        name: "completion",
+        data_sources: FixtureSources::Shop,
+        play: completion,
+        keeps_pointer: false,
+    },
+    Scene {
+        name: "problems",
+        data_sources: FixtureSources::Shop,
+        play: problems,
+        keeps_pointer: true,
     },
 ];
 
@@ -207,8 +234,9 @@ fn regenerate_screenshots() {
             let fixture = Fixture::new(scene.data_sources);
             let mut harness = fixture.start(theme);
             (scene.play)(&mut harness, &fixture);
-            // Take the pointer away, so no cursor or hover highlight ends up in the image.
-            harness.event(egui::Event::PointerGone);
+            if !scene.keeps_pointer {
+                harness.event(egui::Event::PointerGone);
+            }
             harness.run_steps(SETTLE_STEPS);
             let file_name = match themes.as_slice() {
                 [_] => format!("{}.png", scene.name),
@@ -479,4 +507,50 @@ fn console_error(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
 fn run_anyway(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
     open_console(harness, "shop", DELETE_EVERYTHING);
     run_all(harness, "Run anyway");
+}
+
+fn completion(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    open_console(
+        harness,
+        "shop",
+        "SELECT o.id, c.\nFROM orders o\nJOIN customers c ON c.id = o.customer_id",
+    );
+    // Back to just after `c.`, where the list opens on request.
+    let after_dot = "SELECT o.id, c.".chars().count();
+    let total = "SELECT o.id, c.\nFROM orders o\nJOIN customers c ON c.id = o.customer_id"
+        .chars()
+        .count();
+    for _ in after_dot..total {
+        harness.key_press(egui::Key::ArrowLeft);
+    }
+    harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::Space);
+    // The columns load into the explorer's cache in the background.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while harness.query_by_label("country").is_none() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the columns were never suggested"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        harness.step();
+    }
+    // The list sizes itself from the frame before; let it grow to its full height.
+    harness.run_steps(4);
+}
+
+fn problems(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    open_console(
+        harness,
+        "shop",
+        "SELECT id, status\nFROM orders\nWHERE placed_at = NULL;\n\nSELECT name FROM customers WHERE",
+    );
+    step_until_visible(harness, "1 error, 1 warning");
+    let squiggle = harness
+        .state()
+        .open_consoles()
+        .flat_map(|console| console.squiggle_rects().collect::<Vec<_>>())
+        .next()
+        .unwrap();
+    harness.hover_at(squiggle.center());
+    step_until_visible(harness, "never true");
 }

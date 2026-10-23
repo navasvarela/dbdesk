@@ -10,7 +10,9 @@ use egui_dock::tab_viewer::OnCloseResponse;
 use egui_dock::{DockState, NodeIndex, TabStyle, TabViewer};
 use serde::{Deserialize, Serialize};
 
-use crate::console::{self, ConsoleAction, ConsoleContext, LintOptions, QueryConsole, TreeCatalog};
+use crate::console::{
+    self, ConsoleAction, ConsoleContext, LintOptions, QueryConsole, RecentCompletions, TreeCatalog,
+};
 use crate::consoles::SavedConsoles;
 use crate::explorer::{self, ExplorerAction, ExplorerOptions};
 use crate::fonts;
@@ -122,6 +124,7 @@ pub struct Panels<'a> {
     pub consoles: &'a mut BTreeMap<ConsoleKey, QueryConsole>,
     pub keymap: &'a Keymap,
     pub lint: &'a LintOptions,
+    pub recent_completions: &'a RecentCompletions,
     /// What the user asked of each console this frame.
     pub console_actions: &'a mut Vec<(ConsoleKey, ConsoleAction)>,
     /// Consoles whose tabs the user asked to close this frame. The tabs stay until the app
@@ -204,6 +207,7 @@ impl TabViewer for Panels<'_> {
                     let context = ConsoleContext {
                         keymap: self.keymap,
                         lint: self.lint,
+                        recent: self.recent_completions,
                         catalog: self
                             .data_sources
                             .entries()

@@ -10,7 +10,7 @@ use std::ops::Range;
 
 use dbdesk_sql::{
     Dialect, LintRule, Problem, ProblemSource, Severity, Token, TokenKind, first_word,
-    is_checkable, split_statements, tokenize,
+    is_checkable, is_keyword, split_statements, tokenize,
 };
 
 use super::completion::{CatalogSource, TableRef, resolve, table_references};
@@ -196,7 +196,9 @@ fn unknown_columns(
         let continues = words
             .get(index + 3)
             .is_some_and(|next| next.text == "." || next.text == "(");
-        if dot.text != "." || chained || continues {
+        // `c.` still being typed, before the next clause: `c.FROM` names no column.
+        let keyword = !column.quoted && is_keyword(column_name);
+        if dot.text != "." || chained || continues || keyword {
             continue;
         }
         if ROW_QUALIFIERS
@@ -364,6 +366,10 @@ mod tests {
         fn tables_loaded(&self, _: Option<&str>) -> bool {
             self.loaded
         }
+
+        fn functions(&self) -> Vec<super::super::completion::FunctionEntry> {
+            Vec::new()
+        }
     }
 
     fn flagged(sql: &str, loaded: bool) -> Vec<(LintRule, &str)> {
@@ -380,7 +386,7 @@ mod tests {
     #[test]
     fn flags_unknown_tables_and_columns_only_when_the_catalog_is_loaded() {
         use LintRule::*;
-        let cases: [(&str, &[(LintRule, &str)]); 9] = [
+        let cases: [(&str, &[(LintRule, &str)]); 10] = [
             ("select * from ordres", &[(UnknownTable, "ordres")]),
             (
                 "select o.custmer from orders o",
@@ -394,6 +400,7 @@ mod tests {
                 "select * from public.nope",
                 &[(UnknownTable, "public.nope")],
             ),
+            ("select o.\nfrom orders o", &[]),
             ("with x as (select 1) select * from x", &[]),
             ("select * from scratch", &[]),
             ("select * from generate_series(1, 3) g, pg_class", &[]),

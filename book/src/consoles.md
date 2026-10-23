@@ -38,11 +38,25 @@ The editor highlights SQL keywords, strings, numbers, comments and quoted names,
 lines, and gives the statement that **Run** would run a faint background.
 
 **Completion.** Typing a name, or a `.`, opens a list of suggestions at the cursor; ⌃Space opens
-it anywhere. Use ↑ and ↓ to pick, Enter or Tab to accept, Esc to close. It suggests:
+it anywhere. Use ↑ and ↓ to pick, Enter or Tab to accept, Esc to close.
+
+![Completing a column after an alias](images/completion.png)
+
+It suggests what fits where the cursor is:
 
 - after `alias.` or `table.`, that table's columns; after `schema.`, that schema's tables;
-- otherwise, the columns of the tables the statement names, then tables and views, schemas and
-  SQL keywords.
+- after `FROM`, `JOIN`, `UPDATE` or `INTO`, tables and views;
+- after `SELECT`, `WHERE`, `ON`, `GROUP BY`, `ORDER BY` or `SET`, the columns of the tables the
+  statement uses, their aliases, and functions;
+- inside `INSERT INTO orders (…)`, the columns of `orders`.
+
+The statement's own names count too: aliases, `WITH` queries (CTEs) and subqueries in `FROM`,
+with the columns they return. Functions come with their parentheses, the cursor between them.
+Each suggestion shows an icon for what it is and, for a column, its type.
+
+You don't have to type the start of a name: `cid` finds `customer_id`, matching the first
+letters of its words. Names that start with what you typed come first, and the ones you picked
+lately come before the rest.
 
 Names come from what the explorer has loaded for the data source. When a suggestion needs a
 part that isn't loaded yet, dbdesk loads it in the background (the list says "Loading the
@@ -73,6 +87,8 @@ quoted names and function bodies between `$$` are never touched, and dbdesk chec
 before using it: if it would read differently to the database, the text stays as it was and the
 toolbar says **Not formatted**. The cursor stays where it was in the SQL, and ⌘Z undoes the
 whole format at once.
+
+![An underlined comparison with NULL, and its explanation](images/problems.png)
 
 **Problems while typing.** A moment after you stop typing, dbdesk underlines mistakes: a red
 wave for errors (SQL the database can't read), an amber one for warnings (SQL that runs but
