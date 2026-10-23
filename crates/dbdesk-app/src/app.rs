@@ -322,7 +322,7 @@ mod tests {
 
     fn start_app(dir: &Path, log_feed: LogFeed) -> Harness<'static, DbDeskApp> {
         crate::test_support::start_app(
-            HarnessBuilder::default(),
+            HarnessBuilder::default().with_size(crate::DEFAULT_WINDOW_SIZE),
             dir,
             log_feed,
             MemorySecrets::default(),

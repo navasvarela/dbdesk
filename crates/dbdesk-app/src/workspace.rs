@@ -18,6 +18,9 @@ use crate::state::DataSources;
 const UPPER_AREA_SHARE: f32 = 0.72;
 /// Share of the upper area's width for query consoles; the explorer gets the rest.
 const CONSOLES_SHARE_OF_UPPER_AREA: f32 = 0.8;
+/// egui_dock's split `fraction` is the share of the first (left or top) node, whatever its
+/// docs say about "the old node", so consoles to the right of the explorer take the rest.
+const EXPLORER_SHARE_OF_UPPER_AREA: f32 = 1.0 - CONSOLES_SHARE_OF_UPPER_AREA;
 
 /// Every kind of tab the dock can hold.
 ///
@@ -53,7 +56,7 @@ pub fn open_console_tab(layout: &mut DockState<Tab>, id: ConsoleId) {
         Some((node, _)) => tree[node].append_tab(tab),
         // The consoles' area was closed; give them a new one beside everything else.
         None => {
-            tree.split_right(NodeIndex::root(), CONSOLES_SHARE_OF_UPPER_AREA, vec![tab]);
+            tree.split_right(NodeIndex::root(), EXPLORER_SHARE_OF_UPPER_AREA, vec![tab]);
         }
     }
     if let Some(path) = layout.find_tab(&tab) {
@@ -69,7 +72,7 @@ pub fn default_layout() -> DockState<Tab> {
         tree.split_below(NodeIndex::root(), UPPER_AREA_SHARE, vec![Tab::LogConsole]);
     tree.split_left(
         upper_area,
-        CONSOLES_SHARE_OF_UPPER_AREA,
+        EXPLORER_SHARE_OF_UPPER_AREA,
         vec![Tab::Explorer],
     );
     dock
