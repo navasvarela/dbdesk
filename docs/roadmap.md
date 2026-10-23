@@ -231,8 +231,8 @@ flowchart LR
 slabs, picked from four concepts; [brand.md](brand.md) has its construction, the files and the
 palette with its contrast ratios. `assets/brand/export.sh` regenerates every PNG and the
 `.icns` reproducibly. The window and the README show the logo. The social preview is a
-repository setting rather than a file: upload `assets/brand/social-preview.png` under
-**Settings → General → Social preview**.
+repository setting rather than a file: `assets/brand/social-preview.png` is uploaded under
+**Settings → General → Social preview**, and has to be uploaded again whenever it changes.
 
 ### D2 — A more colourful, vibrant UI
 
@@ -295,12 +295,7 @@ by one ignored test (`screenshots::regenerate_screenshots`), and CI builds the b
 - **Deployment:** a GitHub Actions workflow builds the landing page and the book on every push
   to `main` and publishes them with `actions/deploy-pages`. PRs only build, so a broken site
   fails the PR without going live.
-- **Decision needed first.** This repository is private, and a GitHub Pages site is always
-  public. Pages from a private repository needs a paid GitHub plan; on the free plan it needs a
-  public repository. The options:
-  1. Make this repository public.
-  2. Keep it private and publish from a paid plan; the site is public, the code isn't.
-  3. Keep it private and publish the site from a separate public repository (e.g.
-     `dbdesk-site`), pushed to by this repository's CI.
+- **Hosting:** GitHub Pages from this repository, which is public, so the free plan covers it.
+  (While it was private, Pages would have needed a paid plan or a separate public repository.)
 
 **Exit:** the site is live, linked from the README, and redeploys on every merge to `main`.

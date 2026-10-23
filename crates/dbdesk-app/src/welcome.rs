@@ -88,7 +88,7 @@ pub fn show(ui: &mut Ui, data_sources: &DataSources, actions: &mut Vec<ExplorerA
                 ui.add_space(12.0);
                 ui.label(RichText::new("Welcome to dbdesk").font(fonts::semibold(26.0)));
                 ui.label(
-                    RichText::new("Browse and query PostgreSQL and SQLite databases.")
+                    RichText::new("Browse and Query databases")
                         .color(palette.text_weak),
                 );
                 ui.add_space(20.0);
