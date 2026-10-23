@@ -1,5 +1,6 @@
 //! Opening connections: resolving the password, then dispatching to the right driver.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -112,4 +113,21 @@ async fn open_ping_close(
     let server = connection.server_info().clone();
     connection.close().await?;
     Ok(server)
+}
+
+/// Creates an empty SQLite database, then reports it as [`Event::SqliteDatabaseCreated`].
+pub(crate) async fn create_sqlite_database(path: PathBuf, events: EventSink) {
+    let result = dbdesk_driver_sqlite::create_database(&path).await;
+    match &result {
+        Ok(()) => tracing::info!("created SQLite database {}", path.display()),
+        Err(error) => tracing::warn!(
+            "could not create SQLite database {}: {}",
+            path.display(),
+            describe_error(error)
+        ),
+    }
+    events.send(Event::SqliteDatabaseCreated {
+        path,
+        result: result.map_err(|error| describe_error(&error)),
+    });
 }
