@@ -111,6 +111,82 @@ hundred lines over the lexer that already highlights and splits statements, so w
 treats as a string is exactly what the editor shows as one. The trade-off: its layout rules
 are fewer than `sqlformat`'s, and statements other than queries keep their line breaks.
 
+### Problems while typing
+
+Errors are underlined with a red wave and warnings with an amber one, from the palette's error
+and warning colours. Hovering over one shows its message (and, for a lint warning, the rule's
+id). The toolbar counts them (**1 error, 2 warnings**); clicking the count, or F8
+(`console.next-problem`), moves the cursor to the next one, ⇧F8 (`console.previous-problem`)
+to the previous one, wrapping around.
+
+**Syntax errors** come from [`sqlparser`](https://crates.io/crates/sqlparser) 0.63 with its
+PostgreSQL or SQLite dialect, one statement at a time (as `dbdesk-sql` splits them), mapped
+from the parser's line and column to the token it points at. A statement that ends early is
+marked at its last token ("expected an expression at the end of the statement").
+
+- **Only data queries and changes are parsed** (`SELECT`, `WITH`, `VALUES`, `INSERT`,
+  `UPDATE`, `DELETE`, SQLite's `REPLACE`). DDL, `DO` blocks, `COPY`, `PRAGMA` and other
+  vendor statements are where the parser falls short of the databases, and **a false error is
+  worse than a missed one**, so they get none.
+- **Known gaps.** A corpus of valid statements in `dbdesk-sql`'s tests found the constructs
+  `sqlparser` rejects although the database accepts them. A statement using one is not
+  checked: PostgreSQL `ROWS FROM (…)`, `FOR NO KEY UPDATE` / `FOR KEY SHARE`,
+  `BETWEEN SYMMETRIC`, `JOIN … USING (…) AS alias`, the XML functions (`xmlelement(name …)`),
+  and SQLite `INDEXED BY`, `NOT INDEXED` and `a IS b` between any two expressions. A
+  statement the parser wrongly rejects is a bug to add there.
+- **The database overrules the parser**: when it accepts a statement (see below), a parser
+  error on it is dropped.
+- *Why `sqlparser`:* it is maintained, has both dialects, and needs no database. Its tokenizer
+  isn't used for anything else (see the lexer note under Running SQL).
+
+**Lint rules** (warnings), each with an id that `settings.toml` (or View → Settings…) can
+switch off:
+
+| Id | Flags |
+| --- | --- |
+| `null-comparison` | `= NULL`, `<> NULL`, `!= NULL`, which are never true: use `IS [NOT] NULL`. Assignments in `UPDATE … SET` are left alone. |
+| `update-without-where` | An `UPDATE` without a top-level `WHERE` (the same check as the "Run anyway?" dialog). |
+| `delete-without-where` | A `DELETE` without a top-level `WHERE`. |
+| `select-star-in-insert` | `INSERT … SELECT *`, which depends on the order of the source's columns. |
+| `unknown-table` | A table or view the explorer's cached catalog doesn't have. |
+| `unknown-column` | `alias.column` where the alias's table, in the cached catalog, has no such column. |
+
+The two catalog rules never guess: a name is only reported when the catalog level that
+would hold it is loaded (all of the schema's tables and views; a table's columns), and
+they never load anything themselves. Unqualified names need every schema's tables loaded.
+Names the console defines are left alone: CTEs, tables and views created by `CREATE` anywhere
+in the console, `SELECT … INTO` targets, table functions (`generate_series(…)`), the row
+qualifiers `excluded`, `new` and `old`, and system catalogs (`pg_*`, `sqlite_*`, `pragma_*`).
+Unqualified columns aren't checked: output aliases, subqueries and correlated names make that
+a guess.
+
+**Asking the database** (on by default, `lint.ask_database`). Decided worth it: only the
+database knows about temporary tables, the search path and types, and it is authoritative
+where the parser and the cached catalog aren't. After a check, a connected console sends its
+data queries and changes to its **own connection** with `Command::ValidateStatements`, which
+prepares each without running it (`Connection::validate`):
+
+- PostgreSQL: tokio-postgres's `prepare`, an unnamed statement through the extended protocol
+  (Parse and Describe), which parses and analyses but executes nothing; dropping it closes it.
+- SQLite: `sqlite3_prepare` without a step. Statements other than queries and changes are never
+  prepared, because some `PRAGMA`s take effect while being prepared.
+- **Never disturbs the console:** the session skips everything while a result has unread rows
+  (preparing would wait for them or discard them) or a transaction is open (on PostgreSQL a
+  rejected statement would abort it), and it never connects: a console that hasn't run
+  anything isn't asked about. Answers are cached per statement text and forgotten after each
+  run, a commit or rollback, or a reconnect.
+- Rejections show as "The database says: …": syntax errors and other failures as errors,
+  unknown names (SQLSTATE `42P01`, `42703`, `42883`, `42704`, `3F000`; SQLite's "no such …")
+  as warnings, since a table may be created by an earlier statement of the same script.
+  SQLite gives no position for unknown names, so the name its message ends with (`no such
+  table: shipments`) is marked where the statement mentions it.
+
+**Keeping the UI frame cheap.** Checks wait until typing pauses (300 ms). Results are
+cached per statement text, so an edit re-parses only the statement it touched, and a frame
+spends at most 4 ms parsing before carrying on in the next one. Measured on an M-series Mac,
+checking a statement takes about 13 µs in a release build (84 µs in debug), so a 1,000-statement
+console (78 KB) checks from cold in about 13 ms, over four frames.
+
 ## Running SQL
 
 | Action | Key | What runs |

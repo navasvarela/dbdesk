@@ -26,6 +26,10 @@ Implemented:
   committed rows stay and rolled-back ones don't, and a failure inside a transaction leaves it
   open (failed, on PostgreSQL) until it is rolled back.
 
+- `check_validate` (SQL tools): preparing runs nothing (an accepted `INSERT` inserts no row),
+  temporary tables are visible, unknown names and syntax errors are told apart, syntax errors
+  carry their position, and no transaction is left open.
+
 - `check_describe_table` (M5): an unquoted name resolves ignoring case, columns come in table
   order and the primary key in key order, a keyless table has an empty key, and views and
   missing tables are `None`.

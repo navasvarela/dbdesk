@@ -13,6 +13,8 @@ On Linux and Windows, read Ctrl wherever this page says ⌘.
 | ⌃Space | Suggest names and keywords at the cursor | the editor has focus |
 | ⌥⌘L | Format the selection, or the statement at the cursor | the editor has focus |
 | ⇧⌥⌘L | Format every statement in the console | the editor has focus |
+| F8 | Go to the next error or warning | the editor has focus |
+| ⇧F8 | Go to the previous error or warning | the editor has focus |
 | Space | Show the selected cell's whole value | no text field has focus |
 | F2, Enter | Edit the selected cell | no text field has focus |
 | ⌘C | Copy the selected cells | no text field has focus |
