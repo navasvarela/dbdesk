@@ -4,7 +4,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::{CancelHandle, CatalogNode, CatalogPath, DriverError, ResultCursor, TransactionStatus};
+use crate::{
+    CancelHandle, CatalogNode, CatalogPath, DriverError, RelationName, ResultCursor,
+    TableDescription, TransactionStatus,
+};
 
 /// What a server reported about itself when the connection was opened.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +60,18 @@ pub trait Connection: Send {
     /// [`DriverError::Statement`] if the statement is rejected or fails before producing a
     /// result, with the error's position when known.
     async fn execute(&mut self, sql: &str) -> Result<Box<dyn ResultCursor>, DriverError>;
+
+    /// Resolves a table the way a statement on this connection would (search path, case
+    /// folding) and describes it, for editing its rows. `None` if no such table exists, or it
+    /// isn't a plain table (a view, say).
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError::Connection`] if the catalog query fails.
+    async fn describe_table(
+        &mut self,
+        table: &RelationName,
+    ) -> Result<Option<TableDescription>, DriverError>;
 
     /// Whether a transaction is open on this connection, as the database sees it, so a
     /// transaction the user started with their own `BEGIN` counts too.

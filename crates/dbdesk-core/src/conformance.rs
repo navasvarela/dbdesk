@@ -6,8 +6,8 @@
 use std::time::{Duration, Instant};
 
 use crate::{
-    CatalogNode, CatalogPath, Connection, DriverError, NodeKind, ResultCursor, TransactionStatus,
-    describe_error,
+    CatalogNode, CatalogPath, Connection, DriverError, Identifier, NodeKind, RelationName,
+    ResultCursor, TransactionStatus, describe_error,
 };
 
 /// A fresh connection reports its server, answers pings, and closes cleanly.
@@ -284,6 +284,59 @@ pub async fn check_transactions(connection: &mut dyn Connection) {
         "only the committed row"
     );
     run_to_end(connection, "DROP TABLE dbdesk_transactions").await;
+}
+
+/// Tables resolve as statements would (unquoted names ignoring case), with their columns in
+/// table order and their primary key in key order; views and missing tables are `None`.
+pub async fn check_describe_table(connection: &mut dyn Connection) {
+    run_to_end(
+        connection,
+        "CREATE TEMP TABLE dbdesk_describe (id integer, part text, note text, \
+         PRIMARY KEY (part, id))",
+    )
+    .await;
+    run_to_end(connection, "CREATE TEMP TABLE dbdesk_keyless (n integer)").await;
+    run_to_end(
+        connection,
+        "CREATE TEMP VIEW dbdesk_describe_view AS SELECT 1 AS one",
+    )
+    .await;
+    let unquoted = |name: &str| RelationName {
+        schema: None,
+        name: Identifier {
+            name: name.to_owned(),
+            quoted: false,
+        },
+    };
+    let described = connection
+        .describe_table(&unquoted("DBDESK_DESCRIBE"))
+        .await
+        .expect("describe")
+        .expect("the table exists");
+    assert_eq!(described.name, "dbdesk_describe");
+    assert!(!described.schema.is_empty());
+    assert_eq!(described.columns, ["id", "part", "note"]);
+    assert_eq!(described.primary_key, ["part", "id"]);
+    let keyless = connection
+        .describe_table(&unquoted("dbdesk_keyless"))
+        .await
+        .expect("describe")
+        .expect("the table exists");
+    assert!(keyless.primary_key.is_empty());
+    for not_a_table in ["dbdesk_describe_view", "dbdesk_no_such_table"] {
+        let found = connection
+            .describe_table(&unquoted(not_a_table))
+            .await
+            .expect("describe");
+        assert_eq!(found, None, "{not_a_table}");
+    }
+    for drop in [
+        "DROP VIEW dbdesk_describe_view",
+        "DROP TABLE dbdesk_keyless",
+        "DROP TABLE dbdesk_describe",
+    ] {
+        run_to_end(connection, drop).await;
+    }
 }
 
 async fn status(connection: &mut dyn Connection) -> TransactionStatus {
