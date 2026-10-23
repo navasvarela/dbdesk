@@ -40,10 +40,20 @@ pass proved nothing in M3: the console's cancel test hung 2 runs in 5 before its
 Each driver crate runs the suite against its own backend:
 
 - **SQLite**: a temporary database file, always runs.
-- **Postgres**: the container from `docker-compose.yml` (`docker compose up -d --wait`, port
-  55432). Tests are skipped with a message when `DBDESK_TEST_POSTGRES_URL` is unset, so
-  `cargo test` works offline:
-  `DBDESK_TEST_POSTGRES_URL=postgres://dbdesk:dbdesk@localhost:55432/dbdesk cargo test`.
+- **Postgres**: the containers from `docker-compose.yml`. `postgres` (port 55432) is a plain
+  server; `postgres-tls` (port 55443) refuses unencrypted connections, and its certificate is
+  signed by the test authority in `docker/postgres-tls/` (`generate.sh` makes both), which the
+  `verify-full` tests trust. Tests are skipped with a message when `DBDESK_TEST_POSTGRES_URL`
+  or `DBDESK_TEST_POSTGRES_TLS_URL` is unset, so `cargo test` works offline.
+
+Every server engine follows the same pattern: a service in `docker-compose.yml` and its URL in
+`test-servers.env`, which CI reads too. To run everything locally:
+
+```bash
+docker compose up -d --wait
+set -a; . ./test-servers.env; set +a
+cargo test --workspace
+```
 
 Cancellation tests use `pg_sleep(10)` and a recursive CTE for SQLite, and assert the run ends in
 well under the sleep time.
@@ -113,6 +123,7 @@ with `lychee --offline`, which fails on a link to a file the build didn't produc
 
 GitHub Actions: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`
 on macOS and Linux, and the mdBook build with its link check. A separate Pages workflow builds
-the website and manual on pull requests that touch them, and publishes them from `main`. On Linux the workflow starts the compose Postgres and sets
-`DBDESK_TEST_POSTGRES_URL`. GitHub can't run containers on macOS runners, so the Postgres tests
-skip there.
+the website and manual on pull requests that touch them, and publishes them from `main`. On Linux the workflow starts every compose service and exports
+the URLs in `test-servers.env`; adding an engine's container changes those two files and not
+the workflow. GitHub can't run containers on macOS or Windows runners, so the server tests skip
+there.

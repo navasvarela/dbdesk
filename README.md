@@ -46,14 +46,15 @@ Each recipe is one or two `cargo` commands, which also work without `just`. The 
 shows them.
 
 The PostgreSQL tests need a server and are skipped without one. To run them, start the bundled
-container and point the tests at it:
+containers (a plain PostgreSQL and one that requires TLS) and load their URLs from
+`test-servers.env`:
 
 ```bash
 docker compose up -d --wait
 ```
 
 ```bash
-DBDESK_TEST_POSTGRES_URL=postgres://dbdesk:dbdesk@localhost:55432/dbdesk just test
+set -a; . ./test-servers.env; set +a; just test
 ```
 
 Files live in `~/Library/Application Support/dbdesk` on macOS: data sources in

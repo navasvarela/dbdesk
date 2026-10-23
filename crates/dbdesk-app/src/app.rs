@@ -872,6 +872,61 @@ mod tests {
     }
 
     #[test]
+    fn chooses_a_tls_mode_and_ca_file_for_a_postgres_data_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let ca_file = dir.path().join("internal-ca.pem");
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "No data sources yet.");
+
+        harness
+            .get_all_by_label("New data source")
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness.get_by_label("PostgreSQL").click();
+        harness.run();
+        // Only verify-full reads a CA file, so the row only shows for it.
+        assert!(harness.query_by_label("CA file").is_none());
+        harness
+            .get_by(|node| {
+                node.role() == Role::ComboBox && node.value().as_deref() == Some("prefer")
+            })
+            .click();
+        harness.run();
+        harness.get_by_label("verify-full").click();
+        harness.run();
+        harness.get_by_label("Browse…");
+        harness
+            .get_by_role_and_label(Role::TextInput, "CA file")
+            .focus();
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::TextInput, "CA file")
+            .type_text(&ca_file.display().to_string());
+        harness.run();
+        harness.get_by_label("Save").click();
+
+        step_until_visible(&mut harness, "Expand postgres@localhost");
+        let saved = DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .load()
+            .unwrap();
+        let [saved] = saved.as_slice() else {
+            panic!("expected one data source, got {saved:?}");
+        };
+        let dbdesk_core::ConnectionConfig::Postgres(config) = &saved.config else {
+            panic!("expected a PostgreSQL data source, got {saved:?}");
+        };
+        assert_eq!(
+            config.server.tls,
+            dbdesk_core::TlsMode::VerifyFull {
+                ca_file: Some(ca_file)
+            }
+        );
+    }
+
+    #[test]
     fn browses_a_sqlite_catalog_down_to_columns() {
         let dir = tempfile::tempdir().unwrap();
         save_shop(

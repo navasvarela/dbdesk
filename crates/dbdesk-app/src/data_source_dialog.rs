@@ -10,7 +10,7 @@ use egui::{
 };
 
 use crate::data_source_form::{
-    DataSourceForm, DriverFields, FormError, PostgresFields, SqliteFields, TlsChoice,
+    DataSourceForm, DriverFields, FormError, ServerFields, SqliteFields, TlsChoice,
 };
 use crate::file_picker;
 use crate::icons;
@@ -140,7 +140,6 @@ impl DataSourceDialog {
 
     /// Draws the form. Returns a path if the user chose to create a new SQLite database there.
     fn fields(&mut self, ui: &mut Ui) -> Option<PathBuf> {
-        let uses_password = self.form.driver().uses_password();
         let password_hint = if self.is_new { "none" } else { "unchanged" };
         Grid::new("data_source_fields")
             .num_columns(2)
@@ -149,25 +148,13 @@ impl DataSourceDialog {
                 ui.label("Colour");
                 color_picker(ui, &mut self.form.color);
                 ui.end_row();
-                let new_database = match &mut self.form.fields {
+                match &mut self.form.fields {
                     DriverFields::Postgres(fields) => {
-                        postgres_rows(ui, fields);
+                        server_rows(ui, &mut fields.server, password_hint);
                         None
                     }
                     DriverFields::Sqlite(fields) => sqlite_rows(ui, fields),
-                };
-                if uses_password {
-                    let label = ui.label("Password");
-                    ui.add(
-                        TextEdit::singleline(&mut self.form.password)
-                            .password(true)
-                            .hint_text(password_hint)
-                            .desired_width(FIELD_WIDTH),
-                    )
-                    .labelled_by(label.id);
-                    ui.end_row();
                 }
-                new_database
             })
             .inner
     }
@@ -274,16 +261,29 @@ impl DataSourceDialog {
     }
 }
 
-fn postgres_rows(ui: &mut Ui, fields: &mut PostgresFields) {
-    text_row(ui, "Host", &mut fields.host, "localhost");
-    text_row(ui, "Port", &mut fields.port, "5432");
-    text_row(ui, "Database", &mut fields.database, "postgres");
-    text_row(ui, "User", &mut fields.user, "postgres");
+/// The rows every network engine shares: where the server is, whom to connect as, and how to
+/// encrypt. An engine's own rows go before or after them.
+fn server_rows(ui: &mut Ui, fields: &mut ServerFields, password_hint: &str) {
+    let defaults = fields.defaults;
+    let default_port = defaults.port.to_string();
+    text_row(ui, "Host", &mut fields.host, defaults.host);
+    text_row(ui, "Port", &mut fields.port, &default_port);
+    text_row(ui, "Database", &mut fields.database, defaults.database);
+    text_row(ui, "User", &mut fields.user, defaults.user);
+    let label = ui.label("Password");
+    ui.add(
+        TextEdit::singleline(&mut fields.password)
+            .password(true)
+            .hint_text(password_hint)
+            .desired_width(FIELD_WIDTH),
+    )
+    .labelled_by(label.id);
+    ui.end_row();
     tls_rows(ui, fields);
 }
 
 /// The TLS mode and, for `verify-full`, the file of authorities to trust.
-fn tls_rows(ui: &mut Ui, fields: &mut PostgresFields) {
+fn tls_rows(ui: &mut Ui, fields: &mut ServerFields) {
     let label = ui.label("TLS");
     egui::ComboBox::from_id_salt("data_source_tls")
         .selected_text(fields.tls.label())

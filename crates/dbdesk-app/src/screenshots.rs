@@ -16,8 +16,8 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use dbdesk_core::{
-    ConnectionConfig, DataSource, DataSourceId, Password, PostgresConfig, SourceColor,
-    SqliteConfig, TlsMode,
+    ConnectionConfig, DataSource, DataSourceId, Password, PostgresConfig, ServerConfig,
+    SourceColor, SqliteConfig, TlsMode,
 };
 use dbdesk_store::DataSourceFile;
 use egui::accesskit::Role;
@@ -358,11 +358,13 @@ fn postgres_data_source(url: &str) -> (DataSource, Password) {
         name: "warehouse".to_owned(),
         color: Some(SourceColor::Red),
         config: ConnectionConfig::Postgres(PostgresConfig {
-            host: host.to_owned(),
-            port: port.parse().unwrap(),
-            database: database.to_owned(),
-            user: user.to_owned(),
-            tls: TlsMode::default(),
+            server: ServerConfig {
+                host: host.to_owned(),
+                port: port.parse().unwrap(),
+                database: database.to_owned(),
+                user: user.to_owned(),
+                tls: TlsMode::default(),
+            },
         }),
     };
     (data_source, Password::new(password))

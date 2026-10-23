@@ -1,6 +1,6 @@
 # More databases
 
-Status: **planned**, nothing built yet. Order agreed on 2026-10-23.
+Status: **DB0 built**; DB1 onwards planned. Order agreed on 2026-10-23.
 
 dbdesk speaks PostgreSQL and SQLite. This plan adds the next engines in order of how many
 people would use them, and starts with the groundwork that makes each one cheaper than the
@@ -59,7 +59,9 @@ engine is:
   - `transaction_status` for manual commit mode;
   - `cancel_handle` for ⌘.
 - **A `ConnectionConfig` variant** in `dbdesk-core`, with its `DriverKind`, and its form in the
-  data source dialog (`data_source_form.rs`).
+  data source dialog (`data_source_form/`). Since DB0, a server engine's config holds a shared
+  `ServerConfig` and its form a shared `ServerFields` section (host, port, database, user,
+  password, TLS), so the engine adds only its own extras.
 - **A SQL dialect** in `dbdesk-sql`. It covers:
   - the lexer's quoting and comment rules, and the statement splitter;
   - the `sqlparser` dialect the linter and completion parse with;
