@@ -25,6 +25,8 @@ dbdesk/
 - Owned by the engine: loaded once at start-up, rewritten on every save or delete.
 - If the file exists but can't be parsed, the engine refuses all changes and the explorer shows
   the error. A broken file is never overwritten with an empty list.
+- `color` is optional (one of `red`, `orange`, `yellow`, `green`, `teal`, `blue`, `violet`,
+  `pink`) and only written when set, so files from before it existed load unchanged.
 - Comments and unknown fields are **not** preserved when dbdesk rewrites the file (it is written
   with `serde` + `toml`), and the file header says so. Switching to `toml_edit` to edit the
   document in place is a follow-up if hand-editing becomes common.
@@ -33,6 +35,7 @@ dbdesk/
 [[data_source]]
 id = "6f1c0d9e-3b8a-4c3e-9f57-2d1e8a7b5c40"
 name = "local"
+color = "teal"
 driver = "postgres"
 host = "localhost"
 port = 5432

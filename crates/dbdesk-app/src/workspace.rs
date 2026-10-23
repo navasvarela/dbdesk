@@ -2,18 +2,29 @@
 
 use std::collections::BTreeMap;
 
+use dbdesk_core::SourceColor;
 use dbdesk_store::ConsoleKey;
-use egui::{Id, Ui, WidgetText};
+use egui::text::{LayoutJob, TextFormat};
+use egui::{Color32, FontId, Id, Ui, WidgetText};
 use egui_dock::tab_viewer::OnCloseResponse;
-use egui_dock::{DockState, NodeIndex, TabViewer};
+use egui_dock::{DockState, NodeIndex, TabStyle, TabViewer};
 use serde::{Deserialize, Serialize};
 
 use crate::console::{self, ConsoleAction, ConsoleContext, QueryConsole, TreeCatalog};
 use crate::consoles::SavedConsoles;
 use crate::explorer::{self, ExplorerAction, ExplorerOptions};
+use crate::fonts;
+use crate::icons::{self, Icon, Role};
 use crate::keymap::Keymap;
 use crate::log_console::LogConsole;
 use crate::state::DataSources;
+use crate::theme::{self, Palette};
+use crate::welcome;
+
+/// Tab titles are a little smaller than body text, like an IDE's.
+const TAB_TITLE_SIZE: f32 = 12.5;
+/// The band in a console's data source colour along the top of the console.
+const SOURCE_BAND_HEIGHT: f32 = 2.0;
 
 /// Share of the window height for the explorer and query consoles; the log console gets the
 /// rest, spanning the full width as DataGrip's bottom tool windows do.
@@ -101,6 +112,7 @@ pub fn default_layout() -> DockState<Tab> {
 
 /// Draws the content of each tab.
 pub struct Panels<'a> {
+    pub palette: &'static Palette,
     pub log_console: &'a mut LogConsole,
     pub data_sources: &'a DataSources,
     pub saved_consoles: &'a SavedConsoles,
@@ -124,16 +136,49 @@ impl TabViewer for Panels<'_> {
     }
 
     fn title(&mut self, tab: &mut Tab) -> WidgetText {
+        let palette = self.palette;
+        let tool_window = |icon: Icon, title: &str| {
+            tab_title(palette, icon, title, fonts::semibold(TAB_TITLE_SIZE))
+        };
         match tab {
-            Tab::Explorer => "Explorer".into(),
-            Tab::Welcome => "Welcome".into(),
-            Tab::LogConsole => "Log console".into(),
-            Tab::QueryConsole(key) => self
-                .consoles
-                .get(key)
-                .map_or("console", QueryConsole::title)
-                .into(),
+            Tab::Explorer => tool_window(icons::node(dbdesk_core::NodeKind::Database), "Explorer"),
+            Tab::Welcome => tool_window(
+                Icon {
+                    glyph: icons::SPARKLE,
+                    role: Role::Primary,
+                },
+                "Welcome",
+            ),
+            Tab::LogConsole => tool_window(
+                Icon {
+                    glyph: icons::LIST_DASHES,
+                    role: Role::Weak,
+                },
+                "Log console",
+            ),
+            Tab::QueryConsole(key) => {
+                let title = self
+                    .consoles
+                    .get(key)
+                    .map_or("console", QueryConsole::title);
+                let role = self
+                    .console_color(key)
+                    .map_or(Role::Secondary, Role::Source);
+                let icon = Icon {
+                    glyph: icons::FILE_SQL,
+                    role,
+                };
+                tab_title(palette, icon, title, FontId::proportional(TAB_TITLE_SIZE))
+            }
         }
+    }
+
+    fn tab_style_override(&self, tab: &Tab, global_style: &TabStyle) -> Option<TabStyle> {
+        let Tab::QueryConsole(key) = tab else {
+            return None;
+        };
+        let color = self.console_color(key)?;
+        Some(theme::source_tab_style(global_style, self.palette, color))
     }
 
     fn ui(&mut self, ui: &mut Ui, tab: &mut Tab) {
@@ -147,11 +192,14 @@ impl TabViewer for Panels<'_> {
                 self.explorer_options,
                 self.explorer_actions,
             ),
-            Tab::Welcome => welcome(ui),
+            Tab::Welcome => welcome::show(ui, self.data_sources, self.explorer_actions),
             Tab::LogConsole => self.log_console.ui(ui),
             Tab::QueryConsole(key) => match self.consoles.get_mut(key) {
                 Some(query_console) => {
                     let data_source = query_console.data_source();
+                    if let Some(color) = self.data_sources.color_of(data_source) {
+                        source_band(ui, self.palette.source(color));
+                    }
                     let context = ConsoleContext {
                         keymap: self.keymap,
                         catalog: self
@@ -192,9 +240,35 @@ impl TabViewer for Panels<'_> {
     }
 }
 
-fn welcome(ui: &mut Ui) {
-    ui.heading("dbdesk");
-    ui.label("Query consoles open here: right-click a data source and choose New query console.");
+impl Panels<'_> {
+    /// The colour of the data source a console runs on, looked up every frame so a colour
+    /// changed in the data source dialog shows at once.
+    fn console_color(&self, key: &ConsoleKey) -> Option<SourceColor> {
+        let data_source = self.consoles.get(key)?.data_source();
+        self.data_sources.color_of(data_source)
+    }
+}
+
+/// An icon in its palette colour, then the title in the tab's own text colour.
+fn tab_title(palette: &Palette, icon: Icon, title: &str, font: FontId) -> WidgetText {
+    let mut job = LayoutJob::default();
+    job.append(
+        icon.glyph,
+        0.0,
+        TextFormat::simple(fonts::icon(TAB_TITLE_SIZE + 1.0), icon.role.color(palette)),
+    );
+    // PLACEHOLDER takes the tab's text colour, which egui_dock varies with the tab's state.
+    job.append(title, 6.0, TextFormat::simple(font, Color32::PLACEHOLDER));
+    job.into()
+}
+
+/// A thin band in the data source's colour along the top of a console.
+fn source_band(ui: &mut Ui, color: Color32) {
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), SOURCE_BAND_HEIGHT),
+        egui::Sense::hover(),
+    );
+    ui.painter().rect_filled(rect, 1.0, color);
 }
 
 #[cfg(test)]

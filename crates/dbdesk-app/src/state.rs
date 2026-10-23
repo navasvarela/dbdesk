@@ -1,4 +1,4 @@
-use dbdesk_core::{DataSource, DataSourceId};
+use dbdesk_core::{DataSource, DataSourceId, SourceColor};
 use dbdesk_engine::{Event, SessionState};
 
 use crate::catalog_tree::CatalogTree;
@@ -142,6 +142,14 @@ impl DataSources {
         }
     }
 
+    pub fn color_of(&self, id: DataSourceId) -> Option<SourceColor> {
+        self.entries()
+            .iter()
+            .find(|entry| entry.data_source.id == id)?
+            .data_source
+            .color
+    }
+
     fn entry_mut(&mut self, id: DataSourceId) -> Option<&mut DataSourceEntry> {
         match self {
             Self::Loaded(entries) => entries.iter_mut().find(|e| e.data_source.id == id),
@@ -185,6 +193,7 @@ mod tests {
         DataSource {
             id: DataSourceId::generate(),
             name: name.to_owned(),
+            color: None,
             config: ConnectionConfig::Sqlite(SqliteConfig {
                 path: format!("/data/{name}.db").into(),
                 read_only: false,

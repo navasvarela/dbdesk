@@ -5,16 +5,20 @@ use dbdesk_core::{CatalogNode, CatalogPath, DataSourceId, DriverKind, NodeKind};
 use dbdesk_engine::SessionState;
 use dbdesk_store::ConsoleKey;
 use egui::{
-    Color32, Id, Label, Response, ScrollArea, Sense, TextEdit, TextStyle, Ui, Visuals, WidgetInfo,
-    WidgetType, vec2,
+    Color32, CornerRadius, Id, Label, Rect, Response, ScrollArea, Sense, Shape, TextEdit,
+    TextStyle, Ui, WidgetInfo, WidgetType, vec2,
 };
 
 use crate::catalog_tree::{CatalogTree, Children};
 use crate::consoles::SavedConsoles;
+use crate::icons;
 use crate::state::{DataSourceEntry, DataSources};
-use crate::theme::SUCCESS_COLOR;
+use crate::theme::Palette;
+use crate::widgets::{self, IconButton};
 
-const STATUS_DOT_RADIUS: f32 = 4.0;
+const STATUS_DOT_RADIUS: f32 = 3.5;
+/// How strongly a data source's colour tints its row.
+const SOURCE_ROW_TINT: f32 = 0.16;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExplorerAction {
@@ -92,24 +96,60 @@ pub fn show(
 }
 
 fn toolbar(ui: &mut Ui, options: &mut ExplorerOptions, actions: &mut Vec<ExplorerAction>) {
-    ui.horizontal(|ui| {
-        ui.menu_button("+", |ui| {
-            for driver in DriverKind::ALL {
-                if ui.button(driver.display_name()).clicked() {
-                    actions.push(ExplorerAction::New(driver));
-                }
-            }
-        })
-        .response
-        .on_hover_text("New data source");
-        ui.checkbox(&mut options.show_system, "System")
-            .on_hover_text("Show system schemas and tables");
+    let palette = Palette::for_visuals(ui.visuals());
+    widgets::toolbar(ui, |ui| {
+        let new = ui.menu_button(widgets::glyph(icons::PLUS).size(15.0), |ui| {
+            new_data_source_menu(ui, actions);
+        });
+        widgets::name(
+            new.response.on_hover_text("New data source"),
+            WidgetType::Button,
+            "New data source",
+            true,
+        );
+        let (system_icon, system_color) = if options.show_system {
+            (icons::EYE, palette.primary)
+        } else {
+            (icons::EYE_SLASH, palette.text_weak)
+        };
+        if IconButton::new(system_icon, "Show system schemas and tables")
+            .color(system_color)
+            .show(ui)
+            .clicked()
+        {
+            options.show_system = !options.show_system;
+        }
+        ui.add_space(4.0);
+        ui.label(widgets::glyph(icons::MAGNIFYING_GLASS).color(palette.text_weak));
         ui.add(
             TextEdit::singleline(&mut options.filter)
                 .hint_text("Filter loaded nodes")
                 .desired_width(f32::INFINITY),
         );
     });
+}
+
+/// One entry per driver, each with its icon. Also used by the Welcome tab.
+pub fn new_data_source_menu(ui: &mut Ui, actions: &mut Vec<ExplorerAction>) {
+    let palette = Palette::for_visuals(ui.visuals());
+    for driver in DriverKind::ALL {
+        let icon = icons::driver(driver);
+        let text = widgets::icon_text(
+            ui,
+            icon.glyph,
+            icon.role.color(palette),
+            driver.display_name(),
+        );
+        let response = widgets::name(
+            ui.button(text),
+            WidgetType::Button,
+            driver.display_name(),
+            true,
+        );
+        if response.clicked() {
+            actions.push(ExplorerAction::New(driver));
+        }
+    }
 }
 
 fn data_source_tree(
@@ -122,20 +162,33 @@ fn data_source_tree(
     let id = entry.data_source.id;
     let root = CatalogPath::root();
     let expanded = entry.catalog.is_expanded(&root);
-    let response = ui
-        .horizontal(|ui| {
-            if expander(ui, expanded, &entry.data_source.name).clicked() {
-                actions.push(toggle_expansion(id, &root, expanded));
-            }
-            status_dot(ui, &entry.session);
-            ui.add(
-                Label::new(&entry.data_source.name)
-                    .selectable(false)
-                    .sense(Sense::click()),
-            )
-        })
-        .inner
-        .on_hover_text(tooltip(entry));
+    let palette = Palette::for_visuals(ui.visuals());
+    let row_background = ui.painter().add(Shape::Noop);
+    let row = ui.horizontal(|ui| {
+        if expander(ui, expanded, &entry.data_source.name).clicked() {
+            actions.push(toggle_expansion(id, &root, expanded));
+        }
+        ui.label(icons::driver(entry.data_source.config.driver()).rich_text(palette));
+        let name = ui.add(
+            Label::new(&entry.data_source.name)
+                .selectable(false)
+                .sense(Sense::click()),
+        );
+        status_dot(ui, &entry.session, palette);
+        name
+    });
+    if let Some(color) = entry.data_source.color {
+        let rect = Rect::from_x_y_ranges(ui.max_rect().x_range(), row.response.rect.y_range());
+        ui.painter().set(
+            row_background,
+            Shape::rect_filled(
+                rect.expand2(vec2(0.0, 1.0)),
+                CornerRadius::same(4),
+                palette.tint(palette.source(color), SOURCE_ROW_TINT),
+            ),
+        );
+    }
+    let response = row.inner.on_hover_text(tooltip(entry));
 
     if response.double_clicked() {
         actions.push(toggle_expansion(id, &root, expanded));
@@ -164,24 +217,24 @@ fn data_source_menu(
         SessionState::Connecting | SessionState::Connected(_)
     );
     if connected {
-        if ui.button("Disconnect").clicked() {
+        if widgets::menu_item(ui, icons::PLUGS, "Disconnect").clicked() {
             actions.push(ExplorerAction::Disconnect(id));
         }
-        if ui.button("Refresh").clicked() {
+        if widgets::menu_item(ui, icons::ARROWS_CLOCKWISE, "Refresh").clicked() {
             actions.push(ExplorerAction::Refresh(id, CatalogPath::root()));
         }
-    } else if ui.button("Connect").clicked() {
+    } else if widgets::menu_item(ui, icons::PLUGS_CONNECTED, "Connect").clicked() {
         actions.push(ExplorerAction::Connect(id));
     }
-    if ui.button("New query console").clicked() {
+    if widgets::menu_item(ui, icons::TERMINAL_WINDOW, "New query console").clicked() {
         actions.push(ExplorerAction::NewConsole(id));
     }
     saved_consoles_menu(ui, id, saved_consoles, actions);
     ui.separator();
-    if ui.button("Edit…").clicked() {
+    if widgets::menu_item(ui, icons::PENCIL_SIMPLE, "Edit…").clicked() {
         actions.push(ExplorerAction::Edit(id));
     }
-    if ui.button("Delete…").clicked() {
+    if widgets::menu_item(ui, icons::TRASH, "Delete…").clicked() {
         actions.push(ExplorerAction::Delete(id));
     }
 }
@@ -296,6 +349,9 @@ fn node_row(
             } else {
                 ui.add_space(ui.spacing().icon_width);
             }
+            if let Some(kind) = node.kind() {
+                ui.label(icons::node(kind).rich_text(Palette::for_visuals(ui.visuals())));
+            }
             let label = ui.add(
                 Label::new(&node.label)
                     .selectable(false)
@@ -303,6 +359,9 @@ fn node_row(
             );
             if let Some(detail) = &node.detail {
                 ui.weak(detail);
+            }
+            if let Some(count) = folder_count(tree.catalog, node, filter.show_system) {
+                widgets::count_badge(ui, count);
             }
             label
         })
@@ -324,22 +383,22 @@ fn node_menu(ui: &mut Ui, id: DataSourceId, node: &CatalogNode, actions: &mut Ve
         node.kind(),
         Some(NodeKind::Table | NodeKind::View | NodeKind::MaterializedView)
     );
-    if holds_rows && ui.button("Open data").clicked() {
+    if holds_rows && widgets::menu_item(ui, icons::TABLE, "Open data").clicked() {
         actions.push(ExplorerAction::OpenData(id, node.path.clone()));
     }
     if let Some(name) = node.path.qualified_name()
-        && ui.button("Copy name").clicked()
+        && widgets::menu_item(ui, icons::COPY, "Copy name").clicked()
     {
         ui.ctx().copy_text(name);
     }
-    if node.has_definition && ui.button("Show definition").clicked() {
+    if node.has_definition && widgets::menu_item(ui, icons::FILE_SQL, "Show definition").clicked() {
         actions.push(ExplorerAction::ShowDefinition {
             id,
             path: node.path.clone(),
             title: node.label.clone(),
         });
     }
-    if node.has_children && ui.button("Refresh").clicked() {
+    if node.has_children && widgets::menu_item(ui, icons::ARROWS_CLOCKWISE, "Refresh").clicked() {
         actions.push(ExplorerAction::Refresh(id, node.path.clone()));
     }
 }
@@ -381,30 +440,62 @@ fn expander(ui: &mut Ui, expanded: bool, label: &str) -> Response {
     let verb = if expanded { "Collapse" } else { "Expand" };
     response
         .widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, format!("{verb} {label}")));
-    let openness = if expanded { 1.0 } else { 0.0 };
-    egui::collapsing_header::paint_default_icon(ui, openness, &response);
+    let caret = if expanded {
+        icons::CARET_DOWN
+    } else {
+        icons::CARET_RIGHT
+    };
+    let color = if response.hovered() {
+        ui.visuals().text_color()
+    } else {
+        ui.visuals().weak_text_color()
+    };
+    ui.painter().text(
+        response.rect.center(),
+        egui::Align2::CENTER_CENTER,
+        caret,
+        crate::fonts::icon(size * 0.8),
+        color,
+    );
     response
 }
 
-fn status_dot(ui: &mut Ui, session: &SessionState) {
+/// The number of children a loaded folder shows, for the badge after its label.
+fn folder_count(catalog: &CatalogTree, node: &CatalogNode, show_system: bool) -> Option<usize> {
+    if !matches!(node.kind(), Some(NodeKind::Folder(_))) {
+        return None;
+    }
+    let Some(Children::Loaded(children)) = catalog.children(&node.path) else {
+        return None;
+    };
+    Some(
+        children
+            .iter()
+            .filter(|child| show_system || !child.system)
+            .count(),
+    )
+}
+
+/// The connection state as a dot after the name. Disconnected data sources get none, so the
+/// eye goes to the ones that are live or in trouble.
+fn status_dot(ui: &mut Ui, session: &SessionState, palette: &Palette) {
     let size = vec2(
         STATUS_DOT_RADIUS * 2.0,
         ui.text_style_height(&TextStyle::Body),
     );
     let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
-    ui.painter().circle_filled(
-        rect.center(),
-        STATUS_DOT_RADIUS,
-        status_color(session, ui.visuals()),
-    );
+    if let Some(color) = status_color(session, palette) {
+        ui.painter()
+            .circle_filled(rect.center(), STATUS_DOT_RADIUS, color);
+    }
 }
 
-fn status_color(session: &SessionState, visuals: &Visuals) -> Color32 {
+fn status_color(session: &SessionState, palette: &Palette) -> Option<Color32> {
     match session {
-        SessionState::Disconnected => visuals.weak_text_color(),
-        SessionState::Connecting => visuals.warn_fg_color,
-        SessionState::Connected(_) => SUCCESS_COLOR,
-        SessionState::Failed(_) => visuals.error_fg_color,
+        SessionState::Disconnected => None,
+        SessionState::Connecting => Some(palette.warning),
+        SessionState::Connected(_) => Some(palette.success),
+        SessionState::Failed(_) => Some(palette.error),
     }
 }
 

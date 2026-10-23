@@ -12,8 +12,10 @@ use super::{
     QueryConsole, RunScope, RunState, SubmittedStatement, TreeCatalog, cell_viewer,
     completion_popup, highlight, results,
 };
+use crate::icons::{self, Role};
 use crate::keymap::{Action, Keymap};
-use crate::theme::SUCCESS_COLOR;
+use crate::theme::Palette;
+use crate::widgets::{self, IconButton};
 use dbdesk_core::TransactionStatus;
 use dbdesk_core::{CatalogPath, RelationName};
 use dbdesk_engine::{RunId, RunOutcome, SessionState, TransactionEnd, TransactionMode};
@@ -204,17 +206,42 @@ fn action_button(
         Some(shortcut) => format!("{} ({shortcut})", action.description()),
         None => action.description().to_owned(),
     };
-    if ui
-        .add_enabled(is_enabled(console, action), egui::Button::new(label))
-        .on_hover_text(hint)
-        .clicked()
-    {
+    let enabled = is_enabled(console, action);
+    let response = match toolbar_icon(action) {
+        Some((glyph, role)) => IconButton::new(glyph, label)
+            .color(role.color(Palette::for_visuals(ui.visuals())))
+            .enabled(enabled)
+            .tooltip(hint)
+            .show(ui),
+        None => ui
+            .add_enabled(enabled, egui::Button::new(label))
+            .on_hover_text(hint),
+    };
+    if response.clicked() {
         perform(console, action, actions);
     }
 }
 
+/// The icon a toolbar action is shown with. Commit and Rollback stay words: they end a
+/// transaction, and an icon alone would be too easy to misread.
+fn toolbar_icon(action: Action) -> Option<(&'static str, Role)> {
+    match action {
+        Action::RunCurrent => Some((icons::PLAY, Role::Success)),
+        Action::RunAll => Some((icons::FAST_FORWARD, Role::Success)),
+        Action::Explain => Some((icons::TREE_VIEW, Role::Secondary)),
+        Action::Cancel => Some((icons::STOP, Role::Error)),
+        Action::ShowHistory => Some((icons::CLOCK_COUNTER_CLOCKWISE, Role::Weak)),
+        Action::Commit
+        | Action::Rollback
+        | Action::ViewCell
+        | Action::EditCell
+        | Action::Complete => None,
+    }
+}
+
 fn toolbar(ui: &mut Ui, console: &QueryConsole, keymap: &Keymap, actions: &mut Vec<ConsoleAction>) {
-    ui.horizontal(|ui| {
+    let palette = Palette::for_visuals(ui.visuals());
+    widgets::toolbar(ui, |ui| {
         for button in [
             ("Run", Action::RunCurrent),
             ("Run all", Action::RunAll),
@@ -224,10 +251,12 @@ fn toolbar(ui: &mut Ui, console: &QueryConsole, keymap: &Keymap, actions: &mut V
         ] {
             action_button(ui, console, keymap, button, actions);
         }
+        ui.add_space(6.0);
         ui.separator();
-        run_status(ui, console);
+        ui.add_space(6.0);
+        run_status(ui, console, palette);
         if let Some(error) = console.save_error() {
-            ui.colored_label(ui.visuals().error_fg_color, "Not saved")
+            ui.colored_label(palette.error, "Not saved")
                 .on_hover_text(error);
         }
     });
@@ -272,20 +301,21 @@ fn mode_label(mode: TransactionMode) -> &'static str {
 }
 
 fn transaction_status(ui: &mut Ui, console: &QueryConsole) {
+    let palette = Palette::for_visuals(ui.visuals());
     match (console.transaction, &console.transaction_ended) {
         (TransactionStatus::InTransaction, _) => {
-            ui.colored_label(ui.visuals().warn_fg_color, "● Transaction open")
+            ui.colored_label(palette.warning, "● Transaction open")
                 .on_hover_text("Changes stay pending until you commit or roll back");
         }
         (TransactionStatus::Failed, _) => {
-            ui.colored_label(ui.visuals().error_fg_color, "● Transaction failed")
+            ui.colored_label(palette.error, "● Transaction failed")
                 .on_hover_text(
                     "A statement failed, so the database only accepts Rollback now \
                      (Commit rolls back too)",
                 );
         }
         (TransactionStatus::Idle, Some(Ok(TransactionEnd::Commit))) => {
-            ui.colored_label(SUCCESS_COLOR, "Committed");
+            ui.colored_label(palette.success, "Committed");
         }
         (TransactionStatus::Idle, Some(Ok(TransactionEnd::Rollback))) => {
             ui.weak("Rolled back");
@@ -295,11 +325,11 @@ fn transaction_status(ui: &mut Ui, console: &QueryConsole) {
     // A failed commit can leave the transaction open (SQLite's "database is locked", say),
     // so the error shows whatever the status.
     if let Some(Err(error)) = &console.transaction_ended {
-        ui.colored_label(ui.visuals().error_fg_color, error);
+        ui.colored_label(palette.error, error);
     }
 }
 
-fn run_status(ui: &mut Ui, console: &QueryConsole) {
+fn run_status(ui: &mut Ui, console: &QueryConsole, palette: &Palette) {
     match (&console.session, console.run.as_ref().map(|run| run.state)) {
         (SessionState::Connecting, _) => {
             ui.spinner();
@@ -311,17 +341,16 @@ fn run_status(ui: &mut Ui, console: &QueryConsole) {
         }
         (_, Some(RunState::Finished { outcome, elapsed })) => {
             let millis = elapsed.as_millis();
-            match outcome {
-                RunOutcome::Completed => {
-                    ui.colored_label(SUCCESS_COLOR, format!("Done in {millis} ms"));
-                }
-                RunOutcome::Failed => {
-                    ui.colored_label(ui.visuals().error_fg_color, "Failed");
-                }
-                RunOutcome::Cancelled => {
-                    ui.colored_label(ui.visuals().warn_fg_color, "Cancelled");
-                }
-            }
+            let (glyph, color, text) = match outcome {
+                RunOutcome::Completed => (
+                    icons::CHECK_CIRCLE,
+                    palette.success,
+                    format!("Done in {millis} ms"),
+                ),
+                RunOutcome::Failed => (icons::X_CIRCLE, palette.error, "Failed".to_owned()),
+                RunOutcome::Cancelled => (icons::PROHIBIT, palette.warning, "Cancelled".to_owned()),
+            };
+            widgets::status(ui, glyph, color, &text);
         }
         (SessionState::Connected(server), None) => {
             ui.weak(format!("Connected to {server}"));

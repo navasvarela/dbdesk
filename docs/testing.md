@@ -56,19 +56,51 @@ against a real server, such as a cancel arriving after the last row.
 ## UI
 
 - `AppState` reducers (applying an `Event` to state) are pure functions with plain unit tests.
-- Widgets get smoke tests through `egui_kittest`, which drives egui headlessly and supports
-  snapshot images. Used sparingly, for the result grid and explorer tree.
+- Widgets get smoke tests through `egui_kittest`, which drives egui headlessly. The app tests
+  share their harness (a real engine, a temporary data source file, in-memory passwords) through
+  `test_support`, and run at the app's default window size.
+- `theme::tests::text_colours_meet_wcag_aa` checks every text colour against the backgrounds it
+  is drawn on, in both themes, for WCAG AA contrast (4.5:1).
 
 Hard-learned from the M4 UI tests: `egui_kittest` clicks at the centre of a widget's last
-known rectangle, in an 800×600 window. A widget laid out off-screen, or covered by another one
-that egui hit-tests first, simply doesn't get the click, and the test only notices when the
-expected effect never happens. When a click seems ignored, print the widget's rect and egui's
-`interaction_snapshot` before suspecting the code under test. Modals are measured on their
-first frame and placed on the next, so run a frame before clicking inside one.
+known rectangle. The app tests run in a window of the app's default size, 1280×800, because
+egui_kittest's own 800×600 is too narrow for the console with the bundled fonts. A widget laid
+out off-screen, or covered by another one that egui hit-tests first, simply doesn't get the
+click, and the test only notices when the expected effect never happens. When a click seems
+ignored, print the widget's rect and egui's `interaction_snapshot` before suspecting the code
+under test. Modals are measured on their first frame and placed on the next, so run a frame
+before clicking inside one.
+
+### Screenshots
+
+`screenshots::regenerate_screenshots` renders the app with egui_kittest's `wgpu` renderer and
+writes every picture in the user manual, at 2x, into `book/src/images`:
+
+```bash
+cargo test -p dbdesk-app regenerate_screenshots -- --ignored
+```
+
+`DBDESK_SCREENSHOTS_DIR` writes them somewhere else, and `DBDESK_SCREENSHOTS_THEMES=light,dark`
+renders each scene in both themes (with a `-light` / `-dark` suffix), which is what design
+reviews want. Regenerate the manual's images after a visible UI change, and run it with
+`DBDESK_TEST_POSTGRES_URL` set so the workspace picture includes the PostgreSQL data source.
+
+It is ignored by default because it needs a GPU adapter and rewrites files. Each scene starts a
+fresh app against a SQLite fixture (a small shop database built from SQL in the test) and drives
+it the way a user would: expanding nodes, opening a console, typing and running SQL. With
+`DBDESK_TEST_POSTGRES_URL` set, a PostgreSQL data source joins the fixture. Engine logs reach the log
+console through one global `tracing` subscriber whose layer is swapped per scene.
+
+## User manual
+
+The manual in `book/` is an mdBook. `mdbook build book` builds it into `book/book/html` and,
+through the `mdbook-linkcheck2` backend, fails on a link to a page or image that doesn't exist.
+Install both with `cargo install mdbook --version 0.5.4` and
+`cargo install mdbook-linkcheck2 --version 0.13.0`.
 
 ## CI
 
 GitHub Actions: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`
-on macOS and Linux. On Linux the workflow starts the compose Postgres and sets
+on macOS and Linux, and the mdBook build with its link check. On Linux the workflow starts the compose Postgres and sets
 `DBDESK_TEST_POSTGRES_URL`. GitHub can't run containers on macOS runners, so the Postgres tests
 skip there.

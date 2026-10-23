@@ -1,6 +1,7 @@
 //! The dbdesk desktop application.
 
 mod app;
+mod brand;
 mod catalog_tree;
 mod console;
 mod consoles;
@@ -10,15 +11,23 @@ mod definition_window;
 mod delete_dialog;
 mod explorer;
 mod export_dialog;
+mod fonts;
 mod hazard_dialog;
 mod history_window;
+mod icons;
 mod keymap;
 mod keymap_window;
 mod log_console;
 mod rollback_dialog;
+#[cfg(test)]
+mod screenshots;
 mod state;
 mod telemetry;
+#[cfg(test)]
+mod test_support;
 mod theme;
+mod welcome;
+mod widgets;
 mod workspace;
 
 use std::sync::Arc;
@@ -31,6 +40,7 @@ use dbdesk_store::{
 
 use crate::app::DbDeskApp;
 
+/// Also the size UI tests run at, so they see the layout a new user sees.
 const DEFAULT_WINDOW_SIZE: [f32; 2] = [1280.0, 800.0];
 
 fn main() -> anyhow::Result<()> {
@@ -47,11 +57,15 @@ fn main() -> anyhow::Result<()> {
         keymap: KeymapFile::new(paths.keymap_file()),
     };
 
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("dbdesk")
+        .with_app_id(APP_NAME)
+        .with_inner_size(DEFAULT_WINDOW_SIZE);
+    if let Some(icon) = brand::window_icon() {
+        viewport = viewport.with_icon(icon);
+    }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("dbdesk")
-            .with_app_id(APP_NAME)
-            .with_inner_size(DEFAULT_WINDOW_SIZE),
+        viewport,
         ..Default::default()
     };
     eframe::run_native(

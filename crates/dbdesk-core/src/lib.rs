@@ -17,7 +17,8 @@ pub mod conformance;
 pub use catalog::{CatalogNode, CatalogPath, FolderKind, NodeKind, PathSegment, quote_identifier};
 pub use connection::{Connection, ServerInfo};
 pub use data_source::{
-    ConnectionConfig, DataSource, DataSourceId, DriverKind, PostgresConfig, SqliteConfig,
+    ConnectionConfig, DataSource, DataSourceId, DriverKind, PostgresConfig, SourceColor,
+    SqliteConfig,
 };
 pub use error::{BoxError, DriverError, describe_error};
 pub use execution::{CancelHandle, Cell, ColumnInfo, ResultCursor, Row, TransactionStatus};

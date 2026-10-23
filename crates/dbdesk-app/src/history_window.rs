@@ -7,7 +7,7 @@ use dbdesk_store::{ConsoleKey, HistoryEntry, HistoryOutcome};
 use egui::{Label, RichText, ScrollArea, TextEdit, Ui, Window};
 use jiff::tz::TimeZone;
 
-use crate::theme::SUCCESS_COLOR;
+use crate::theme::Palette;
 
 const DEFAULT_SIZE: [f32; 2] = [640.0, 420.0];
 const TIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
@@ -161,10 +161,11 @@ fn entry_row(ui: &mut Ui, entry: &HistoryEntry, time_zone: &TimeZone) -> bool {
 }
 
 fn outcome_label(ui: &mut Ui, entry: &HistoryEntry) {
+    let palette = Palette::for_visuals(ui.visuals());
     let (text, color) = match entry.outcome {
-        HistoryOutcome::Ok => ("ok", SUCCESS_COLOR),
-        HistoryOutcome::Error => ("error", ui.visuals().error_fg_color),
-        HistoryOutcome::Cancelled => ("cancelled", ui.visuals().warn_fg_color),
+        HistoryOutcome::Ok => ("ok", palette.success),
+        HistoryOutcome::Error => ("error", palette.error),
+        HistoryOutcome::Cancelled => ("cancelled", palette.warning),
     };
     let details = match (entry.duration, entry.rows) {
         (Some(duration), Some(rows)) => format!("{} ms · {rows} rows", duration.as_millis()),

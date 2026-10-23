@@ -56,7 +56,7 @@ pub fn init(logs_dir: &Path) -> anyhow::Result<Telemetry> {
 
 /// dbdesk's own crates log from debug up. Dependencies only from warn up: at info they are
 /// chatty about things a database tool's user doesn't care about (GL setup, window events).
-fn targets() -> Targets {
+pub fn targets() -> Targets {
     Targets::new()
         .with_target("dbdesk", Level::DEBUG)
         .with_default(Level::WARN)

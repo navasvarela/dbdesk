@@ -13,6 +13,8 @@ use tracing::Level;
 
 pub use entry::LogEntry;
 use filter::LogFilter;
+#[cfg(test)]
+pub use pipeline::LogConsoleLayer;
 pub use pipeline::{LogFeed, pipeline};
 
 /// Entries kept in memory before the oldest are dropped. Large enough for a long working
@@ -66,7 +68,7 @@ impl LogConsole {
     }
 
     fn toolbar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
+        crate::widgets::toolbar(ui, |ui| {
             egui::ComboBox::from_id_salt("log_console_verbosity")
                 .selected_text(level_name(self.filter.verbosity))
                 .show_ui(ui, |ui| {
@@ -74,12 +76,20 @@ impl LogConsole {
                         ui.selectable_value(&mut self.filter.verbosity, level, level_name(level));
                     }
                 });
+            ui.add_space(6.0);
+            ui.label(
+                crate::widgets::glyph(crate::icons::MAGNIFYING_GLASS)
+                    .color(ui.visuals().weak_text_color()),
+            );
             ui.add(
                 TextEdit::singleline(&mut self.filter.search)
                     .hint_text("Search")
                     .desired_width(SEARCH_BOX_WIDTH),
             );
-            if ui.button("Clear").clicked() {
+            if crate::widgets::IconButton::new(crate::icons::TRASH, "Clear")
+                .show(ui)
+                .clicked()
+            {
                 self.entries.clear();
             }
         });
@@ -154,7 +164,6 @@ fn level_name(level: Level) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
     use tracing_subscriber::layer::SubscriberExt;
 
@@ -170,7 +179,7 @@ mod tests {
         });
         assert!(console.drain());
 
-        let harness = Harness::new_ui(|ui| console.ui(ui));
+        let harness = crate::test_support::ui_harness(|ui| console.ui(ui));
 
         harness.get_by_label_contains("engine started");
         assert!(harness.query_by_label_contains("loaded 12 nodes").is_none());
