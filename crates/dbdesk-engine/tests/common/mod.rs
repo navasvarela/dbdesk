@@ -108,6 +108,7 @@ pub fn sqlite_data_source(path: PathBuf) -> DataSource {
     DataSource {
         id: DataSourceId::generate(),
         name: "app".to_owned(),
+        color: None,
         config: ConnectionConfig::Sqlite(SqliteConfig {
             path,
             read_only: false,

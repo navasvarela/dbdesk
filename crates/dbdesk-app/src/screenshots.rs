@@ -178,6 +178,7 @@ impl Fixture {
         let mut data_sources = vec![DataSource {
             id: DataSourceId::generate(),
             name: "shop".to_owned(),
+            color: None,
             config: ConnectionConfig::Sqlite(SqliteConfig {
                 path: shop,
                 read_only: false,
@@ -218,6 +219,7 @@ fn postgres_data_source(url: &str) -> (DataSource, Password) {
     let data_source = DataSource {
         id: DataSourceId::generate(),
         name: "warehouse".to_owned(),
+        color: None,
         config: ConnectionConfig::Postgres(PostgresConfig {
             host: host.to_owned(),
             port: port.parse().unwrap(),

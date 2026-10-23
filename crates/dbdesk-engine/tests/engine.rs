@@ -61,6 +61,7 @@ fn reloads_saved_data_sources_and_stores_passwords_in_the_secret_store() {
     let data_source = DataSource {
         id: DataSourceId::generate(),
         name: "remote".to_owned(),
+        color: None,
         config: ConnectionConfig::Postgres(PostgresConfig {
             host: "db.internal".to_owned(),
             port: 5432,
@@ -214,6 +215,7 @@ fn connects_to_postgres_with_the_saved_password() {
     let data_source = DataSource {
         id: DataSourceId::generate(),
         name: "test server".to_owned(),
+        color: None,
         config: ConnectionConfig::Postgres(parsed.config),
     };
     let id = data_source.id;

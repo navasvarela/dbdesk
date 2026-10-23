@@ -389,6 +389,7 @@ mod tests {
             .save(&[dbdesk_core::DataSource {
                 id: DataSourceId::generate(),
                 name: "shop".to_owned(),
+                color: None,
                 config: dbdesk_core::ConnectionConfig::Sqlite(dbdesk_core::SqliteConfig {
                     path: database,
                     read_only: true,
@@ -429,6 +430,7 @@ mod tests {
             .save(&[dbdesk_core::DataSource {
                 id: DataSourceId::generate(),
                 name: "shop".to_owned(),
+                color: None,
                 config: dbdesk_core::ConnectionConfig::Sqlite(dbdesk_core::SqliteConfig {
                     path: database,
                     read_only: true,
