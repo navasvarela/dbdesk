@@ -22,6 +22,10 @@ on:
 permissions:
   contents: read
 
+# cargo-packager, given `-p dbdesk-app`, resolves relative paths from the crate's folder and
+# always packages `target/release/<binary>` under `--release` (`--binaries-dir` is ignored when
+# its config comes from Cargo.toml). Hence the absolute `--out-dir`, and the macOS job copying
+# its universal binary into target/release before packaging.
 env:
   CARGO_TERM_COLOR: always
   # cargo-packager reads this to skip GUI steps meant for interactive machines.
@@ -81,8 +85,9 @@ jobs:
           lipo -archs target/universal/release/dbdesk
       - name: Package
         run: |
-          cargo packager -p dbdesk-app --release --formats app \
-            --binaries-dir target/universal/release --out-dir dist
+          mkdir -p target/release
+          cp target/universal/release/dbdesk target/release/dbdesk
+          cargo packager -p dbdesk-app --release --formats app --out-dir "$GITHUB_WORKSPACE/dist"
           packaging/macos-dmg.sh dist/dbdesk.app "dist/dbdesk-$VERSION-macos-universal.dmg"
       - name: Smoke test the disk image
         run: |
@@ -124,7 +129,7 @@ jobs:
       - name: Package
         run: |
           cargo packager -p dbdesk-app --release --formats appimage,deb \
-            --binaries-dir target/release --out-dir dist
+            --out-dir "$GITHUB_WORKSPACE/dist"
           mv dist/*.AppImage "dist/dbdesk-$VERSION-x86_64.AppImage"
           mv dist/*.deb "dist/dbdesk_${VERSION}_amd64.deb"
       - name: Smoke test the AppImage and the .deb
@@ -162,8 +167,7 @@ jobs:
       - run: cargo build --release --locked -p dbdesk-app
       - name: Package
         run: |
-          cargo packager -p dbdesk-app --release --formats nsis \
-            --binaries-dir target/release --out-dir dist
+          cargo packager -p dbdesk-app --release --formats nsis --out-dir "$GITHUB_WORKSPACE/dist"
           mv dist/*-setup.exe "dist/dbdesk-$VERSION-windows-x64-setup.exe"
       - name: Smoke test
         run: |
