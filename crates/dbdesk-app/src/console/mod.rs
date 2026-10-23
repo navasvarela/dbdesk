@@ -3,7 +3,10 @@
 //! This module holds the state and its rules (what to run, how events update a run); `view`
 //! and `results` draw it. See `docs/features/sql-runner.md`.
 
+mod catalog_source;
 mod cell_viewer;
+mod completion;
+mod completion_popup;
 mod grid;
 mod highlight;
 mod results;
@@ -21,7 +24,8 @@ use dbdesk_engine::{
 use dbdesk_sql::{Dialect, explain_prefix, split_statements, statement_at};
 use dbdesk_store::{ConsoleKey, ExportFormat};
 
-pub use view::{ConsoleAction, show};
+pub use catalog_source::TreeCatalog;
+pub use view::{ConsoleAction, ConsoleContext, show};
 
 pub fn dialect_for(driver: DriverKind) -> Dialect {
     match driver {
@@ -76,6 +80,8 @@ pub struct QueryConsole {
     pending_cursor: Option<usize>,
     /// The cell shown in full in the cell viewer window.
     viewed_cell: Option<ViewedCell>,
+    /// The completion list, while it is open.
+    completion: Option<Completion>,
     /// How the last export went: where the rows went, or why they didn't.
     export_status: Option<Result<String, String>>,
     file: FileState,
@@ -124,6 +130,21 @@ pub struct StatementView {
     grid: grid::GridView,
 }
 
+/// The completion list at the cursor.
+struct Completion {
+    /// Opened on request, rather than by typing: stays open with nothing to suggest.
+    explicit: bool,
+    candidates: Vec<completion::Candidate>,
+    /// The typed prefix, which an accepted candidate replaces.
+    replace: Range<usize>,
+    selected: usize,
+    /// Where the list was drawn last frame, so a click on it doesn't count as leaving the
+    /// editor.
+    rect: Option<egui::Rect>,
+    /// Catalog levels it needs are still loading.
+    loading: bool,
+}
+
 /// A copy of one cell, so the viewer stays open while new rows arrive or a new run starts.
 pub struct ViewedCell {
     column: String,
@@ -153,6 +174,7 @@ impl QueryConsole {
             error_marker: None,
             pending_cursor: None,
             viewed_cell: None,
+            completion: None,
             export_status: None,
             file: FileState::default(),
         }
@@ -197,6 +219,109 @@ impl QueryConsole {
                 rows: statement.grid.shown_rows(&statement.rows),
             },
         })
+    }
+
+    /// Opens the completion list; it fills on the next [`QueryConsole::refresh_completion`].
+    pub fn open_completion(&mut self, explicit: bool) {
+        match &mut self.completion {
+            Some(open) => open.explicit |= explicit,
+            None => {
+                self.completion = Some(Completion {
+                    explicit,
+                    candidates: Vec::new(),
+                    replace: self.selection.end..self.selection.end,
+                    selected: 0,
+                    rect: None,
+                    loading: false,
+                });
+            }
+        }
+    }
+
+    pub fn close_completion(&mut self) {
+        self.completion = None;
+    }
+
+    /// Recomputes the open completion list for the cursor, closing it where nothing applies
+    /// (a selection, inside a string, or nothing to suggest unless asked). Returns the catalog
+    /// levels that should be loaded to suggest more.
+    pub fn refresh_completion(
+        &mut self,
+        catalog: Option<&TreeCatalog<'_>>,
+    ) -> Vec<dbdesk_core::CatalogPath> {
+        let Some(open) = &self.completion else {
+            return Vec::new();
+        };
+        let (start, end) = ordered(&self.selection);
+        let point = (start == end)
+            .then(|| completion::completion_point(&self.text, end, self.dialect))
+            .flatten();
+        let Some(point) = point else {
+            self.completion = None;
+            return Vec::new();
+        };
+        let statement = self
+            .current_statement()
+            .and_then(|range| self.text.get(range))
+            .unwrap_or_default();
+        let references = completion::table_references(statement, self.dialect);
+        let candidates = match catalog {
+            Some(catalog) => completion::candidates(&point, &references, catalog),
+            None => completion::candidates(&point, &references, &completion::NoCatalog),
+        };
+        let needed = catalog
+            .map(|catalog| catalog.missing(&references))
+            .unwrap_or_default();
+        // While the catalog loads, an empty list may yet fill; it shows "Loading…".
+        if candidates.is_empty() && !open.explicit && !needed.is_pending() {
+            self.completion = None;
+            return Vec::new();
+        }
+        let selected = open.selected.min(candidates.len().saturating_sub(1));
+        let rect = open.rect;
+        let explicit = open.explicit;
+        self.completion = Some(Completion {
+            explicit,
+            candidates,
+            replace: point.replace,
+            selected,
+            rect,
+            loading: needed.is_pending(),
+        });
+        needed.unrequested
+    }
+
+    /// Moves the highlight in the completion list, wrapping around.
+    pub fn move_completion(&mut self, down: bool) {
+        if let Some(open) = &mut self.completion
+            && !open.candidates.is_empty()
+        {
+            let count = open.candidates.len();
+            open.selected = if down {
+                (open.selected + 1) % count
+            } else {
+                (open.selected + count - 1) % count
+            };
+        }
+    }
+
+    /// Replaces the typed prefix with the highlighted candidate and closes the list.
+    pub fn accept_completion(&mut self, now: Instant) {
+        let Some(open) = self.completion.take() else {
+            return;
+        };
+        let Some(candidate) = open.candidates.get(open.selected) else {
+            return;
+        };
+        if self.text.get(open.replace.clone()).is_none() {
+            return;
+        }
+        self.text
+            .replace_range(open.replace.clone(), &candidate.insert);
+        let cursor = open.replace.start + candidate.insert.len();
+        self.selection = cursor..cursor;
+        self.pending_cursor = Some(cursor);
+        self.edited(now);
     }
 
     /// Puts `sql` at the cursor, replacing the selection, as a statement on a line of its own,

@@ -29,6 +29,7 @@ rebind it. Status: implemented in M5.
 
 | Id | Default | What it does |
 | --- | --- | --- |
+| `console.complete` | ⌃Space | Suggest names and keywords at the cursor |
 | `console.run` | ⌘↵ | Run the selection or the statement at the cursor |
 | `console.run-all` | ⇧⌘↵ | Run every statement in the console |
 | `console.explain` | ⌥⌘E | Explain the statement at the cursor |

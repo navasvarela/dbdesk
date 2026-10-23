@@ -177,6 +177,13 @@ edits. A typo in the file is listed as a problem (and counted in the status bar)
 discarding the rest. Covered by store and engine tests for reading, creating and reloading the
 file, parser and conflict tests, and a UI test that runs a statement with a rebound key.
 
+**Completion demo note:** built. Typing in a console suggests columns of the tables the
+statement names, tables, schemas and keywords from the explorer's cached catalog, loading
+what's missing in the background; ⌃Space asks anywhere, `alias.` lists that table's columns.
+Covered by tests for finding the prefix, qualifier and table references, ranking candidates,
+reading and requesting catalog levels, accepting a candidate, and a UI test that completes a
+column on a fresh connection.
+
 The original candidates:
 
 - `keymap.toml`, themes, fonts.

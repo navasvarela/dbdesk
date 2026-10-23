@@ -8,7 +8,7 @@ use egui_dock::tab_viewer::OnCloseResponse;
 use egui_dock::{DockState, NodeIndex, TabViewer};
 use serde::{Deserialize, Serialize};
 
-use crate::console::{self, ConsoleAction, QueryConsole};
+use crate::console::{self, ConsoleAction, ConsoleContext, QueryConsole, TreeCatalog};
 use crate::consoles::SavedConsoles;
 use crate::explorer::{self, ExplorerAction, ExplorerOptions};
 use crate::keymap::Keymap;
@@ -151,8 +151,20 @@ impl TabViewer for Panels<'_> {
             Tab::LogConsole => self.log_console.ui(ui),
             Tab::QueryConsole(key) => match self.consoles.get_mut(key) {
                 Some(query_console) => {
+                    let data_source = query_console.data_source();
+                    let context = ConsoleContext {
+                        keymap: self.keymap,
+                        catalog: self
+                            .data_sources
+                            .entries()
+                            .iter()
+                            .find(|entry| entry.data_source.id == data_source)
+                            .map(|entry| {
+                                TreeCatalog::new(&entry.catalog, &entry.data_source.config)
+                            }),
+                    };
                     let mut actions = Vec::new();
-                    console::show(ui, query_console, self.keymap, &mut actions);
+                    console::show(ui, query_console, &context, &mut actions);
                     self.console_actions
                         .extend(actions.into_iter().map(|action| (key.clone(), action)));
                 }

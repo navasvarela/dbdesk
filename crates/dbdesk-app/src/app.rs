@@ -254,6 +254,17 @@ impl DbDeskApp {
         }
     }
 
+    /// Loads catalog levels completion asked for, without expanding them in the explorer.
+    fn load_catalog(&mut self, id: DataSourceId, paths: Vec<CatalogPath>) {
+        for path in paths {
+            let needs_loading = self
+                .state
+                .catalog_mut(id)
+                .is_some_and(|catalog| catalog.request(&path));
+            self.load_children_if(needs_loading, id, path);
+        }
+    }
+
     fn load_children_if(&self, needs_loading: bool, id: DataSourceId, path: CatalogPath) {
         if needs_loading {
             self.send(Command::LoadChildren { id, path });
@@ -472,6 +483,7 @@ impl eframe::App for DbDeskApp {
             match action {
                 ConsoleAction::ShowHistory => self.open_history(console),
                 ConsoleAction::Export(format) => self.export(&console, format),
+                ConsoleAction::LoadCatalog(paths) => self.load_catalog(console.data_source, paths),
                 action => {
                     let command = self.consoles.handle(&console, action);
                     self.send_if(command);
@@ -926,6 +938,7 @@ mod tests {
         let (_layer, feed) = log_console::pipeline();
         let mut harness = start_app(dir.path(), feed);
         step_until_visible(&mut harness, "keymap.toml: 1 problem");
+        step_until_visible(&mut harness, "Expand shop");
         harness.get_by_label("shop").click_secondary();
         harness.run();
         harness.get_by_label("New query console").click();
@@ -935,7 +948,7 @@ mod tests {
         harness
             .get_by_role(Role::MultilineTextInput)
             .type_text("SELECT 42 AS answer");
-        harness.run();
+        harness.step();
 
         harness.key_press(egui::Key::F5);
 
@@ -943,5 +956,41 @@ mod tests {
         harness.get_by_label("keymap.toml: 1 problem").click();
         harness.run();
         harness.get_by_label_contains("\"console.walk\" is not an action");
+    }
+
+    #[test]
+    fn completes_a_column_from_the_catalog_it_loads_in_the_background() {
+        let dir = tempfile::tempdir().unwrap();
+        save_shop(
+            dir.path(),
+            "CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT)",
+        );
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "Expand shop");
+        harness.get_by_label("shop").click_secondary();
+        harness.run();
+        harness.get_by_label("New query console").click();
+        harness.run();
+        harness.get_by_role(Role::MultilineTextInput).focus();
+        harness.run();
+
+        harness
+            .get_by_role(Role::MultilineTextInput)
+            .type_text("SELECT * FROM orders WHERE cus");
+        step_until_visible(&mut harness, "c customer");
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+
+        harness.get_by(|node| {
+            node.role() == Role::MultilineTextInput
+                && node.value().as_deref() == Some("SELECT * FROM orders WHERE customer")
+        });
+        assert!(
+            !harness.state().state.data_sources.entries()[0]
+                .catalog
+                .is_expanded(&dbdesk_core::CatalogPath::root()),
+            "completion loads the catalog without expanding the explorer"
+        );
     }
 }

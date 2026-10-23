@@ -17,7 +17,7 @@ mod split;
 mod transaction;
 
 pub use explain::explain_prefix;
-pub use keywords::is_keyword;
+pub use keywords::{is_keyword, keywords};
 pub use lexer::{Dialect, Token, TokenKind, first_word, tokenize};
 pub use safety::{Hazard, hazard};
 pub use split::{split_statements, statement_at};
