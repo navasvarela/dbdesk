@@ -24,17 +24,26 @@ use dbdesk. Its sources are in `book/`; `mdbook serve book` shows it locally.
 
 ## Building and running
 
-```bash
-cargo run -p dbdesk-app
-```
-
-Checks run in CI (and should pass locally before pushing):
+The everyday commands are recipes in the `justfile`, for [just](https://github.com/casey/just)
+(`brew install just` or `cargo install just`); `just` lists them.
 
 ```bash
-cargo fmt --all --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+just run
 ```
+
+Before pushing, run the checks CI runs. `just format` fixes what `just lint` reports about
+formatting.
+
+```bash
+just lint
+```
+
+```bash
+just test
+```
+
+Each recipe is one or two `cargo` commands, which also work without `just`. The `justfile`
+shows them.
 
 The PostgreSQL tests need a server and are skipped without one. To run them, start the bundled
 container and point the tests at it:
@@ -44,7 +53,7 @@ docker compose up -d --wait
 ```
 
 ```bash
-DBDESK_TEST_POSTGRES_URL=postgres://dbdesk:dbdesk@localhost:55432/dbdesk cargo test --workspace
+DBDESK_TEST_POSTGRES_URL=postgres://dbdesk:dbdesk@localhost:55432/dbdesk just test
 ```
 
 Files live in `~/Library/Application Support/dbdesk` on macOS: data sources in
