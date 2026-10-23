@@ -1,13 +1,11 @@
 # Database servers for the driver tests and manual testing, one service per engine (plus
 # PostgreSQL again with TLS required):
 #   docker compose up -d --wait
-# Then point the tests at them; each test that needs a server is skipped when its variable
-# is unset, so `cargo test` also works with none running:
-#   DBDESK_TEST_POSTGRES_URL=postgres://dbdesk:dbdesk@localhost:55432/dbdesk
-#   DBDESK_TEST_POSTGRES_TLS_URL=postgres://dbdesk:dbdesk@localhost:55443/dbdesk
-# The ports avoid clashing with servers already running on their usual ports. CI exports the
-# same variables (.github/workflows/ci.yml), so a new engine adds a service here and its
-# variable there.
+#   set -a; . ./test-servers.env; set +a
+#   cargo test --workspace
+# test-servers.env holds each service's DBDESK_TEST_*_URL; a test skips when its variable is
+# unset. CI reads the same two files, so a new engine adds its service here and its URL there.
+# The ports avoid clashing with servers already running on their usual ports.
 services:
   postgres:
     image: postgres:17

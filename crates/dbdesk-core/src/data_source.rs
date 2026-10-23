@@ -112,7 +112,7 @@ impl ConnectionConfig {
     /// schemas; the explorer lists that database's schemas.
     pub fn database(&self) -> Option<&str> {
         match self {
-            Self::Postgres(config) => Some(&config.database),
+            Self::Postgres(config) => Some(&config.server.database),
             Self::Sqlite(_) => None,
         }
     }
@@ -120,7 +120,7 @@ impl ConnectionConfig {
     /// A name for a data source the user didn't name: `database@host`, or the file name.
     pub fn default_name(&self) -> String {
         match self {
-            Self::Postgres(config) => format!("{}@{}", config.database, config.host),
+            Self::Postgres(config) => config.server.default_name(),
             Self::Sqlite(config) => config.path.file_name().map_or_else(
                 || config.path.display().to_string(),
                 |name| name.to_string_lossy().into_owned(),
@@ -144,11 +144,7 @@ impl DriverKind {
 impl fmt::Display for ConnectionConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Postgres(config) => write!(
-                f,
-                "{}@{}:{}/{}",
-                config.user, config.host, config.port, config.database
-            ),
+            Self::Postgres(config) => config.server.fmt(f),
             Self::Sqlite(config) if config.read_only => {
                 write!(f, "{} (read-only)", config.path.display())
             }
@@ -157,8 +153,10 @@ impl fmt::Display for ConnectionConfig {
     }
 }
 
+/// Where a database server is and whom to connect as: what every network engine's settings
+/// start with, and what the data source dialog's server section edits.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PostgresConfig {
+pub struct ServerConfig {
     pub host: String,
     pub port: u16,
     pub database: String,
@@ -166,6 +164,31 @@ pub struct PostgresConfig {
     /// Absent from files written before TLS existed, which then get the default.
     #[serde(default)]
     pub tls: TlsMode,
+}
+
+impl ServerConfig {
+    fn default_name(&self) -> String {
+        format!("{}@{}", self.database, self.host)
+    }
+}
+
+/// `user@host:port/database`.
+impl fmt::Display for ServerConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}@{}:{}/{}",
+            self.user, self.host, self.port, self.database
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PostgresConfig {
+    /// Flattened, so the file keeps `host`, `port` and the rest next to `driver`, as it did
+    /// before the server settings were shared between engines.
+    #[serde(flatten)]
+    pub server: ServerConfig,
 }
 
 impl PostgresConfig {
@@ -238,12 +261,14 @@ mod tests {
                     name: "local".to_owned(),
                     color: None,
                     config: ConnectionConfig::Postgres(PostgresConfig {
-                        host: "localhost".to_owned(),
-                        port: 5432,
-                        database: "app".to_owned(),
-                        user: "juan".to_owned(),
-                        tls: TlsMode::VerifyFull {
-                            ca_file: Some("/etc/ssl/internal-ca.pem".into()),
+                        server: ServerConfig {
+                            host: "localhost".to_owned(),
+                            port: 5432,
+                            database: "app".to_owned(),
+                            user: "juan".to_owned(),
+                            tls: TlsMode::VerifyFull {
+                                ca_file: Some("/etc/ssl/internal-ca.pem".into()),
+                            },
                         },
                     }),
                 },
@@ -283,7 +308,7 @@ mod tests {
         let ConnectionConfig::Postgres(config) = &file.data_source[0].config else {
             panic!("expected a PostgreSQL data source");
         };
-        assert_eq!(config.tls, TlsMode::Prefer);
+        assert_eq!(config.server.tls, TlsMode::Prefer);
     }
 
     #[test]
@@ -309,11 +334,13 @@ mod tests {
                     name: "local".to_owned(),
                     color: None,
                     config: ConnectionConfig::Postgres(PostgresConfig {
-                        host: "localhost".to_owned(),
-                        port: 5432,
-                        database: "app".to_owned(),
-                        user: "juan".to_owned(),
-                        tls,
+                        server: ServerConfig {
+                            host: "localhost".to_owned(),
+                            port: 5432,
+                            database: "app".to_owned(),
+                            user: "juan".to_owned(),
+                            tls,
+                        },
                     }),
                 }],
             };
@@ -348,11 +375,13 @@ mod tests {
     #[test]
     fn describes_the_target_without_secrets() {
         let postgres = ConnectionConfig::Postgres(PostgresConfig {
-            host: "db.internal".to_owned(),
-            port: 6432,
-            database: "app".to_owned(),
-            user: "juan".to_owned(),
-            tls: TlsMode::Require,
+            server: ServerConfig {
+                host: "db.internal".to_owned(),
+                port: 6432,
+                database: "app".to_owned(),
+                user: "juan".to_owned(),
+                tls: TlsMode::Require,
+            },
         });
         let sqlite = ConnectionConfig::Sqlite(SqliteConfig {
             path: "/data/app.db".into(),

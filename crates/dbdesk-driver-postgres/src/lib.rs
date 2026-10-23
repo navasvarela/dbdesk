@@ -29,7 +29,7 @@ pub use tls::TlsSetupError;
 const APPLICATION_NAME: &str = "dbdesk";
 const PRODUCT: &str = "PostgreSQL";
 
-/// Opens a connection, encrypted as `config.tls` says.
+/// Opens a connection, encrypted as `config.server.tls` says.
 ///
 /// # Errors
 ///
@@ -40,8 +40,9 @@ pub async fn connect(
     config: &PostgresConfig,
     password: Option<&Password>,
 ) -> Result<PostgresConnection, DriverError> {
-    let tls = tls::connector(&config.tls).map_err(|error| DriverError::Connect(Box::new(error)))?;
-    let primary = DatabaseClient::open(config, &config.database, password, &tls)
+    let tls = tls::connector(&config.server.tls)
+        .map_err(|error| DriverError::Connect(Box::new(error)))?;
+    let primary = DatabaseClient::open(config, &config.server.database, password, &tls)
         .await
         .map_err(connect_error)?;
     let version = server_version(&primary.client)
@@ -92,12 +93,12 @@ impl DatabaseClient {
     ) -> Result<Self, tokio_postgres::Error> {
         let mut pg_config = tokio_postgres::Config::new();
         pg_config
-            .host(&config.host)
-            .port(config.port)
+            .host(&config.server.host)
+            .port(config.server.port)
             .dbname(database)
-            .user(&config.user)
+            .user(&config.server.user)
             .application_name(APPLICATION_NAME)
-            .ssl_mode(tls::ssl_mode(&config.tls));
+            .ssl_mode(tls::ssl_mode(&config.server.tls));
         if let Some(password) = password {
             pg_config.password(password.expose());
         }
@@ -165,7 +166,8 @@ impl PostgresConnection {
     async fn client_for(&mut self, path: &CatalogPath) -> Result<&Client, DriverError> {
         let database = match path.segments().first() {
             Some(segment)
-                if segment.kind == NodeKind::Database && segment.name != self.config.database =>
+                if segment.kind == NodeKind::Database
+                    && segment.name != self.config.server.database =>
             {
                 segment.name.as_str()
             }
@@ -261,7 +263,7 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::str::FromStr;
 
-    use dbdesk_core::{FolderKind, TlsMode, conformance};
+    use dbdesk_core::{FolderKind, ServerConfig, TlsMode, conformance};
     use tokio_postgres::config::Host;
 
     use super::*;
@@ -280,8 +282,16 @@ mod tests {
 
     /// The TLS-only server, connected to with `tls`.
     fn tls_test_server(tls: TlsMode) -> Option<(PostgresConfig, Option<Password>)> {
-        server_from(TLS_TEST_URL_VAR)
-            .map(|(config, password)| (PostgresConfig { tls, ..config }, password))
+        server_from(TLS_TEST_URL_VAR).map(|(config, password)| (with_tls(config, tls), password))
+    }
+
+    fn with_tls(config: PostgresConfig, tls: TlsMode) -> PostgresConfig {
+        PostgresConfig {
+            server: ServerConfig {
+                tls,
+                ..config.server
+            },
+        }
     }
 
     /// The authority that signed the TLS server's certificate.
@@ -300,18 +310,20 @@ mod tests {
             other => panic!("test URL needs a TCP host, got {other:?}"),
         };
         let config = PostgresConfig {
-            host,
-            port: parsed
-                .get_ports()
-                .first()
-                .copied()
-                .unwrap_or(PostgresConfig::DEFAULT_PORT),
-            database: parsed
-                .get_dbname()
-                .expect("database in test URL")
-                .to_owned(),
-            user: parsed.get_user().expect("user in test URL").to_owned(),
-            tls: TlsMode::default(),
+            server: ServerConfig {
+                host,
+                port: parsed
+                    .get_ports()
+                    .first()
+                    .copied()
+                    .unwrap_or(PostgresConfig::DEFAULT_PORT),
+                database: parsed
+                    .get_dbname()
+                    .expect("database in test URL")
+                    .to_owned(),
+                user: parsed.get_user().expect("user in test URL").to_owned(),
+                tls: TlsMode::default(),
+            },
         };
         let password = parsed
             .get_password()
@@ -345,13 +357,15 @@ mod tests {
     #[tokio::test]
     async fn unreachable_server_is_a_connect_error() {
         let config = PostgresConfig {
-            host: "127.0.0.1".to_owned(),
-            // Port 1 (tcpmux) is reserved and has no listener on any normal machine, so the
-            // connection is refused immediately instead of timing out.
-            port: 1,
-            database: "postgres".to_owned(),
-            user: "postgres".to_owned(),
-            tls: TlsMode::default(),
+            server: ServerConfig {
+                host: "127.0.0.1".to_owned(),
+                // Port 1 (tcpmux) is reserved and has no listener on any normal machine, so the
+                // connection is refused immediately instead of timing out.
+                port: 1,
+                database: "postgres".to_owned(),
+                user: "postgres".to_owned(),
+                tls: TlsMode::default(),
+            },
         };
 
         conformance::check_connect_failure(connect(&config, None).await);
@@ -425,7 +439,7 @@ mod tests {
             let Some((config, password)) = server_from(variable) else {
                 continue;
             };
-            let config = PostgresConfig { tls, ..config };
+            let config = with_tls(config, tls);
 
             conformance::check_connect_failure(connect(&config, password.as_ref()).await);
         }
@@ -436,7 +450,7 @@ mod tests {
         let Some((config, password)) = test_server() else {
             return;
         };
-        assert_eq!(config.tls, TlsMode::Prefer);
+        assert_eq!(config.server.tls, TlsMode::Prefer);
 
         let connection = connect(&config, password.as_ref()).await.unwrap();
 
@@ -497,11 +511,12 @@ mod tests {
 
         let root_labels = labels_under(&nodes, &CatalogPath::root());
         assert!(
-            root_labels.contains(&config.database.as_str()),
+            root_labels.contains(&config.server.database.as_str()),
             "{root_labels:?}"
         );
         assert!(root_labels.contains(&"postgres"), "{root_labels:?}");
-        let database = CatalogPath::root().child(NodeKind::Database, config.database.clone());
+        let database =
+            CatalogPath::root().child(NodeKind::Database, config.server.database.clone());
         let pg_catalog = nodes
             .iter()
             .find(|node| node.path == database.child(NodeKind::Schema, "pg_catalog"))

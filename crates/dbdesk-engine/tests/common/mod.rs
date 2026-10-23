@@ -12,7 +12,8 @@ use std::time::Duration;
 use std::str::FromStr;
 
 use dbdesk_core::{
-    ConnectionConfig, DataSource, DataSourceId, Password, PostgresConfig, SqliteConfig, TlsMode,
+    ConnectionConfig, DataSource, DataSourceId, Password, PostgresConfig, ServerConfig,
+    SqliteConfig, TlsMode,
 };
 use dbdesk_engine::{Command, EngineConfig, EngineHandle, Event, Repaint, SessionState};
 use dbdesk_store::{
@@ -187,11 +188,13 @@ fn parse_test_url(url: &str) -> ParsedUrl {
     let (host, port) = host_port.split_once(':').unwrap_or((host_port, "5432"));
     ParsedUrl {
         config: PostgresConfig {
-            host: host.to_owned(),
-            port: u16::from_str(port).expect("numeric port"),
-            database: database.to_owned(),
-            user: user.to_owned(),
-            tls: TlsMode::default(),
+            server: ServerConfig {
+                host: host.to_owned(),
+                port: u16::from_str(port).expect("numeric port"),
+                database: database.to_owned(),
+                user: user.to_owned(),
+                tls: TlsMode::default(),
+            },
         },
         password: Password::new(password),
     }
