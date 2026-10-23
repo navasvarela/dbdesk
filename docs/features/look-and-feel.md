@@ -1,8 +1,8 @@
 # Look and feel
 
-dbdesk's interface takes its layout and density from DataGrip's new UI, and its colours from
-the brand palette ([brand.md](../brand.md)): a calm base, a few accents used sparingly. The code
-is in `crates/dbdesk-app/src/theme.rs`, `fonts.rs`, `icons.rs`, `widgets.rs` and `welcome.rs`.
+dbdesk's interface takes its layout and density from current desktop database tools
+(TablePlus, Beekeeper Studio, DataGrip's new UI), and its colours from the brand palette
+([brand.md](../brand.md)): a calm base, a few accents used sparingly. The code is in `crates/dbdesk-app/src/theme.rs`, `fonts.rs`, `icons.rs`, `widgets.rs` and `welcome.rs`.
 
 ## Themes
 

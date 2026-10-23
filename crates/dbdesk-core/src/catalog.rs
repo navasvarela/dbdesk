@@ -32,7 +32,7 @@ pub enum NodeKind {
     Trigger,
 }
 
-/// Groups children by kind, the way DataGrip shows "tables", "views", and so on.
+/// Groups children by kind ("tables", "views", and so on), as most database tools' trees do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FolderKind {
     Tables,

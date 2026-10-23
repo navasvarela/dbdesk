@@ -4,8 +4,9 @@ Status: **planned**, nothing built yet. Proposed on 2026-10-23.
 
 Today the explorer only reads: it browses the catalog, opens a table's data and shows
 definitions. Creating or changing anything means writing the SQL by hand in a console. This
-plan adds DataGrip-style helpers for the three kinds of object people manage most: **tables**,
-**views** and **users**. Each one is a dialog that writes the SQL, shows it, and runs it.
+plan adds helpers like those in desktop database tools (pgAdmin, DBeaver, DataGrip,
+TablePlus) for the three kinds of object people manage most: **tables**, **views** and
+**users**. Each one is a dialog that writes the SQL, shows it, and runs it.
 
 ## What the user sees
 
@@ -108,7 +109,8 @@ PostgreSQL I also create and refresh a materialized view.
 ## E3 — Users and roles (PostgreSQL)
 
 PostgreSQL has one kind of object for both: a **user** is a role that may log in. The menu
-offers both words, the way DataGrip does, and **New user** starts with LOGIN ticked.
+offers both words, and **New user** starts with LOGIN ticked. pgAdmin likewise uses one
+"Login/Group Role" dialog for both.
 
 - **Catalog:** a **Roles** folder at the top of a PostgreSQL data source, next to its
   databases, because roles belong to the whole server. Each role shows whether it can log in
@@ -174,7 +176,7 @@ and nothing is lost.
 - **Indexes:** New index… on a table, and Drop index.
 - **A privileges editor** for PostgreSQL.
 - **Users** for MySQL (DB1) and SQL Server (DB2).
-- **DataGrip's "Virtual view"** (a saved query shown as if it were a view, never created on the
+- **Virtual views** (a saved query shown as if it were a view, never created on the
   server): a candidate once consoles can be pinned to the tree.
 
 ## Decisions
@@ -185,7 +187,7 @@ Proposed defaults; each is confirmed when its milestone starts.
 | --- | --- | --- |
 | Run straight away, or always review first | **Always review first**, with Execute in the review panel. | One extra click per change; nothing runs unseen. |
 | Where the DDL builder lives | **`dbdesk-sql`**, beside the dialects. | Pure and testable without a database or the UI. |
-| Users and roles in one dialog | **One dialog**: New user is New role with LOGIN ticked. | Matches PostgreSQL's model and DataGrip's menu. |
+| Users and roles in one dialog | **One dialog**: New user is New role with LOGIN ticked. | Matches PostgreSQL's model, and pgAdmin's single Login/Group Role dialog. |
 | Passwords | **Hashed into a SCRAM verifier on the client**, and kept out of the history and logs. | Needs a server with `password_encryption = scram-sha-256`, the default since PostgreSQL 14. Older servers get the password sent as typed, with a warning in the panel. |
 | SQLite table rebuilds | **Last, in E4**, behind round-trip tests. | Until then, Modify table on SQLite offers only what `ALTER TABLE` does in place. Other options are disabled, with a tooltip saying why. |
 

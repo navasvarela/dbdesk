@@ -38,4 +38,5 @@ Use `egui` through `eframe`, with `egui_dock` for the docking layout and `egui_e
 - **Tauri + web UI**: Monaco and a mature JS grid would give the best UX for the least effort,
   but half the code base would be TypeScript, defeating the learning goal.
 - **ratatui (TUI)**: light and fun, but a result grid and mouse-driven tree browsing are a worse
-  fit for the DataGrip-style experience being aimed at.
+  fit for the desktop database IDE being aimed at, in the line of DBeaver, DataGrip and
+  TablePlus.
