@@ -1,3 +1,5 @@
+<img src="assets/brand/logo.svg" alt="The dbdesk logo: a database cylinder in teal and violet" width="96">
+
 # dbdesk
 
 A desktop database tool in the spirit of JetBrains DataGrip, written in Rust.
@@ -63,5 +65,6 @@ UI: **egui** (via `eframe`) with **egui_dock** for DataGrip-style dockable panel
 | [Keymap](docs/features/keymap.md) | `keymap.toml`: action ids and rebinding keys |
 | [Persistence](docs/persistence.md) | Config files, secrets, history, layout state |
 | [Testing](docs/testing.md) | Driver conformance suite, UI testing strategy |
+| [Brand](docs/brand.md) | The logo, its files, and the colour palette |
 | [Roadmap](docs/roadmap.md) | Milestones M0–M5 with exit criteria |
 | [ADRs](docs/adr/README.md) | Architecture decision records |

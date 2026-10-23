@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-labelledby="title" fill="currentColor">
+  <title id="title">dbdesk</title>
+  <ellipse cx="32" cy="16" rx="22" ry="7"/>
+  <path d="M10 21A22 7 0 0 0 54 21V32A22 7 0 0 1 10 32Z"/>
+  <path d="M10 37A22 7 0 0 0 54 37V48A22 7 0 0 1 10 48Z"/>
+</svg>

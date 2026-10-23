@@ -1,6 +1,7 @@
 //! The dbdesk desktop application.
 
 mod app;
+mod brand;
 mod catalog_tree;
 mod console;
 mod consoles;
@@ -47,11 +48,15 @@ fn main() -> anyhow::Result<()> {
         keymap: KeymapFile::new(paths.keymap_file()),
     };
 
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("dbdesk")
+        .with_app_id(APP_NAME)
+        .with_inner_size(DEFAULT_WINDOW_SIZE);
+    if let Some(icon) = brand::window_icon() {
+        viewport = viewport.with_icon(icon);
+    }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("dbdesk")
-            .with_app_id(APP_NAME)
-            .with_inner_size(DEFAULT_WINDOW_SIZE),
+        viewport,
         ..Default::default()
     };
     eframe::run_native(
