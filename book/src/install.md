@@ -1,9 +1,63 @@
 # Install and first launch
 
-dbdesk has no installer or prebuilt download yet. You build it from source, which takes a few
-minutes the first time.
+Download dbdesk from the
+[releases page](https://github.com/navasvarela/dbdesk/releases): pick the file for your system
+from the latest release's **Assets**. Until the first release is published, the page is empty;
+build from source instead (see the end of this page).
 
-## What you need
+| System | File |
+| --- | --- |
+| macOS 11 or later, Apple silicon or Intel | `dbdesk-<version>-macos-universal.dmg` |
+| Linux x86_64, most distributions | `dbdesk-<version>-x86_64.AppImage` |
+| Debian, Ubuntu and derivatives | `dbdesk_<version>_amd64.deb` |
+
+Windows builds are on the way: they're built for every release but only offered once they've
+been tried on a real Windows machine.
+
+## macOS
+
+1. Open the `.dmg` and drag **dbdesk** onto **Applications**.
+2. Open dbdesk from Applications. These builds aren't signed by Apple yet, so the first launch
+   is blocked with "Apple could not verify dbdesk".
+3. Open **System Settings › Privacy & Security**, scroll down to the message about dbdesk, and
+   click **Open Anyway**. macOS asks once more; confirm, and it opens normally from then on.
+
+After each update, macOS asks again for access to each password dbdesk saved in the Keychain.
+Choose **Always Allow**. This happens because the app's signature changes with every unsigned
+build; signed builds, planned for a later release, will remove both steps.
+
+## Linux
+
+**AppImage**, on any distribution:
+
+```bash
+chmod +x dbdesk-*-x86_64.AppImage
+./dbdesk-*-x86_64.AppImage
+```
+
+**.deb**, on Debian, Ubuntu and derivatives. This also adds dbdesk to the application menu:
+
+```bash
+sudo apt install ./dbdesk_*_amd64.deb
+```
+
+Saved passwords go to the Secret Service (GNOME Keyring, KWallet), which desktop environments
+already run. On a bare window manager without one, see [Troubleshooting](troubleshooting.md).
+
+## Check the download and the version
+
+Each release has a `SHA256SUMS` file. In the folder with your download:
+
+```bash
+shasum -a 256 -c SHA256SUMS --ignore-missing
+```
+
+**Help › About dbdesk** shows the version and the commit it was built from, and **Copy
+version** copies them for a bug report. From a terminal, `dbdesk --version` prints the same.
+
+## Build from source
+
+For contributors, or to run the latest unreleased code. You need:
 
 - **Rust 1.95 or newer**, installed with [rustup](https://rustup.rs). Check with
   `rustc --version`.
@@ -14,9 +68,7 @@ minutes the first time.
   sudo apt-get install libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
   ```
 
-dbdesk is developed on macOS, and its tests also run on Linux. Windows isn't tested.
-
-## Build and run
+Then:
 
 ```bash
 git clone https://github.com/navasvarela/dbdesk.git
