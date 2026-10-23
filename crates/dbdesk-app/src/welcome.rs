@@ -87,10 +87,7 @@ pub fn show(ui: &mut Ui, data_sources: &DataSources, actions: &mut Vec<ExplorerA
                 ui.add(brand::logo().fit_to_exact_size(Vec2::splat(LOGO_SIZE)));
                 ui.add_space(12.0);
                 ui.label(RichText::new("Welcome to dbdesk").font(fonts::semibold(26.0)));
-                ui.label(
-                    RichText::new("Browse and Query databases")
-                        .color(palette.text_weak),
-                );
+                ui.label(RichText::new("Browse and Query databases").color(palette.text_weak));
                 ui.add_space(20.0);
                 cards(ui, data_sources, actions, palette);
                 ui.add_space(16.0);
