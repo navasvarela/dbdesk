@@ -80,3 +80,21 @@ UI: **egui** (via `eframe`) with **egui_dock** for dockable panels.
 | [Releasing](docs/releasing.md) | Plan for downloadable builds: packaging, signing, the release workflow (proposed) |
 | [Contributing](CONTRIBUTING.md) | How commits, branches and pull requests are named |
 | [ADRs](docs/adr/README.md) | Architecture decision records |
+
+## Licence
+
+dbdesk is licensed under either of
+
+- the Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE)), or
+- the MIT licence ([LICENSE-MIT](LICENSE-MIT)),
+
+at your option.
+
+The bundled fonts keep their own licences: Inter
+([`assets/fonts/inter/LICENSE.txt`](assets/fonts/inter/LICENSE.txt)) and JetBrains Mono
+([`assets/fonts/jetbrains-mono/OFL.txt`](assets/fonts/jetbrains-mono/OFL.txt)), both under the
+SIL Open Font License 1.1.
+
+Unless you explicitly state otherwise, any contribution you intentionally submit for inclusion
+in dbdesk, as defined in the Apache-2.0 licence, is dual licensed as above, without any
+additional terms or conditions.
