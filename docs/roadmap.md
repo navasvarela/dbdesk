@@ -290,6 +290,29 @@ TLS driver tests against both servers (encrypted per `pg_stat_ssl`, cancel and b
 TLS, each refusal), serde tests for old and new files, form tests for every TLS mode, and a UI
 test that picks `verify-full` with a CA file and saves it.
 
+## Object helpers track
+
+DataGrip-style dialogs that write, show and run the SQL to create and change tables, views and
+users, from a **New** submenu and object actions in the explorer. The full plan is in
+[Creating and changing database objects](entity-helpers.md).
+
+- **E0 — Groundwork:**
+  - object specs and a DDL builder per dialect in `dbdesk-sql`;
+  - each dialect's capabilities;
+  - a review-and-run panel that shows the SQL before anything runs;
+  - `ApplyDdl` in one transaction where the engine allows it;
+  - confirmations for destructive actions.
+- **E1 — Tables:** New table (columns, keys, checks), Rename, Truncate, Drop, and Copy DDL,
+  which also gives PostgreSQL tables their missing `CREATE TABLE`.
+- **E2 — Views:** New view and materialized view with the console's editor, Edit, Refresh,
+  Rename, Drop.
+- **E3 — Users and roles (PostgreSQL):**
+  - a Roles folder in the tree;
+  - New user and New role, with passwords hashed into a SCRAM verifier and kept out of the
+    history and logs;
+  - Edit, Rename, Drop.
+- **E4 — Modify table:** `ALTER TABLE` from a changed table, with SQLite's table rebuild last.
+
 ## Design and documentation track
 
 Runs alongside the feature milestones rather than after them: each item is usable on its own.
