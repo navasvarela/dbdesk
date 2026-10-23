@@ -4,31 +4,49 @@
 //! query never holds up browsing or another console.
 
 mod catalog;
+mod edits;
 mod query;
+mod transaction;
 
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Instant;
 
 use dbdesk_core::{
-    CancelHandle, CatalogPath, Connection, DataSource, DataSourceId, describe_error,
+    CancelHandle, CatalogPath, Connection, DataSource, DataSourceId, DriverKind, RelationName,
+    TransactionStatus, describe_error,
 };
-use dbdesk_store::SecretStore;
+use dbdesk_sql::Dialect;
+use dbdesk_store::{HistoryEntry, SecretStore};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::{oneshot, watch};
 use tokio::task::JoinHandle;
 
 use crate::events::EventSink;
+use crate::history::HistoryLog;
 use crate::open::open;
-use crate::{ConsoleId, Event, PasswordUpdate, RunId, SessionState};
+use crate::{
+    ConsoleId, Event, PasswordUpdate, RunId, SessionState, TransactionEnd, TransactionMode,
+};
 
 /// Work for a session's connection. Answered with events, in the order received.
 #[derive(Debug)]
 pub(crate) enum SessionRequest {
     Children(CatalogPath),
     Definition(CatalogPath),
-    Execute { run: RunId, statements: Vec<String> },
+    Execute(Script),
     FetchMore(RunId),
+    EndTransaction(TransactionEnd),
+    DescribeTable(RelationName),
+    ApplyEdits(Vec<String>),
+}
+
+/// Statements to run in a console, in order.
+#[derive(Debug)]
+pub(crate) struct Script {
+    pub(crate) run: RunId,
+    pub(crate) statements: Vec<String>,
+    pub(crate) transactions: TransactionMode,
 }
 
 /// Who a session works for, which decides how its state changes are reported.
@@ -36,6 +54,13 @@ pub(crate) enum SessionRequest {
 pub(crate) enum SessionOwner {
     Explorer(DataSourceId),
     Console(ConsoleId),
+}
+
+/// What a session needs from the engine.
+pub(crate) struct Services {
+    pub(crate) secrets: Arc<dyn SecretStore>,
+    pub(crate) events: EventSink,
+    pub(crate) history: HistoryLog,
 }
 
 /// A live connection, owned by its own task so a slow connect or query never holds up the
@@ -53,12 +78,12 @@ pub(crate) struct Session {
 }
 
 impl Session {
-    pub(crate) fn start(
-        data_source: DataSource,
-        owner: SessionOwner,
-        secrets: Arc<dyn SecretStore>,
-        events: EventSink,
-    ) -> Self {
+    pub(crate) fn start(data_source: DataSource, owner: SessionOwner, services: Services) -> Self {
+        let Services {
+            secrets,
+            events,
+            history,
+        } = services;
         let (disconnect, disconnect_signal) = oneshot::channel();
         let (requests, request_receiver) = mpsc::unbounded_channel();
         let (cancel, cancel_signal) = watch::channel(None);
@@ -66,6 +91,9 @@ impl Session {
             data_source,
             owner,
             events,
+            // Only what the user runs in a console belongs in the history, not the
+            // explorer's catalog queries.
+            history: matches!(owner, SessionOwner::Console(_)).then_some(history),
         };
         let signals = Signals {
             disconnect: disconnect_signal,
@@ -112,6 +140,7 @@ struct SessionContext {
     data_source: DataSource,
     owner: SessionOwner,
     events: EventSink,
+    history: Option<HistoryLog>,
 }
 
 impl SessionContext {
@@ -121,6 +150,27 @@ impl SessionContext {
 
     fn send(&self, event: Event) {
         self.events.send(event);
+    }
+
+    fn record(&self, entry: HistoryEntry) {
+        if let Some(history) = &self.history {
+            history.record(entry);
+        }
+    }
+
+    /// The dialect of the SQL this session runs, for reading statements' first words.
+    fn dialect(&self) -> Dialect {
+        match self.data_source.config.driver() {
+            DriverKind::Postgres => Dialect::Postgres,
+            DriverKind::Sqlite => Dialect::Sqlite,
+        }
+    }
+
+    /// Tells a console about its connection's transaction. The explorer never opens one.
+    fn notify_transaction(&self, status: TransactionStatus) {
+        if let SessionOwner::Console(console) = self.owner {
+            self.send(Event::TransactionChanged { console, status });
+        }
     }
 
     fn notify(&self, state: SessionState) {
@@ -202,6 +252,7 @@ async fn run(
         cancel_handle: cancel_handle.as_ref(),
         signals: &mut signals,
         parked: None,
+        transaction: TransactionStatus::Idle,
     };
     worker.serve(&mut requests).await;
     if let Some(parked) = worker.parked.take() {
@@ -261,6 +312,8 @@ struct Worker<'a> {
     signals: &'a mut Signals,
     /// The last run's final statement, with rows still unread.
     parked: Option<query::Parked>,
+    /// The connection's transaction status as last reported to the UI.
+    transaction: TransactionStatus,
 }
 
 impl Worker<'_> {
@@ -284,7 +337,7 @@ impl Worker<'_> {
                 changed = self.signals.cancel.changed() => {
                     changed.ok()?;
                     let cancelled = *self.signals.cancel.borrow_and_update();
-                    if let Some(parked) = self.parked.take_if(|parked| Some(parked.run) == cancelled) {
+                    if let Some(parked) = self.parked.take_if(|parked| Some(parked.run()) == cancelled) {
                         query::discard(self.context, parked, self.cancel_handle).await;
                     }
                 }
@@ -295,7 +348,7 @@ impl Worker<'_> {
 
     async fn handle(&mut self, request: SessionRequest) -> Result<(), Disconnected> {
         if let SessionRequest::FetchMore(run) = request {
-            if let Some(parked) = self.parked.take_if(|parked| parked.run == run) {
+            if let Some(parked) = self.parked.take_if(|parked| parked.run() == run) {
                 self.parked = query::fetch_more(self, parked).await?;
             }
             return Ok(());
@@ -313,10 +366,16 @@ impl Worker<'_> {
                 let work = catalog::definition(self.context, &mut *self.connection, path);
                 self.signals.guard(work, None, self.cancel_handle).await
             }
-            SessionRequest::Execute { run, statements } => {
-                self.parked = query::run_script(self, run, &statements).await?;
+            SessionRequest::Execute(script) => {
+                self.parked = query::run_script(self, &script).await?;
                 Ok(())
             }
+            SessionRequest::EndTransaction(end) => transaction::end(self, end).await,
+            SessionRequest::DescribeTable(table) => {
+                let work = catalog::describe_table(self.context, &mut *self.connection, table);
+                self.signals.guard(work, None, self.cancel_handle).await
+            }
+            SessionRequest::ApplyEdits(statements) => edits::apply(self, &statements).await,
             SessionRequest::FetchMore(_) => Ok(()),
         }
     }

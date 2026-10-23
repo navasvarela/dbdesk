@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640">
+  <title>dbdesk</title>
+  <defs>
+    <radialGradient id="violet-glow" cx="0.3" cy="0" r="0.75">
+      <stop offset="0" stop-color="#9A8BFF" stop-opacity="0.32"/>
+      <stop offset="1" stop-color="#9A8BFF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="teal-glow" cx="0.75" cy="0" r="0.7">
+      <stop offset="0" stop-color="#2DD4BF" stop-opacity="0.26"/>
+      <stop offset="1" stop-color="#2DD4BF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1280" height="640" fill="#17181E"/>
+  <rect width="1280" height="640" fill="url(#violet-glow)"/>
+  <rect width="1280" height="640" fill="url(#teal-glow)"/>
+  <g transform="translate(150 192) scale(4)">
+    <ellipse cx="32" cy="16" rx="22" ry="7" fill="#2DD4BF"/>
+    <path d="M10 21A22 7 0 0 0 54 21V32A22 7 0 0 1 10 32Z" fill="#9A8BFF"/>
+    <path d="M10 37A22 7 0 0 0 54 37V48A22 7 0 0 1 10 48Z" fill="#9A8BFF"/>
+  </g>
+  <text x="480" y="330" font-family="Inter" font-weight="600" font-size="120" fill="#F2F3F7">dbdesk</text>
+  <text x="484" y="398" font-family="Inter" font-size="34" fill="#A9AFBC">Browse and query PostgreSQL and SQLite</text>
+</svg>

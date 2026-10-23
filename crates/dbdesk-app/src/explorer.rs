@@ -3,12 +3,14 @@
 
 use dbdesk_core::{CatalogNode, CatalogPath, DataSourceId, DriverKind, NodeKind};
 use dbdesk_engine::SessionState;
+use dbdesk_store::ConsoleKey;
 use egui::{
     Color32, CornerRadius, Id, Label, Rect, Response, ScrollArea, Sense, Shape, TextEdit,
     TextStyle, Ui, WidgetInfo, WidgetType, vec2,
 };
 
 use crate::catalog_tree::{CatalogTree, Children};
+use crate::consoles::SavedConsoles;
 use crate::icons;
 use crate::state::{DataSourceEntry, DataSources};
 use crate::theme::Palette;
@@ -34,6 +36,8 @@ pub enum ExplorerAction {
         title: String,
     },
     NewConsole(DataSourceId),
+    /// Reopens a console from its file.
+    OpenSavedConsole(ConsoleKey),
     /// Opens a console that selects everything from the table or view at `path`.
     OpenData(DataSourceId, CatalogPath),
 }
@@ -48,15 +52,22 @@ pub struct ExplorerOptions {
     pub show_system: bool,
 }
 
+/// What the explorer shows.
+pub struct ExplorerView<'a> {
+    pub data_sources: &'a DataSources,
+    /// Offered for reopening in each data source's menu.
+    pub saved_consoles: &'a SavedConsoles,
+}
+
 pub fn show(
     ui: &mut Ui,
-    data_sources: &DataSources,
+    view: &ExplorerView<'_>,
     options: &mut ExplorerOptions,
     actions: &mut Vec<ExplorerAction>,
 ) {
     toolbar(ui, options, actions);
     ui.separator();
-    match data_sources {
+    match view.data_sources {
         DataSources::Loading => {
             ui.weak("Loading data sources…");
         }
@@ -77,7 +88,7 @@ pub fn show(
             };
             ScrollArea::both().auto_shrink(false).show(ui, |ui| {
                 for entry in entries {
-                    data_source_tree(ui, entry, &filter, actions);
+                    data_source_tree(ui, entry, view.saved_consoles, &filter, actions);
                 }
             });
         }
@@ -144,6 +155,7 @@ pub fn new_data_source_menu(ui: &mut Ui, actions: &mut Vec<ExplorerAction>) {
 fn data_source_tree(
     ui: &mut Ui,
     entry: &DataSourceEntry,
+    saved_consoles: &SavedConsoles,
     filter: &TreeFilter<'_>,
     actions: &mut Vec<ExplorerAction>,
 ) {
@@ -181,7 +193,7 @@ fn data_source_tree(
     if response.double_clicked() {
         actions.push(toggle_expansion(id, &root, expanded));
     }
-    response.context_menu(|ui| data_source_menu(ui, entry, actions));
+    response.context_menu(|ui| data_source_menu(ui, entry, saved_consoles, actions));
     if expanded {
         let tree = TreeView {
             id,
@@ -193,7 +205,12 @@ fn data_source_tree(
     }
 }
 
-fn data_source_menu(ui: &mut Ui, entry: &DataSourceEntry, actions: &mut Vec<ExplorerAction>) {
+fn data_source_menu(
+    ui: &mut Ui,
+    entry: &DataSourceEntry,
+    saved_consoles: &SavedConsoles,
+    actions: &mut Vec<ExplorerAction>,
+) {
     let id = entry.data_source.id;
     let connected = matches!(
         entry.session,
@@ -212,6 +229,7 @@ fn data_source_menu(ui: &mut Ui, entry: &DataSourceEntry, actions: &mut Vec<Expl
     if widgets::menu_item(ui, icons::TERMINAL_WINDOW, "New query console").clicked() {
         actions.push(ExplorerAction::NewConsole(id));
     }
+    saved_consoles_menu(ui, id, saved_consoles, actions);
     ui.separator();
     if widgets::menu_item(ui, icons::PENCIL_SIMPLE, "Edit…").clicked() {
         actions.push(ExplorerAction::Edit(id));
@@ -383,6 +401,28 @@ fn node_menu(ui: &mut Ui, id: DataSourceId, node: &CatalogNode, actions: &mut Ve
     if node.has_children && widgets::menu_item(ui, icons::ARROWS_CLOCKWISE, "Refresh").clicked() {
         actions.push(ExplorerAction::Refresh(id, node.path.clone()));
     }
+}
+
+/// Lists the data source's closed console files, if there are any.
+fn saved_consoles_menu(
+    ui: &mut Ui,
+    id: DataSourceId,
+    saved_consoles: &SavedConsoles,
+    actions: &mut Vec<ExplorerAction>,
+) {
+    if saved_consoles.names(id).next().is_none() {
+        return;
+    }
+    ui.menu_button("Open saved console", |ui| {
+        for name in saved_consoles.names(id) {
+            if ui.button(format!("{name}.sql")).clicked() {
+                actions.push(ExplorerAction::OpenSavedConsole(ConsoleKey {
+                    data_source: id,
+                    name: name.clone(),
+                }));
+            }
+        }
+    });
 }
 
 fn toggle_expansion(id: DataSourceId, path: &CatalogPath, expanded: bool) -> ExplorerAction {

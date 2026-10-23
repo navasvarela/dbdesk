@@ -6,10 +6,12 @@ A desktop database tool in the spirit of JetBrains DataGrip, written in Rust.
 It is a learning project first and a personal daily driver second: the goal is a tool
 small enough to understand end to end and easy to bend to my own workflow.
 
-Status: **M3 (SQL runner)**. You can add PostgreSQL and SQLite data sources and browse their
-catalogs. Query consoles have highlighting, run the statement at the cursor or a whole script,
-page through results, cancel long queries, and point at errors. Daily-driver polish (saved
-consoles, history, transactions, export) comes in M4.
+Status: **M4 (daily-driver polish)**. You can add PostgreSQL and SQLite data sources and browse
+their catalogs. Query consoles have highlighting and line numbers, run the statement at the
+cursor or a whole script, explain it, page through results, cancel long queries, and point at
+errors. Consoles are saved as `.sql` files and reopen on start, every statement goes to a
+searchable history, and a console can hold a transaction open until you commit. The grid
+selects, copies, sorts and filters loaded rows, shows long values, and exports CSV or JSON.
 
 The [user manual](book/src/SUMMARY.md) explains how to install and use dbdesk. Build it with
 `mdbook serve book` to read it in a browser.
@@ -40,7 +42,8 @@ DBDESK_TEST_POSTGRES_URL=postgres://dbdesk:dbdesk@localhost:55432/dbdesk cargo t
 ```
 
 Files live in `~/Library/Application Support/dbdesk` on macOS: data sources in
-`data_sources.toml`, window and layout state in `app.ron`, daily log files in `logs/`. Passwords
+`data_sources.toml`, consoles in `consoles/`, the query history in `history.sqlite`, window
+and layout state in `app.ron`, daily log files in `logs/`. Passwords
 are in the macOS Keychain under the service `dbdesk`.
 
 ## Core features (v1)
@@ -63,6 +66,7 @@ UI: **egui** (via `eframe`) with **egui_dock** for DataGrip-style dockable panel
 | [Connection explorer](docs/features/connection-explorer.md) | Data sources, catalog tree, introspection |
 | [SQL runner](docs/features/sql-runner.md) | Editor, execution, result grid, cancellation |
 | [Log console](docs/features/log-console.md) | Logging pipeline and what gets logged |
+| [Keymap](docs/features/keymap.md) | `keymap.toml`: action ids and rebinding keys |
 | [Persistence](docs/persistence.md) | Config files, secrets, history, layout state |
 | [Testing](docs/testing.md) | Driver conformance suite, UI testing strategy, screenshots, the manual's build |
 | [Brand](docs/brand.md) | The logo, its files, and the colour palette |

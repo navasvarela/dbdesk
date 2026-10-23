@@ -55,6 +55,19 @@ pub trait ResultCursor: Send {
     async fn finish(self: Box<Self>) -> Result<Option<u64>, DriverError>;
 }
 
+/// Whether a connection is inside a transaction block.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TransactionStatus {
+    /// Each statement commits on its own.
+    #[default]
+    Idle,
+    /// Changes stay pending until `COMMIT` or `ROLLBACK`.
+    InTransaction,
+    /// A statement failed inside the transaction, and the database accepts nothing but
+    /// `ROLLBACK` (PostgreSQL only; SQLite keeps the transaction usable).
+    Failed,
+}
+
 /// Interrupts whatever a connection is running, from outside the task that runs it.
 #[async_trait]
 pub trait CancelHandle: Send + Sync {

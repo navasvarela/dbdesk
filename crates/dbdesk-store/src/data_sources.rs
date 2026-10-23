@@ -4,6 +4,8 @@ use std::{fs, io};
 use dbdesk_core::DataSource;
 use serde::{Deserialize, Serialize};
 
+use crate::atomic::write_atomically;
+
 const HEADER: &str = "\
 # dbdesk data sources. Safe to edit by hand while dbdesk is closed.
 # Passwords are stored in the OS keychain, never in this file.
@@ -87,8 +89,7 @@ impl DataSourceFile {
 
     /// Replaces the file's contents with `data_sources`.
     ///
-    /// Writes a temporary file next to it and renames it into place, so a crash mid-write
-    /// leaves either the old or the new file, never a truncated one.
+    /// Written atomically: a crash mid-write leaves either the old or the new file.
     ///
     /// # Errors
     ///
@@ -96,17 +97,12 @@ impl DataSourceFile {
     pub fn save(&self, data_sources: &[DataSource]) -> Result<(), StoreError> {
         let body =
             toml::to_string(&FileContentsRef { data_sources }).map_err(StoreError::Serialize)?;
-        let write_error = |source| StoreError::Write {
-            path: self.path.clone(),
-            source,
-        };
-
-        if let Some(dir) = self.path.parent() {
-            fs::create_dir_all(dir).map_err(write_error)?;
-        }
-        let temp_path = self.path.with_extension("toml.tmp");
-        fs::write(&temp_path, format!("{HEADER}{body}")).map_err(write_error)?;
-        fs::rename(&temp_path, &self.path).map_err(write_error)
+        write_atomically(&self.path, &format!("{HEADER}{body}")).map_err(|source| {
+            StoreError::Write {
+                path: self.path.clone(),
+                source,
+            }
+        })
     }
 }
 
