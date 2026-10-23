@@ -14,7 +14,8 @@ use dbdesk_core::{
 };
 use futures_util::StreamExt;
 use tokio_postgres::error::{ErrorPosition, SqlState};
-use tokio_postgres::{CancelToken, Client, NoTls, SimpleQueryMessage, SimpleQueryStream};
+use tokio_postgres::{CancelToken, Client, SimpleQueryMessage, SimpleQueryStream};
+use tokio_postgres_rustls::MakeRustlsConnect;
 
 use crate::connection_error;
 
@@ -220,11 +221,19 @@ impl ResultCursor for PostgresCursor {
 }
 
 /// Cancels through a separate connection to the server, as `psql`'s Ctrl+C does.
-pub(crate) struct PostgresCancel(pub(crate) CancelToken);
+pub(crate) struct PostgresCancel {
+    pub(crate) token: CancelToken,
+    /// The session's own connector: the cancel request is a new connection, which a server
+    /// that requires TLS refuses in plain text.
+    pub(crate) tls: MakeRustlsConnect,
+}
 
 #[async_trait]
 impl CancelHandle for PostgresCancel {
     async fn cancel(&self) -> Result<(), DriverError> {
-        self.0.cancel_query(NoTls).await.map_err(connection_error)
+        self.token
+            .cancel_query(self.tls.clone())
+            .await
+            .map_err(connection_error)
     }
 }

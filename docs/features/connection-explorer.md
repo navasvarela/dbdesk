@@ -5,7 +5,8 @@ The left-hand panel. It lists data sources and lets you browse what each one con
 ## Data sources
 
 A data source is a saved `ConnectionConfig`. M1 implements name, host/port/database/user,
-password, and SQLite file + read-only; D2 added the colour. The other rows are still planned:
+password, and SQLite file + read-only; D2 added the colour and DB0 the TLS mode and CA file
+(`TlsMode`, libpq's `sslmode` names, on rustls). The other rows are still planned:
 
 | Field | Postgres | SQLite |
 | --- | --- | --- |

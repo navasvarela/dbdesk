@@ -13,7 +13,7 @@ use common::{
 };
 use dbdesk_core::{
     CatalogPath, ConnectionConfig, DataSource, DataSourceId, FolderKind, NodeKind, Password,
-    PostgresConfig,
+    PostgresConfig, TlsMode,
 };
 use dbdesk_engine::{Command, ConsoleId, Event, Export, PasswordUpdate, SessionState};
 use dbdesk_store::{
@@ -70,6 +70,7 @@ fn reloads_saved_data_sources_and_stores_passwords_in_the_secret_store() {
             port: 5432,
             database: "app".to_owned(),
             user: "juan".to_owned(),
+            tls: TlsMode::Require,
         }),
     };
 

@@ -27,10 +27,32 @@ Both kinds have:
 | Port | `5432` | A number from 1 to 65535. |
 | Database | `postgres` | The database to connect to. The explorer lists the server's other databases too. |
 | User | `postgres` | |
+| TLS | `prefer` | Whether to encrypt the connection; see below. |
 | Password | none | Stored in the keychain when you save. See below. |
 
-dbdesk connects to PostgreSQL **without TLS** for now, so a server that requires an encrypted
-connection will refuse it. See [Troubleshooting](troubleshooting.md#the-server-requires-tlsssl).
+### TLS
+
+**TLS** encrypts the connection, which hosted databases usually require. The modes are the
+ones PostgreSQL's own tools call `sslmode`, so a provider's connection guide reads the same:
+
+| Mode | Encrypts | Checks the server's certificate |
+| --- | --- | --- |
+| `disable` | Never | — |
+| `prefer` | If the server offers it, otherwise connects unencrypted | No |
+| `require` | Always; fails if the server can't | No |
+| `verify-full` | Always | Yes: signed by an authority you trust, and naming the host you typed |
+
+`prefer` and `require` keep anyone on the network from reading what you send, but not from
+pretending to be the server. Use `verify-full` for anything that matters.
+
+With `verify-full`, a **CA file** row appears. Leave it empty for servers whose certificate is
+signed by a public authority (the same ones web browsers trust). For a private or self-signed
+certificate, give the authority's certificate as a PEM file, typed or picked with **Browse…**:
+for example the bundle your cloud provider publishes for its managed databases. The **Host**
+must be a name (or IP address) the certificate lists.
+
+dbdesk encrypts with [rustls](https://github.com/rustls/rustls), so there is no OpenSSL to
+install. Client certificates aren't supported yet.
 
 **SQLite** adds:
 

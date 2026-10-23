@@ -42,6 +42,11 @@ port = 5432
 database = "app"
 user = "juan"
 
+# Optional; files written before TLS existed get mode = "prefer".
+[data_source.tls]
+mode = "verify-full"
+ca_file = "/Users/juan/certs/internal-ca.pem"
+
 [[data_source]]
 id = "0b6a4f8e-91d2-4e7a-a1c3-5f0e2d9b7c18"
 name = "chinook.db"

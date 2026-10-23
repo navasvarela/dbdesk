@@ -5,6 +5,7 @@
 mod catalog;
 mod execution;
 mod table;
+mod tls;
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -18,27 +19,29 @@ use dbdesk_core::{
     TransactionStatus,
 };
 use tokio::task::{JoinError, JoinHandle};
-use tokio_postgres::tls::NoTlsStream;
-use tokio_postgres::{AsyncMessage, Client, NoTls, Socket};
+use tokio_postgres::tls::MakeTlsConnect;
+use tokio_postgres::{AsyncMessage, Client, Socket};
+use tokio_postgres_rustls::MakeRustlsConnect;
+
+pub use tls::TlsSetupError;
 
 /// Shown in `pg_stat_activity`, so a DBA can tell dbdesk's sessions apart.
 const APPLICATION_NAME: &str = "dbdesk";
 const PRODUCT: &str = "PostgreSQL";
 
-/// Opens a connection without TLS.
-///
-/// TODO(juan): support TLS (`sslmode`); servers that require it reject this connection with
-/// a clear error for now. Tracked in `docs/roadmap.md` under M1 follow-ups.
+/// Opens a connection, encrypted as `config.tls` says.
 ///
 /// # Errors
 ///
-/// [`DriverError::Connect`] if the server is unreachable, rejects the credentials, or the
-/// database doesn't exist.
+/// [`DriverError::Connect`] if the TLS settings can't be used (a missing CA file, say), the
+/// server is unreachable, the TLS handshake or certificate check fails, the server rejects
+/// the credentials, or the database doesn't exist.
 pub async fn connect(
     config: &PostgresConfig,
     password: Option<&Password>,
 ) -> Result<PostgresConnection, DriverError> {
-    let primary = DatabaseClient::open(config, &config.database, password)
+    let tls = tls::connector(&config.tls).map_err(|error| DriverError::Connect(Box::new(error)))?;
+    let primary = DatabaseClient::open(config, &config.database, password, &tls)
         .await
         .map_err(connect_error)?;
     let version = server_version(&primary.client)
@@ -48,6 +51,7 @@ pub async fn connect(
     Ok(PostgresConnection {
         config: config.clone(),
         password: password.cloned(),
+        tls,
         primary,
         others: HashMap::new(),
         server_info: ServerInfo {
@@ -84,6 +88,7 @@ impl DatabaseClient {
         config: &PostgresConfig,
         database: &str,
         password: Option<&Password>,
+        tls: &MakeRustlsConnect,
     ) -> Result<Self, tokio_postgres::Error> {
         let mut pg_config = tokio_postgres::Config::new();
         pg_config
@@ -91,12 +96,13 @@ impl DatabaseClient {
             .port(config.port)
             .dbname(database)
             .user(&config.user)
-            .application_name(APPLICATION_NAME);
+            .application_name(APPLICATION_NAME)
+            .ssl_mode(tls::ssl_mode(&config.tls));
         if let Some(password) = password {
             pg_config.password(password.expose());
         }
 
-        let (client, connection) = pg_config.connect(NoTls).await?;
+        let (client, connection) = pg_config.connect(tls.clone()).await?;
         let connection_task = tokio::spawn(drive_connection(connection, database.to_owned()));
         Ok(Self {
             client,
@@ -116,7 +122,7 @@ impl DatabaseClient {
 /// The connection future must be polled through `poll_message` for this: awaiting it
 /// directly, as the tokio-postgres examples do, silently drops every notice.
 async fn drive_connection(
-    mut connection: tokio_postgres::Connection<Socket, NoTlsStream>,
+    mut connection: tokio_postgres::Connection<Socket, TlsStream>,
     database: String,
 ) {
     while let Some(message) = poll_fn(|cx| connection.poll_message(cx)).await {
@@ -133,6 +139,10 @@ async fn drive_connection(
     }
 }
 
+/// What a connection's socket carries: TLS or, with `disable` or a `prefer` the server
+/// declined, the bare socket.
+type TlsStream = <MakeRustlsConnect as MakeTlsConnect<Socket>>::Stream;
+
 /// A session with a PostgreSQL server.
 ///
 /// PostgreSQL binds each connection to one database, but the explorer lists every database
@@ -142,6 +152,7 @@ pub struct PostgresConnection {
     config: PostgresConfig,
     /// Kept in memory, for the session's lifetime only, to open those extra connections.
     password: Option<Password>,
+    tls: MakeRustlsConnect,
     primary: DatabaseClient,
     others: HashMap<String, DatabaseClient>,
     server_info: ServerInfo,
@@ -163,9 +174,10 @@ impl PostgresConnection {
         match self.others.entry(database.to_owned()) {
             Entry::Occupied(entry) => Ok(&entry.into_mut().client),
             Entry::Vacant(entry) => {
-                let client = DatabaseClient::open(&self.config, database, self.password.as_ref())
-                    .await
-                    .map_err(connect_error)?;
+                let client =
+                    DatabaseClient::open(&self.config, database, self.password.as_ref(), &self.tls)
+                        .await
+                        .map_err(connect_error)?;
                 tracing::info!(
                     database,
                     "opened a connection for browsing another database"
@@ -224,9 +236,10 @@ impl Connection for PostgresConnection {
     }
 
     fn cancel_handle(&self) -> Arc<dyn CancelHandle> {
-        Arc::new(execution::PostgresCancel(
-            self.primary.client.cancel_token(),
-        ))
+        Arc::new(execution::PostgresCancel {
+            token: self.primary.client.cancel_token(),
+            tls: self.tls.clone(),
+        })
     }
 
     async fn close(self: Box<Self>) -> Result<(), DriverError> {
@@ -245,9 +258,10 @@ impl Connection for PostgresConnection {
 
 #[cfg(test)]
 mod tests {
+    use std::path::{Path, PathBuf};
     use std::str::FromStr;
 
-    use dbdesk_core::{FolderKind, conformance};
+    use dbdesk_core::{FolderKind, TlsMode, conformance};
     use tokio_postgres::config::Host;
 
     use super::*;
@@ -256,10 +270,28 @@ mod tests {
     /// from the repository's `docker-compose.yml`. Tests that need a server are skipped when
     /// it is unset, so `cargo test` works offline.
     const TEST_URL_VAR: &str = "DBDESK_TEST_POSTGRES_URL";
+    /// Points at a server that refuses unencrypted connections, the `postgres-tls` service in
+    /// `docker-compose.yml`, e.g. `postgres://dbdesk:dbdesk@localhost:55443/dbdesk`.
+    const TLS_TEST_URL_VAR: &str = "DBDESK_TEST_POSTGRES_TLS_URL";
 
     fn test_server() -> Option<(PostgresConfig, Option<Password>)> {
-        let Ok(url) = std::env::var(TEST_URL_VAR) else {
-            eprintln!("skipping: {TEST_URL_VAR} is not set");
+        server_from(TEST_URL_VAR)
+    }
+
+    /// The TLS-only server, connected to with `tls`.
+    fn tls_test_server(tls: TlsMode) -> Option<(PostgresConfig, Option<Password>)> {
+        server_from(TLS_TEST_URL_VAR)
+            .map(|(config, password)| (PostgresConfig { tls, ..config }, password))
+    }
+
+    /// The authority that signed the TLS server's certificate.
+    fn test_ca_file() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docker/postgres-tls/ca.crt")
+    }
+
+    fn server_from(variable: &str) -> Option<(PostgresConfig, Option<Password>)> {
+        let Ok(url) = std::env::var(variable) else {
+            eprintln!("skipping: {variable} is not set");
             return None;
         };
         let parsed = tokio_postgres::Config::from_str(&url).expect("valid test URL");
@@ -279,6 +311,7 @@ mod tests {
                 .expect("database in test URL")
                 .to_owned(),
             user: parsed.get_user().expect("user in test URL").to_owned(),
+            tls: TlsMode::default(),
         };
         let password = parsed
             .get_password()
@@ -318,9 +351,97 @@ mod tests {
             port: 1,
             database: "postgres".to_owned(),
             user: "postgres".to_owned(),
+            tls: TlsMode::default(),
         };
 
         conformance::check_connect_failure(connect(&config, None).await);
+    }
+
+    /// Whether the session's own connection is encrypted, as the server sees it.
+    async fn is_encrypted(connection: &PostgresConnection) -> bool {
+        connection
+            .primary
+            .client
+            .query_one(
+                "SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()",
+                &[],
+            )
+            .await
+            .unwrap()
+            .get(0)
+    }
+
+    #[tokio::test]
+    async fn encrypts_when_the_server_requires_it() {
+        let modes = [
+            TlsMode::Prefer,
+            TlsMode::Require,
+            TlsMode::VerifyFull {
+                ca_file: Some(test_ca_file()),
+            },
+        ];
+        for tls in modes {
+            let Some((config, password)) = tls_test_server(tls.clone()) else {
+                return;
+            };
+
+            let connection = connect(&config, password.as_ref())
+                .await
+                .unwrap_or_else(|error| panic!("{tls:?}: {error:?}"));
+
+            assert!(is_encrypted(&connection).await, "{tls:?}");
+            Box::new(connection).close().await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn runs_browses_and_cancels_over_tls() {
+        let Some((config, password)) = tls_test_server(TlsMode::Require) else {
+            return;
+        };
+        let mut connection = connect(&config, password.as_ref()).await.unwrap();
+
+        conformance::check_execution(&mut connection).await;
+        // Another database's connection and the cancel request are connections of their own,
+        // which the server refuses unless they are encrypted too.
+        let other = CatalogPath::root().child(NodeKind::Database, "postgres");
+        assert!(!connection.children(&other).await.unwrap().is_empty());
+        conformance::check_cancel(&mut connection, "SELECT pg_sleep(60)").await;
+
+        conformance::check_lifecycle(Box::new(connection)).await;
+    }
+
+    #[tokio::test]
+    async fn refuses_unencrypted_or_unverified_connections_where_they_are_not_allowed() {
+        let cases = [
+            // The TLS-only server rejects a plain connection.
+            (TLS_TEST_URL_VAR, TlsMode::Disable),
+            // Its certificate isn't signed by a public authority.
+            (TLS_TEST_URL_VAR, TlsMode::VerifyFull { ca_file: None }),
+            // The plain server offers no TLS to require.
+            (TEST_URL_VAR, TlsMode::Require),
+        ];
+        for (variable, tls) in cases {
+            let Some((config, password)) = server_from(variable) else {
+                continue;
+            };
+            let config = PostgresConfig { tls, ..config };
+
+            conformance::check_connect_failure(connect(&config, password.as_ref()).await);
+        }
+    }
+
+    #[tokio::test]
+    async fn prefer_falls_back_to_plain_text_without_server_tls() {
+        let Some((config, password)) = test_server() else {
+            return;
+        };
+        assert_eq!(config.tls, TlsMode::Prefer);
+
+        let connection = connect(&config, password.as_ref()).await.unwrap();
+
+        assert!(!is_encrypted(&connection).await);
+        Box::new(connection).close().await.unwrap();
     }
 
     const FIXTURE_SCHEMA: &str = "dbdesk_catalog_test";

@@ -10,7 +10,7 @@ use egui::{
 };
 
 use crate::data_source_form::{
-    DataSourceForm, DriverFields, FormError, PostgresFields, SqliteFields,
+    DataSourceForm, DriverFields, FormError, PostgresFields, SqliteFields, TlsChoice,
 };
 use crate::file_picker;
 use crate::icons;
@@ -279,6 +279,38 @@ fn postgres_rows(ui: &mut Ui, fields: &mut PostgresFields) {
     text_row(ui, "Port", &mut fields.port, "5432");
     text_row(ui, "Database", &mut fields.database, "postgres");
     text_row(ui, "User", &mut fields.user, "postgres");
+    tls_rows(ui, fields);
+}
+
+/// The TLS mode and, for `verify-full`, the file of authorities to trust.
+fn tls_rows(ui: &mut Ui, fields: &mut PostgresFields) {
+    let label = ui.label("TLS");
+    egui::ComboBox::from_id_salt("data_source_tls")
+        .selected_text(fields.tls.label())
+        .show_ui(ui, |ui| {
+            for choice in TlsChoice::ALL {
+                ui.selectable_value(&mut fields.tls, choice, choice.label())
+                    .on_hover_text(choice.description());
+            }
+        })
+        .response
+        .labelled_by(label.id)
+        .on_hover_text(fields.tls.description());
+    ui.end_row();
+    if fields.tls != TlsChoice::VerifyFull {
+        return;
+    }
+    text_row(ui, "CA file", &mut fields.ca_file, "public authorities");
+    ui.label("");
+    let palette = Palette::for_visuals(ui.visuals());
+    if file_button(ui, icons::FOLDER_OPEN, palette.warning, "Browse…")
+        .on_hover_text("Choose a PEM file of authorities to trust")
+        .clicked()
+        && let Some(path) = file_picker::pick_ca_file(&fields.ca_file)
+    {
+        fields.ca_file = path.display().to_string();
+    }
+    ui.end_row();
 }
 
 /// The file field, then Browse… (open an existing database) and New… (create one). Returns the

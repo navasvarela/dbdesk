@@ -11,16 +11,28 @@ The same entries, from dbdesk itself and warnings from the libraries it uses, go
 per day: see [Where dbdesk keeps its files](files.md). Attach the day's file when you report a
 problem; it never contains passwords.
 
-## The server requires TLS/SSL
+## TLS/SSL errors
 
-dbdesk doesn't support encrypted PostgreSQL connections yet: it always connects without TLS.
-A server that only accepts encrypted connections (as many hosted databases do) refuses, and the
-error usually mentions SSL or `pg_hba.conf`, for example *no pg_hba.conf entry for host …, SSL
-off*.
+The data source's **TLS** setting decides whether dbdesk encrypts the connection (see
+[Data sources](data-sources.md#tls)). The usual errors, and what to change:
 
-Until TLS support arrives, dbdesk can only reach servers that accept unencrypted connections
-from where you are, such as a database in a local container. Don't turn off encryption on a
-server just for dbdesk.
+- ***pg_hba.conf rejects connection … no encryption*** (or *no pg_hba.conf entry … SSL off*):
+  the server only accepts encrypted connections and **TLS** is `disable`. Pick `require` or,
+  better, `verify-full`.
+- ***server does not support TLS***: **TLS** is `require` or `verify-full`, but the server
+  has encryption turned off. Pick `prefer` or `disable` if the network is one you trust, such
+  as a database in a local container, or turn TLS on in the server.
+- ***invalid peer certificate: UnknownIssuer***: with `verify-full`, the certificate isn't
+  signed by an authority dbdesk trusts. Set **CA file** to your provider's or your company's
+  authority certificate (a PEM file).
+- ***certificate not valid for name …; certificate is only valid for …***: with
+  `verify-full`, the certificate doesn't list the **Host** you typed. Use one of the names the
+  message lists, often the one in the provider's connection string, instead of an IP address
+  or an alias.
+- ***could not read the CA file …*** or ***… holds no usable certificate***: the **CA file**
+  is missing, or isn't a PEM file with a certificate in it (`-----BEGIN CERTIFICATE-----`).
+
+Don't turn off encryption on a server just for dbdesk.
 
 ## The keychain keeps asking
 

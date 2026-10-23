@@ -39,6 +39,20 @@ database = "app"
 user = "juan"
 
 [[data_source]]
+id = "b3c9e1f2-7a4d-4b8e-9c2f-1d5e6a7b8c90"
+name = "production"
+color = "red"
+driver = "postgres"
+host = "db.example.com"
+port = 5432
+database = "app"
+user = "juan"
+
+[data_source.tls]
+mode = "verify-full"
+ca_file = "/Users/juan/certs/example-ca.pem"
+
+[[data_source]]
 id = "0b6a4f8e-91d2-4e7a-a1c3-5f0e2d9b7c18"
 name = "chinook.db"
 driver = "sqlite"
@@ -49,6 +63,8 @@ read_only = true
 - `id` identifies the data source for good, including its keychain entry. Don't change it; for
   a new data source by hand, any unique UUID will do.
 - `color` is optional: `red`, `orange`, `yellow`, `green`, `teal`, `blue`, `violet` or `pink`.
+- `tls` is optional for PostgreSQL, and `mode` defaults to `prefer`: `disable`, `prefer`,
+  `require` or `verify-full`. `ca_file` is only read with `verify-full`.
 - `read_only` is optional and defaults to `false`.
 
 If the file can't be read — say, a typo while editing it — the explorer shows the error and

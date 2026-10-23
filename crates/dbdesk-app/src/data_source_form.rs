@@ -1,9 +1,11 @@
 //! The editable fields behind the data source dialog, and their validation. No egui here, so
 //! the rules are testable without a UI.
 
+use std::path::PathBuf;
+
 use dbdesk_core::{
     ConnectionConfig, DataSource, DataSourceId, DriverKind, Password, PostgresConfig, SourceColor,
-    SqliteConfig,
+    SqliteConfig, TlsMode,
 };
 use dbdesk_engine::PasswordUpdate;
 
@@ -48,6 +50,55 @@ pub struct PostgresFields {
     pub port: String,
     pub database: String,
     pub user: String,
+    pub tls: TlsChoice,
+    /// Only used by [`TlsChoice::VerifyFull`], but kept while another mode is chosen so
+    /// switching back doesn't lose it. Empty trusts the public web authorities.
+    pub ca_file: String,
+}
+
+/// The TLS modes, as the form lists them: [`TlsMode`] without its CA file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TlsChoice {
+    Disable,
+    Prefer,
+    Require,
+    VerifyFull,
+}
+
+impl TlsChoice {
+    pub const ALL: [Self; 4] = [Self::Disable, Self::Prefer, Self::Require, Self::VerifyFull];
+
+    /// libpq's `sslmode` names, which PostgreSQL users and hosting providers' guides use.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Disable => "disable",
+            Self::Prefer => "prefer",
+            Self::Require => "require",
+            Self::VerifyFull => "verify-full",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Disable => "Never encrypt.",
+            Self::Prefer => "Encrypt if the server offers it, without checking its certificate.",
+            Self::Require => "Always encrypt, without checking the server's certificate.",
+            Self::VerifyFull => {
+                "Always encrypt, and check that the certificate is trusted and names the host."
+            }
+        }
+    }
+}
+
+impl From<&TlsMode> for TlsChoice {
+    fn from(tls: &TlsMode) -> Self {
+        match tls {
+            TlsMode::Disable => Self::Disable,
+            TlsMode::Prefer => Self::Prefer,
+            TlsMode::Require => Self::Require,
+            TlsMode::VerifyFull { .. } => Self::VerifyFull,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,6 +115,8 @@ impl DataSourceForm {
                 port: PostgresConfig::DEFAULT_PORT.to_string(),
                 database: DEFAULT_POSTGRES_DATABASE.to_owned(),
                 user: DEFAULT_POSTGRES_USER.to_owned(),
+                tls: TlsChoice::from(&TlsMode::default()),
+                ca_file: String::new(),
             }),
             DriverKind::Sqlite => DriverFields::Sqlite(SqliteFields {
                 path: String::new(),
@@ -85,6 +138,13 @@ impl DataSourceForm {
                 port: config.port.to_string(),
                 database: config.database.clone(),
                 user: config.user.clone(),
+                tls: TlsChoice::from(&config.tls),
+                ca_file: match &config.tls {
+                    TlsMode::VerifyFull {
+                        ca_file: Some(path),
+                    } => path.display().to_string(),
+                    _ => String::new(),
+                },
             }),
             ConnectionConfig::Sqlite(config) => DriverFields::Sqlite(SqliteFields {
                 path: config.path.display().to_string(),
@@ -146,7 +206,21 @@ impl PostgresFields {
             port,
             database: required(&self.database, FormError::DatabaseMissing)?,
             user: required(&self.user, FormError::UserMissing)?,
+            tls: self.tls_mode(),
         })
+    }
+
+    fn tls_mode(&self) -> TlsMode {
+        match self.tls {
+            TlsChoice::Disable => TlsMode::Disable,
+            TlsChoice::Prefer => TlsMode::Prefer,
+            TlsChoice::Require => TlsMode::Require,
+            TlsChoice::VerifyFull => TlsMode::VerifyFull {
+                ca_file: Some(self.ca_file.trim())
+                    .filter(|path| !path.is_empty())
+                    .map(PathBuf::from),
+            },
+        }
     }
 }
 
@@ -213,25 +287,72 @@ mod tests {
                 port: 6432,
                 database: "postgres".to_owned(),
                 user: "postgres".to_owned(),
+                tls: TlsMode::Prefer,
             })
         );
     }
 
     #[test]
-    fn round_trips_an_existing_data_source() {
-        let data_source = DataSource {
-            id: DataSourceId::generate(),
-            name: "chinook".to_owned(),
-            color: Some(SourceColor::Teal),
-            config: ConnectionConfig::Sqlite(SqliteConfig {
+    fn keeps_the_ca_file_for_verify_full_only() {
+        let cases = [
+            (TlsChoice::Require, " /etc/ca.pem ", TlsMode::Require),
+            (
+                TlsChoice::VerifyFull,
+                " /etc/ca.pem ",
+                TlsMode::VerifyFull {
+                    ca_file: Some("/etc/ca.pem".into()),
+                },
+            ),
+            (
+                TlsChoice::VerifyFull,
+                "  ",
+                TlsMode::VerifyFull { ca_file: None },
+            ),
+        ];
+        for (choice, ca_file, expected) in cases {
+            let form = postgres_form(|f| {
+                f.tls = choice;
+                f.ca_file = ca_file.to_owned();
+            });
+
+            let data_source = form.to_data_source(DataSourceId::generate()).unwrap();
+
+            let ConnectionConfig::Postgres(config) = data_source.config else {
+                panic!("expected a PostgreSQL data source");
+            };
+            assert_eq!(config.tls, expected, "{choice:?} {ca_file:?}");
+        }
+    }
+
+    #[test]
+    fn round_trips_existing_data_sources() {
+        let configs = [
+            ConnectionConfig::Sqlite(SqliteConfig {
                 path: "/data/chinook.db".into(),
                 read_only: true,
             }),
-        };
+            ConnectionConfig::Postgres(PostgresConfig {
+                host: "db.internal".to_owned(),
+                port: 6432,
+                database: "app".to_owned(),
+                user: "juan".to_owned(),
+                tls: TlsMode::VerifyFull {
+                    ca_file: Some("/etc/ca.pem".into()),
+                },
+            }),
+        ];
+        for config in configs {
+            let data_source = DataSource {
+                id: DataSourceId::generate(),
+                name: "saved".to_owned(),
+                color: Some(SourceColor::Teal),
+                config,
+            };
 
-        let form = DataSourceForm::from_data_source(&data_source);
+            let form = DataSourceForm::from_data_source(&data_source);
 
-        assert_eq!(form.to_data_source(data_source.id), Ok(data_source));
+            assert_eq!(form.to_data_source(data_source.id), Ok(data_source));
+        }
     }
 
     #[test]
