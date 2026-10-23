@@ -586,6 +586,7 @@ impl eframe::App for DbDeskApp {
         let mut console_actions = Vec::new();
         let mut close_requests = Vec::new();
         let palette = Palette::for_visuals(ui.visuals());
+        let lint = self.settings.lint_options();
         let (open_consoles, saved_consoles) = self.consoles.open_and_saved_mut();
         DockArea::new(&mut self.dock)
             .style(theme::dock_style(ui.style()))
@@ -603,6 +604,7 @@ impl eframe::App for DbDeskApp {
                     explorer_actions: &mut explorer_actions,
                     consoles: open_consoles,
                     keymap: &self.keymap,
+                    lint: &lint,
                     console_actions: &mut console_actions,
                     close_requests: &mut close_requests,
                 },
@@ -1261,6 +1263,34 @@ mod tests {
             std::fs::read_to_string(dir.path().join("settings.toml"))
                 .is_ok_and(|text| text.contains("keyword_case = \"lower\""))
         });
+    }
+
+    #[test]
+    fn underlines_problems_while_typing_and_explains_them_on_hover() {
+        let dir = tempfile::tempdir().unwrap();
+        save_shop(dir.path(), "CREATE TABLE orders (id INTEGER PRIMARY KEY)");
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        open_console(&mut harness);
+
+        harness
+            .get_by_role(Role::MultilineTextInput)
+            .type_text("select * from orders where id = null;\nselect id from orders where");
+        // Checked once typing pauses.
+        step_until_visible(&mut harness, "1 error, 1 warning");
+        let squiggles: Vec<egui::Rect> = harness
+            .state()
+            .consoles
+            .open_consoles()
+            .flat_map(|console| console.squiggle_rects().collect::<Vec<_>>())
+            .collect();
+        assert_eq!(squiggles.len(), 2, "one squiggle per problem");
+
+        harness.hover_at(squiggles[0].center());
+        step_until_visible(&mut harness, "= NULL is never true; use IS NULL");
+        harness.get_by_label_contains("null-comparison");
+        harness.hover_at(squiggles[1].center());
+        step_until_visible(&mut harness, "Syntax error: expected an expression");
     }
 
     #[test]

@@ -39,6 +39,8 @@ rebind it. Status: implemented in M5.
 | `console.rollback` | — | Roll back the console's transaction |
 | `console.format` | ⌥⌘L | Format the selection, or the statement at the cursor |
 | `console.format-all` | ⇧⌥⌘L | Format every statement in the console |
+| `console.next-problem` | F8 | Go to the next syntax error or warning |
+| `console.previous-problem` | ⇧F8 | Go to the previous syntax error or warning |
 | `grid.view-cell` | Space | Show the selected cell in the cell viewer |
 | `grid.edit-cell` | F2, Enter | Edit the selected cell, if its table can be edited |
 

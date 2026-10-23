@@ -7,7 +7,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use dbdesk_core::{CancelHandle, Cell, ColumnInfo, DriverError, ResultCursor, Row};
+use dbdesk_core::{
+    CancelHandle, Cell, ColumnInfo, DriverError, Rejection, RejectionKind, ResultCursor, Row,
+};
 use rusqlite::types::ValueRef;
 use rusqlite::{InterruptHandle, Statement};
 use tokio::sync::{mpsc, oneshot};
@@ -199,6 +201,42 @@ fn cell(value: rusqlite::Result<ValueRef<'_>>) -> Cell {
         )),
         Err(error) => Some(format!("<unreadable: {error}>")),
     }
+}
+
+/// Compiles `sql` without stepping it, so nothing runs. Errors SQLite finds in the text (the
+/// generic `SQLITE_ERROR`) are rejections; anything else, such as a locked database, means it
+/// couldn't be asked.
+pub(crate) fn validate(
+    connection: &rusqlite::Connection,
+    sql: &str,
+) -> Result<Option<Rejection>, DriverError> {
+    let error = match connection.prepare(sql) {
+        Ok(_) => return Ok(None),
+        Err(error) => error,
+    };
+    let (message, position) = match &error {
+        rusqlite::Error::SqlInputError { msg, offset, .. } => {
+            (msg.clone(), usize::try_from(*offset).ok())
+        }
+        rusqlite::Error::SqliteFailure(failure, Some(msg))
+            if failure.code == rusqlite::ErrorCode::Unknown =>
+        {
+            (msg.clone(), None)
+        }
+        _ => return Err(DriverError::Connection(Box::new(error))),
+    };
+    let kind = if message.contains("syntax error") || message.contains("incomplete input") {
+        RejectionKind::Syntax
+    } else if message.starts_with("no such ") {
+        RejectionKind::UnknownName
+    } else {
+        RejectionKind::Other
+    };
+    Ok(Some(Rejection {
+        message,
+        position,
+        kind,
+    }))
 }
 
 /// Maps a SQLite error to [`DriverError::Statement`], keeping the byte offset SQLite reports

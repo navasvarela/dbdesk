@@ -14,7 +14,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use dbdesk_core::{
     BoxError, CancelHandle, CatalogNode, CatalogPath, Connection, DriverError, NodeKind, Password,
-    PostgresConfig, RelationName, ResultCursor, ServerInfo, TableDescription, TransactionStatus,
+    PostgresConfig, Rejection, RelationName, ResultCursor, ServerInfo, TableDescription,
+    TransactionStatus,
 };
 use tokio::task::{JoinError, JoinHandle};
 use tokio_postgres::tls::NoTlsStream;
@@ -212,6 +213,10 @@ impl Connection for PostgresConnection {
         table: &RelationName,
     ) -> Result<Option<TableDescription>, DriverError> {
         table::describe_table(&self.primary.client, table).await
+    }
+
+    async fn validate(&mut self, sql: &str) -> Result<Option<Rejection>, DriverError> {
+        execution::validate(&self.primary.client, sql).await
     }
 
     async fn transaction_status(&mut self) -> Result<TransactionStatus, DriverError> {
@@ -440,6 +445,7 @@ mod tests {
         conformance::check_execution(&mut connection).await;
         conformance::check_transactions(&mut connection).await;
         conformance::check_describe_table(&mut connection).await;
+        conformance::check_validate(&mut connection).await;
         conformance::check_cancel(&mut connection, "SELECT pg_sleep(60)").await;
 
         Box::new(connection).close().await.unwrap();

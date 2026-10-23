@@ -218,6 +218,18 @@ twice; layout, cursor-mapping and safety-check tests; settings file and engine t
 test that formats with ⌥⌘L, undoes it, and formats again from the Code menu after switching to
 lower case.
 
+**Linter demo note:** built. Type `select * from orders where id = null;` and, once typing
+pauses, `= null` gets an amber wave; hover for "= NULL is never true; use IS NULL". An
+unfinished `select id from orders where` gets a red one, and the toolbar says
+**1 error, 1 warning**; F8 jumps between them. Run something so the console connects, and its
+statements are also prepared (never run) on its own connection: a misspelt column then shows
+the database's own message. Rules are switched off in View → Settings…. Syntax errors come
+from `sqlparser`, only for data queries and changes, with a list of constructs it wrongly
+rejects found by a corpus of valid statements. Covered by that corpus and lint tests in
+`dbdesk-sql`, a `validate` conformance check on both drivers, engine tests that validation
+never connects, never disturbs unread rows and skips open PostgreSQL transactions, problem
+and catalog-lint tests, and a UI test that hovers a warning and an error.
+
 ## Release track
 
 Downloads that install like any other desktop app, instead of building from source. The full

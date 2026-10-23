@@ -15,7 +15,7 @@ mod table;
 pub mod conformance;
 
 pub use catalog::{CatalogNode, CatalogPath, FolderKind, NodeKind, PathSegment, quote_identifier};
-pub use connection::{Connection, ServerInfo};
+pub use connection::{Connection, Rejection, RejectionKind, ServerInfo};
 pub use data_source::{
     ConnectionConfig, DataSource, DataSourceId, DriverKind, PostgresConfig, SourceColor,
     SqliteConfig,

@@ -9,8 +9,8 @@ use egui::{Id, Margin, ScrollArea, TextBuffer, TextEdit, Ui, vec2};
 
 use super::highlight::Marks;
 use super::{
-    FormatScope, QueryConsole, RunScope, RunState, SubmittedStatement, TreeCatalog, cell_viewer,
-    completion_popup, highlight, results,
+    FormatScope, LintOptions, QueryConsole, RunScope, RunState, SubmittedStatement, TreeCatalog,
+    cell_viewer, completion_popup, highlight, results,
 };
 use crate::icons::{self, Role};
 use crate::keymap::{Action, Keymap};
@@ -19,10 +19,11 @@ use crate::widgets::{self, IconButton};
 use dbdesk_core::TransactionStatus;
 use dbdesk_core::{CatalogPath, RelationName};
 use dbdesk_engine::{RunId, RunOutcome, SessionState, TransactionEnd, TransactionMode};
+use dbdesk_sql::{ProblemSource, Severity};
 use dbdesk_store::ExportFormat;
 
 /// What the console's keys can do while its editor has focus.
-const EDITOR_ACTIONS: [Action; 10] = [
+const EDITOR_ACTIONS: [Action; 12] = [
     Action::Complete,
     Action::RunCurrent,
     Action::RunAll,
@@ -33,6 +34,8 @@ const EDITOR_ACTIONS: [Action; 10] = [
     Action::Rollback,
     Action::Format,
     Action::FormatAll,
+    Action::NextProblem,
+    Action::PreviousProblem,
 ];
 
 /// Height the results start at; the user can drag the line above them.
@@ -61,6 +64,8 @@ pub enum ConsoleAction {
     SubmitEdits,
     /// Formats SQL in the editor, with the formatting settings the app holds.
     Format(FormatScope),
+    /// Asks the database whether it would accept these statements, without running them.
+    Validate(Vec<String>),
 }
 
 /// What a console draws with besides its own state.
@@ -68,6 +73,8 @@ pub struct ConsoleContext<'a> {
     pub keymap: &'a Keymap,
     /// The data source's cached catalog, for completion. `None` if the data source is gone.
     pub catalog: Option<TreeCatalog<'a>>,
+    /// Which problems to look for while typing.
+    pub lint: &'a LintOptions,
 }
 
 pub fn show(
@@ -85,7 +92,7 @@ pub fn show(
     let (editor_height, results_height) = split_heights(ui, console);
     let width = ui.available_width();
     ui.allocate_ui(vec2(width, editor_height), |ui| {
-        editor(ui, console, editor_id, context.catalog.as_ref(), actions);
+        editor(ui, console, editor_id, context, actions);
     });
     splitter(ui, console);
     ui.allocate_ui(vec2(width, results_height), |ui| {
@@ -147,10 +154,11 @@ fn shortcuts(
     }
     completion_popup::handle_keys(ui, console);
     for action in ui.input_mut(|input| keymap.consume(input, &EDITOR_ACTIONS)) {
-        if action == Action::Complete {
-            console.open_completion(true);
-        } else {
-            perform(console, action, actions);
+        match action {
+            Action::Complete => console.open_completion(true),
+            Action::NextProblem => console.jump_to_problem(true),
+            Action::PreviousProblem => console.jump_to_problem(false),
+            action => perform(console, action, actions),
         }
     }
 }
@@ -189,7 +197,11 @@ fn perform(console: &QueryConsole, action: Action, actions: &mut Vec<ConsoleActi
             return;
         }
         // The grid and the editor handle these themselves.
-        Action::ViewCell | Action::EditCell | Action::Complete => return,
+        Action::ViewCell
+        | Action::EditCell
+        | Action::Complete
+        | Action::NextProblem
+        | Action::PreviousProblem => return,
     };
     let statements = console.statements_to_run(scope);
     if !statements.is_empty() {
@@ -207,7 +219,9 @@ fn is_enabled(console: &QueryConsole, action: Action) -> bool {
         | Action::EditCell
         | Action::Complete
         | Action::Format
-        | Action::FormatAll => true,
+        | Action::FormatAll
+        | Action::NextProblem
+        | Action::PreviousProblem => true,
     }
 }
 
@@ -252,13 +266,20 @@ fn toolbar_icon(action: Action) -> Option<(&'static str, Role)> {
         Action::Commit
         | Action::Rollback
         | Action::FormatAll
+        | Action::NextProblem
+        | Action::PreviousProblem
         | Action::ViewCell
         | Action::EditCell
         | Action::Complete => None,
     }
 }
 
-fn toolbar(ui: &mut Ui, console: &QueryConsole, keymap: &Keymap, actions: &mut Vec<ConsoleAction>) {
+fn toolbar(
+    ui: &mut Ui,
+    console: &mut QueryConsole,
+    keymap: &Keymap,
+    actions: &mut Vec<ConsoleAction>,
+) {
     let palette = Palette::for_visuals(ui.visuals());
     widgets::toolbar(ui, |ui| {
         for button in [
@@ -275,6 +296,7 @@ fn toolbar(ui: &mut Ui, console: &QueryConsole, keymap: &Keymap, actions: &mut V
         ui.separator();
         ui.add_space(6.0);
         run_status(ui, console, palette);
+        problem_count(ui, console, keymap, palette);
         if let Some(error) = console.save_error() {
             ui.colored_label(palette.error, "Not saved")
                 .on_hover_text(error);
@@ -284,6 +306,47 @@ fn toolbar(ui: &mut Ui, console: &QueryConsole, keymap: &Keymap, actions: &mut V
                 .on_hover_text(error);
         }
     });
+}
+
+/// How many errors and warnings the console has; a click goes to the next one.
+fn problem_count(ui: &mut Ui, console: &mut QueryConsole, keymap: &Keymap, palette: &Palette) {
+    let errors = console.problems.count(Severity::Error);
+    let warnings = console.problems.count(Severity::Warning);
+    let (glyph, color) = match (errors, warnings) {
+        (0, 0) => return,
+        (0, _) => (icons::WARNING, palette.warning),
+        _ => (icons::X_CIRCLE, palette.error),
+    };
+    let text = problem_summary(errors, warnings);
+    let hint = match keymap.hint(ui.ctx(), Action::NextProblem) {
+        Some(shortcut) => format!("{} ({shortcut})", Action::NextProblem.description()),
+        None => Action::NextProblem.description().to_owned(),
+    };
+    let job = widgets::icon_text(ui, glyph, color, &text);
+    let response = ui
+        .add(egui::Button::new(job).frame(false))
+        .on_hover_text(hint);
+    let response = widgets::name(response, egui::WidgetType::Button, &text, true);
+    if response.clicked() {
+        console.jump_to_problem(true);
+    }
+}
+
+/// `1 error, 2 warnings`, leaving out a count of zero.
+fn problem_summary(errors: usize, warnings: usize) -> String {
+    let count = |n: usize, one: &str, many: &str| match n {
+        0 => None,
+        1 => Some(format!("1 {one}")),
+        n => Some(format!("{n} {many}")),
+    };
+    [
+        count(errors, "error", "errors"),
+        count(warnings, "warning", "warnings"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(", ")
 }
 
 /// The transaction mode, Commit and Rollback, and whether a transaction is pending. The
@@ -414,10 +477,18 @@ fn editor(
     ui: &mut Ui,
     console: &mut QueryConsole,
     editor_id: Id,
-    catalog: Option<&TreeCatalog<'_>>,
+    context: &ConsoleContext<'_>,
     actions: &mut Vec<ConsoleAction>,
 ) {
+    let catalog = context.catalog.as_ref();
     move_cursor(ui, console, editor_id);
+    let checked = console.check_problems(catalog, context.lint, Instant::now());
+    if let Some(wait) = checked.repaint_after {
+        ui.ctx().request_repaint_after(wait);
+    }
+    if !checked.ask_database.is_empty() {
+        actions.push(ConsoleAction::Validate(checked.ask_database));
+    }
     let dialect = console.dialect;
     let marks = Marks {
         error: console.error_marker.clone(),
@@ -449,6 +520,8 @@ fn editor(
                 .layouter(&mut layouter)
                 .show(ui);
             line_numbers(ui, &output);
+            squiggles(ui, console, &output);
+            problem_tooltip(ui, console, &output);
             if output.response.changed() {
                 console.edited(Instant::now());
             }
@@ -462,6 +535,102 @@ fn editor(
             }
             completion_popup::show(ui, console, &output);
         });
+}
+
+/// How far a squiggle's wave rises and falls, and the length of one rise or fall.
+const SQUIGGLE_AMPLITUDE: f32 = 1.5;
+const SQUIGGLE_STEP: f32 = 2.5;
+
+/// Underlines each problem with a wave, red for errors and amber for warnings, and remembers
+/// where, so hovering can show the message.
+fn squiggles(ui: &Ui, console: &mut QueryConsole, output: &egui::text_edit::TextEditOutput) {
+    let palette = Palette::for_visuals(ui.visuals());
+    let origin = output.galley_pos;
+    let mut rects = Vec::new();
+    for (index, problem) in console.problems.shown().iter().enumerate() {
+        let color = match problem.severity {
+            Severity::Error => palette.error,
+            Severity::Warning => palette.warning,
+        };
+        let start = char_index(&console.text, problem.range.start);
+        let end = char_index(&console.text, problem.range.end).max(start + 1);
+        let mut row_start = 0;
+        for row in &output.galley.rows {
+            let row_end = row_start + row.char_count_including_newline().0;
+            let (from, to) = (start.max(row_start), end.min(row_end));
+            if from < to {
+                let column =
+                    |char: usize| egui::text::CharIndex((char - row_start).min(row.glyphs.len()));
+                let left = origin.x + row.pos.x + row.x_offset(column(from));
+                let right = origin.x + row.pos.x + row.x_offset(column(to));
+                let rect = egui::Rect::from_min_max(
+                    egui::pos2(left, origin.y + row.min_y()),
+                    egui::pos2(
+                        right.max(left + 2.0 * SQUIGGLE_STEP),
+                        origin.y + row.max_y(),
+                    ),
+                );
+                ui.painter().add(wave(rect, color));
+                rects.push((rect, index));
+            }
+            row_start = row_end;
+        }
+    }
+    console.problem_rects = rects;
+}
+
+fn wave(rect: egui::Rect, color: egui::Color32) -> egui::Shape {
+    let baseline = rect.bottom() - SQUIGGLE_AMPLITUDE;
+    let mut points = Vec::new();
+    let mut x = rect.left();
+    let mut up = true;
+    while x <= rect.right() {
+        let offset = if up {
+            -SQUIGGLE_AMPLITUDE
+        } else {
+            SQUIGGLE_AMPLITUDE
+        };
+        points.push(egui::pos2(x, baseline + offset));
+        x += SQUIGGLE_STEP;
+        up = !up;
+    }
+    egui::Shape::line(points, egui::Stroke::new(1.0, color))
+}
+
+/// Shows the message of the problem under the pointer, and how to switch off a lint rule.
+fn problem_tooltip(ui: &Ui, console: &QueryConsole, output: &egui::text_edit::TextEditOutput) {
+    if !output.response.hovered() {
+        return;
+    }
+    let Some(pointer) = ui.ctx().pointer_hover_pos() else {
+        return;
+    };
+    let Some(problem) = console
+        .problem_rects
+        .iter()
+        .find(|(rect, _)| rect.contains(pointer))
+        .and_then(|(_, index)| console.problems.shown().get(*index))
+    else {
+        return;
+    };
+    output
+        .response
+        .response
+        .clone()
+        .on_hover_ui_at_pointer(|ui| {
+            ui.label(&problem.message);
+            if let ProblemSource::Lint(rule) = problem.source {
+                ui.weak(format!(
+                    "{} · can be switched off in View → Settings",
+                    rule.id()
+                ));
+            }
+        });
+}
+
+/// The character index of byte `offset`, as the editor's galley counts.
+fn char_index(text: &str, offset: usize) -> usize {
+    text.get(..offset).unwrap_or(text).chars().count()
 }
 
 /// The editor's own margin around the text; the line numbers widen its left side.
