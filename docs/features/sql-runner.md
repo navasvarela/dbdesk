@@ -42,7 +42,27 @@ becomes the bottleneck, the plan is a dedicated editor widget in its own crate.
 - The statement ⌘↵ would run (the one at the cursor) has a faint background, unless text is
   selected.
 
-*Planned*: bracket matching, completion from the cached catalog, formatting.
+### Completion
+
+- Typing a name (or a `.`) opens a list at the cursor; ⌃Space (`console.complete` in the
+  [keymap](keymap.md)) opens it anywhere. ↑/↓ pick, Enter or Tab accept, Escape closes; a
+  click elsewhere or typing a non-name character closes it too.
+- What it offers, matching the typed prefix ignoring case (a name typed in full isn't offered
+  again, so Enter still breaks the line):
+  - after `alias.` or `table.`: that table's columns; after `schema.`: that schema's tables;
+  - otherwise: the columns of the tables the statement names (after `FROM`, `JOIN`,
+    `UPDATE`, `INTO`, with their aliases), then tables and views (schema-qualified outside
+    `public`/`main`), schemas, and keywords (in the case you're typing).
+- Names come from the **explorer's cached catalog** for the console's data source, never from
+  a query of their own. When the list needs a level that isn't cached (the schemas, a schema's
+  tables, a referenced table's columns), the app loads it into that cache in the background,
+  one level per answer, without expanding the explorer; the list says "Loading the catalog…"
+  meanwhile. This connects the explorer's session, as expanding the data source would. A
+  level that failed to load isn't retried until it's expanded in the explorer.
+- System schemas (`pg_catalog`, `information_schema`) aren't offered. Names are quoted when
+  they need it, with the same rule as Open data.
+
+*Planned*: bracket matching, formatting, completing functions and their arguments.
 
 ## Running SQL
 
