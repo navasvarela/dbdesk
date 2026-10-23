@@ -33,8 +33,8 @@ pub async fn connect(config: &SqliteConfig) -> Result<SqliteConnection, DriverEr
     let read_only = config.read_only;
     let (connection, version) = tokio::task::spawn_blocking(move || open(&path, read_only))
         .await
-        .map_err(|join_error| DriverError::Connect(Box::new(join_error)))?
-        .map_err(|error| DriverError::Connect(Box::new(error)))?;
+        .map_err(connect_error)?
+        .map_err(connect_error)?;
 
     Ok(SqliteConnection {
         cancel: Arc::new(execution::SqliteCancel::new(
@@ -46,6 +46,51 @@ pub async fn connect(config: &SqliteConfig) -> Result<SqliteConnection, DriverEr
             version,
         },
     })
+}
+
+/// Creates a new, empty database file at `path`, which must not exist yet.
+///
+/// The only way dbdesk creates a database: [`connect`] never does. Writes the file's header
+/// straight away, so it is a recognisable SQLite file even before it has any tables.
+///
+/// # Errors
+///
+/// [`DriverError::Connect`] if `path` already exists, its folder doesn't, or it can't be
+/// written.
+pub async fn create_database(path: &Path) -> Result<(), DriverError> {
+    let path = path.to_owned();
+    tokio::task::spawn_blocking(move || create(&path))
+        .await
+        .map_err(connect_error)?
+}
+
+fn create(path: &Path) -> Result<(), DriverError> {
+    // `create_new` fails atomically if the file exists, so an existing database is never
+    // overwritten, even when the user confirmed "Replace" in the save dialog.
+    std::fs::File::create_new(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::AlreadyExists {
+            connect_error(format!("{} already exists", path.display()))
+        } else {
+            connect_error(error)
+        }
+    })?;
+    let connection = rusqlite::Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(connect_error)?;
+    // A zero-length file is already a valid, empty database to SQLite, but other tools only
+    // recognise SQLite files by the header, which SQLite writes on the first change.
+    connection
+        .execute_batch("PRAGMA user_version = 1; PRAGMA user_version = 0;")
+        .map_err(connect_error)?;
+    connection
+        .close()
+        .map_err(|(_, error)| connect_error(error))
+}
+
+fn connect_error(error: impl Into<BoxError>) -> DriverError {
+    DriverError::Connect(error.into())
 }
 
 fn open(path: &Path, read_only: bool) -> rusqlite::Result<(rusqlite::Connection, String)> {
@@ -193,6 +238,32 @@ mod tests {
             assert_eq!(connection.server_info().product, PRODUCT);
             conformance::check_lifecycle(Box::new(connection)).await;
         }
+    }
+
+    #[tokio::test]
+    async fn creates_an_empty_database_but_never_overwrites_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("new.db");
+
+        create_database(&path).await.unwrap();
+
+        let header = std::fs::read(&path).unwrap();
+        assert!(header.starts_with(b"SQLite format 3\0"), "missing header");
+        let connection = connect(&SqliteConfig {
+            path: path.clone(),
+            read_only: false,
+        })
+        .await
+        .unwrap();
+        conformance::check_lifecycle(Box::new(connection)).await;
+
+        conformance::check_connect_failure(create_database(&path).await.map(|()| "created"));
+        assert_eq!(std::fs::read(&path).unwrap(), header);
+        conformance::check_connect_failure(
+            create_database(&dir.path().join("missing/new.db"))
+                .await
+                .map(|()| "created"),
+        );
     }
 
     #[tokio::test]
