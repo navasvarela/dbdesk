@@ -76,7 +76,8 @@ pub fn close_console_tab(layout: &mut DockState<Tab>, key: &ConsoleKey) {
     }
 }
 
-/// Adds a console tab next to the other consoles (or the Welcome tab) and focuses it.
+/// Adds a console tab next to the other consoles (or the Welcome tab), and makes it the
+/// active tab and its area the focused one.
 pub fn open_console_tab(layout: &mut DockState<Tab>, key: ConsoleKey) {
     let tab = Tab::QueryConsole(key);
     let tree = layout.main_surface_mut();
@@ -91,6 +92,8 @@ pub fn open_console_tab(layout: &mut DockState<Tab>, key: ConsoleKey) {
     if let Some(path) = layout.find_tab(&tab) {
         // The tab was just found, so activating it can't fail.
         let _ = layout.set_active_tab(path);
+        // Focused too, so menus acting on "the current console" act on this one.
+        layout.set_focused_node_and_surface(path.node_path());
     }
 }
 

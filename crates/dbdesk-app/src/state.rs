@@ -95,6 +95,7 @@ impl AppState {
             Event::DataSourceSaveFailed { .. }
             | Event::ConsolesLoaded(_)
             | Event::KeymapLoaded { .. }
+            | Event::SettingsLoaded { .. }
             | Event::HistoryFound { .. }
             | Event::ExportFinished { .. }
             | Event::TableDescribed { .. }

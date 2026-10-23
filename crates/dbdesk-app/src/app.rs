@@ -8,7 +8,7 @@ use egui::{Frame, Margin, RichText, ThemePreference};
 use egui_dock::{DockArea, DockState};
 
 use crate::about_dialog;
-use crate::console::ConsoleAction;
+use crate::console::{ConsoleAction, FormatScope};
 use crate::consoles::Consoles;
 use crate::data_source_dialog::{DataSourceDialog, DialogAction};
 use crate::definition_window::DefinitionWindow;
@@ -20,6 +20,8 @@ use crate::keymap::{self, Keymap};
 use crate::keymap_window::{self, KeymapWindowAction};
 use crate::log_console::{LogConsole, LogFeed};
 use crate::rollback_dialog::{Closing, RollbackChoice, RollbackConfirmation};
+use crate::settings::AppSettings;
+use crate::settings_window::{self, SettingsWindowAction};
 use crate::state::{AppState, EngineStatus};
 use crate::theme::{self, Palette};
 use crate::workspace::{self, Panels, Tab};
@@ -51,6 +53,7 @@ pub struct DbDeskApp {
     keymap_path: Option<PathBuf>,
     keymap_window_open: bool,
     about_open: bool,
+    settings: AppSettings,
     /// Asks where to export rows. The platform's save dialog, except in tests.
     pick_export_path: Box<dyn Fn(ExportFormat) -> Option<PathBuf>>,
     consoles: Consoles,
@@ -94,6 +97,7 @@ impl DbDeskApp {
             keymap_path: None,
             keymap_window_open: false,
             about_open: false,
+            settings: AppSettings::default(),
             consoles: Consoles::default(),
             maximize_window,
         })
@@ -138,6 +142,7 @@ impl DbDeskApp {
             self.send(window.search_command());
         }
         self.consoles.apply(event);
+        self.settings.apply(event);
         if let Event::KeymapLoaded { path, result } = event {
             self.keymap = match result {
                 Ok(bindings) => Keymap::from_file(bindings),
@@ -435,11 +440,15 @@ impl DbDeskApp {
                 if ui.button("Keymap…").clicked() {
                     self.keymap_window_open = true;
                 }
+                if ui.button("Settings…").clicked() {
+                    self.settings.window_open = true;
+                }
                 if ui.button("Reset layout").clicked() {
                     self.dock = workspace::default_layout();
                     tracing::info!("layout reset");
                 }
             });
+            ui.menu_button("Code", |ui| self.code_menu(ui));
             ui.menu_button("Help", |ui| {
                 if ui.button("About dbdesk").clicked() {
                     self.about_open = true;
@@ -451,6 +460,53 @@ impl DbDeskApp {
     fn show_about(&mut self, ctx: &egui::Context) {
         if self.about_open && about_dialog::show(ctx) {
             self.about_open = false;
+        }
+    }
+
+    /// Formatting, for the console whose tab has focus.
+    fn code_menu(&mut self, ui: &mut egui::Ui) {
+        let console = self.focused_console();
+        for (label, scope, action) in [
+            ("Format", FormatScope::Current, keymap::Action::Format),
+            ("Format all", FormatScope::All, keymap::Action::FormatAll),
+        ] {
+            let mut button = egui::Button::new(label);
+            if let Some(shortcut) = self.keymap.hint(ui.ctx(), action) {
+                button = button.shortcut_text(shortcut);
+            }
+            let response = ui
+                .add_enabled(console.is_some(), button)
+                .on_hover_text(action.description())
+                .on_disabled_hover_text("Select a query console first");
+            if response.clicked()
+                && let Some(console) = &console
+            {
+                self.consoles
+                    .format(console, scope, &self.settings.format_options());
+            }
+        }
+    }
+
+    /// The console in the dock's focused tab, if that is a console.
+    fn focused_console(&mut self) -> Option<ConsoleKey> {
+        match self.dock.find_active_focused() {
+            Some((_, Tab::QueryConsole(key))) => Some(key.clone()),
+            _ => None,
+        }
+    }
+
+    fn show_settings_window(&mut self, ctx: &egui::Context) {
+        if !self.settings.window_open {
+            return;
+        }
+        match settings_window::show(ctx, &self.settings) {
+            Some(SettingsWindowAction::Save(settings)) => {
+                self.settings.set(settings.clone());
+                self.send(Command::SaveSettings(settings));
+            }
+            Some(SettingsWindowAction::Reload) => self.send(Command::ReloadSettings),
+            Some(SettingsWindowAction::Close) => self.settings.window_open = false,
+            None => {}
         }
     }
 
@@ -560,6 +616,10 @@ impl eframe::App for DbDeskApp {
                 ConsoleAction::ShowHistory => self.open_history(console),
                 ConsoleAction::Export(format) => self.export(&console, format),
                 ConsoleAction::LoadCatalog(paths) => self.load_catalog(console.data_source, paths),
+                ConsoleAction::Format(scope) => {
+                    self.consoles
+                        .format(&console, scope, &self.settings.format_options());
+                }
                 action => {
                     let command = self.consoles.handle(&console, action);
                     self.send_if(command);
@@ -587,6 +647,7 @@ impl eframe::App for DbDeskApp {
         self.show_history_window(&ctx);
         self.show_keymap_window(&ctx);
         self.show_about(&ctx);
+        self.show_settings_window(&ctx);
 
         // Entries logged on the UI thread don't wake the UI (see `UiWaker`), so collect any
         // logged during this frame and ask for one more frame to show them.
@@ -647,7 +708,7 @@ mod tests {
     use dbdesk_core::{DataSourceId, Password};
     use dbdesk_store::{
         ConsoleFiles, ConsoleName, DataSourceFile, HistoryFile, KeymapFile, SecretError,
-        SecretStore,
+        SecretStore, SettingsFile,
     };
     use egui::accesskit::Role;
     use egui_kittest::Harness;
@@ -683,6 +744,7 @@ mod tests {
             consoles: ConsoleFiles::new(dir.join("consoles")),
             history: HistoryFile::new(dir.join("history.sqlite")),
             keymap: KeymapFile::new(dir.join("keymap.toml")),
+            settings: SettingsFile::new(dir.join("settings.toml")),
         }
     }
 
@@ -1126,6 +1188,79 @@ mod tests {
                 .is_expanded(&dbdesk_core::CatalogPath::root()),
             "completion loads the catalog without expanding the explorer"
         );
+    }
+
+    /// Opens a console on the shop's data source and focuses its editor.
+    fn open_console(harness: &mut Harness<'_, DbDeskApp>) {
+        step_until_visible(harness, "Expand shop");
+        harness.get_by_label("shop").click_secondary();
+        harness.run();
+        // The Welcome tab has a card of the same name; the context menu comes first.
+        harness
+            .get_all_by_label("New query console")
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness.get_by_role(Role::MultilineTextInput).focus();
+        harness.run();
+    }
+
+    fn editor_text(harness: &Harness<'_, DbDeskApp>) -> String {
+        harness
+            .get_by_role(Role::MultilineTextInput)
+            .value()
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn formats_a_statement_undoes_it_in_one_step_and_follows_the_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        save_shop(dir.path(), "CREATE TABLE orders (id INTEGER PRIMARY KEY)");
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        open_console(&mut harness);
+        let typed = "select id,customer from orders where id=1";
+        harness
+            .get_by_role(Role::MultilineTextInput)
+            .type_text(typed);
+        harness.run();
+
+        harness.key_press_modifiers(
+            egui::Modifiers::COMMAND | egui::Modifiers::ALT,
+            egui::Key::L,
+        );
+        harness.run();
+        assert_eq!(
+            editor_text(&harness),
+            "SELECT\n    id,\n    customer\nFROM orders\nWHERE id = 1"
+        );
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        assert_eq!(
+            editor_text(&harness),
+            typed,
+            "one undo restores the typed text"
+        );
+
+        harness.get_by_label("View").click();
+        harness.run();
+        harness.get_by_label("Settings…").click();
+        harness.run();
+        harness.get_by_label("lower").click();
+        harness.run();
+        harness.get_by_label("Code").click();
+        harness.run();
+        harness.get_by_label_contains("Format all").click();
+        harness.run();
+        assert_eq!(
+            editor_text(&harness),
+            "select\n    id,\n    customer\nfrom orders\nwhere id = 1"
+        );
+        step_until(&mut harness, "the settings file", |_| {
+            std::fs::read_to_string(dir.path().join("settings.toml"))
+                .is_ok_and(|text| text.contains("keyword_case = \"lower\""))
+        });
     }
 
     #[test]

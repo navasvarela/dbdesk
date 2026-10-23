@@ -5,7 +5,7 @@ use dbdesk_core::{
     CatalogNode, CatalogPath, ColumnInfo, DataSource, DataSourceId, Password, RelationName, Row,
     ServerInfo, TableDescription, TransactionStatus,
 };
-use dbdesk_store::{ConsoleKey, HistoryEntry, KeymapBindings, SavedConsole};
+use dbdesk_store::{ConsoleKey, HistoryEntry, KeymapBindings, SavedConsole, Settings};
 
 use crate::Export;
 
@@ -114,6 +114,11 @@ pub enum Command {
     CreateKeymap {
         text: String,
     },
+    /// Reads `settings.toml` again. Answered by [`Event::SettingsLoaded`].
+    ReloadSettings,
+    /// Replaces `settings.toml` with these settings, then reads it. Answered by
+    /// [`Event::SettingsLoaded`].
+    SaveSettings(Settings),
     /// Writes rows a console shows to a file. Answered by [`Event::ExportFinished`].
     ExportRows {
         console: ConsoleId,
@@ -178,6 +183,12 @@ pub enum Event {
     KeymapLoaded {
         path: PathBuf,
         result: Result<KeymapBindings, String>,
+    },
+    /// What `settings.toml` holds, read at start-up (after the keymap, before the data
+    /// sources), after a save and on request. The defaults if there is no file.
+    SettingsLoaded {
+        path: PathBuf,
+        result: Result<Settings, String>,
     },
     ConsoleSaveFailed {
         key: ConsoleKey,

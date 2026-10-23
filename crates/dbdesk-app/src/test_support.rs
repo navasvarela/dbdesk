@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use dbdesk_core::{DataSourceId, Password};
 use dbdesk_engine::EngineConfig;
 use dbdesk_store::{
-    ConsoleFiles, DataSourceFile, HistoryFile, KeymapFile, SecretError, SecretStore,
+    ConsoleFiles, DataSourceFile, HistoryFile, KeymapFile, SecretError, SecretStore, SettingsFile,
 };
 use egui_kittest::kittest::Queryable;
 use egui_kittest::{Harness, HarnessBuilder};
@@ -60,6 +60,7 @@ pub fn start_app(
         consoles: ConsoleFiles::new(dir.join("consoles")),
         history: HistoryFile::new(dir.join("history.sqlite")),
         keymap: KeymapFile::new(dir.join("keymap.toml")),
+        settings: SettingsFile::new(dir.join("settings.toml")),
     };
     builder.build_eframe(|cc| DbDeskApp::new(cc, log_feed, config).unwrap())
 }

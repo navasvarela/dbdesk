@@ -7,9 +7,12 @@ use std::time::{Duration, Instant};
 
 use dbdesk_core::{CatalogPath, DataSource, DataSourceId};
 use dbdesk_engine::{Command, ConsoleId, Event, RunId};
+use dbdesk_sql::FormatOptions;
 use dbdesk_store::{ConsoleKey, ConsoleName, ExportFormat};
 
-use crate::console::{self, ConsoleAction, QueryConsole, RunScope, SubmittedStatement};
+use crate::console::{
+    self, ConsoleAction, FormatScope, QueryConsole, RunScope, SubmittedStatement,
+};
 use crate::hazard_dialog::{self, HazardChoice, HazardConfirmation, Review};
 use crate::rollback_dialog::Closing;
 
@@ -166,6 +169,13 @@ impl Consoles {
         self.open.get(key)?.export(format, path)
     }
 
+    /// Formats SQL in the console, if it is still open.
+    pub fn format(&mut self, key: &ConsoleKey, scope: FormatScope, options: &FormatOptions) {
+        if let Some(console) = self.open.get_mut(key) {
+            console.format(scope, options, Instant::now());
+        }
+    }
+
     /// Puts a statement at the console's cursor, if the console is still open.
     pub fn insert_statement(&mut self, key: &ConsoleKey, sql: &str) {
         if let Some(console) = self.open.get_mut(key) {
@@ -204,7 +214,8 @@ impl Consoles {
             // The app opens a window or a file dialog, or updates the catalog, for these.
             ConsoleAction::ShowHistory
             | ConsoleAction::Export(_)
-            | ConsoleAction::LoadCatalog(_) => None,
+            | ConsoleAction::LoadCatalog(_)
+            | ConsoleAction::Format(_) => None,
         }
     }
 

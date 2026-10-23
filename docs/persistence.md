@@ -6,7 +6,7 @@ All state lives in the platform config directory from the `directories` crate
 ```
 dbdesk/
 ├── data_sources.toml     # data source configs, no secrets
-├── settings.toml         # app settings: page size, theme, fonts
+├── settings.toml         # app settings: SQL formatting (more later: page size, fonts)
 ├── keymap.toml           # M5, key bindings (see features/keymap.md)
 ├── actions.toml          # M5, custom catalog actions
 ├── app.ron               # eframe storage: window size, egui_dock layout, open tabs
@@ -69,6 +69,22 @@ read_only = true
 - `keymap.toml`, only if the user writes one (or creates it from View → Keymap…, which never
   replaces an existing file). Format and action ids: [Keymap](features/keymap.md).
 - Read by the engine at start-up and on Reload; dbdesk never writes to an existing file.
+
+## Settings
+
+- `settings.toml`, written by View → Settings… on every change (atomically), or by hand.
+  Missing settings take their defaults; unknown ones make the file invalid, so a typo is
+  reported rather than ignored.
+- Read by the engine at start-up (after the keymap, before the data sources), after a save
+  and on Reload, and sent as `Event::SettingsLoaded`. A file that can't be read leaves the
+  app on its last good settings (the defaults at start-up) and the Settings window shows why.
+- Rewriting the file drops comments in it.
+
+```toml
+[format]
+keyword_case = "upper"  # "upper", "lower" or "preserve" (as typed)
+indent_width = 4        # spaces per level, 1 to 8
+```
 
 ## Query consoles
 

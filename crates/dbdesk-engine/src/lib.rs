@@ -17,6 +17,7 @@ mod protocol;
 mod registry;
 mod repaint;
 mod session;
+mod settings;
 
 pub use export::Export;
 pub use handle::{EngineConfig, EngineError, EngineHandle};
