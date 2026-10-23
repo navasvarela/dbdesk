@@ -9,13 +9,14 @@ mod common;
 use std::sync::Arc;
 
 use common::{
-    MemorySecrets, TestEngine, postgres_test_server, sqlite_data_source, sqlite_database,
+    FixedReleases, MemorySecrets, TestEngine, postgres_test_server, sqlite_data_source,
+    sqlite_database,
 };
 use dbdesk_core::{
     CatalogPath, ConnectionConfig, DataSource, DataSourceId, FolderKind, NodeKind, Password,
     PostgresConfig, ServerConfig, TlsMode,
 };
-use dbdesk_engine::{Command, ConsoleId, Event, Export, PasswordUpdate, SessionState};
+use dbdesk_engine::{Command, ConsoleId, Event, Export, PasswordUpdate, Release, SessionState};
 use dbdesk_store::{
     ConsoleKey, ConsoleName, DataSourceFile, ExportFormat, FormatSettings, KeymapBindings,
     KeywordCase, SavedConsole, Settings,
@@ -217,6 +218,32 @@ fn saves_and_reloads_the_settings_and_reports_a_broken_file() {
     std::fs::write(&settings_path, "[format]\nkeyword_case = \"shouting\"\n").unwrap();
     engine.send(Command::ReloadSettings);
     engine.expect_settings(Err(String::new()));
+}
+
+#[test]
+fn reports_the_newest_release_or_why_it_is_unknown() {
+    let dir = tempfile::tempdir().unwrap();
+    let release = Release {
+        tag: "v0.2.0".to_owned(),
+        page: "https://example.com/releases/v0.2.0".to_owned(),
+    };
+    let data_sources = dir.path().join("data_sources.toml");
+    let mut engine = TestEngine::start_with_releases(
+        &data_sources,
+        Arc::default(),
+        FixedReleases(Some(release.clone())),
+    );
+    engine.expect_started(vec![]);
+    engine.send(Command::CheckForUpdates);
+    engine.expect(Event::LatestRelease(Ok(release)));
+    drop(engine);
+
+    let mut engine = TestEngine::start(&data_sources, Arc::default());
+    engine.expect_started(vec![]);
+    engine.send(Command::CheckForUpdates);
+    engine.expect(Event::LatestRelease(Err(
+        "no release has been published yet".to_owned(),
+    )));
 }
 
 #[test]

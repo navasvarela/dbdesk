@@ -13,6 +13,7 @@ use crate::history::HistoryLog;
 use crate::keymap;
 use crate::open::{create_sqlite_database, test_connection};
 use crate::registry::{Registry, RegistryError};
+use crate::releases::{self, ReleaseFeed};
 use crate::session::{Script, Services, Session, SessionOwner, SessionRequest};
 use crate::settings;
 use crate::{
@@ -52,6 +53,7 @@ pub(crate) async fn run(
         console_files: config.consoles,
         keymap_file: config.keymap,
         settings_file: config.settings,
+        releases: config.releases,
         events,
         sessions: HashMap::new(),
         consoles: HashMap::new(),
@@ -81,6 +83,7 @@ struct Engine {
     console_files: ConsoleFiles,
     keymap_file: KeymapFile,
     settings_file: SettingsFile,
+    releases: Arc<dyn ReleaseFeed>,
     events: EventSink,
     /// The explorer's sessions, one per data source.
     sessions: HashMap<DataSourceId, Session>,
@@ -212,6 +215,12 @@ impl Engine {
             }
             Command::SearchHistory { data_source, text } => {
                 self.history.search(data_source, text);
+            }
+            Command::CheckForUpdates => {
+                tokio::spawn(releases::check(
+                    Arc::clone(&self.releases),
+                    self.events.clone(),
+                ));
             }
         }
     }

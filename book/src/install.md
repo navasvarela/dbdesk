@@ -55,6 +55,17 @@ shasum -a 256 -c SHA256SUMS --ignore-missing
 **Help › About dbdesk** shows the version and the commit it was built from, and **Copy
 version** copies them for a bug report. From a terminal, `dbdesk --version` prints the same.
 
+## Updates
+
+When dbdesk starts, it asks GitHub whether a newer release is out. If one is, the status bar
+says so, for example **dbdesk 0.2.0 is available**; click it, then **Open release page** to
+download the new version and install it as above. **Help › Check for updates…** asks at any
+time.
+
+dbdesk doesn't update itself yet, and the check sends nothing about you or your data: it reads
+the public list of releases. To stop the check at start-up, untick **Check for a new release
+when dbdesk starts** in **View → Settings…**.
+
 ## Build from source
 
 For contributors, or to run the latest unreleased code. You need:

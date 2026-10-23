@@ -1,5 +1,5 @@
-//! View → Settings: how SQL is formatted and what the console checks while typing. Each
-//! change is saved to `settings.toml` at once.
+//! View → Settings: how SQL is formatted, what the console checks while typing, and whether
+//! to look for updates. Each change is saved to `settings.toml` at once.
 
 use dbdesk_sql::LintRule;
 use dbdesk_store::{KeywordCase, Settings};
@@ -84,6 +84,13 @@ fn contents(ui: &mut egui::Ui, settings: &AppSettings) -> Option<SettingsWindowA
         });
     ui.separator();
     lint_settings(ui, &mut draft);
+    ui.separator();
+    ui.strong("Updates");
+    ui.checkbox(
+        &mut draft.updates.check_on_start,
+        "Check for a new release when dbdesk starts",
+    )
+    .on_hover_text("Asks GitHub once per start. Help › Check for updates works either way.");
     if &draft != settings.settings() {
         action = Some(SettingsWindowAction::Save(draft));
     }

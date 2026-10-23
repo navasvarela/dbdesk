@@ -23,8 +23,7 @@ pub struct ConsoleName(String);
 pub struct InvalidConsoleName(String);
 
 impl ConsoleName {
-    /// The name the `n`th console of a data source gets: `console`, `console_2`, … as
-    /// DataGrip names them.
+    /// The name the `n`th console of a data source gets: `console`, `console_2`, …
     pub fn numbered(n: usize) -> Self {
         match n {
             0 | 1 => Self("console".to_owned()),
@@ -236,7 +235,7 @@ mod tests {
     }
 
     #[test]
-    fn numbers_names_like_datagrip() {
+    fn numbers_names_from_the_second_console_on() {
         let cases = [(1, "console", Some(1)), (2, "console_2", Some(2))];
         for (n, name, number) in cases {
             assert_eq!(ConsoleName::numbered(n).as_str(), name);

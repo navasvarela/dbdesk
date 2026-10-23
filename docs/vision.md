@@ -5,9 +5,10 @@
 1. **Learning.** A database client touches most of what makes Rust interesting in practice:
    async I/O, cancellation, streaming, a non-trivial UI, trait-based plugin points, and
    careful error handling at system boundaries.
-2. **Personalisation.** DataGrip is excellent but heavy and only configurable within the
-   limits JetBrains allows. dbdesk should be small, fast to start, and driven by plain
-   config files I can version and tweak.
+2. **Personalisation.** The established tools (DBeaver, DataGrip, TablePlus, pgAdmin) are
+   capable, but heavy, closed, or configurable only within the limits their makers allow.
+   dbdesk should be small, fast to start, and driven by plain config files I can version and
+   tweak.
 
 ## Goals
 
@@ -22,8 +23,8 @@
 
 ## Non-goals (for now)
 
-- Feature parity with DataGrip. In particular: schema diffing, ER diagrams, refactorings,
-  VCS integration, and a full SQL language server.
+- Feature parity with full database IDEs such as DBeaver or DataGrip. In particular: schema
+  diffing, ER diagrams, refactorings, VCS integration, and a full SQL language server.
 - A plugin system loaded at runtime. Extension happens by adding crates to the workspace.
 - Multi-user or server deployment. This is a single-user desktop app.
 - Windows as a first-class target. macOS first; Linux and Windows should work because
@@ -31,7 +32,7 @@
 
 ## Terminology
 
-DataGrip uses "console" for the SQL editor, which collides with "a console for logs".
+Database tools often call the SQL editor a "console", which collides with "a console for logs".
 dbdesk uses these terms everywhere (docs, code, UI):
 
 | Term | Meaning |
@@ -44,7 +45,7 @@ dbdesk uses these terms everywhere (docs, code, UI):
 
 ## What "personalised" means concretely
 
-These are the hooks that make the tool mine rather than a DataGrip clone. They are planned
+These are the hooks that make the tool mine rather than a clone of an existing IDE. They are planned
 for M5 but the architecture keeps room for them from the start:
 
 - **Keymap file** (`keymap.toml`): every UI action has a stable id, bindings are data.
