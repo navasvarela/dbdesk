@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>dbdesk — Browse and Query databases</title>
+  <meta name="description" content="dbdesk is a desktop database tool written in Rust. Browse and query PostgreSQL and SQLite, with more databases planned.">
+  <meta property="og:title" content="dbdesk">
+  <meta property="og:description" content="Browse and Query databases. A desktop database tool written in Rust.">
+  <meta property="og:image" content="https://navasvarela.github.io/dbdesk/assets/brand/social-preview.png">
+  <meta property="og:url" content="https://navasvarela.github.io/dbdesk/">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" type="image/svg+xml" href="assets/brand/logo.svg">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="./">
+      <img src="assets/brand/logo.svg" alt="" width="28" height="28">
+      <span>dbdesk</span>
+    </a>
+    <nav>
+      <a href="manual/">Manual</a>
+      <a href="https://github.com/navasvarela/dbdesk/releases">Releases</a>
+      <a href="https://github.com/navasvarela/dbdesk">GitHub</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <img class="hero-mark" src="assets/brand/logo.svg" alt="" width="88" height="88">
+      <h1>Browse and Query databases</h1>
+      <p class="lede">
+        dbdesk is a desktop database tool written in Rust. Explore your schemas as a tree,
+        write and run SQL in consoles that remember your work, and page through, sort, export and
+        edit the results.
+      </p>
+      <div class="actions">
+        <a class="button primary" href="https://github.com/navasvarela/dbdesk/releases">Download</a>
+        <a class="button" href="manual/">Read the manual</a>
+      </div>
+      <p class="note">
+        Packages for macOS and Linux come with each release. Until the first one is out,
+        <a href="manual/install.html">build it from source</a>.
+      </p>
+    </section>
+
+    <figure class="window">
+      <div class="window-bar" aria-hidden="true"><span></span><span></span><span></span></div>
+      <img src="manual/images/workspace.png" width="2360" height="1480"
+           alt="dbdesk with the explorer on the left, a query console with its results, and the log console">
+    </figure>
+
+    <section class="databases" aria-labelledby="databases-title">
+      <h2 id="databases-title">Databases</h2>
+      <ul class="engine-list">
+        <li><span class="engine-logo postgresql" aria-hidden="true"></span>PostgreSQL</li>
+        <li><span class="engine-logo sqlite" aria-hidden="true"></span>SQLite</li>
+      </ul>
+      <p class="planned">MySQL, ClickHouse, Oracle and others are planned.</p>
+    </section>
+
+    <section class="features" aria-labelledby="features-title">
+      <h2 id="features-title">What it does</h2>
+      <div class="grid">
+        <article>
+          <h3>Explore</h3>
+          <p>Databases, schemas, tables, views, functions and their columns, indexes and
+            triggers, loaded as you open them. Filter by name, and read any object's definition.</p>
+        </article>
+        <article>
+          <h3>Write SQL</h3>
+          <p>Consoles with highlighting, completion from your catalog and formatting. Run the
+            statement at the cursor or a whole script, explain it, cancel it. Consoles are saved
+            as <code>.sql</code> files.</p>
+        </article>
+        <article>
+          <h3>Work with results</h3>
+          <p>Rows arrive 500 at a time. Sort and filter what's loaded, copy a selection, view
+            long values, export to CSV or JSON, and edit a table's rows.</p>
+        </article>
+        <article>
+          <h3>Stay safe</h3>
+          <p>Manual-commit transactions, a history of every statement, a check before an
+            <code>UPDATE</code> or <code>DELETE</code> without <code>WHERE</code>, and a colour
+            per data source so production stands out.</p>
+        </article>
+        <article>
+          <h3>Make it yours</h3>
+          <p>Rebind shortcuts in <code>keymap.toml</code>, pick light or dark, and edit the plain
+            files dbdesk keeps its settings in. Passwords stay in your system's keychain.</p>
+        </article>
+        <article>
+          <h3>Open source</h3>
+          <p>Written in Rust with egui, MIT or Apache-2.0 licensed. Small enough to read end to
+            end; the <a href="https://github.com/navasvarela/dbdesk/tree/main/docs">design
+            docs</a> explain how it's built.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="start" aria-labelledby="start-title">
+      <h2 id="start-title">Build from source</h2>
+      <p>With <a href="https://rustup.rs">Rust</a> 1.95 or newer:</p>
+<pre><code>git clone https://github.com/navasvarela/dbdesk.git
+cd dbdesk
+cargo run --release -p dbdesk-app</code></pre>
+      <p>The <a href="manual/">manual</a> covers installing, adding a data source and everything
+        after.</p>
+    </section>
+  </main>
+
+  <footer>
+    <p>dbdesk is MIT or Apache-2.0 licensed. Inter and JetBrains Mono are under the SIL Open
+      Font License. Database logos are from <a href="https://simpleicons.org">Simple Icons</a>
+      and remain their owners' trademarks.</p>
+  </footer>
+</body>
+</html>
