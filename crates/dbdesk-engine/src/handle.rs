@@ -10,7 +10,7 @@ use tokio::task::{JoinError, JoinHandle};
 
 use crate::command_loop;
 use crate::events::EventSink;
-use crate::{Command, Event, Repaint};
+use crate::{Command, Event, ReleaseFeed, Repaint};
 
 /// How long [`EngineHandle::shutdown`] waits for in-flight work before abandoning it.
 ///
@@ -30,7 +30,7 @@ pub enum EngineError {
     ShutdownTimedOut(Duration),
 }
 
-/// Where the engine keeps what it persists.
+/// Where the engine keeps what it persists, and where it learns about new releases.
 pub struct EngineConfig {
     pub data_sources: DataSourceFile,
     pub secrets: Arc<dyn SecretStore>,
@@ -38,6 +38,7 @@ pub struct EngineConfig {
     pub history: HistoryFile,
     pub keymap: KeymapFile,
     pub settings: SettingsFile,
+    pub releases: Arc<dyn ReleaseFeed>,
 }
 
 /// The UI's connection to a running engine.

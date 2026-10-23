@@ -15,9 +15,12 @@ dbdesk-driver-sqlite.workspace = true
 dbdesk-sql.workspace = true
 dbdesk-store.workspace = true
 jiff.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+ureq.workspace = true
 
 [dev-dependencies]
 rusqlite.workspace = true

@@ -7,7 +7,7 @@ use dbdesk_core::{
 };
 use dbdesk_store::{ConsoleKey, HistoryEntry, KeymapBindings, SavedConsole, Settings};
 
-use crate::Export;
+use crate::{Export, Release};
 
 /// Identifies a query console. Chosen by the UI, unique for the app's lifetime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -138,6 +138,9 @@ pub enum Command {
         data_source: DataSourceId,
         text: String,
     },
+    /// Asks the release feed for the newest published release. Answered by
+    /// [`Event::LatestRelease`].
+    CheckForUpdates,
 }
 
 /// How a console's statements are committed.
@@ -198,6 +201,9 @@ pub enum Event {
         path: PathBuf,
         result: Result<Settings, String>,
     },
+    /// The answer to [`Command::CheckForUpdates`]: the newest published release, or why it
+    /// couldn't be found out.
+    LatestRelease(Result<Release, String>),
     ConsoleSaveFailed {
         key: ConsoleKey,
         error: String,

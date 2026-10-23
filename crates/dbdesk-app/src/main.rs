@@ -31,6 +31,8 @@ mod telemetry;
 #[cfg(test)]
 mod test_support;
 mod theme;
+mod update_dialog;
+mod updates;
 mod version;
 mod welcome;
 mod widgets;
@@ -39,7 +41,7 @@ mod workspace;
 use std::sync::Arc;
 
 use anyhow::{Context as _, anyhow};
-use dbdesk_engine::EngineConfig;
+use dbdesk_engine::{EngineConfig, GithubReleases};
 use dbdesk_store::{
     APP_NAME, AppPaths, ConsoleFiles, DataSourceFile, HistoryFile, Keychain, KeymapFile,
     SettingsFile,
@@ -68,6 +70,10 @@ fn main() -> anyhow::Result<()> {
         history: HistoryFile::new(paths.history_file()),
         keymap: KeymapFile::new(paths.keymap_file()),
         settings: SettingsFile::new(paths.settings_file()),
+        releases: Arc::new(GithubReleases::new(
+            updates::RELEASES_REPOSITORY,
+            &format!("dbdesk/{}", version::VERSION),
+        )),
     };
 
     let mut viewport = egui::ViewportBuilder::default()

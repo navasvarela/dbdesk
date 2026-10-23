@@ -24,6 +24,8 @@ use crate::settings::AppSettings;
 use crate::settings_window::{self, SettingsWindowAction};
 use crate::state::{AppState, EngineStatus};
 use crate::theme::{self, Palette};
+use crate::update_dialog;
+use crate::updates::{UpdateStatus, Updates};
 use crate::workspace::{self, Panels, Tab};
 use crate::{fonts, icons, widgets};
 
@@ -54,6 +56,7 @@ pub struct DbDeskApp {
     keymap_window_open: bool,
     about_open: bool,
     settings: AppSettings,
+    updates: Updates,
     /// Asks where to export rows. The platform's save dialog, except in tests.
     pick_export_path: Box<dyn Fn(ExportFormat) -> Option<PathBuf>>,
     consoles: Consoles,
@@ -98,6 +101,7 @@ impl DbDeskApp {
             keymap_window_open: false,
             about_open: false,
             settings: AppSettings::default(),
+            updates: Updates::default(),
             consoles: Consoles::default(),
             maximize_window,
         })
@@ -149,6 +153,11 @@ impl DbDeskApp {
         }
         self.consoles.apply(event);
         self.settings.apply(event);
+        self.updates.apply(event);
+        if matches!(event, Event::SettingsLoaded { .. }) {
+            let check = self.updates.start(self.settings.settings());
+            self.send_if(check);
+        }
         if let Event::KeymapLoaded { path, result } = event {
             self.keymap = match result {
                 Ok(bindings) => Keymap::from_file(bindings),
@@ -456,6 +465,10 @@ impl DbDeskApp {
             });
             ui.menu_button("Code", |ui| self.code_menu(ui));
             ui.menu_button("Help", |ui| {
+                if ui.button("Check for updates…").clicked() {
+                    let check = self.updates.check_now();
+                    self.send(check);
+                }
                 if ui.button("About dbdesk").clicked() {
                     self.about_open = true;
                 }
@@ -466,6 +479,12 @@ impl DbDeskApp {
     fn show_about(&mut self, ctx: &egui::Context) {
         if self.about_open && about_dialog::show(ctx) {
             self.about_open = false;
+        }
+    }
+
+    fn show_update_dialog(&mut self, ctx: &egui::Context) {
+        if self.updates.dialog_open && update_dialog::show(ctx, self.updates.status()) {
+            self.updates.dialog_open = false;
         }
     }
 
@@ -548,6 +567,17 @@ impl DbDeskApp {
                     .clicked()
             {
                 self.keymap_window_open = true;
+            }
+            if let UpdateStatus::Available { version, .. } = self.updates.status()
+                && ui
+                    .link(
+                        RichText::new(format!("dbdesk {version} is available"))
+                            .small()
+                            .color(palette.primary),
+                    )
+                    .clicked()
+            {
+                self.updates.dialog_open = true;
             }
         });
     }
@@ -657,6 +687,7 @@ impl eframe::App for DbDeskApp {
         self.show_history_window(&ctx);
         self.show_keymap_window(&ctx);
         self.show_about(&ctx);
+        self.show_update_dialog(&ctx);
         self.show_settings_window(&ctx);
 
         // Entries logged on the UI thread don't wake the UI (see `UiWaker`), so collect any
@@ -727,6 +758,7 @@ mod tests {
 
     use super::*;
     use crate::log_console;
+    use crate::test_support::FixedReleases;
 
     const WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -748,6 +780,10 @@ mod tests {
     }
 
     fn engine_config(dir: &Path) -> EngineConfig {
+        engine_config_with_releases(dir, FixedReleases::current())
+    }
+
+    fn engine_config_with_releases(dir: &Path, releases: FixedReleases) -> EngineConfig {
         EngineConfig {
             data_sources: DataSourceFile::new(dir.join("data_sources.toml")),
             secrets: Arc::new(NoSecrets),
@@ -755,6 +791,7 @@ mod tests {
             history: HistoryFile::new(dir.join("history.sqlite")),
             keymap: KeymapFile::new(dir.join("keymap.toml")),
             settings: SettingsFile::new(dir.join("settings.toml")),
+            releases: Arc::new(releases),
         }
     }
 
@@ -1405,6 +1442,31 @@ mod tests {
             &harness,
             "SELECT * FROM customers c WHERE c.name"
         ));
+    }
+
+    #[test]
+    fn tells_when_a_newer_release_is_out_and_when_it_is_up_to_date() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let config = engine_config_with_releases(dir.path(), FixedReleases::tagged("v99.0.0"));
+        let mut harness =
+            harness_at_default_size().build_eframe(|cc| DbDeskApp::new(cc, feed, config).unwrap());
+
+        // Checked at start-up: the status bar says so, and its link opens the dialog.
+        step_until_visible(&mut harness, "dbdesk 99.0.0 is available");
+        harness.get_by_label("dbdesk 99.0.0 is available").click();
+        step_until_visible(&mut harness, "dbdesk 99.0.0 is available (you have");
+        harness.get_by_label("Open release page");
+        drop(harness);
+
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "Engine running");
+        harness.get_by_label("Help").click();
+        harness.run_steps(2);
+        harness.get_by_label("Check for updates…").click();
+        step_until_visible(&mut harness, "You're up to date");
+        assert!(harness.query_by_label_contains("is available").is_none());
     }
 
     #[test]

@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use dbdesk_core::{DataSourceId, Password};
-use dbdesk_engine::EngineConfig;
+use dbdesk_engine::{EngineConfig, Release, ReleaseError, ReleaseFeed};
 use dbdesk_store::{
     ConsoleFiles, DataSourceFile, HistoryFile, KeymapFile, SecretError, SecretStore, SettingsFile,
 };
@@ -47,6 +47,29 @@ impl SecretStore for MemorySecrets {
     }
 }
 
+/// A release feed that never touches the network: it reports this release, or none.
+pub struct FixedReleases(pub Option<Release>);
+
+impl FixedReleases {
+    /// The running version as the newest release, so the app finds itself up to date.
+    pub fn current() -> Self {
+        Self::tagged(&format!("v{}", crate::version::VERSION))
+    }
+
+    pub fn tagged(tag: &str) -> Self {
+        Self(Some(Release {
+            tag: tag.to_owned(),
+            page: format!("https://example.com/releases/{tag}"),
+        }))
+    }
+}
+
+impl ReleaseFeed for FixedReleases {
+    fn latest(&self) -> Result<Release, ReleaseError> {
+        self.0.clone().ok_or(ReleaseError::NoReleases)
+    }
+}
+
 /// Starts the app with its data source file in `dir`.
 pub fn start_app(
     builder: HarnessBuilder<DbDeskApp>,
@@ -61,6 +84,7 @@ pub fn start_app(
         history: HistoryFile::new(dir.join("history.sqlite")),
         keymap: KeymapFile::new(dir.join("keymap.toml")),
         settings: SettingsFile::new(dir.join("settings.toml")),
+        releases: Arc::new(FixedReleases::current()),
     };
     builder.build_eframe(|cc| DbDeskApp::new(cc, log_feed, config).unwrap())
 }
