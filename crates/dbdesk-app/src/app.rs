@@ -7,6 +7,7 @@ use dbdesk_store::{ConsoleKey, ExportFormat};
 use egui::{Frame, Margin, RichText, ThemePreference};
 use egui_dock::{DockArea, DockState};
 
+use crate::about_dialog;
 use crate::console::{ConsoleAction, FormatScope};
 use crate::consoles::Consoles;
 use crate::data_source_dialog::{DataSourceDialog, DialogAction};
@@ -51,6 +52,7 @@ pub struct DbDeskApp {
     /// Where `keymap.toml` is, once the engine has reported it.
     keymap_path: Option<PathBuf>,
     keymap_window_open: bool,
+    about_open: bool,
     settings: AppSettings,
     /// Asks where to export rows. The platform's save dialog, except in tests.
     pick_export_path: Box<dyn Fn(ExportFormat) -> Option<PathBuf>>,
@@ -94,6 +96,7 @@ impl DbDeskApp {
             keymap: Keymap::default(),
             keymap_path: None,
             keymap_window_open: false,
+            about_open: false,
             settings: AppSettings::default(),
             consoles: Consoles::default(),
             maximize_window,
@@ -446,7 +449,18 @@ impl DbDeskApp {
                 }
             });
             ui.menu_button("Code", |ui| self.code_menu(ui));
+            ui.menu_button("Help", |ui| {
+                if ui.button("About dbdesk").clicked() {
+                    self.about_open = true;
+                }
+            });
         });
+    }
+
+    fn show_about(&mut self, ctx: &egui::Context) {
+        if self.about_open && about_dialog::show(ctx) {
+            self.about_open = false;
+        }
     }
 
     /// Formatting, for the console whose tab has focus.
@@ -632,6 +646,7 @@ impl eframe::App for DbDeskApp {
         }
         self.show_history_window(&ctx);
         self.show_keymap_window(&ctx);
+        self.show_about(&ctx);
         self.show_settings_window(&ctx);
 
         // Entries logged on the UI thread don't wake the UI (see `UiWaker`), so collect any
@@ -1013,13 +1028,17 @@ mod tests {
             .close_connections(Closing::Console(key), &ctx);
         step_until_visible(&mut harness, "Roll back open transactions?");
         // The modal is measured on its first frame and placed on the next; a click aimed at
-        // the first frame's button lands outside it and dismisses the modal.
-        harness.run();
+        // the first frame's button lands outside it and dismisses the modal. Exactly two
+        // frames, not `run()`: a spinner still turning elsewhere (the slower Windows runner
+        // got there first) keeps the UI repainting, and `run()` would give up waiting for it
+        // to settle.
+        harness.run_steps(2);
         assert_eq!(workspace::console_tabs(&harness.state().dock).len(), 1);
         harness.get_by_label("Roll back and close").click();
-        harness.run();
 
-        assert!(workspace::console_tabs(&harness.state().dock).is_empty());
+        step_until(&mut harness, "the console tab closing", |harness| {
+            workspace::console_tabs(&harness.state().dock).is_empty()
+        });
         step_until(&mut harness, "the connection closing", |_| {
             count_orders(dir.path()) == 0
         });

@@ -1,7 +1,7 @@
 # Release binaries
 
-Status: **planned**, decisions settled on 2026-10-23 (see [Decisions](#decisions)). Nothing
-here is built yet.
+Status: **R1 built**, not released yet (see [Cutting a release](#cutting-a-release)).
+Decisions settled on 2026-10-23 (see [Decisions](#decisions)).
 
 Today the only way to run dbdesk is to install Rust and build it from source (see the manual's
 [Install](../book/src/install.md) chapter). That is fine for its author and a wall for anyone
@@ -49,8 +49,14 @@ flowchart LR
      they're built with, so building old keeps the AppImage running on older distributions.
    - **Windows** on `windows-2022`.
 3. **Package** with `cargo-packager`, configured under `[package.metadata.packager]` in
-   `crates/dbdesk-app/Cargo.toml`: the `.app` bundle and `.dmg`, the AppImage and `.deb`, and an
-   NSIS installer. The bundle uses the existing `assets/brand/dbdesk.icns` and icon PNGs.
+   `crates/dbdesk-app/Cargo.toml`: the `.app` bundle, the AppImage and `.deb`, and an NSIS
+   installer. The bundle uses the existing `assets/brand/dbdesk.icns` and icon PNGs, and carries
+   the licences of dbdesk and its fonts in `Resources/licenses/`. The `.dmg` comes from
+   `packaging/macos-dmg.sh` instead of `cargo-packager`'s `dmg` format: that one runs
+   `create-dmg`, whose `hdiutil convert` step failed on macOS 26 even outside any sandbox, and
+   which is a known source of flaky runs on GitHub's macOS runners. A plain `hdiutil create`
+   of a folder with the app and an Applications shortcut works; only the custom Finder window
+   layout is lost.
 4. **Sign** when the signing secrets are configured, and skip with a note in the release
    otherwise. macOS: Developer ID signing, then notarization with `notarytool` and stapling.
    Windows: Authenticode.
@@ -137,9 +143,37 @@ they are ever needed.
 - Releasing is done by a person: bump the version in a `build: release 0.x.y` PR, which also
   updates `CHANGELOG.md` from `git-cliff`, merge it, then tag the merge commit.
 
+## Cutting a release
+
+1. Merge a `build: release 0.x.y` pull request that bumps `version` in the workspace
+   `Cargo.toml` (and, from R2, updates `CHANGELOG.md`).
+2. Tag the merge commit and push the tag:
+
+   ```bash
+   git tag -a v0.x.y -m "dbdesk 0.x.y" && git push origin v0.x.y
+   ```
+
+3. Watch **Actions › Release**. It refuses a tag that doesn't match the version, and builds
+   nothing if CI fails on that commit.
+4. Open the draft on the releases page, check the assets and notes, and publish it.
+
+To try the packaging without releasing, run **Actions › Release › Run workflow** on any
+branch. It builds and smoke-tests everything and keeps the packages as workflow artifacts.
+Pull requests that change packaging do the same automatically.
+
+To start attaching the Windows installer, after it has been tried on a real Windows machine,
+set the repository variable `WINDOWS_RELEASES` to `true`
+(**Settings › Secrets and variables › Actions › Variables**).
+
 ## Milestones
 
 ### R1 — First downloadable build
+
+Built: `--version` and Help › About, the release profile (19.5 MB → 14.6 MB on macOS), the
+licence files, Windows in CI, `cargo-packager` settings, `release.yml`, and the Install chapter.
+The `.app` and `.dmg` were built and smoke-tested locally on macOS; the Linux and Windows
+packages are first built by CI. Not done yet: the first tagged release, and trying it on a
+clean machine, which is the exit check below.
 
 - `--version`, the About dialog, the release profile, `LICENSE`, third-party notices.
 - A Windows CI job.
