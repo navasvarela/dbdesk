@@ -1,6 +1,6 @@
 # More databases
 
-Status: **DB0 built**; DB1 onwards planned. Order agreed on 2026-10-23; ClickHouse added
+Status: **DB0 and DB1 built**; DB2 onwards planned. Order agreed on 2026-10-23; ClickHouse added
 after DuckDB the same day.
 
 dbdesk speaks PostgreSQL and SQLite. This plan adds the next engines in order of how many

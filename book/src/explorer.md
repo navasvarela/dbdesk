@@ -40,6 +40,23 @@ data source
    └─ views
 ```
 
+**MySQL and MariaDB**, where a database and a schema are the same thing:
+
+```text
+data source
+└─ database               every database you may see, shown as a schema
+   ├─ tables
+   │  └─ table
+   │     ├─ columns    with their type and "not null"
+   │     ├─ indexes    with their columns, and whether they are unique
+   │     ├─ constraints
+   │     └─ triggers
+   ├─ views
+   ├─ functions
+   ├─ procedures
+   └─ events          scheduled with CREATE EVENT
+```
+
 Each kind of object has its own icon and colour, and folders that have been loaded show how many
 objects they hold (`tables 5`).
 
@@ -74,6 +91,9 @@ Which objects have one depends on the database:
 - **PostgreSQL**: views, materialized views, functions, indexes, constraints and triggers.
 - **SQLite**: tables, views, triggers, and indexes created with `CREATE INDEX` (not the ones
   SQLite makes for primary keys and unique constraints).
+- **MySQL and MariaDB**: tables, views, functions, procedures, events and triggers, as
+  `SHOW CREATE …` gives them. A routine whose source you may run but not read shows a message
+  instead.
 
 ## Filtering
 
@@ -88,8 +108,9 @@ Expand the parts you want to search first.
 
 ## System objects
 
-PostgreSQL's `pg_catalog`, `information_schema` and temporary schemas, and SQLite's internal
-`sqlite_` tables, are hidden. The eye button next to **+** shows or hides them, for every data
+PostgreSQL's `pg_catalog`, `information_schema` and temporary schemas, SQLite's internal
+`sqlite_` tables, and MySQL's `mysql`, `information_schema`, `performance_schema` and `sys`
+databases are hidden. The eye button next to **+** shows or hides them, for every data
 source at once.
 
 ## When the connection closes

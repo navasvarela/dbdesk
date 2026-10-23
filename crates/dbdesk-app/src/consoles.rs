@@ -6,14 +6,14 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use dbdesk_core::{CatalogPath, DataSource, DataSourceId};
-use dbdesk_engine::{Command, ConsoleId, Event, RunId};
+use dbdesk_engine::{Command, ConsoleId, Event, RunId, TransactionMode};
 use dbdesk_sql::{Dialect, FormatOptions};
 use dbdesk_store::{ConsoleKey, ConsoleName, ExportFormat};
 
 use crate::console::{
     ConsoleAction, FormatScope, QueryConsole, RecentCompletions, RunScope, SubmittedStatement,
 };
-use crate::hazard_dialog::{self, HazardChoice, HazardConfirmation, Review};
+use crate::hazard_dialog::{self, HazardChoice, HazardConfirmation, Review, ReviewContext};
 use crate::rollback_dialog::Closing;
 
 /// How long a console's text stays unsaved after an edit. Long enough that typing doesn't
@@ -240,11 +240,17 @@ impl Consoles {
         }
     }
 
-    /// Runs the statements, unless one would change every row of a table: then the
-    /// confirmation is shown first and nothing runs until the user answers.
+    /// Runs the statements, unless one would change every row of a table or commit what the
+    /// user may mean to roll back: then the confirmation is shown first and nothing runs
+    /// until the user answers.
     fn submit(&mut self, key: &ConsoleKey, statements: Vec<SubmittedStatement>) -> Option<Command> {
-        let dialect = self.open.get(key)?.dialect();
-        match hazard_dialog::review(key.clone(), statements, dialect) {
+        let console = self.open.get(key)?;
+        let context = ReviewContext {
+            dialect: console.dialect(),
+            relies_on_rollback: console.transaction_mode() == TransactionMode::Manual
+                || console.has_open_transaction(),
+        };
+        match hazard_dialog::review(key.clone(), statements, context) {
             Review::Safe(statements) => self.start_run(key, statements),
             Review::NeedsConfirmation(confirmation) => {
                 self.hazard = Some(confirmation);

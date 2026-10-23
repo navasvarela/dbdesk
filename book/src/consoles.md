@@ -127,7 +127,7 @@ The toolbar's buttons, and their shortcuts while the editor has focus:
 | --- | --- | --- |
 | **Run** (▷) | ⌘↵ | Runs the selected text if there is a selection, otherwise the statement at the cursor. |
 | **Run all** (▷▷) | ⇧⌘↵ | Runs every statement in the console, in order, stopping at the first one that fails. |
-| **Explain** | ⌥⌘E | Shows how the database would run the statement at the cursor: `EXPLAIN` on PostgreSQL, `EXPLAIN QUERY PLAN` on SQLite. |
+| **Explain** | ⌥⌘E | Shows how the database would run the statement at the cursor: `EXPLAIN` on PostgreSQL and MariaDB, `EXPLAIN QUERY PLAN` on SQLite, `EXPLAIN FORMAT=TREE` on MySQL 8 once the console has connected. |
 | **Cancel** (□) | ⌘. | Stops the running statement, or discards rows not yet loaded. |
 | **History** | — | Opens the data source's query history. |
 | **Format** | ⌥⌘L | Formats the selected text, or the statement at the cursor (see [The editor](#the-editor)). |
@@ -140,6 +140,22 @@ the way the database would: semicolons inside strings, quoted names, comments, P
 dollar-quoted function bodies, and `BEGIN … END` or `CASE … END` blocks don't end a statement.
 The statement at the cursor is the one the cursor is in, or the one just before it, so you can
 press ⌘↵ with the cursor right after a semicolon.
+
+On MySQL and MariaDB, scripts can change what ends a statement with `DELIMITER`, as the `mysql`
+client does, so a procedure's body can hold semicolons:
+
+```sql
+DELIMITER //
+CREATE PROCEDURE touch(n INT)
+BEGIN
+  UPDATE items SET price = price + 1 WHERE id = n;
+END//
+DELIMITER ;
+```
+
+The `DELIMITER` lines are dbdesk's to read and are never sent. MySQL's own quoting applies too:
+`"text"` is a string, as it is without `ANSI_QUOTES`, names are quoted with backticks, and a
+backslash inside a string escapes the next character.
 
 The toolbar shows how the last run went: **Done in 12 ms**, **Failed** or **Cancelled**. While a
 statement runs, Run, Run all and Explain are disabled.
@@ -253,3 +269,9 @@ Before running an `UPDATE` or a `DELETE` without a `WHERE`, dbdesk asks first:
 Nothing in the run starts until you answer: **Run anyway** runs everything as asked, **Cancel**
 runs nothing. The check looks at how each statement starts, so a `DELETE` inside a `WITH` query
 isn't caught.
+
+On MySQL and MariaDB, the same dialog warns before a statement that commits by itself (`CREATE`,
+`ALTER`, `DROP`, `RENAME`, `TRUNCATE`, `GRANT`, `REVOKE`) when you might be counting on
+**Rollback**: in **Manual commit** mode, or with a transaction open. MySQL commits such a
+statement at once, together with whatever the transaction held, so **Rollback** can't undo
+either. Temporary tables are the exception, and don't get the warning.

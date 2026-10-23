@@ -8,7 +8,7 @@
 
 mod functions;
 
-use dbdesk_core::{DriverKind, Quoting};
+use dbdesk_core::{DriverKind, Quoting, ServerInfo};
 use sqlparser::dialect::{MySqlDialect, PostgreSqlDialect, SQLiteDialect};
 
 /// The SQL flavour of a data source.
@@ -175,14 +175,30 @@ impl Dialect {
         }
     }
 
+    /// First words of statements that commit the open transaction before they run, and
+    /// commit themselves at once, so `ROLLBACK` undoes neither: MySQL's DDL and account
+    /// statements. PostgreSQL and SQLite run DDL inside the transaction.
+    pub(crate) fn implicit_commit_verbs(self) -> &'static [&'static str] {
+        match self {
+            Self::Postgres | Self::Sqlite => &[],
+            Self::Mysql => &[
+                "alter", "create", "drop", "grant", "rename", "revoke", "truncate",
+            ],
+        }
+    }
+
     /// What to put before a statement to have the database describe how it would run it,
     /// without running it: `EXPLAIN` on PostgreSQL, `EXPLAIN QUERY PLAN` on SQLite (whose
-    /// plain `EXPLAIN` lists virtual machine opcodes instead), and `EXPLAIN` on MySQL and
-    /// MariaDB, which both accept it.
-    pub fn explain_prefix(self) -> &'static str {
+    /// plain `EXPLAIN` lists virtual machine opcodes instead). On MySQL 8.0.16 and later,
+    /// `EXPLAIN FORMAT=TREE`, which reads like PostgreSQL's plan; MariaDB, older MySQL, and a
+    /// console that hasn't connected yet (`server` is `None`) get plain `EXPLAIN`, which they
+    /// all accept.
+    pub fn explain_prefix(self, server: Option<&ServerInfo>) -> &'static str {
         match self {
-            Self::Postgres | Self::Mysql => "EXPLAIN ",
+            Self::Postgres => "EXPLAIN ",
             Self::Sqlite => "EXPLAIN QUERY PLAN ",
+            Self::Mysql if server.is_some_and(has_tree_explain) => "EXPLAIN FORMAT=TREE ",
+            Self::Mysql => "EXPLAIN ",
         }
     }
 
@@ -233,6 +249,20 @@ impl Dialect {
     }
 }
 
+/// `EXPLAIN FORMAT=TREE` arrived in MySQL 8.0.16; MariaDB has never had it.
+fn has_tree_explain(server: &ServerInfo) -> bool {
+    let mut numbers = server
+        .version
+        .split(['.', '-'])
+        .map(|part| part.parse::<u32>().unwrap_or(0));
+    let version = (
+        numbers.next().unwrap_or(0),
+        numbers.next().unwrap_or(0),
+        numbers.next().unwrap_or(0),
+    );
+    server.product == "MySQL" && version >= (8, 0, 16)
+}
+
 /// The dialect each engine speaks.
 impl From<DriverKind> for Dialect {
     fn from(driver: DriverKind) -> Self {
@@ -272,6 +302,28 @@ mod tests {
                 dialect.is_system_name(schema, table),
                 expected,
                 "{dialect:?} {schema:?}.{table}"
+            );
+        }
+    }
+
+    #[test]
+    fn explains_as_tree_on_mysql_8_only() {
+        let server = |product: &str, version: &str| ServerInfo {
+            product: product.to_owned(),
+            version: version.to_owned(),
+        };
+        let cases = [
+            (Some(server("MySQL", "8.4.3")), "EXPLAIN FORMAT=TREE "),
+            (Some(server("MySQL", "8.0.16")), "EXPLAIN FORMAT=TREE "),
+            (Some(server("MySQL", "8.0.15")), "EXPLAIN "),
+            (Some(server("MariaDB", "11.4.4")), "EXPLAIN "),
+            (None, "EXPLAIN "),
+        ];
+        for (server, expected) in cases {
+            assert_eq!(
+                Dialect::Mysql.explain_prefix(server.as_ref()),
+                expected,
+                "{server:?}"
             );
         }
     }
