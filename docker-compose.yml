@@ -52,3 +52,40 @@ services:
       interval: 1s
       timeout: 5s
       retries: 30
+
+  # MySQL 8.4 LTS. It makes a self-signed certificate on first start, so TLS works out of
+  # the box. Binary logging is on by default, under which only a superuser may create
+  # functions unless the server is told to trust their creators.
+  mysql:
+    image: mysql:8.4
+    command: ["--log-bin-trust-function-creators=1"]
+    environment:
+      MYSQL_ROOT_PASSWORD: dbdesk
+      MYSQL_DATABASE: dbdesk
+      MYSQL_USER: dbdesk
+      MYSQL_PASSWORD: dbdesk
+    ports:
+      - "55306:3306"
+    # Over TCP, which only the real server listens on: the image's set-up server answers on
+    # the socket alone, so a socket ping would pass too early.
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "dbdesk", "-pdbdesk", "--silent"]
+      interval: 1s
+      timeout: 5s
+      retries: 60
+
+  # MariaDB 11.4 LTS, through the same driver and tests as MySQL.
+  mariadb:
+    image: mariadb:11.4
+    environment:
+      MARIADB_ROOT_PASSWORD: dbdesk
+      MARIADB_DATABASE: dbdesk
+      MARIADB_USER: dbdesk
+      MARIADB_PASSWORD: dbdesk
+    ports:
+      - "55307:3306"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 1s
+      timeout: 5s
+      retries: 60

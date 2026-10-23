@@ -4,8 +4,8 @@
 mod server;
 
 use dbdesk_core::{
-    ConnectionConfig, DataSource, DataSourceId, DriverKind, Password, PostgresConfig, SourceColor,
-    SqliteConfig,
+    ConnectionConfig, DataSource, DataSourceId, DriverKind, MysqlConfig, Password, PostgresConfig,
+    SourceColor, SqliteConfig,
 };
 use dbdesk_engine::PasswordUpdate;
 
@@ -16,6 +16,15 @@ const POSTGRES_DEFAULTS: ServerDefaults = ServerDefaults {
     port: PostgresConfig::DEFAULT_PORT,
     database: "postgres",
     user: "postgres",
+};
+
+/// `mysql` exists on every server, as `postgres` does on PostgreSQL; `root` is the account
+/// every installation starts with.
+const MYSQL_DEFAULTS: ServerDefaults = ServerDefaults {
+    host: "localhost",
+    port: MysqlConfig::DEFAULT_PORT,
+    database: "mysql",
+    user: "root",
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -47,10 +56,16 @@ pub struct DataSourceForm {
 pub enum DriverFields {
     Postgres(PostgresFields),
     Sqlite(SqliteFields),
+    Mysql(MysqlFields),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PostgresFields {
+    pub server: ServerFields,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MysqlFields {
     pub server: ServerFields,
 }
 
@@ -70,6 +85,9 @@ impl DriverFields {
                 path: String::new(),
                 read_only: false,
             }),
+            DriverKind::Mysql => Self::Mysql(MysqlFields {
+                server: ServerFields::new(MYSQL_DEFAULTS),
+            }),
         }
     }
 
@@ -82,6 +100,9 @@ impl DriverFields {
                 path: config.path.display().to_string(),
                 read_only: config.read_only,
             }),
+            ConnectionConfig::Mysql(config) => Self::Mysql(MysqlFields {
+                server: ServerFields::from_config(&config.server, MYSQL_DEFAULTS),
+            }),
         }
     }
 
@@ -89,6 +110,7 @@ impl DriverFields {
         match self {
             Self::Postgres(_) => DriverKind::Postgres,
             Self::Sqlite(_) => DriverKind::Sqlite,
+            Self::Mysql(_) => DriverKind::Mysql,
         }
     }
 
@@ -96,6 +118,7 @@ impl DriverFields {
     fn server(&self) -> Option<&ServerFields> {
         match self {
             Self::Postgres(fields) => Some(&fields.server),
+            Self::Mysql(fields) => Some(&fields.server),
             Self::Sqlite(_) => None,
         }
     }
@@ -106,6 +129,9 @@ impl DriverFields {
                 server: fields.server.to_config()?,
             }),
             Self::Sqlite(fields) => ConnectionConfig::Sqlite(fields.to_config()?),
+            Self::Mysql(fields) => ConnectionConfig::Mysql(MysqlConfig {
+                server: fields.server.to_config()?,
+            }),
         })
     }
 }

@@ -74,6 +74,9 @@ async fn connect(
             Box::new(dbdesk_driver_postgres::connect(config, password).await?)
         }
         ConnectionConfig::Sqlite(config) => Box::new(dbdesk_driver_sqlite::connect(config).await?),
+        ConnectionConfig::Mysql(config) => {
+            Box::new(dbdesk_driver_mysql::connect(config, password).await?)
+        }
     })
 }
 

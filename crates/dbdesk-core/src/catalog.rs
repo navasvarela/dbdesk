@@ -27,7 +27,11 @@ pub enum NodeKind {
     View,
     MaterializedView,
     Function,
+    /// A stored procedure (MySQL), called rather than used in an expression.
+    Procedure,
     Sequence,
+    /// A scheduled event (MySQL).
+    Event,
     Column,
     Index,
     Constraint,
@@ -41,7 +45,9 @@ pub enum FolderKind {
     Views,
     MaterializedViews,
     Functions,
+    Procedures,
     Sequences,
+    Events,
     Columns,
     Indexes,
     Constraints,
@@ -55,7 +61,9 @@ impl FolderKind {
             Self::Views => "views",
             Self::MaterializedViews => "materialized views",
             Self::Functions => "functions",
+            Self::Procedures => "procedures",
             Self::Sequences => "sequences",
+            Self::Events => "events",
             Self::Columns => "columns",
             Self::Indexes => "indexes",
             Self::Constraints => "constraints",
@@ -154,6 +162,8 @@ impl CatalogPath {
             | NodeKind::View
             | NodeKind::MaterializedView
             | NodeKind::Sequence
+            | NodeKind::Procedure
+            | NodeKind::Event
             | NodeKind::Index => Some(self.schema_qualified(&quote(&object.name), quoting)),
             // Function names already carry their argument list, e.g. `add(integer, integer)`.
             NodeKind::Function => Some(self.schema_qualified(&object.name, quoting)),

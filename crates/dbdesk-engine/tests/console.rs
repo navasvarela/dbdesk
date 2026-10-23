@@ -6,7 +6,9 @@ mod common;
 
 use std::sync::Arc;
 
-use common::{TestEngine, postgres_test_server, sqlite_data_source, sqlite_database};
+use common::{
+    TestEngine, mysql_test_servers, postgres_test_server, sqlite_data_source, sqlite_database,
+};
 use dbdesk_core::{ConnectionConfig, DataSource, DataSourceId, Identifier, RelationName};
 use dbdesk_core::{Quoting, RejectionKind, TransactionStatus};
 use dbdesk_engine::{
@@ -598,6 +600,62 @@ fn applies_and_rolls_back_edits_on_postgres() {
         if let Event::RowsFetched { rows, .. } = next_run_event(&mut engine) {
             assert_eq!(rows, [[Some("Ada".to_owned())]]);
             break;
+        }
+    }
+}
+
+/// The `UPDATE`s grid editing writes for MySQL: backticked names, every value a string
+/// literal with its backslashes doubled. Needs `DBDESK_TEST_MYSQL_URL` or
+/// `DBDESK_TEST_MARIADB_URL`; skipped without them.
+#[test]
+fn applies_and_rolls_back_edits_on_mysql() {
+    for (config, password) in mysql_test_servers() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+        engine.expect_started(vec![]);
+        let data_source = DataSource {
+            id: DataSourceId::generate(),
+            name: "test server".to_owned(),
+            color: None,
+            config: ConnectionConfig::Mysql(config),
+        };
+        let id = data_source.id;
+        engine.send(Command::SaveDataSource {
+            data_source,
+            password: PasswordUpdate::Set(password),
+        });
+        assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
+        execute(
+            &engine,
+            id,
+            1,
+            &[
+                "CREATE TEMPORARY TABLE people (id int PRIMARY KEY, name text NOT NULL)",
+                "INSERT INTO people VALUES (1, 'ada')",
+            ],
+        );
+        finish_run(&mut engine, 1);
+
+        edits(
+            &engine,
+            &[r"UPDATE `dbdesk`.`people` SET `name` = 'C:\\ada''s' WHERE `id` = '1'"],
+        );
+        assert_eq!(expect_edits(&mut engine), Ok(()));
+        edits(
+            &engine,
+            &[
+                "UPDATE `people` SET `name` = 'gone' WHERE `id` = '1'",
+                "UPDATE `people` SET `name` = NULL WHERE `id` = '1'",
+            ],
+        );
+        assert_eq!(expect_edits(&mut engine).unwrap_err().statement, Some(1));
+        execute(&engine, id, 2, &["SELECT name FROM people"]);
+
+        loop {
+            if let Event::RowsFetched { rows, .. } = next_run_event(&mut engine) {
+                assert_eq!(rows, [[Some(r"C:\ada's".to_owned())]]);
+                break;
+            }
         }
     }
 }

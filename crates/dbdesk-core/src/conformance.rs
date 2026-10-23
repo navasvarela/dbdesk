@@ -115,18 +115,20 @@ async fn run_to_end(connection: &mut dyn Connection, sql: &str) -> Option<u64> {
 }
 
 /// Statements run, results page lazily, NULL is distinct from text, a cursor can be
-/// abandoned halfway, and errors point at the offending text. Uses only SQL that both
-/// PostgreSQL and SQLite accept, and a temporary table.
+/// abandoned halfway, and errors point at the offending text. Uses only SQL that PostgreSQL,
+/// SQLite and MySQL all accept, and a temporary table.
 pub async fn check_execution(connection: &mut dyn Connection) {
     run_to_end(
         connection,
-        "CREATE TEMP TABLE dbdesk_conformance (id integer, name text)",
+        "CREATE TEMPORARY TABLE dbdesk_conformance (id integer, name text)",
     )
     .await;
     let inserted = run_to_end(
         connection,
-        "WITH RECURSIVE s(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM s WHERE n < 1200) \
-         INSERT INTO dbdesk_conformance SELECT n, 'row ' || n FROM s",
+        "INSERT INTO dbdesk_conformance \
+         WITH RECURSIVE s(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM s WHERE n < 40) \
+         SELECT (b.n - 1) * 40 + a.n, concat('row ', (b.n - 1) * 40 + a.n) \
+         FROM s a CROSS JOIN s b WHERE b.n <= 30",
     )
     .await;
     assert_eq!(inserted, Some(TABLE_ROWS), "rows inserted");
@@ -236,7 +238,7 @@ pub async fn check_transactions(connection: &mut dyn Connection) {
     );
     run_to_end(
         connection,
-        "CREATE TEMP TABLE dbdesk_transactions (n integer)",
+        "CREATE TEMPORARY TABLE dbdesk_transactions (n integer)",
     )
     .await;
 
@@ -286,19 +288,35 @@ pub async fn check_transactions(connection: &mut dyn Connection) {
     run_to_end(connection, "DROP TABLE dbdesk_transactions").await;
 }
 
-/// Tables resolve as statements would (unquoted names ignoring case), with their columns in
-/// table order and their primary key in key order; views and missing tables are `None`.
-pub async fn check_describe_table(connection: &mut dyn Connection) {
+/// How an engine matches an unquoted table name, which a description must follow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnquotedNames {
+    /// PostgreSQL folds them to lowercase, SQLite compares ignoring case, and so does MySQL
+    /// when `lower_case_table_names` is set (the default on macOS and Windows).
+    IgnoreCase,
+    /// MySQL on Linux by default: `Orders` and `orders` are different tables.
+    ExactCase,
+}
+
+/// Tables resolve as statements would, with their columns in table order and their primary
+/// key in key order; views and missing tables are `None`. The view is an ordinary one,
+/// dropped first in case an earlier run failed, because MySQL has no temporary views.
+pub async fn check_describe_table(connection: &mut dyn Connection, names: UnquotedNames) {
     run_to_end(
         connection,
-        "CREATE TEMP TABLE dbdesk_describe (id integer, part text, note text, \
+        "CREATE TEMPORARY TABLE dbdesk_describe (id integer, part varchar(50), note text, \
          PRIMARY KEY (part, id))",
     )
     .await;
-    run_to_end(connection, "CREATE TEMP TABLE dbdesk_keyless (n integer)").await;
     run_to_end(
         connection,
-        "CREATE TEMP VIEW dbdesk_describe_view AS SELECT 1 AS one",
+        "CREATE TEMPORARY TABLE dbdesk_keyless (n integer)",
+    )
+    .await;
+    run_to_end(connection, "DROP VIEW IF EXISTS dbdesk_describe_view").await;
+    run_to_end(
+        connection,
+        "CREATE VIEW dbdesk_describe_view AS SELECT 1 AS one",
     )
     .await;
     let unquoted = |name: &str| RelationName {
@@ -308,8 +326,12 @@ pub async fn check_describe_table(connection: &mut dyn Connection) {
             quoted: false,
         },
     };
+    let written = match names {
+        UnquotedNames::IgnoreCase => "DBDESK_DESCRIBE",
+        UnquotedNames::ExactCase => "dbdesk_describe",
+    };
     let described = connection
-        .describe_table(&unquoted("DBDESK_DESCRIBE"))
+        .describe_table(&unquoted(written))
         .await
         .expect("describe")
         .expect("the table exists");
@@ -317,6 +339,13 @@ pub async fn check_describe_table(connection: &mut dyn Connection) {
     assert!(!described.schema.is_empty());
     assert_eq!(described.columns, ["id", "part", "note"]);
     assert_eq!(described.primary_key, ["part", "id"]);
+    if names == UnquotedNames::ExactCase {
+        let other_case = connection
+            .describe_table(&unquoted("DBDESK_DESCRIBE"))
+            .await
+            .expect("describe");
+        assert_eq!(other_case, None, "names match exactly");
+    }
     let keyless = connection
         .describe_table(&unquoted("dbdesk_keyless"))
         .await
@@ -343,7 +372,11 @@ pub async fn check_describe_table(connection: &mut dyn Connection) {
 /// temporary tables are visible, unknown names and syntax errors are told apart (syntax errors
 /// with their position), and no transaction is left open.
 pub async fn check_validate(connection: &mut dyn Connection) {
-    run_to_end(connection, "CREATE TEMP TABLE dbdesk_validate (n integer)").await;
+    run_to_end(
+        connection,
+        "CREATE TEMPORARY TABLE dbdesk_validate (n integer)",
+    )
+    .await;
     for accepted in [
         "SELECT n FROM dbdesk_validate WHERE n > 1",
         "INSERT INTO dbdesk_validate VALUES (1)",

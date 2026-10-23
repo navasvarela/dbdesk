@@ -450,6 +450,23 @@ mod tests {
     }
 
     #[test]
+    fn writes_mysql_updates_with_backticks_and_doubled_backslashes() {
+        let columns = [column("id"), column("name")];
+        let Editability::Editable(target) = edit_target(table(&["id", "name"], &["id"]), &columns)
+        else {
+            panic!("expected the result to be editable");
+        };
+        let rows = vec![cells(&[Some("1"), Some("ada")])];
+        let mut pending = PendingEdits::default();
+        pending.set(&rows, 0, 1, Some(r"C:\ada's".to_owned()));
+
+        assert_eq!(
+            pending.statements(&target, &columns, &rows, Dialect::Mysql.quoting()),
+            [r"UPDATE `public`.`people` SET `name` = 'C:\\ada''s' WHERE `id` = '1'"]
+        );
+    }
+
+    #[test]
     fn writes_one_update_per_changed_row_keyed_by_the_loaded_key() {
         let columns = [column("id"), column("name"), column("note")];
         let Editability::Editable(target) =

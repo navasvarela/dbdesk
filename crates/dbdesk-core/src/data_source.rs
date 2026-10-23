@@ -98,6 +98,8 @@ impl SourceColor {
 pub enum ConnectionConfig {
     Postgres(PostgresConfig),
     Sqlite(SqliteConfig),
+    /// MySQL and MariaDB: one driver serves both.
+    Mysql(MysqlConfig),
 }
 
 impl ConnectionConfig {
@@ -105,15 +107,17 @@ impl ConnectionConfig {
         match self {
             Self::Postgres(_) => DriverKind::Postgres,
             Self::Sqlite(_) => DriverKind::Sqlite,
+            Self::Mysql(_) => DriverKind::Mysql,
         }
     }
 
     /// The database a connection opens, on engines whose catalog has databases above its
-    /// schemas; the explorer lists that database's schemas.
+    /// schemas; the explorer lists that database's schemas. MySQL's databases are its
+    /// schemas, so it has no such level.
     pub fn database(&self) -> Option<&str> {
         match self {
             Self::Postgres(config) => Some(&config.server.database),
-            Self::Sqlite(_) => None,
+            Self::Sqlite(_) | Self::Mysql(_) => None,
         }
     }
 
@@ -123,6 +127,7 @@ impl ConnectionConfig {
         match self {
             Self::Postgres(_) => "public",
             Self::Sqlite(_) => "main",
+            Self::Mysql(config) => &config.server.database,
         }
     }
 
@@ -130,6 +135,7 @@ impl ConnectionConfig {
     pub fn default_name(&self) -> String {
         match self {
             Self::Postgres(config) => config.server.default_name(),
+            Self::Mysql(config) => config.server.default_name(),
             Self::Sqlite(config) => config.path.file_name().map_or_else(
                 || config.path.display().to_string(),
                 |name| name.to_string_lossy().into_owned(),
@@ -143,7 +149,7 @@ impl DriverKind {
     /// Skipping the lookup for other drivers avoids pointless keychain prompts.
     pub fn uses_password(self) -> bool {
         match self {
-            Self::Postgres => true,
+            Self::Postgres | Self::Mysql => true,
             Self::Sqlite => false,
         }
     }
@@ -154,6 +160,7 @@ impl fmt::Display for ConnectionConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Postgres(config) => config.server.fmt(f),
+            Self::Mysql(config) => config.server.fmt(f),
             Self::Sqlite(config) if config.read_only => {
                 write!(f, "{} (read-only)", config.path.display())
             }
@@ -204,6 +211,18 @@ impl PostgresConfig {
     pub const DEFAULT_PORT: u16 = 5432;
 }
 
+/// A MySQL or MariaDB server. Its `database` is the one connected to, which unqualified
+/// names resolve in, and the explorer lists every database the user can see.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MysqlConfig {
+    #[serde(flatten)]
+    pub server: ServerConfig,
+}
+
+impl MysqlConfig {
+    pub const DEFAULT_PORT: u16 = 3306;
+}
+
 /// Whether and how a network connection is encrypted. The modes are libpq's `sslmode` values
 /// of the same names, so they mean what PostgreSQL users already expect.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -239,15 +258,17 @@ pub struct SqliteConfig {
 pub enum DriverKind {
     Postgres,
     Sqlite,
+    Mysql,
 }
 
 impl DriverKind {
-    pub const ALL: [Self; 2] = [Self::Postgres, Self::Sqlite];
+    pub const ALL: [Self; 3] = [Self::Postgres, Self::Sqlite, Self::Mysql];
 
     pub fn display_name(self) -> &'static str {
         match self {
             Self::Postgres => "PostgreSQL",
             Self::Sqlite => "SQLite",
+            Self::Mysql => "MySQL / MariaDB",
         }
     }
 }
@@ -359,6 +380,32 @@ mod tests {
             assert!(text.contains(expected), "{text}");
             assert_eq!(toml::from_str::<File>(&text).unwrap(), file);
         }
+    }
+
+    #[test]
+    fn reads_a_mysql_data_source_with_its_driver_tag() {
+        let text = r#"
+            [[data_source]]
+            id = "4b5f9a3e-8a52-4a7e-9c6b-1f0f2b0c9d11"
+            name = "shop"
+            driver = "mysql"
+            host = "localhost"
+            port = 3306
+            database = "shop"
+            user = "root"
+        "#;
+
+        let file: File = toml::from_str(text).unwrap();
+
+        let config = &file.data_source[0].config;
+        assert_eq!(config.driver(), DriverKind::Mysql);
+        assert_eq!(config.default_schema(), "shop");
+        assert_eq!(config.database(), None);
+        assert_eq!(config.to_string(), "root@localhost:3306/shop");
+        assert_eq!(
+            toml::from_str::<File>(&toml::to_string(&file).unwrap()).unwrap(),
+            file
+        );
     }
 
     #[test]

@@ -7,6 +7,7 @@ the New data source menu and in the data source dialog.
 | --- | --- | --- |
 | `postgresql.svg` | PostgreSQL | `#4169E1` |
 | `sqlite.svg` | SQLite | `#003B57` |
+| `mysql.svg` | MySQL (also shown for MariaDB, which the same driver serves) | `#4479A1` |
 
 ## Source and licence
 

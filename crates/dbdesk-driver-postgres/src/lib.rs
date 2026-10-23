@@ -580,7 +580,8 @@ mod tests {
 
         conformance::check_execution(&mut connection).await;
         conformance::check_transactions(&mut connection).await;
-        conformance::check_describe_table(&mut connection).await;
+        conformance::check_describe_table(&mut connection, conformance::UnquotedNames::IgnoreCase)
+            .await;
         conformance::check_validate(&mut connection).await;
         conformance::check_cancel(&mut connection, "SELECT pg_sleep(60)").await;
 

@@ -32,5 +32,11 @@ pub fn of(driver: DriverKind) -> DatabaseBrand {
             light: Color32::from_rgb(0x00, 0x3B, 0x57),
             dark: Color32::from_rgb(0x5A, 0xB0, 0xE0),
         },
+        DriverKind::Mysql => DatabaseBrand {
+            logo_uri: "bytes://logos/mysql.svg",
+            logo_svg: include_bytes!("../../../assets/icons/databases/mysql.svg"),
+            light: Color32::from_rgb(0x44, 0x79, 0xA1),
+            dark: Color32::from_rgb(0x7F, 0xB2, 0xDB),
+        },
     }
 }

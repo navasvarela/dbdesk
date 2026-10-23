@@ -12,6 +12,7 @@ publish = false
 
 [workspace.dependencies]
 dbdesk-core = { path = "crates/dbdesk-core" }
+dbdesk-driver-mysql = { path = "crates/dbdesk-driver-mysql" }
 dbdesk-driver-postgres = { path = "crates/dbdesk-driver-postgres" }
 dbdesk-driver-sqlite = { path = "crates/dbdesk-driver-sqlite" }
 dbdesk-engine = { path = "crates/dbdesk-engine" }
@@ -42,6 +43,11 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 jiff = "0.2.38"
 keyring = "4.2.0"
+# MySQL and MariaDB. No default features, which compress with the zlib C library:
+# `minimal-rust` compresses in pure Rust, and TLS is rustls with ring. Its rustls connector
+# takes rustls's process-wide provider, so ring must stay the only provider compiled in
+# (dbdesk-driver-mysql's tests check it).
+mysql_async = { version = "0.37.1", default-features = false, features = ["minimal-rust", "rustls-tls", "ring", "tls12"] }
 rfd = "0.17.2"
 rusqlite = { version = "0.40.2", features = ["bundled", "column_decltype"] }
 # TLS for network connections. rustls rather than OpenSSL leaves nothing to link (see

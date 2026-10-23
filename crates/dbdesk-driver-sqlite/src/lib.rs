@@ -397,7 +397,8 @@ mod tests {
 
         conformance::check_execution(&mut connection).await;
         conformance::check_transactions(&mut connection).await;
-        conformance::check_describe_table(&mut connection).await;
+        conformance::check_describe_table(&mut connection, conformance::UnquotedNames::IgnoreCase)
+            .await;
         conformance::check_validate(&mut connection).await;
         // Counts an endless sequence: only an interrupt stops it.
         conformance::check_cancel(

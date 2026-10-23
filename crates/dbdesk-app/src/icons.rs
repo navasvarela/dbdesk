@@ -98,6 +98,8 @@ pub fn node(kind: NodeKind) -> Icon {
         NodeKind::View => Icon::new(glyph::EYE, Role::Primary),
         NodeKind::MaterializedView => Icon::new(glyph::STACK, Role::Primary),
         NodeKind::Function => Icon::new(glyph::FUNCTION, Role::Success),
+        NodeKind::Procedure => Icon::new(glyph::GEAR_SIX, Role::Success),
+        NodeKind::Event => Icon::new(glyph::CLOCK, Role::Success),
         NodeKind::Sequence => Icon::new(glyph::LIST_NUMBERS, Role::Success),
         NodeKind::Column => Icon::new(glyph::TEXT_COLUMNS, Role::Weak),
         NodeKind::Index => Icon::new(glyph::LIST_MAGNIFYING_GLASS, Role::Warning),
@@ -136,8 +138,10 @@ mod tests {
             let ImagePoll::Ready { image } = poll else {
                 panic!("{driver:?}: the SVG loader answers synchronously");
             };
+            // Catches a blank or unreadable SVG, not a sparse one: the MySQL dolphin is drawn
+            // in thin strokes and has the fewest opaque pixels of the logos, 45 at this size.
             let opaque = image.pixels.iter().filter(|pixel| pixel.a() > 200).count();
-            assert!(opaque > 50, "{driver:?}: only {opaque} opaque pixels");
+            assert!(opaque > 30, "{driver:?}: only {opaque} opaque pixels");
         }
     }
 }
