@@ -254,6 +254,24 @@ plan, including the decisions it needs first, is in [Releasing](releasing.md).
   generated release notes.
 - **R3 — Updates:** an in-app update notice, then automatic updates.
 
+## Database track
+
+More engines, in order of how many people use them. The full plan, with the rankings, what
+each engine needs and the open decisions, is in [More databases](databases.md).
+
+- **DB0 — Groundwork:**
+  - dialect facts gathered in one module;
+  - TLS for network connections, PostgreSQL first;
+  - one data source form shared by every server engine;
+  - one CI container per engine.
+- **DB1 — MySQL and MariaDB:** one driver on `mysql_async`, with cancel by `KILL QUERY` and
+  `SHOW CREATE` definitions.
+- **DB2 — SQL Server:** `tiberius`, SQL Server logins first, `GO` batches, XML plans.
+- **DB3 — DuckDB:** files and in-memory data sources for querying CSV and Parquet, if the
+  bundled engine keeps the downloads small enough.
+- **DB4 — Oracle:** after R2, because its client needs Oracle's own library installed
+  separately.
+
 ## Design and documentation track
 
 Runs alongside the feature milestones rather than after them: each item is usable on its own.
