@@ -209,22 +209,47 @@ fn row_matches(row: &Row, needle: &str) -> bool {
         .any(|value| value.to_lowercase().contains(needle))
 }
 
-/// `NULL` first, then numbers by value when both cells look numeric, then text.
+/// `NULL` first, then cells that look numeric by value, then the rest as text.
 ///
 /// Cells are text (see ADR-0004), so "numeric" is a guess from the text, the same one the grid
-/// uses to right-align: `9` sorts before `10` in a numeric column, and a column mixing numbers
-/// and words sorts the numbers by value among themselves.
+/// uses to right-align: `9` sorts before `10` in a numeric column. In a column mixing numbers
+/// and words, the numbers come first.
+///
+/// Each cell's place is decided by the cell alone, never by what it is compared with, which
+/// keeps this a total order. `sort_by` panics on a comparison that isn't one (since Rust 1.81).
+/// The first version compared two numbers by value but a number and a word as text, which
+/// goes round in circles on a mixed column (`9 < 10`, `"10" < "5x"`, `"5x" < "9"`). Sorting
+/// such a column crashed the app.
 fn compare_cells(a: Option<&Cell>, b: Option<&Cell>) -> Ordering {
-    let a = a.and_then(Option::as_deref);
-    let b = b.and_then(Option::as_deref);
-    match (a, b) {
-        (None, None) => Ordering::Equal,
-        (None, Some(_)) => Ordering::Less,
-        (Some(_), None) => Ordering::Greater,
-        (Some(a), Some(b)) => match (a.parse::<f64>(), b.parse::<f64>()) {
-            (Ok(x), Ok(y)) => x.total_cmp(&y),
-            _ => a.cmp(b),
-        },
+    match (SortValue::of(a), SortValue::of(b)) {
+        (SortValue::Number(x), SortValue::Number(y)) => x.total_cmp(&y),
+        (SortValue::Text(x), SortValue::Text(y)) => x.cmp(y),
+        (a, b) => a.group().cmp(&b.group()),
+    }
+}
+
+/// How a cell sorts: its group, and its value within the group.
+enum SortValue<'a> {
+    Null,
+    Number(f64),
+    Text(&'a str),
+}
+
+impl<'a> SortValue<'a> {
+    fn of(cell: Option<&'a Cell>) -> Self {
+        match cell.and_then(Option::as_deref) {
+            None => Self::Null,
+            Some(text) => text.parse().map_or(Self::Text(text), Self::Number),
+        }
+    }
+
+    /// Groups in ascending order.
+    fn group(&self) -> u8 {
+        match self {
+            Self::Null => 0,
+            Self::Number(_) => 1,
+            Self::Text(_) => 2,
+        }
     }
 }
 
@@ -278,6 +303,100 @@ mod tests {
         grid.toggle_sort(0);
         assert_eq!(order(&mut grid), [0, 1, 2, 3, 4]);
         assert!(!grid.is_rearranged());
+    }
+
+    /// Cells chosen to break a comparison that isn't a total order: numbers whose order by
+    /// value and as text disagree, words between them as text, and text `f64` parses.
+    const AWKWARD_CELLS: [Option<&str>; 14] = [
+        None,
+        Some(""),
+        Some("10"),
+        Some("9"),
+        Some("5x"),
+        Some("-1"),
+        Some("1e3"),
+        Some("NaN"),
+        Some("inf"),
+        Some("abc"),
+        Some("ABC"),
+        Some("10a"),
+        Some("0.5"),
+        Some("N/A"),
+    ];
+
+    #[test]
+    fn the_cell_order_is_a_total_order() {
+        let cells: Vec<Cell> = AWKWARD_CELLS.iter().map(|c| c.map(str::to_owned)).collect();
+        for a in &cells {
+            assert_eq!(compare_cells(Some(a), Some(a)), Ordering::Equal, "{a:?}");
+            for b in &cells {
+                let ab = compare_cells(Some(a), Some(b));
+                assert_eq!(ab, compare_cells(Some(b), Some(a)).reverse(), "{a:?} {b:?}");
+                for c in &cells {
+                    let bc = compare_cells(Some(b), Some(c));
+                    if ab != Ordering::Greater && bc != Ordering::Greater {
+                        assert_ne!(
+                            compare_cells(Some(a), Some(c)),
+                            Ordering::Greater,
+                            "{a:?} <= {b:?} <= {c:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn sorts_a_mixed_column_numbers_first_without_panicking() {
+        // A pseudo-random mix of numbers and codes, 51 rows like the query that crashed. The
+        // old comparison panicked on the first shuffle of a column like this.
+        let mut seed = 42_u64;
+        let mut next = move || {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            seed >> 33
+        };
+        for _ in 0..200 {
+            let rows: Vec<Row> = (0..51)
+                .map(|index| {
+                    let value = next() % 1000;
+                    let text = if index % 3 == 0 {
+                        format!("{value}x")
+                    } else {
+                        value.to_string()
+                    };
+                    vec![Some(text)]
+                })
+                .collect();
+            let ascending = shown_cells(&rows, false);
+            let numbers: Vec<f64> = ascending
+                .iter()
+                .map_while(|text| text.parse().ok())
+                .collect();
+            assert!(numbers.is_sorted(), "{ascending:?}");
+            assert!(
+                ascending[numbers.len()..]
+                    .iter()
+                    .all(|text| text.ends_with('x')),
+                "numbers first: {ascending:?}"
+            );
+
+            let mut descending = shown_cells(&rows, true);
+            descending.reverse();
+            assert_eq!(descending, ascending);
+        }
+    }
+
+    fn shown_cells(rows: &[Row], descending: bool) -> Vec<String> {
+        let sort = SortKey {
+            column: 0,
+            descending,
+        };
+        display_order(rows, Some(sort), "")
+            .into_iter()
+            .filter_map(|index| rows[index][0].clone())
+            .collect()
     }
 
     #[test]
