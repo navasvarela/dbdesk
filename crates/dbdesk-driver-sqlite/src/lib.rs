@@ -4,13 +4,15 @@
 //! engine's async workers. Must run inside a tokio runtime.
 
 mod catalog;
+mod execution;
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use dbdesk_core::{
-    BoxError, CatalogNode, CatalogPath, Connection, DriverError, ServerInfo, SqliteConfig,
+    BoxError, CancelHandle, CatalogNode, CatalogPath, Connection, DriverError, ResultCursor,
+    ServerInfo, SqliteConfig,
 };
 use rusqlite::OpenFlags;
 
@@ -34,6 +36,9 @@ pub async fn connect(config: &SqliteConfig) -> Result<SqliteConnection, DriverEr
         .map_err(|error| DriverError::Connect(Box::new(error)))?;
 
     Ok(SqliteConnection {
+        cancel: Arc::new(execution::SqliteCancel::new(
+            connection.get_interrupt_handle(),
+        )),
         connection: Arc::new(Mutex::new(connection)),
         server_info: ServerInfo {
             product: PRODUCT.to_owned(),
@@ -61,6 +66,8 @@ fn open(path: &Path, read_only: bool) -> rusqlite::Result<(rusqlite::Connection,
 pub struct SqliteConnection {
     /// Behind a mutex only so it can move into blocking tasks; there is one user at a time.
     connection: Arc<Mutex<rusqlite::Connection>>,
+    /// Works without the lock, which is the point: the statement being cancelled holds it.
+    cancel: Arc<execution::SqliteCancel>,
     server_info: ServerInfo,
 }
 
@@ -112,6 +119,14 @@ impl Connection for SqliteConnection {
         let path = path.clone();
         self.run_blocking(move |connection| catalog::definition(connection, &path))
             .await
+    }
+
+    async fn execute(&mut self, sql: &str) -> Result<Box<dyn ResultCursor>, DriverError> {
+        execution::execute(&self.connection, &self.cancel, sql).await
+    }
+
+    fn cancel_handle(&self) -> Arc<dyn CancelHandle> {
+        self.cancel.clone()
     }
 
     async fn close(self: Box<Self>) -> Result<(), DriverError> {
@@ -270,5 +285,25 @@ mod tests {
             .find(|node| node.path == customers_columns.child(NodeKind::Column, "id"))
             .unwrap();
         assert_eq!(id.detail.as_deref(), Some("integer, primary key"));
+    }
+
+    #[tokio::test]
+    async fn runs_pages_cancels_and_reports_error_positions() {
+        let file = database_file();
+        let mut connection = connect(&SqliteConfig {
+            path: file.path().to_owned(),
+            read_only: false,
+        })
+        .await
+        .unwrap();
+
+        conformance::check_execution(&mut connection).await;
+        // Counts an endless sequence: only an interrupt stops it.
+        conformance::check_cancel(
+            &mut connection,
+            "WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM c) \
+             SELECT count(*) FROM c",
+        )
+        .await;
     }
 }

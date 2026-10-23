@@ -1,4 +1,17 @@
-use dbdesk_core::{CatalogNode, CatalogPath, DataSource, DataSourceId, Password, ServerInfo};
+use std::time::Duration;
+
+use dbdesk_core::{
+    CatalogNode, CatalogPath, ColumnInfo, DataSource, DataSourceId, Password, Row, ServerInfo,
+};
+
+/// Identifies a query console. Chosen by the UI, unique for the app's lifetime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ConsoleId(pub u64);
+
+/// Identifies one execution in a console, so events from an older run can be told apart.
+/// Chosen by the UI, unique for the app's lifetime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct RunId(pub u64);
 
 /// A request from the UI to the engine.
 ///
@@ -33,6 +46,28 @@ pub enum Command {
         id: DataSourceId,
         path: CatalogPath,
     },
+    /// Runs statements in order on the console's own connection, connecting it to
+    /// `data_source` first if needed, and stops at the first failure. Each statement's first
+    /// page of rows is reported; the last statement's remaining rows stay available through
+    /// [`Command::FetchMore`] until the next run.
+    Execute {
+        console: ConsoleId,
+        data_source: DataSourceId,
+        run: RunId,
+        statements: Vec<String>,
+    },
+    /// Reads the next page of the run's last statement.
+    FetchMore {
+        console: ConsoleId,
+        run: RunId,
+    },
+    /// Stops the run's current statement, or discards its unread rows.
+    Cancel {
+        console: ConsoleId,
+        run: RunId,
+    },
+    /// Disconnects the console's connection.
+    CloseConsole(ConsoleId),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,6 +115,59 @@ pub enum Event {
         path: CatalogPath,
         result: Result<String, String>,
     },
+    ConsoleSessionChanged {
+        console: ConsoleId,
+        state: SessionState,
+    },
+    /// A statement that returns rows has started; its rows follow as [`Event::RowsFetched`].
+    StatementStarted {
+        run: RunId,
+        statement: usize,
+        columns: Vec<ColumnInfo>,
+    },
+    RowsFetched {
+        run: RunId,
+        statement: usize,
+        rows: Vec<Row>,
+        /// Whether [`Command::FetchMore`] can read more.
+        more: bool,
+    },
+    StatementFinished {
+        run: RunId,
+        statement: usize,
+        result: Result<StatementSummary, StatementFailure>,
+    },
+    /// Every statement has run, or one failed. Rows of the last statement may still be
+    /// fetched afterwards.
+    RunFinished {
+        run: RunId,
+        outcome: RunOutcome,
+        elapsed: Duration,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatementSummary {
+    /// Rows changed (or returned), as the database reports it.
+    pub rows_changed: Option<u64>,
+    /// Time until the statement completed, or until its first page for row results.
+    pub elapsed: Duration,
+    /// Whether rows were left unread.
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatementFailure {
+    pub message: String,
+    /// Byte offset into the statement's text, when the database reports one.
+    pub position: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunOutcome {
+    Completed,
+    Failed,
+    Cancelled,
 }
 
 /// The state of a data source's connection.

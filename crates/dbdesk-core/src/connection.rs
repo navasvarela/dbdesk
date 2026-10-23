@@ -1,8 +1,10 @@
 use std::fmt;
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 
-use crate::{CatalogNode, CatalogPath, DriverError};
+use crate::{CancelHandle, CatalogNode, CatalogPath, DriverError, ResultCursor};
 
 /// What a server reported about itself when the connection was opened.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,6 +48,19 @@ pub trait Connection: Send {
     ///
     /// As for [`Connection::children`]. A node without a definition is an `InvalidPath`.
     async fn definition(&mut self, path: &CatalogPath) -> Result<String, DriverError>;
+
+    /// Starts running one statement and returns a cursor over its result. Rows are read
+    /// lazily, so a huge result costs nothing until it is paged through.
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError::Statement`] if the statement is rejected or fails before producing a
+    /// result, with the error's position when known.
+    async fn execute(&mut self, sql: &str) -> Result<Box<dyn ResultCursor>, DriverError>;
+
+    /// A handle for cancelling this connection's running statement from another task. Valid
+    /// for the connection's whole lifetime.
+    fn cancel_handle(&self) -> Arc<dyn CancelHandle>;
 
     async fn close(self: Box<Self>) -> Result<(), DriverError>;
 }

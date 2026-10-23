@@ -13,6 +13,7 @@ dbdesk-core = { path = "crates/dbdesk-core" }
 dbdesk-driver-postgres = { path = "crates/dbdesk-driver-postgres" }
 dbdesk-driver-sqlite = { path = "crates/dbdesk-driver-sqlite" }
 dbdesk-engine = { path = "crates/dbdesk-engine" }
+dbdesk-sql = { path = "crates/dbdesk-sql" }
 dbdesk-store = { path = "crates/dbdesk-store" }
 
 anyhow = "1.0.104"
@@ -29,10 +30,12 @@ eframe = { version = "0.36.2", default-features = false, features = [
 # egui_dock 0.21 is built against egui 0.36; bump the egui family only together with it.
 egui = "0.36.2"
 egui_dock = { version = "0.21.1", features = ["serde"] }
+egui_extras = "0.36.2"
 egui_kittest = "0.36.2"
+futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 jiff = "0.2.38"
 keyring = "4.2.0"
-rusqlite = { version = "0.40.2", features = ["bundled"] }
+rusqlite = { version = "0.40.2", features = ["bundled", "column_decltype"] }
 serde = { version = "1.0.229", features = ["derive"] }
 tempfile = "3.27.0"
 thiserror = "2.0.21"

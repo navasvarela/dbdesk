@@ -2,11 +2,14 @@
 
 mod app;
 mod catalog_tree;
+mod console;
+mod consoles;
 mod data_source_dialog;
 mod data_source_form;
 mod definition_window;
 mod delete_dialog;
 mod explorer;
+mod hazard_dialog;
 mod log_console;
 mod state;
 mod telemetry;

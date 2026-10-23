@@ -7,6 +7,7 @@ mod catalog;
 mod connection;
 mod data_source;
 mod error;
+mod execution;
 mod password;
 
 #[cfg(feature = "conformance")]
@@ -18,4 +19,5 @@ pub use data_source::{
     ConnectionConfig, DataSource, DataSourceId, DriverKind, PostgresConfig, SqliteConfig,
 };
 pub use error::{BoxError, DriverError, describe_error};
+pub use execution::{CancelHandle, Cell, ColumnInfo, ResultCursor, Row};
 pub use password::Password;

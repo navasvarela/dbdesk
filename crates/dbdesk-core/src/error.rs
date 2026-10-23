@@ -15,6 +15,16 @@ pub enum DriverError {
     /// An established connection failed to do what was asked.
     #[error("the connection failed")]
     Connection(#[source] BoxError),
+    /// A statement the user ran failed: a syntax error, a constraint violation, a
+    /// cancellation, and so on.
+    #[error("the statement failed")]
+    Statement {
+        #[source]
+        source: BoxError,
+        /// Byte offset into the statement's text where the error was found, when the
+        /// database reports one.
+        position: Option<usize>,
+    },
     /// A catalog path this driver doesn't produce, or one whose object has no definition.
     /// Points at a bug in the caller, or at a node that disappeared from the database.
     #[error("nothing to show for {0}")]

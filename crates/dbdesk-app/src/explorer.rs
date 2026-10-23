@@ -1,7 +1,7 @@
 //! The connection explorer panel: data sources and their catalogs as a lazily loaded tree.
 //! It only reports what the user asked for; the app turns that into engine commands.
 
-use dbdesk_core::{CatalogNode, CatalogPath, DataSourceId, DriverKind};
+use dbdesk_core::{CatalogNode, CatalogPath, DataSourceId, DriverKind, NodeKind};
 use dbdesk_engine::SessionState;
 use egui::{
     Color32, Id, Label, Response, ScrollArea, Sense, TextEdit, TextStyle, Ui, Visuals, WidgetInfo,
@@ -29,6 +29,9 @@ pub enum ExplorerAction {
         path: CatalogPath,
         title: String,
     },
+    NewConsole(DataSourceId),
+    /// Opens a console that selects everything from the table or view at `path`.
+    OpenData(DataSourceId, CatalogPath),
 }
 
 /// The explorer's own view settings.
@@ -152,6 +155,9 @@ fn data_source_menu(ui: &mut Ui, entry: &DataSourceEntry, actions: &mut Vec<Expl
         }
     } else if ui.button("Connect").clicked() {
         actions.push(ExplorerAction::Connect(id));
+    }
+    if ui.button("New query console").clicked() {
+        actions.push(ExplorerAction::NewConsole(id));
     }
     ui.separator();
     if ui.button("Edit…").clicked() {
@@ -296,6 +302,13 @@ fn node_row(
 }
 
 fn node_menu(ui: &mut Ui, id: DataSourceId, node: &CatalogNode, actions: &mut Vec<ExplorerAction>) {
+    let holds_rows = matches!(
+        node.kind(),
+        Some(NodeKind::Table | NodeKind::View | NodeKind::MaterializedView)
+    );
+    if holds_rows && ui.button("Open data").clicked() {
+        actions.push(ExplorerAction::OpenData(id, node.path.clone()));
+    }
     if let Some(name) = node.path.qualified_name()
         && ui.button("Copy name").clicked()
     {
@@ -368,8 +381,6 @@ fn tooltip(entry: &DataSourceEntry) -> String {
 
 #[cfg(test)]
 mod tests {
-    use dbdesk_core::NodeKind;
-
     use super::*;
 
     fn node(parent: &CatalogPath, name: &str, system: bool) -> CatalogNode {
