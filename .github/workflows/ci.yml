@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The release workflow runs the full suite on the commit it packages.
+  workflow_call:
 
 env:
   CARGO_TERM_COLOR: always

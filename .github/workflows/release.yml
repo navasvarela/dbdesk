@@ -1,0 +1,207 @@
+name: Release
+
+# Builds the downloadable packages. See docs/releasing.md.
+#
+# - A tag `vX.Y.Z` on main: checks the tag against the version, runs the full CI, builds and
+#   smoke-tests every package, and creates a *draft* GitHub release for a person to publish.
+# - Run by hand (Actions > Release > Run workflow): the same builds as a dry run, kept as
+#   workflow artifacts, with no release.
+# - A pull request that touches packaging: the builds and smoke tests only, so a broken package
+#   fails the PR rather than the release.
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - packaging/**
+      - crates/dbdesk-app/Cargo.toml
+      - crates/dbdesk-app/build.rs
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # cargo-packager reads this to skip GUI steps meant for interactive machines.
+  CI: "true"
+  # Recorded by crates/dbdesk-app/build.rs and shown by `dbdesk --version`.
+  DBDESK_COMMIT: ${{ github.sha }}
+  CARGO_PACKAGER_VERSION: 0.11.8
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: version
+        run: |
+          version=$(cargo metadata --format-version 1 --no-deps \
+            | jq -r '.packages[] | select(.name == "dbdesk-app") | .version')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match the workspace version $version"
+            exit 1
+          fi
+
+  # The full test suite, Postgres included, for the exact commit being released. Pull requests
+  # already run it through ci.yml, so it is skipped there.
+  ci:
+    if: github.event_name != 'pull_request'
+    uses: ./.github/workflows/ci.yml
+
+  macos:
+    needs: [version, ci]
+    if: ${{ !cancelled() && needs.version.result == 'success' && needs.ci.result != 'failure' }}
+    runs-on: macos-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-packager@${{ env.CARGO_PACKAGER_VERSION }}
+      # One download for every Mac: both architectures, joined with lipo.
+      - name: Build a universal binary
+        run: |
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --release --locked -p dbdesk-app --target "$target"
+          done
+          mkdir -p target/universal/release
+          lipo -create -output target/universal/release/dbdesk \
+            target/aarch64-apple-darwin/release/dbdesk \
+            target/x86_64-apple-darwin/release/dbdesk
+          lipo -archs target/universal/release/dbdesk
+      - name: Package
+        run: |
+          cargo packager -p dbdesk-app --release --formats app \
+            --binaries-dir target/universal/release --out-dir dist
+          packaging/macos-dmg.sh dist/dbdesk.app "dist/dbdesk-$VERSION-macos-universal.dmg"
+      - name: Smoke test the disk image
+        run: |
+          mount=$(hdiutil attach -nobrowse -readonly "dist/dbdesk-$VERSION-macos-universal.dmg" \
+            | awk -F'\t' '/\/Volumes\// {print $NF}')
+          binary="$mount/dbdesk.app/Contents/MacOS/dbdesk"
+          archs=$(lipo -archs "$binary")
+          [[ "$archs" == *arm64* && "$archs" == *x86_64* ]] || { echo "::error::archs: $archs"; exit 1; }
+          "$binary" --version | tee version.txt
+          grep -q "dbdesk $VERSION" version.txt
+          hdiutil detach -quiet "$mount"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  linux:
+    needs: [version, ci]
+    if: ${{ !cancelled() && needs.version.result == 'success' && needs.ci.result != 'failure' }}
+    # The oldest supported runner: binaries need the glibc they were built against or newer,
+    # so building here keeps the AppImage running on older distributions.
+    runs-on: ubuntu-22.04
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      # linuxdeploy and appimagetool are AppImages themselves; this runs them without FUSE.
+      APPIMAGE_EXTRACT_AND_RUN: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-packager@${{ env.CARGO_PACKAGER_VERSION }}
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev file
+      - run: cargo build --release --locked -p dbdesk-app
+      - name: Package
+        run: |
+          cargo packager -p dbdesk-app --release --formats appimage,deb \
+            --binaries-dir target/release --out-dir dist
+          mv dist/*.AppImage "dist/dbdesk-$VERSION-x86_64.AppImage"
+          mv dist/*.deb "dist/dbdesk_${VERSION}_amd64.deb"
+      - name: Smoke test the AppImage and the .deb
+        run: |
+          "dist/dbdesk-$VERSION-x86_64.AppImage" --appimage-extract-and-run --version | tee appimage.txt
+          grep -q "dbdesk $VERSION" appimage.txt
+          dpkg-deb --info "dist/dbdesk_${VERSION}_amd64.deb"
+          dpkg-deb -x "dist/dbdesk_${VERSION}_amd64.deb" deb-root
+          deb-root/usr/bin/dbdesk --version | tee deb.txt
+          grep -q "dbdesk $VERSION" deb.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: |
+            dist/*.AppImage
+            dist/*.deb
+          if-no-files-found: error
+
+  windows:
+    needs: [version, ci]
+    if: ${{ !cancelled() && needs.version.result == 'success' && needs.ci.result != 'failure' }}
+    runs-on: windows-2022
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-packager@${{ env.CARGO_PACKAGER_VERSION }}
+      - run: cargo build --release --locked -p dbdesk-app
+      - name: Package
+        run: |
+          cargo packager -p dbdesk-app --release --formats nsis \
+            --binaries-dir target/release --out-dir dist
+          mv dist/*-setup.exe "dist/dbdesk-$VERSION-windows-x64-setup.exe"
+      - name: Smoke test
+        run: |
+          target/release/dbdesk.exe --version | tee version.txt
+          grep -q "dbdesk $VERSION" version.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*-setup.exe
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [version, macos, linux, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      # The Windows installer is built and tested on every release but only attached once
+      # someone has tried it on a real Windows machine and set the repository variable
+      # WINDOWS_RELEASES to "true" (Settings > Secrets and variables > Actions > Variables).
+      - if: vars.WINDOWS_RELEASES != 'true'
+        run: rm -f dist/*-setup.exe
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum -- * | tee SHA256SUMS
+      - name: Draft the release
+        run: |
+          generated=$(gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$GITHUB_REF_NAME" --jq .body)
+          { cat packaging/release-notes.md; echo; echo "$generated"; } > notes.md
+          gh release create "$GITHUB_REF_NAME" dist/* --draft \
+            --title "dbdesk $VERSION" --notes-file notes.md
