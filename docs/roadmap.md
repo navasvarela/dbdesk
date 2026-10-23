@@ -124,7 +124,8 @@ Follow-ups left out of M3 (most belong to M4 anyway):
 - Copy as TSV, export CSV/JSON.
 - `EXPLAIN` action.
 
-**Exit:** I use dbdesk instead of DataGrip for a week, and keep a list of what I missed.
+**Exit:** I use dbdesk instead of my usual database tool for a week, and keep a list of what I
+missed.
 
 **Demo note:** built; the exit criterion (a week of real use) is still to be tried.
 - **Consoles are files:** each console is `consoles/<data-source-id>/console.sql` (then
@@ -302,8 +303,8 @@ test that picks `verify-full` with a CA file and saves it.
 
 ## Object helpers track
 
-DataGrip-style dialogs that write, show and run the SQL to create and change tables, views and
-users, from a **New** submenu and object actions in the explorer. The full plan is in
+Dialogs that write, show and run the SQL to create and change tables, views and users, from a
+**New** submenu and object actions in the explorer. The full plan is in
 [Creating and changing database objects](entity-helpers.md).
 
 - **E0 — Groundwork:**

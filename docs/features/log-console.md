@@ -55,5 +55,5 @@ spawned and forgotten. The Postgres driver therefore runs its own connection tas
 
 ## Open questions
 
-- Should each data source get its own log tab (like DataGrip's per-session output) in addition
-  to the global stream with a filter? (Leaning: global stream only; filters are enough.)
+- Should each data source get its own log tab (some tools, such as DBeaver and DataGrip, show
+  output per session) in addition to the global stream with a filter? (Leaning: global stream only; filters are enough.)
