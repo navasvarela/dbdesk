@@ -80,7 +80,7 @@ Create `crates/dbdesk-driver-<engine>/`, using `dbdesk-driver-mysql` as the temp
 | `execution.rs` | `execute`, returning a `ResultCursor` that reads rows lazily, plus the cancel handle |
 | `table.rs` | `describe_table`, for editing in the grid |
 | `errors.rs` | Mapping the client's errors to `DriverError`, keeping the code, message and position |
-| `tls.rs` | Turning the shared `TlsMode` into the client's TLS setup |
+| `tls.rs` | Turning the shared `TlsMode` into the client's TLS setup. A client that takes a rustls `ClientConfig` gets it from `dbdesk-tls`, as PostgreSQL and ClickHouse do |
 | `tests.rs` | The conformance suite against a real server |
 
 What each `Connection` method must do is documented on the trait in
@@ -101,6 +101,9 @@ Tests use the conformance suite in `dbdesk-core/src/conformance.rs`:
 - `walk_catalog` and `check_invalid_path`;
 - `check_execution`, `check_transactions`, `check_describe_table`, `check_validate`, and
   `check_cancel` (with a statement that runs long, such as MySQL's `SLEEP`).
+
+An engine without transactions, or without a key that tells a table's rows apart, skips
+`check_transactions` or `check_describe_table` and says why in its tests, as ClickHouse does.
 
 Each test reads its server from a `DBDESK_TEST_<ENGINE>_URL` variable and skips when it is
 unset, so `cargo test` works offline (see the top of `dbdesk-driver-mysql/src/tests.rs`).
@@ -135,6 +138,9 @@ unset, so `cargo test` works offline (see the top of `dbdesk-driver-mysql/src/te
   - the theme's contrast test checks the two shades.
 - **Whatever else the compiler points at.** For MySQL that included the grid's edit statements
   (`console/edit.rs`) and the hazard warnings for DDL that commits (`hazard_dialog.rs`).
+- **The MCP server's read-only mode** (`dbdesk-mcp/src/read_only.rs`): how the engine refuses
+  writes on its own, or `None`, which keeps its data sources from being served until it has one
+  (see `docs/mcp-server.md`).
 - **A UI test** that adds a data source of the new engine through the dialog. With a test server
   set, also browse it and run a query.
 
