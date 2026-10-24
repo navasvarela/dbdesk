@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use dbdesk_core::{CatalogPath, DataSourceId};
+use dbdesk_core::{CatalogPath, DataSource, DataSourceId};
 use dbdesk_engine::{
     Command, EngineConfig, EngineError, EngineHandle, Event, PasswordKept, Repaint,
 };
@@ -13,6 +13,7 @@ use crate::about_dialog;
 use crate::console::{ConsoleAction, FormatScope};
 use crate::consoles::Consoles;
 use crate::data_source_dialog::{DataSourceDialog, DialogAction};
+use crate::data_source_form::McpPasswordChange;
 use crate::definition_window::DefinitionWindow;
 use crate::delete_dialog::{DeleteChoice, DeleteConfirmation};
 use crate::explorer::{ExplorerAction, ExplorerOptions};
@@ -28,6 +29,7 @@ use crate::password_prompt::{PasswordPrompt, PromptAction};
 use crate::project_dialog::{
     DeleteProjectChoice, DeleteProjectConfirmation, ProjectDialogAction, ProjectNameDialog,
 };
+use crate::project_settings::{ProjectSettingsAction, ProjectSettingsDialog};
 use crate::rollback_dialog::{Closing, RollbackChoice, RollbackConfirmation};
 use crate::settings::AppSettings;
 use crate::settings_window::{self, SettingsWindowAction};
@@ -55,6 +57,7 @@ pub struct DbDeskApp {
     data_source_dialog: Option<DataSourceDialog>,
     delete_confirmation: Option<DeleteConfirmation>,
     project_dialog: Option<ProjectNameDialog>,
+    project_settings: Option<ProjectSettingsDialog>,
     delete_project_confirmation: Option<DeleteProjectConfirmation>,
     definition_window: Option<DefinitionWindow>,
     history_window: Option<HistoryWindow>,
@@ -113,6 +116,7 @@ impl DbDeskApp {
             data_source_dialog: None,
             delete_confirmation: None,
             project_dialog: None,
+            project_settings: None,
             delete_project_confirmation: None,
             definition_window: None,
             history_window: None,
@@ -182,6 +186,13 @@ impl DbDeskApp {
             .is_some_and(|dialog| dialog.apply(event))
         {
             self.project_dialog = None;
+        }
+        if self
+            .project_settings
+            .as_mut()
+            .is_some_and(|dialog| dialog.apply(event))
+        {
+            self.project_settings = None;
         }
         if let Some(window) = &mut self.definition_window {
             window.apply(event);
@@ -410,6 +421,14 @@ impl DbDeskApp {
                     self.project_dialog = Some(ProjectNameDialog::rename(project));
                 }
             }
+            ExplorerAction::ProjectSettings(id) => {
+                if let Some(project) = self.state.projects.get(id) {
+                    self.project_settings = Some(ProjectSettingsDialog::new(
+                        project,
+                        &self.state.mcp_defaults,
+                    ));
+                }
+            }
             ExplorerAction::DeleteProject(id) => {
                 if let Some(project) = self.state.projects.get(id) {
                     let members = self
@@ -462,10 +481,19 @@ impl DbDeskApp {
                 data_source,
                 password,
             }),
-            DialogAction::Save(data_source, password) => self.send(Command::SaveDataSource {
-                data_source,
-                password,
-            }),
+            DialogAction::Save(data_source, password, mcp_password) => {
+                let id = data_source.id;
+                self.send(Command::SaveDataSource {
+                    data_source,
+                    password,
+                });
+                let password = match mcp_password {
+                    McpPasswordChange::Keep => return,
+                    McpPasswordChange::Set(password) => Some(password),
+                    McpPasswordChange::Remove => None,
+                };
+                self.send(Command::SaveMcpPassword { id, password });
+            }
             DialogAction::CreateDatabaseFile(file) => {
                 self.send(Command::CreateDatabaseFile(file));
             }
@@ -500,6 +528,35 @@ impl DbDeskApp {
                 self.send(Command::RenameProject { id, name });
             }
             ProjectDialogAction::Close => self.project_dialog = None,
+        }
+    }
+
+    fn show_project_settings(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.project_settings else {
+            return;
+        };
+        let members: Vec<&DataSource> = self
+            .state
+            .data_sources
+            .entries()
+            .iter()
+            .map(|entry| &entry.data_source)
+            .filter(|data_source| data_source.project == Some(dialog.project()))
+            .collect();
+        let Some(action) = dialog.show(ctx, &self.state.mcp_defaults, &members) else {
+            return;
+        };
+        match action {
+            ProjectSettingsAction::Save {
+                id,
+                mcp_enabled,
+                overrides,
+            } => self.send(Command::SaveProjectMcp {
+                id,
+                mcp_enabled,
+                overrides,
+            }),
+            ProjectSettingsAction::Close => self.project_settings = None,
         }
     }
 
@@ -919,6 +976,7 @@ impl eframe::App for DbDeskApp {
         self.show_data_source_dialog(&ctx);
         self.show_delete_confirmation(&ctx);
         self.show_project_dialog(&ctx);
+        self.show_project_settings(&ctx);
         self.show_delete_project_confirmation(&ctx);
         self.show_password_prompt(&ctx);
         self.show_export_sources_dialog(&ctx);
@@ -1432,6 +1490,93 @@ mod tests {
             .into_iter()
             .find(|data_source| data_source.name == name)
             .and_then(|data_source| data_source.project)
+    }
+
+    fn saved_project(dir: &Path) -> dbdesk_store::Project {
+        let projects = ProjectFile::new(dir.join("projects.toml")).load().unwrap();
+        let [project] = projects.projects.as_slice() else {
+            panic!("expected one project, got {projects:?}");
+        };
+        project.clone()
+    }
+
+    #[test]
+    fn sets_a_projects_mcp_permissions_warning_about_shared_logins() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut shop = save_shop(dir.path(), "CREATE TABLE orders (id INTEGER PRIMARY KEY)");
+        let project = dbdesk_store::Project::new(
+            dbdesk_core::ProjectId::generate(),
+            "Analytics".to_owned(),
+            dbdesk_store::ProjectSlug::from_name("Analytics"),
+        );
+        ProjectFile::new(dir.path().join("projects.toml"))
+            .save(&dbdesk_store::Projects {
+                projects: vec![project.clone()],
+                ..dbdesk_store::Projects::default()
+            })
+            .unwrap();
+        shop.project = Some(project.id);
+        let warehouse = dbdesk_core::DataSource {
+            id: DataSourceId::generate(),
+            name: "warehouse".to_owned(),
+            config: dbdesk_core::ConnectionConfig::Postgres(dbdesk_core::PostgresConfig {
+                server: dbdesk_core::ServerConfig {
+                    host: "warehouse.invalid".to_owned(),
+                    port: 5432.into(),
+                    database: "warehouse".to_owned(),
+                    user: "owner".to_owned(),
+                    tls: dbdesk_core::TlsMode::Prefer,
+                },
+            }),
+            ..shop.clone()
+        };
+        DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .save(&[shop, warehouse])
+            .unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "Collapse Analytics");
+
+        harness.get_by_label("Analytics").click_secondary();
+        harness.run();
+        harness.get_by_label("Project settings…").click();
+        harness.run();
+        harness.get_by_label_contains("dbdesk mcp --project analytics");
+        harness
+            .get_by_label("Allow MCP clients to use this project")
+            .click();
+        harness.run();
+        assert!(
+            harness.query_by_label_contains("No MCP login").is_none(),
+            "reading needs no warning"
+        );
+        harness.get_by_label("Write").click();
+        harness.run();
+        harness.get_by_label_contains("No MCP login on warehouse.");
+        harness.get_by_label("Save").click();
+        step_until(&mut harness, "the project being saved", |harness| {
+            harness
+                .query_by_label("Allow MCP clients to use this project")
+                .is_none()
+        });
+        let saved = saved_project(dir.path());
+        assert!(saved.mcp_enabled);
+        assert_eq!(saved.mcp.write, Some(true));
+        assert_eq!(
+            saved.mcp.schema, None,
+            "untouched settings stay at the default"
+        );
+
+        harness.get_by_label("Analytics").click_secondary();
+        harness.run();
+        harness.get_by_label("Project settings…").click();
+        harness.run();
+        harness.get_by_label("Reset Write").click();
+        harness.run();
+        harness.get_by_label("Save").click();
+        step_until(&mut harness, "the reset being saved", |_| {
+            saved_project(dir.path()).mcp.write.is_none()
+        });
     }
 
     #[test]

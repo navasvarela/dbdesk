@@ -13,7 +13,8 @@ use egui::{
 };
 
 use crate::data_source_form::{
-    DataSourceForm, DriverFields, DuckDbFields, DuckDbLocation, FormError, ServerFields, TlsChoice,
+    DataSourceForm, DriverFields, DuckDbFields, DuckDbLocation, FormError, McpLoginFields,
+    McpPasswordChange, ServerFields, TlsChoice,
 };
 use crate::file_picker::{self, FileEngine};
 use crate::icons;
@@ -26,7 +27,7 @@ const SWATCH_RADIUS: f32 = 8.0;
 
 pub enum DialogAction {
     Test(DataSource, PasswordUpdate),
-    Save(DataSource, PasswordUpdate),
+    Save(DataSource, PasswordUpdate, McpPasswordChange),
     /// Create an empty database file at the path chosen in the Save dialog.
     CreateDatabaseFile(DatabaseFile),
     Close,
@@ -162,31 +163,24 @@ impl DataSourceDialog {
                 color_picker(ui, &mut self.form.color);
                 ui.end_row();
                 safety_rows(ui, &mut self.form);
-                match &mut self.form.fields {
-                    DriverFields::Postgres(fields) => {
-                        server_rows(ui, &mut fields.server, password_hint);
-                        None
+                let server = match &mut self.form.fields {
+                    DriverFields::Postgres(fields) => &mut fields.server,
+                    DriverFields::Mysql(fields) => &mut fields.server,
+                    DriverFields::SqlServer(fields) => &mut fields.server,
+                    DriverFields::ClickHouse(fields) => &mut fields.server,
+                    DriverFields::Sqlite(fields) => {
+                        return file_rows(
+                            ui,
+                            FileEngine::Sqlite,
+                            &mut fields.path,
+                            &mut fields.read_only,
+                        );
                     }
-                    DriverFields::Mysql(fields) => {
-                        server_rows(ui, &mut fields.server, password_hint);
-                        None
-                    }
-                    DriverFields::SqlServer(fields) => {
-                        server_rows(ui, &mut fields.server, password_hint);
-                        None
-                    }
-                    DriverFields::ClickHouse(fields) => {
-                        server_rows(ui, &mut fields.server, password_hint);
-                        None
-                    }
-                    DriverFields::Sqlite(fields) => file_rows(
-                        ui,
-                        FileEngine::Sqlite,
-                        &mut fields.path,
-                        &mut fields.read_only,
-                    ),
-                    DriverFields::DuckDb(fields) => duckdb_rows(ui, fields),
-                }
+                    DriverFields::DuckDb(fields) => return duckdb_rows(ui, fields),
+                };
+                server_rows(ui, server, password_hint);
+                mcp_login_rows(ui, &mut self.form.mcp_login);
+                None
             })
             .inner
     }
@@ -271,8 +265,10 @@ impl DataSourceDialog {
             self.submit(Status::Testing)
                 .map(|(data_source, password)| DialogAction::Test(data_source, password))
         } else if save {
-            self.submit(Status::Saving)
-                .map(|(data_source, password)| DialogAction::Save(data_source, password))
+            let mcp_password = self.form.mcp_password_change();
+            self.submit(Status::Saving).map(|(data_source, password)| {
+                DialogAction::Save(data_source, password, mcp_password)
+            })
         } else {
             None
         }
@@ -318,6 +314,35 @@ fn server_rows(ui: &mut Ui, fields: &mut ServerFields, password_hint: &str) {
     .labelled_by(label.id);
     ui.end_row();
     tls_rows(ui, fields);
+}
+
+/// The login `dbdesk mcp` signs in as, so the database's grants limit what an assistant can
+/// do; the project settings warn when a project allows changes without one.
+fn mcp_login_rows(ui: &mut Ui, fields: &mut McpLoginFields) {
+    let label = ui.label("MCP login").on_hover_text(
+        "Another user for MCP clients to sign in as, used only by dbdesk mcp. Give it only the \
+         grants an assistant should have: beyond reading, only the database's grants are \
+         airtight.",
+    );
+    ui.add(
+        TextEdit::singleline(&mut fields.user)
+            .hint_text("none: the user above")
+            .desired_width(FIELD_WIDTH),
+    )
+    .labelled_by(label.id);
+    ui.end_row();
+    if fields.user.trim().is_empty() {
+        return;
+    }
+    let label = ui.label("MCP password");
+    ui.add(
+        TextEdit::singleline(&mut fields.password)
+            .password(true)
+            .hint_text("unchanged")
+            .desired_width(FIELD_WIDTH),
+    )
+    .labelled_by(label.id);
+    ui.end_row();
 }
 
 /// The TLS mode and, for `verify-full`, the file of authorities to trust.

@@ -8,10 +8,12 @@ mod common;
 use std::path::Path;
 use std::sync::Arc;
 
-use common::{TestEngine, sqlite_data_source};
-use dbdesk_core::{DataSource, ProjectId};
+use common::{MemorySecrets, TestEngine, sqlite_data_source};
+use dbdesk_core::{DataSource, DataSourceId, Password, ProjectId};
 use dbdesk_engine::{Command, Event, PasswordUpdate};
-use dbdesk_store::{DataSourceFile, KeymapBindings, Project, ProjectFile, Settings};
+use dbdesk_store::{
+    DataSourceFile, KeymapBindings, McpOverrides, Project, ProjectFile, SchemaScope, Settings,
+};
 
 fn save(engine: &mut TestEngine, data_source: &DataSource) {
     engine.send(Command::SaveDataSource {
@@ -196,5 +198,53 @@ fn never_overwrites_an_unreadable_projects_file() {
     assert_eq!(
         std::fs::read_to_string(dir.path().join("projects.toml")).unwrap(),
         broken
+    );
+}
+
+#[test]
+fn saves_a_projects_mcp_settings_and_an_mcp_logins_password() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("data_sources.toml");
+    let secrets = Arc::new(MemorySecrets::default());
+    let mut engine = TestEngine::start(&file, Arc::clone(&secrets));
+    engine.expect_started(vec![]);
+    let project = create(&mut engine, "Analytics");
+    let overrides = McpOverrides {
+        write: Some(true),
+        schemas: Some(SchemaScope::Only(vec!["reports".to_owned()])),
+        ..McpOverrides::default()
+    };
+
+    engine.send(Command::SaveProjectMcp {
+        id: project.id,
+        mcp_enabled: true,
+        overrides: overrides.clone(),
+    });
+
+    let saved = expect_project_saved(&mut engine);
+    assert!(saved.mcp_enabled);
+    assert_eq!(saved.mcp, overrides);
+    assert_eq!(
+        projects_file(dir.path()).load().unwrap().projects,
+        vec![saved.clone()]
+    );
+    assert_eq!(saved.slug, project.slug, "the slug never changes");
+
+    let id = DataSourceId::generate();
+    engine.send(Command::SaveMcpPassword {
+        id,
+        password: Some(Password::new("for the assistant")),
+    });
+    engine.send(Command::SaveMcpPassword { id, password: None });
+    engine.send(Command::SaveMcpPassword {
+        id,
+        password: Some(Password::new("again")),
+    });
+    engine.engine.shutdown().unwrap();
+    assert_eq!(secrets.mcp(id), Some(Password::new("again")));
+    assert_eq!(
+        secrets.get(id),
+        None,
+        "the data source's own entry is untouched"
     );
 }

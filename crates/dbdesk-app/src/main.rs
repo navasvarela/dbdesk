@@ -24,8 +24,10 @@ mod keymap;
 mod keymap_window;
 mod log_console;
 mod mcp;
+mod mcp_settings;
 mod password_prompt;
 mod project_dialog;
+mod project_settings;
 mod relaunch;
 mod rollback_dialog;
 #[cfg(test)]

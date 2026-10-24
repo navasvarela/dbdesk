@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use dbdesk_core::{DataSource, DataSourceId, ProjectId, describe_error};
+use dbdesk_core::{DataSource, DataSourceId, Password, ProjectId, describe_error};
 use dbdesk_store::{
     ConsoleFiles, ImportPlan, KeymapFile, Project, SecretError, SecretStore, SettingsFile,
 };
@@ -128,6 +128,15 @@ impl Engine {
                 let result = self.projects.rename(id, &name).await;
                 self.report_project(id, result);
             }
+            Command::SaveProjectMcp {
+                id,
+                mcp_enabled,
+                overrides,
+            } => {
+                let result = self.projects.save_mcp(id, mcp_enabled, overrides).await;
+                self.report_project(id, result);
+            }
+            Command::SaveMcpPassword { id, password } => self.save_mcp_password(id, password).await,
             Command::DeleteProject(id) => self.delete_project(id).await,
             Command::MoveToProject {
                 data_source,
@@ -530,6 +539,25 @@ impl Engine {
             self.events.send(Event::DataSourceSaved(data_source));
         }
         Ok(())
+    }
+
+    async fn save_mcp_password(&self, id: DataSourceId, password: Option<Password>) {
+        let secrets = Arc::clone(&self.secrets);
+        let result = tokio::task::spawn_blocking(move || match password {
+            Some(password) => secrets.set_mcp_password(id, &password),
+            None => secrets.delete_mcp_password(id),
+        })
+        .await;
+        let error = match result {
+            Ok(Ok(())) => {
+                tracing::info!(%id, "saved the MCP login's password");
+                return;
+            }
+            Ok(Err(error)) => describe_error(&error),
+            Err(error) => describe_error(&error),
+        };
+        tracing::error!(%id, "could not save the MCP login's password: {error}");
+        self.events.send(Event::DataSourceSaveFailed { id, error });
     }
 
     /// Removes both of the data source's keychain entries, its own and its MCP login's. A

@@ -74,9 +74,28 @@ pub struct DataSourceForm {
     /// Not edited in the dialog, only carried through it, so saving an edit keeps the data
     /// source in its project.
     pub project: Option<ProjectId>,
-    /// Carried through the dialog like `project`.
-    pub mcp_login: Option<McpLogin>,
+    pub mcp_login: McpLoginFields,
     pub fields: DriverFields,
+}
+
+/// The login `dbdesk mcp` signs in as instead of the data source's own. An empty user means
+/// none, and MCP clients sign in as the data source does.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct McpLoginFields {
+    pub user: String,
+    /// Empty keeps the saved one.
+    pub password: String,
+    /// Whether the data source had an MCP login when the dialog opened, so removing it also
+    /// removes its saved password.
+    had_login: bool,
+}
+
+/// What saving the dialog does to the MCP login's saved password.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum McpPasswordChange {
+    Keep,
+    Set(Password),
+    Remove,
 }
 
 /// Each engine's fields: the shared [`ServerFields`] for a network engine, plus whatever is
@@ -241,7 +260,7 @@ impl DataSourceForm {
             color: None,
             safety: SafetyLevel::Normal,
             project: None,
-            mcp_login: None,
+            mcp_login: McpLoginFields::default(),
             fields: DriverFields::new(driver),
         }
     }
@@ -252,7 +271,15 @@ impl DataSourceForm {
             color: data_source.color,
             safety: data_source.safety,
             project: data_source.project,
-            mcp_login: data_source.mcp_login.clone(),
+            mcp_login: McpLoginFields {
+                user: data_source
+                    .mcp_login
+                    .as_ref()
+                    .map(|login| login.user.clone())
+                    .unwrap_or_default(),
+                password: String::new(),
+                had_login: data_source.mcp_login.is_some(),
+            },
             fields: DriverFields::from_config(&data_source.config),
         }
     }
@@ -273,9 +300,31 @@ impl DataSourceForm {
             color: self.color,
             safety: self.safety,
             project: self.project,
-            mcp_login: self.mcp_login.clone(),
+            mcp_login: self.mcp_login(),
             config,
         })
+    }
+
+    /// Only engines that sign in have a login to swap.
+    fn mcp_login(&self) -> Option<McpLogin> {
+        let user = self.mcp_login.user.trim();
+        (self.driver().uses_password() && !user.is_empty()).then(|| McpLogin {
+            user: user.to_owned(),
+        })
+    }
+
+    pub fn mcp_password_change(&self) -> McpPasswordChange {
+        if self.mcp_login().is_none() {
+            return if self.mcp_login.had_login {
+                McpPasswordChange::Remove
+            } else {
+                McpPasswordChange::Keep
+            };
+        }
+        match self.mcp_login.password.as_str() {
+            "" => McpPasswordChange::Keep,
+            password => McpPasswordChange::Set(Password::new(password.to_owned())),
+        }
     }
 
     pub fn password_update(&self) -> PasswordUpdate {
@@ -371,7 +420,7 @@ mod tests {
                 color: Some(SourceColor::Teal),
                 safety: SafetyLevel::ReadOnly,
                 project: Some(ProjectId::generate()),
-                mcp_login: Some(McpLogin {
+                mcp_login: config.driver().uses_password().then(|| McpLogin {
                     user: "assistant".to_owned(),
                 }),
                 config,
@@ -398,5 +447,36 @@ mod tests {
             DataSourceForm::new(DriverKind::Sqlite).password_update(),
             PasswordUpdate::Keep
         );
+    }
+
+    #[test]
+    fn keeps_sets_or_removes_the_mcp_logins_password() {
+        let mut form = postgres_form(|_| {});
+        assert_eq!(form.mcp_password_change(), McpPasswordChange::Keep);
+
+        form.mcp_login.user = " assistant ".to_owned();
+        form.mcp_login.password = "for the assistant".to_owned();
+        let saved = form.to_data_source(DataSourceId::generate()).unwrap();
+        assert_eq!(
+            saved.mcp_login,
+            Some(McpLogin {
+                user: "assistant".to_owned()
+            })
+        );
+        assert_eq!(
+            form.mcp_password_change(),
+            McpPasswordChange::Set(Password::new("for the assistant"))
+        );
+
+        let mut edited = DataSourceForm::from_data_source(&saved);
+        assert_eq!(edited.mcp_login.user, "assistant");
+        assert_eq!(edited.mcp_password_change(), McpPasswordChange::Keep);
+        edited.mcp_login.user.clear();
+        assert_eq!(edited.mcp_password_change(), McpPasswordChange::Remove);
+        assert_eq!(edited.to_data_source(saved.id).unwrap().mcp_login, None);
+
+        let mut sqlite = DataSourceForm::new(DriverKind::Sqlite);
+        sqlite.mcp_login.user = "assistant".to_owned();
+        assert_eq!(sqlite.mcp_password_change(), McpPasswordChange::Keep);
     }
 }

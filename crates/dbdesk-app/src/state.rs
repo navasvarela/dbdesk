@@ -1,6 +1,6 @@
 use dbdesk_core::{DataSource, DataSourceId, ProjectId, SourceColor};
 use dbdesk_engine::{Event, SessionState};
-use dbdesk_store::Project;
+use dbdesk_store::{McpPermissions, Project};
 
 use crate::catalog_tree::CatalogTree;
 
@@ -10,6 +10,8 @@ pub struct AppState {
     pub engine_status: EngineStatus,
     pub data_sources: DataSources,
     pub projects: ProjectList,
+    /// What projects allow MCP clients when they don't say otherwise.
+    pub mcp_defaults: McpPermissions,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -132,7 +134,10 @@ impl AppState {
             }
             Event::DataSourceSaved(data_source) => self.data_sources.upsert(data_source),
             Event::DataSourceDeleted(id) => self.data_sources.remove(*id),
-            Event::ProjectsLoaded(projects) => self.projects.set(projects.projects.clone()),
+            Event::ProjectsLoaded(projects) => {
+                self.projects.set(projects.projects.clone());
+                self.mcp_defaults = projects.mcp_defaults.clone();
+            }
             Event::ProjectsUnavailable { error } => {
                 self.projects = ProjectList::Unavailable(error.clone());
             }
