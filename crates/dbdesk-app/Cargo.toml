@@ -16,6 +16,7 @@ path = "src/main.rs"
 anyhow.workspace = true
 dbdesk-core.workspace = true
 dbdesk-engine.workspace = true
+dbdesk-mcp.workspace = true
 dbdesk-sql.workspace = true
 dbdesk-store.workspace = true
 eframe.workspace = true
@@ -30,12 +31,14 @@ semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
 tracing.workspace = true
 tracing-appender.workspace = true
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
 egui_kittest = { workspace = true, features = ["eframe", "snapshot", "wgpu"] }
+rmcp = { workspace = true, features = ["client", "transport-child-process"] }
 rusqlite.workspace = true
 tempfile.workspace = true
 toml.workspace = true
