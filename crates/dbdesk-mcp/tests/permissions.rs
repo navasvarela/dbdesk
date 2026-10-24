@@ -223,8 +223,11 @@ async fn checks_each_permission() {
         check_schema(&server.client, engine, &created).await;
     }
     let log = server.stop().await;
-    assert!(
+    // SQLite files have no logins to warn about; the servers' data sources do.
+    let signs_in = engines.iter().any(|engine| engine.password.is_some());
+    assert_eq!(
         log.contains("only a dedicated login's grants are airtight"),
+        signs_in,
         "{log}"
     );
 
