@@ -1134,6 +1134,51 @@ mod tests {
     }
 
     #[test]
+    fn adds_a_clickhouse_data_source_whose_port_follows_its_tls_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "No data sources yet.");
+
+        harness
+            .get_all_by_label("New data source")
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness.get_by_label("ClickHouse").click();
+        harness.run();
+        harness.get_by_label_contains("New ClickHouse data source");
+        harness.get_by_label("TLS").click();
+        harness.run();
+        assert!(harness.query_by_label("prefer").is_none());
+        harness.get_by_label("require").click();
+        harness.run();
+        harness.get_by_label("Save").click();
+
+        step_until_visible(&mut harness, "Expand default@localhost");
+        let saved = DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .load()
+            .unwrap();
+        let [saved] = saved.as_slice() else {
+            panic!("expected one data source, got {saved:?}");
+        };
+        let dbdesk_core::ConnectionConfig::ClickHouse(config) = &saved.config else {
+            panic!("expected a ClickHouse data source, got {saved:?}");
+        };
+        let server = &config.server;
+        assert_eq!(
+            (
+                server.port,
+                server.database.as_str(),
+                server.user.as_str(),
+                &server.tls
+            ),
+            (8443, "default", "default", &dbdesk_core::TlsMode::Require)
+        );
+    }
+
+    #[test]
     fn chooses_a_tls_mode_and_ca_file_for_a_postgres_data_source() {
         let dir = tempfile::tempdir().unwrap();
         let ca_file = dir.path().join("internal-ca.pem");

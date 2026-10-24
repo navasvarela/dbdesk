@@ -127,7 +127,7 @@ The toolbar's buttons, and their shortcuts while the editor has focus:
 | --- | --- | --- |
 | **Run** (▷) | ⌘↵ | Runs the selected text if there is a selection, otherwise the statement at the cursor. |
 | **Run all** (▷▷) | ⇧⌘↵ | Runs every statement in the console, in order, stopping at the first one that fails. |
-| **Explain** | ⌥⌘E | Shows how the database would run the statement at the cursor: `EXPLAIN` on PostgreSQL and MariaDB, `EXPLAIN QUERY PLAN` on SQLite, `EXPLAIN FORMAT=TREE` on MySQL 8 once the console has connected, on SQL Server the estimated plan as XML (`SET SHOWPLAN_XML`), which **View value** shows indented, and `EXPLAIN` on DuckDB, whose plan is drawn as a tree in text. |
+| **Explain** | ⌥⌘E | Shows how the database would run the statement at the cursor: `EXPLAIN` on PostgreSQL and MariaDB, `EXPLAIN QUERY PLAN` on SQLite, `EXPLAIN FORMAT=TREE` on MySQL 8 once the console has connected, on SQL Server the estimated plan as XML (`SET SHOWPLAN_XML`), which **View value** shows indented, `EXPLAIN` on DuckDB, whose plan is drawn as a tree in text, and `EXPLAIN` on ClickHouse, one step of the plan per row. |
 | **Cancel** (□) | ⌘. | Stops the running statement, or discards rows not yet loaded. |
 | **History** | — | Opens the data source's query history. |
 | **Format** | ⌥⌘L | Formats the selected text, or the statement at the cursor (see [The editor](#the-editor)). |
@@ -191,6 +191,12 @@ the Dock or the Start menu is not your home folder, so give files their full pat
 that only report how they went show no result grid: `CREATE TABLE`, `SET` and `ATTACH` just
 finish, and an `INSERT`, `UPDATE`, `DELETE` or `COPY` says how many rows it wrote.
 
+On ClickHouse, a console is a session on the server: `USE`, `SET` and temporary tables last from
+one run to the next, until the console disconnects or has been idle for an hour, when the server
+ends the session. Names are case-sensitive (`toDate`, not `TODATE`), so **Format** leaves the
+case of every word as you typed it and completion keeps ClickHouse's spelling of functions.
+`#` starts a comment, as `--` does. Results can't be edited: see [Editing data](#editing-data).
+
 The toolbar shows how the last run went: **Done in 12 ms**, **Failed** or **Cancelled**. While a
 statement runs, Run, Run all and Explain are disabled.
 
@@ -202,6 +208,9 @@ Below the toolbar, each console has a transaction mode:
   start a transaction yourself with `BEGIN`.
 - **Manual commit**: dbdesk starts a transaction before your first statement, and changes stay
   pending until you click **Commit** or **Rollback**.
+
+ClickHouse consoles have no transaction mode: ClickHouse's transactions are experimental and
+off unless the server is set up for them, so every statement takes effect as it runs.
 
 While a transaction is open, the console says **● Transaction open**, in either mode, and you
 can't switch modes. On PostgreSQL, a statement that fails inside a transaction leaves it
@@ -261,7 +270,9 @@ failed; failed statements' tabs are red. Hover over a tab to see its statement.
 
 You can change values in the grid when the result is a `SELECT` from a single table (no joins,
 `GROUP BY` or `DISTINCT`), the table has a primary key, and the result includes the key's
-columns. Otherwise the grid says **Read-only**; hover over it to see why.
+columns. Otherwise the grid says **Read-only**; hover over it to see why. ClickHouse results are
+always read-only: a ClickHouse table's primary key is its sort order, which several rows may
+share, so nothing tells one row from another.
 
 - Double-click a cell, or select it and press F2 or Enter, to edit it. Enter or a click
   elsewhere keeps the new text; Esc drops it. **Set NULL** in the cell's menu sets `NULL`

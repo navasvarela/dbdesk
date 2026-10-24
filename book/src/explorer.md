@@ -99,6 +99,26 @@ data source
       └─ synonyms           with the object each one names
 ```
 
+**ClickHouse**, where, as on MySQL, a database holds its tables directly:
+
+```text
+data source
+└─ database                 every database you may see, shown as a schema
+   ├─ tables
+   │  └─ table
+   │     ├─ columns         with their type
+   │     └─ indexes         data-skipping indexes, with their type and expression
+   ├─ views
+   ├─ materialized views
+   │  └─ columns
+   └─ dictionaries
+      └─ columns
+```
+
+A ClickHouse table's primary key is its sort order rather than an index, so it shows in the
+table's definition, not under **indexes**. Functions aren't listed: a ClickHouse function belongs
+to the whole server, not to one database.
+
 **DuckDB**, where the database opened (named after its file, or `memory`) is listed with any
 attached with `ATTACH`:
 
@@ -158,6 +178,8 @@ Which objects have one depends on the database:
   login may run but not read, shows a message instead.
 - **DuckDB**: tables, views, macros, indexes and sequences, as DuckDB keeps them. A macro's
   definition is rebuilt from its parameters and body, one `CREATE MACRO` per parameter list.
+- **ClickHouse**: tables, views, materialized views and dictionaries, as ClickHouse keeps
+  their `CREATE` statement.
 
 ## Filtering
 
@@ -182,7 +204,9 @@ The explorer hides each database's own objects:
 - SQL Server's `master`, `model`, `msdb` and `tempdb` databases, and in every database the
   `sys`, `INFORMATION_SCHEMA` and `guest` schemas and those of the fixed database roles;
 - DuckDB's `system` and `temp` databases, and its `information_schema` and `pg_catalog`
-  schemas.
+  schemas;
+- ClickHouse's `system` and `information_schema` databases (in either case), and the
+  `.inner` tables where a materialized view without a `TO` table keeps its rows.
 
 The eye button next to **+** shows or hides them, for every data source at once.
 
