@@ -441,6 +441,7 @@ impl From<DriverKind> for Dialect {
             DriverKind::Sqlite => Self::Sqlite,
             DriverKind::Mysql => Self::Mysql,
             DriverKind::SqlServer => Self::SqlServer,
+            DriverKind::DuckDb => Self::DuckDb,
         }
     }
 }
@@ -512,7 +513,8 @@ mod tests {
                 Dialect::Postgres,
                 Dialect::Sqlite,
                 Dialect::Mysql,
-                Dialect::SqlServer
+                Dialect::SqlServer,
+                Dialect::DuckDb
             ]
         );
     }

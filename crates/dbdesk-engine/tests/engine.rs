@@ -16,7 +16,9 @@ use dbdesk_core::{
     CatalogPath, ConnectionConfig, DataSource, DataSourceId, FolderKind, NodeKind, Password,
     PostgresConfig, ServerConfig, TlsMode,
 };
-use dbdesk_engine::{Command, ConsoleId, Event, Export, PasswordUpdate, Release, SessionState};
+use dbdesk_engine::{
+    Command, ConsoleId, DatabaseFile, Event, Export, PasswordUpdate, Release, SessionState,
+};
 use dbdesk_store::{
     ConsoleKey, ConsoleName, DataSourceFile, ExportFormat, FormatSettings, KeymapBindings,
     KeywordCase, Projects, SavedConsole, Settings,
@@ -418,24 +420,29 @@ fn loading_children_connects_first_and_answers_catalog_requests() {
 }
 
 #[test]
-fn creates_a_sqlite_database_but_never_overwrites_one() {
+fn creates_sqlite_and_duckdb_databases_but_never_overwrites_one() {
     let dir = tempfile::tempdir().unwrap();
     let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
     engine.expect_started(vec![]);
-    let path = dir.path().join("new.db");
+    let files = [
+        DatabaseFile::Sqlite(dir.path().join("new.db")),
+        DatabaseFile::DuckDb(dir.path().join("new.duckdb")),
+    ];
 
-    engine.send(Command::CreateSqliteDatabase(path.clone()));
-    engine.expect(Event::SqliteDatabaseCreated {
-        path: path.clone(),
-        result: Ok(()),
-    });
-    engine.send(Command::CreateSqliteDatabase(path.clone()));
+    for file in files {
+        engine.send(Command::CreateDatabaseFile(file.clone()));
+        engine.expect(Event::DatabaseFileCreated {
+            file: file.clone(),
+            result: Ok(()),
+        });
+        engine.send(Command::CreateDatabaseFile(file.clone()));
 
-    match engine.next_event() {
-        Event::SqliteDatabaseCreated {
-            result: Err(error), ..
-        } => assert!(error.contains("already exists"), "{error}"),
-        other => panic!("expected a refusal to overwrite, got {other:?}"),
+        match engine.next_event() {
+            Event::DatabaseFileCreated {
+                result: Err(error), ..
+            } => assert!(error.contains("already exists"), "{error}"),
+            other => panic!("expected a refusal to overwrite, got {other:?}"),
+        }
     }
 }
 

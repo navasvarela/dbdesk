@@ -129,6 +129,9 @@ pub enum ConnectionConfig {
     /// Microsoft SQL Server and Azure SQL.
     #[serde(rename = "sqlserver")]
     SqlServer(SqlServerConfig),
+    /// DuckDB, in a file or in memory.
+    #[serde(rename = "duckdb")]
+    DuckDb(DuckDbConfig),
 }
 
 impl ConnectionConfig {
@@ -138,6 +141,7 @@ impl ConnectionConfig {
             Self::Sqlite(_) => DriverKind::Sqlite,
             Self::Mysql(_) => DriverKind::Mysql,
             Self::SqlServer(_) => DriverKind::SqlServer,
+            Self::DuckDb(_) => DriverKind::DuckDb,
         }
     }
 
@@ -148,6 +152,7 @@ impl ConnectionConfig {
         match self {
             Self::Postgres(config) => Some(&config.server.database),
             Self::SqlServer(config) => Some(&config.server.database),
+            Self::DuckDb(config) => config.database_name(),
             Self::Sqlite(_) | Self::Mysql(_) => None,
         }
     }
@@ -160,6 +165,7 @@ impl ConnectionConfig {
         match self {
             Self::Postgres(_) => "public",
             Self::SqlServer(_) => "dbo",
+            Self::DuckDb(_) => "main",
             Self::Sqlite(_) => "main",
             Self::Mysql(config) => &config.server.database,
         }
@@ -188,6 +194,16 @@ impl ConnectionConfig {
                     .map_err(PlaceholderError::in_setting(Setting::File))?,
                 read_only: config.read_only,
             }),
+            Self::DuckDb(config) => Self::DuckDb(DuckDbConfig {
+                database: match &config.database {
+                    DuckDbDatabase::File { path, read_only } => DuckDbDatabase::File {
+                        path: expand_path(path, variables)
+                            .map_err(PlaceholderError::in_setting(Setting::File))?,
+                        read_only: *read_only,
+                    },
+                    DuckDbDatabase::InMemory => DuckDbDatabase::InMemory,
+                },
+            }),
         })
     }
 
@@ -197,10 +213,11 @@ impl ConnectionConfig {
             Self::Postgres(config) => config.server.default_name(),
             Self::Mysql(config) => config.server.default_name(),
             Self::SqlServer(config) => config.server.default_name(),
-            Self::Sqlite(config) => config.path.file_name().map_or_else(
-                || config.path.display().to_string(),
-                |name| name.to_string_lossy().into_owned(),
-            ),
+            Self::Sqlite(config) => file_name(&config.path),
+            Self::DuckDb(config) => match &config.database {
+                DuckDbDatabase::File { path, .. } => file_name(path),
+                DuckDbDatabase::InMemory => DuckDbConfig::IN_MEMORY_NAME.to_owned(),
+            },
         }
     }
 }
@@ -211,7 +228,7 @@ impl DriverKind {
     pub fn uses_password(self) -> bool {
         match self {
             Self::Postgres | Self::Mysql | Self::SqlServer => true,
-            Self::Sqlite => false,
+            Self::Sqlite | Self::DuckDb => false,
         }
     }
 }
@@ -227,8 +244,24 @@ impl fmt::Display for ConnectionConfig {
                 write!(f, "{} (read-only)", config.path.display())
             }
             Self::Sqlite(config) => write!(f, "{}", config.path.display()),
+            Self::DuckDb(config) => match &config.database {
+                DuckDbDatabase::File {
+                    path,
+                    read_only: true,
+                } => write!(f, "{} (read-only)", path.display()),
+                DuckDbDatabase::File { path, .. } => write!(f, "{}", path.display()),
+                DuckDbDatabase::InMemory => f.write_str("in memory"),
+            },
         }
     }
+}
+
+/// The file name of `path`, or the whole path if it has none.
+fn file_name(path: &std::path::Path) -> String {
+    path.file_name().map_or_else(
+        || path.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    )
 }
 
 /// Where a database server is and whom to connect as: what every network engine's settings
@@ -410,6 +443,39 @@ pub enum TlsMode {
     },
 }
 
+/// A DuckDB database: a file, or one in memory that starts empty each time, for querying CSV,
+/// Parquet and JSON files with DuckDB's table functions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DuckDbConfig {
+    #[serde(flatten)]
+    pub database: DuckDbDatabase,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "database", rename_all = "kebab-case")]
+pub enum DuckDbDatabase {
+    File {
+        path: PathBuf,
+        #[serde(default)]
+        read_only: bool,
+    },
+    InMemory,
+}
+
+impl DuckDbConfig {
+    /// What DuckDB calls an in-memory database in its catalog.
+    pub const IN_MEMORY_NAME: &str = "memory";
+
+    /// The name DuckDB gives the database it opens: the file's name without its extension, or
+    /// `memory`. `None` for a file name that isn't valid UTF-8.
+    pub fn database_name(&self) -> Option<&str> {
+        match &self.database {
+            DuckDbDatabase::File { path, .. } => path.file_stem()?.to_str(),
+            DuckDbDatabase::InMemory => Some(Self::IN_MEMORY_NAME),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SqliteConfig {
     pub path: PathBuf,
@@ -423,10 +489,17 @@ pub enum DriverKind {
     Sqlite,
     Mysql,
     SqlServer,
+    DuckDb,
 }
 
 impl DriverKind {
-    pub const ALL: [Self; 4] = [Self::Postgres, Self::Sqlite, Self::Mysql, Self::SqlServer];
+    pub const ALL: [Self; 5] = [
+        Self::Postgres,
+        Self::Sqlite,
+        Self::Mysql,
+        Self::SqlServer,
+        Self::DuckDb,
+    ];
 
     pub fn display_name(self) -> &'static str {
         match self {
@@ -434,6 +507,7 @@ impl DriverKind {
             Self::Sqlite => "SQLite",
             Self::Mysql => "MySQL / MariaDB",
             Self::SqlServer => "SQL Server",
+            Self::DuckDb => "DuckDB",
         }
     }
 }
@@ -604,6 +678,51 @@ mod tests {
             toml::from_str::<File>(&toml::to_string(&file).unwrap()).unwrap(),
             file
         );
+    }
+
+    #[test]
+    fn writes_duckdb_files_and_in_memory_databases_with_their_tags() {
+        let cases = [
+            (
+                DuckDbDatabase::File {
+                    path: "/data/orders.duckdb".into(),
+                    read_only: true,
+                },
+                "database = \"file\"",
+                Some("orders"),
+                "orders.duckdb",
+                "/data/orders.duckdb (read-only)",
+            ),
+            (
+                DuckDbDatabase::InMemory,
+                "database = \"in-memory\"",
+                Some("memory"),
+                "memory",
+                "in memory",
+            ),
+        ];
+        for (database, tag, catalog_name, default_name, shown) in cases {
+            let file = File {
+                data_source: vec![DataSource {
+                    id: DataSourceId::generate(),
+                    name: "duck".to_owned(),
+                    color: None,
+                    project: None,
+                    config: ConnectionConfig::DuckDb(DuckDbConfig { database }),
+                }],
+            };
+
+            let text = toml::to_string(&file).unwrap();
+
+            assert!(text.contains("driver = \"duckdb\""), "{text}");
+            assert!(text.contains(tag), "{text}");
+            assert_eq!(toml::from_str::<File>(&text).unwrap(), file);
+            let config = &file.data_source[0].config;
+            assert_eq!(config.database(), catalog_name);
+            assert_eq!(config.default_schema(), "main");
+            assert_eq!(config.default_name(), default_name);
+            assert_eq!(config.to_string(), shown);
+        }
     }
 
     #[test]

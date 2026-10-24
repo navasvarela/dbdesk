@@ -9,6 +9,7 @@ the New data source menu and in the data source dialog.
 | `sqlite.svg` | SQLite | `#003B57` |
 | `mysql.svg` | MySQL (also shown for MariaDB, which the same driver serves) | `#4479A1` |
 | `sqlserver.svg` | A neutral database glyph for SQL Server, drawn for dbdesk (see below) | `#CC2927` |
+| `duckdb.svg` | DuckDB (its yellow is darkened to a gold on the light theme, where it wouldn't show) | `#FFF000` |
 
 ## Source and licence
 

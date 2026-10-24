@@ -4,8 +4,8 @@
 mod server;
 
 use dbdesk_core::{
-    ConnectionConfig, DataSource, DataSourceId, DriverKind, MysqlConfig, Password, PostgresConfig,
-    ProjectId, SourceColor, SqlServerConfig, SqliteConfig,
+    ConnectionConfig, DataSource, DataSourceId, DriverKind, DuckDbConfig, DuckDbDatabase,
+    MysqlConfig, Password, PostgresConfig, ProjectId, SourceColor, SqlServerConfig, SqliteConfig,
 };
 use dbdesk_engine::PasswordUpdate;
 
@@ -70,6 +70,7 @@ pub enum DriverFields {
     Sqlite(SqliteFields),
     Mysql(MysqlFields),
     SqlServer(SqlServerFields),
+    DuckDb(DuckDbFields),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,6 +86,21 @@ pub struct MysqlFields {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SqlServerFields {
     pub server: ServerFields,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DuckDbFields {
+    pub location: DuckDbLocation,
+    /// Kept while In memory is chosen, so switching back to File doesn't lose it.
+    pub path: String,
+    pub read_only: bool,
+}
+
+/// Where a DuckDB data source's database is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DuckDbLocation {
+    File,
+    InMemory,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,6 +125,11 @@ impl DriverFields {
             DriverKind::SqlServer => Self::SqlServer(SqlServerFields {
                 server: ServerFields::new(SQL_SERVER_DEFAULTS),
             }),
+            DriverKind::DuckDb => Self::DuckDb(DuckDbFields {
+                location: DuckDbLocation::File,
+                path: String::new(),
+                read_only: false,
+            }),
         }
     }
 
@@ -127,6 +148,18 @@ impl DriverFields {
             ConnectionConfig::SqlServer(config) => Self::SqlServer(SqlServerFields {
                 server: ServerFields::from_config(&config.server, SQL_SERVER_DEFAULTS),
             }),
+            ConnectionConfig::DuckDb(config) => Self::DuckDb(match &config.database {
+                DuckDbDatabase::File { path, read_only } => DuckDbFields {
+                    location: DuckDbLocation::File,
+                    path: path.display().to_string(),
+                    read_only: *read_only,
+                },
+                DuckDbDatabase::InMemory => DuckDbFields {
+                    location: DuckDbLocation::InMemory,
+                    path: String::new(),
+                    read_only: false,
+                },
+            }),
         }
     }
 
@@ -136,6 +169,7 @@ impl DriverFields {
             Self::Sqlite(_) => DriverKind::Sqlite,
             Self::Mysql(_) => DriverKind::Mysql,
             Self::SqlServer(_) => DriverKind::SqlServer,
+            Self::DuckDb(_) => DriverKind::DuckDb,
         }
     }
 
@@ -145,7 +179,7 @@ impl DriverFields {
             Self::Postgres(fields) => Some(&fields.server),
             Self::Mysql(fields) => Some(&fields.server),
             Self::SqlServer(fields) => Some(&fields.server),
-            Self::Sqlite(_) => None,
+            Self::Sqlite(_) | Self::DuckDb(_) => None,
         }
     }
 
@@ -161,6 +195,7 @@ impl DriverFields {
             Self::SqlServer(fields) => ConnectionConfig::SqlServer(SqlServerConfig {
                 server: fields.server.to_config()?,
             }),
+            Self::DuckDb(fields) => ConnectionConfig::DuckDb(fields.to_config()?),
         })
     }
 }
@@ -219,6 +254,19 @@ impl SqliteFields {
             path: required(&self.path, FormError::PathMissing)?.into(),
             read_only: self.read_only,
         })
+    }
+}
+
+impl DuckDbFields {
+    fn to_config(&self) -> Result<DuckDbConfig, FormError> {
+        let database = match self.location {
+            DuckDbLocation::File => DuckDbDatabase::File {
+                path: required(&self.path, FormError::PathMissing)?.into(),
+                read_only: self.read_only,
+            },
+            DuckDbLocation::InMemory => DuckDbDatabase::InMemory,
+        };
+        Ok(DuckDbConfig { database })
     }
 }
 
