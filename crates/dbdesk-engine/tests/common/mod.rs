@@ -363,3 +363,18 @@ fn parse_server(rest: &str, default_port: &str) -> (ServerConfig, Password) {
     };
     (server, Password::new(password))
 }
+
+/// A port on this machine where every connection is accepted and closed at once, so a
+/// connection attempt fails straight away. A port nothing listens on isn't enough: some
+/// machines (CI runners among them) drop the attempt instead of refusing it, and it then
+/// waits for the connect timeout.
+pub fn closing_server() -> u16 {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for connection in listener.incoming() {
+            drop(connection);
+        }
+    });
+    port
+}

@@ -1433,7 +1433,11 @@ mod tests {
     #[test]
     fn asks_for_the_password_a_data_source_has_none_saved_for_then_connects() {
         let dir = tempfile::tempdir().unwrap();
-        // Nothing listens on port 1, so the second attempt fails only once it is made.
+        // A server that hangs up at once: the second attempt fails as soon as it is made. A
+        // port nothing listens on can hang until the connect timeout on CI runners.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || listener.incoming().for_each(drop));
         let data_source = dbdesk_core::DataSource {
             id: DataSourceId::generate(),
             name: "shared".to_owned(),
@@ -1442,7 +1446,7 @@ mod tests {
             config: dbdesk_core::ConnectionConfig::Postgres(dbdesk_core::PostgresConfig {
                 server: dbdesk_core::ServerConfig {
                     host: "127.0.0.1".to_owned(),
-                    port: 1.into(),
+                    port: port.into(),
                     database: "app".to_owned(),
                     user: "juan".to_owned(),
                     tls: dbdesk_core::TlsMode::Disable,

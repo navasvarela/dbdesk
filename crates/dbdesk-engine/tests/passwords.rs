@@ -6,17 +6,17 @@ mod common;
 
 use std::sync::Arc;
 
-use common::{MemorySecrets, TestEngine, postgres_test_server};
+use common::{MemorySecrets, TestEngine, closing_server, postgres_test_server};
 use dbdesk_core::{
     ConnectionConfig, DataSource, DataSourceId, Password, PostgresConfig, ServerConfig, TlsMode,
 };
 use dbdesk_engine::{Command, Event, PasswordKept, PasswordNeeded, PasswordUpdate, SessionState};
 
-/// Nothing listens on port 1, so connecting fails at once, after the password is found.
+/// A server that hangs up at once, so connecting fails as soon as the password is found.
 fn unreachable_postgres() -> DataSource {
     postgres(ServerConfig {
         host: "127.0.0.1".to_owned(),
-        port: 1.into(),
+        port: closing_server().into(),
         database: "app".to_owned(),
         user: "juan".to_owned(),
         tls: TlsMode::Disable,
