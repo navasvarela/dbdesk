@@ -17,7 +17,10 @@ use crate::definition_window::DefinitionWindow;
 use crate::delete_dialog::{DeleteChoice, DeleteConfirmation};
 use crate::explorer::{ExplorerAction, ExplorerOptions};
 use crate::export_dialog;
+use crate::export_sources_dialog::{ExportAction, ExportSourcesDialog};
+use crate::file_picker;
 use crate::history_window::{HistoryAction, HistoryWindow};
+use crate::import_dialog::{ImportAction, ImportDialog};
 use crate::keymap::{self, Keymap};
 use crate::keymap_window::{self, KeymapWindowAction};
 use crate::log_console::{LogConsole, LogFeed};
@@ -57,6 +60,12 @@ pub struct DbDeskApp {
     history_window: Option<HistoryWindow>,
     rollback_confirmation: Option<RollbackConfirmation>,
     password_prompt: Option<PasswordPrompt>,
+    export_sources_dialog: Option<ExportSourcesDialog>,
+    import_dialog: Option<ImportDialog>,
+    /// Ask where to export data sources to and which file to import. The platform's file
+    /// dialogs, except in tests.
+    pick_data_sources_export: Box<dyn Fn() -> Option<PathBuf>>,
+    pick_data_sources_import: Box<dyn Fn() -> Option<PathBuf>>,
     /// Set once quitting may roll back open transactions, so the close isn't asked again.
     quit_confirmed: bool,
     keymap: Keymap,
@@ -109,6 +118,10 @@ impl DbDeskApp {
             history_window: None,
             rollback_confirmation: None,
             password_prompt: None,
+            export_sources_dialog: None,
+            import_dialog: None,
+            pick_data_sources_export: Box::new(file_picker::pick_data_sources_export),
+            pick_data_sources_import: Box::new(file_picker::pick_data_sources_import),
             quit_confirmed: false,
             pick_export_path: Box::new(export_dialog::pick_export_path),
             keymap: Keymap::default(),
@@ -174,6 +187,12 @@ impl DbDeskApp {
             self.send(window.search_command());
         }
         self.apply_to_password_prompt(event);
+        if let Some(dialog) = &mut self.export_sources_dialog {
+            dialog.apply(event);
+        }
+        if let Some(dialog) = &mut self.import_dialog {
+            dialog.apply(event);
+        }
         self.consoles.apply(event);
         self.settings.apply(event);
         self.updates.apply(event);
@@ -595,6 +614,7 @@ impl DbDeskApp {
 
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
+            ui.menu_button("File", |ui| self.file_menu(ui));
             ui.menu_button("View", |ui| {
                 ui.menu_button("Theme", theme_menu);
                 if ui.button("Keymap…").clicked() {
@@ -619,6 +639,63 @@ impl DbDeskApp {
                 }
             });
         });
+    }
+
+    fn file_menu(&mut self, ui: &mut egui::Ui) {
+        let has_data_sources = !self.state.data_sources.entries().is_empty();
+        if ui
+            .add_enabled(has_data_sources, egui::Button::new("Export data sources…"))
+            .on_hover_text("Write data sources and projects to a file, without passwords")
+            .on_disabled_hover_text("There are no data sources to export yet")
+            .clicked()
+        {
+            self.export_sources_dialog = Some(ExportSourcesDialog::new());
+        }
+        if ui
+            .button("Import data sources…")
+            .on_hover_text("Add or update data sources from an exported file")
+            .clicked()
+            && let Some(path) = (self.pick_data_sources_import)()
+        {
+            let (dialog, read) = ImportDialog::open(path);
+            self.import_dialog = Some(dialog);
+            self.send(read);
+        }
+    }
+
+    fn show_export_sources_dialog(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.export_sources_dialog else {
+            return;
+        };
+        let data_sources: Vec<_> = self
+            .state
+            .data_sources
+            .entries()
+            .iter()
+            .map(|entry| entry.data_source.clone())
+            .collect();
+        match dialog.show(ctx, self.state.projects.projects(), &data_sources) {
+            Some(ExportAction::ChooseFile) => {
+                if let Some(path) = (self.pick_data_sources_export)() {
+                    let command = dialog.command(path);
+                    self.send(command);
+                }
+            }
+            Some(ExportAction::Close) => self.export_sources_dialog = None,
+            None => {}
+        }
+    }
+
+    fn show_import_dialog(&mut self, ctx: &egui::Context) {
+        match self
+            .import_dialog
+            .as_mut()
+            .and_then(|dialog| dialog.show(ctx))
+        {
+            Some(ImportAction::Apply(plan)) => self.send(Command::ApplyImport(plan)),
+            Some(ImportAction::Close) => self.import_dialog = None,
+            None => {}
+        }
     }
 
     fn show_about(&mut self, ctx: &egui::Context) {
@@ -835,6 +912,8 @@ impl eframe::App for DbDeskApp {
         self.show_project_dialog(&ctx);
         self.show_delete_project_confirmation(&ctx);
         self.show_password_prompt(&ctx);
+        self.show_export_sources_dialog(&ctx);
+        self.show_import_dialog(&ctx);
         if self
             .definition_window
             .as_ref()
@@ -1489,6 +1568,105 @@ mod tests {
                         if error.starts_with("could not connect"))
                 })
         });
+    }
+
+    #[test]
+    fn exports_a_project_with_its_data_sources_and_no_password() {
+        let dir = tempfile::tempdir().unwrap();
+        let shop = save_shop(dir.path(), "CREATE TABLE t (id INTEGER)");
+        let export_path = dir.path().join("team.toml");
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        let picked = export_path.clone();
+        harness.state_mut().pick_data_sources_export = Box::new(move || Some(picked.clone()));
+        step_until_visible(&mut harness, "Expand shop");
+
+        harness.get_by_label("File").click();
+        harness.run();
+        harness.get_by_label("Export data sources…").click();
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::CheckBox, "shop")
+            .click();
+        harness.run();
+        harness.get_by_label_contains("1 data source chosen");
+        harness.get_by_label("Export…").click();
+
+        step_until_visible(&mut harness, "Exported 1 data source to");
+        let text = std::fs::read_to_string(&export_path).unwrap();
+        assert!(text.contains(&shop.id.to_string()), "{text}");
+        assert!(text.contains(r#"path = "shop.db""#), "{text}");
+    }
+
+    #[test]
+    fn previews_an_import_then_imports_what_was_chosen() {
+        let dir = tempfile::tempdir().unwrap();
+        let shop = save_shop(dir.path(), "CREATE TABLE t (id INTEGER)");
+        let analytics = dbdesk_store::Project::new(
+            dbdesk_core::ProjectId::generate(),
+            "Analytics".to_owned(),
+            dbdesk_store::ProjectSlug::from_name("Analytics"),
+        );
+        let changed_shop = dbdesk_core::DataSource {
+            color: Some(dbdesk_core::SourceColor::Green),
+            ..shop.clone()
+        };
+        let warehouse = dbdesk_core::DataSource {
+            id: DataSourceId::generate(),
+            name: "warehouse".to_owned(),
+            project: Some(analytics.id),
+            config: dbdesk_core::ConnectionConfig::Sqlite(dbdesk_core::SqliteConfig {
+                path: dir.path().join("elsewhere/warehouse.db"),
+                read_only: true,
+            }),
+            ..shop.clone()
+        };
+        let export_path = dir.path().join("team.toml");
+        dbdesk_store::write_export(
+            &export_path,
+            &[changed_shop, warehouse],
+            std::slice::from_ref(&analytics),
+            None,
+        )
+        .unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        let picked = export_path.clone();
+        harness.state_mut().pick_data_sources_import = Box::new(move || Some(picked.clone()));
+        step_until_visible(&mut harness, "Expand shop");
+
+        harness.get_by_label("File").click();
+        harness.run();
+        harness.get_by_label("Import data sources…").click();
+        step_until_visible(&mut harness, "Imports 1 project and 2 data sources.");
+        harness.get_by_label_contains("Colour: none → Green");
+        harness.get_by_label_contains("not found on this machine");
+        for (entry, choice) in [
+            ("Analytics", "Import"),
+            ("shop", "Update"),
+            ("warehouse", "Import"),
+        ] {
+            let label = format!("Import choice for {entry}");
+            let combo = harness.get_by_label(&label);
+            assert_eq!(combo.value().as_deref(), Some(choice), "{entry}");
+        }
+        harness
+            .get_by_label("Import choice for shop")
+            .click_accesskit();
+        harness.run();
+        harness.get_by_label("Skip").click_accesskit();
+        harness.run();
+        harness.get_by_label_contains("Imports 1 project and 1 data source.");
+        harness.get_by_label("Import").click();
+
+        step_until_visible(&mut harness, "Imported 1 project and 1 data source.");
+        let saved = DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .load()
+            .unwrap();
+        assert_eq!(saved.len(), 2, "{saved:#?}");
+        assert_eq!(saved[0], shop);
+        assert_eq!(saved[1].name, "warehouse");
+        assert_eq!(saved[1].project, Some(analytics.id));
     }
 
     #[test]

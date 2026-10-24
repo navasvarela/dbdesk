@@ -1,11 +1,15 @@
 //! The platform's open and save dialogs, for choosing an existing database file (SQLite or
-//! DuckDB) or naming a new one, and for choosing a CA certificate.
+//! DuckDB) or naming a new one, for choosing a CA certificate, and for exporting and importing
+//! data sources.
 
 use std::path::{Path, PathBuf};
 
 use dbdesk_engine::DatabaseFile;
 
 const CA_TITLE: &str = "Choose a CA certificate (PEM)";
+const EXPORT_TITLE: &str = "Export data sources";
+const IMPORT_TITLE: &str = "Import data sources";
+const EXPORT_FILE_NAME: &str = "dbdesk-data-sources.toml";
 
 /// An engine whose databases are files.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +78,23 @@ pub fn pick_new_database_file(engine: FileEngine, current: &str) -> Option<PathB
 /// the same reason as [`pick_database_file`]: they come as `.pem`, `.crt` and `.cer`.
 pub fn pick_ca_file(current: &str) -> Option<PathBuf> {
     dialog(CA_TITLE, current).pick_file()
+}
+
+/// Shows the save dialog for an export of data sources.
+pub fn pick_data_sources_export() -> Option<PathBuf> {
+    rfd::FileDialog::new()
+        .set_title(EXPORT_TITLE)
+        .add_filter("TOML", &["toml"])
+        .set_file_name(EXPORT_FILE_NAME)
+        .save_file()
+}
+
+/// Shows the open dialog for a file of data sources to import.
+pub fn pick_data_sources_import() -> Option<PathBuf> {
+    rfd::FileDialog::new()
+        .set_title(IMPORT_TITLE)
+        .add_filter("TOML", &["toml"])
+        .pick_file()
 }
 
 fn dialog(title: &str, current: &str) -> rfd::FileDialog {
