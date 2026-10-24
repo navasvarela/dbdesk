@@ -1604,6 +1604,9 @@ mod tests {
         harness.run();
         harness.get_by_label("Settings…").click();
         harness.run();
+        // The window scrolls, and the MCP section is at its bottom, out of reach of clicks.
+        harness.get_by_label("Save MCP defaults").scroll_to_me();
+        harness.run();
         harness.get_by_label("Schema").click();
         harness.run();
         harness.get_by_label("Only").click();
