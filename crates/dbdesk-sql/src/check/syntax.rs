@@ -114,6 +114,27 @@ impl<'a> Tokens<'a> {
             .map(|token| &self.statement[token.range.clone()])
     }
 
+    /// Whether the tokens from `index` on are written together, with nothing between them,
+    /// and spell `text`.
+    fn spells_at(&self, index: usize, text: &str) -> bool {
+        let Some(first) = self.tokens.get(index) else {
+            return false;
+        };
+        let start = first.range.start;
+        let end = start + text.len();
+        let mut reached = start;
+        for token in &self.tokens[index..] {
+            if token.range.start >= end {
+                break;
+            }
+            if token.range.start != reached {
+                return false;
+            }
+            reached = token.range.end;
+        }
+        reached == end && self.statement.get(start..end) == Some(text)
+    }
+
     /// Whether the construct `gap` starts at token `index`.
     fn has_gap_at(&self, index: usize, gap: ParserGap) -> bool {
         let current = self.word(index);
@@ -135,6 +156,7 @@ impl<'a> Tokens<'a> {
                         .find(|&close| self.text(close) == Some(")"))
                         .is_some_and(|close| self.word(close + 1).as_deref() == Some("as"))
             }
+            ParserGap::Operator(operator) => self.spells_at(index, operator),
             ParserGap::InfixOperator(operator) => {
                 current.as_deref() == Some(operator) && self.text(index + 1) != Some("(")
             }

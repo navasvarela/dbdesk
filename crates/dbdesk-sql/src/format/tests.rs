@@ -101,6 +101,26 @@ merge into t using s on t.id = s.id when matched then update set a = s.a when no
 /* a /* nested */ comment */ select 1;
 "#;
 
+/// DuckDB statements: its friendlier SQL, file-reading table functions and statements of its
+/// own.
+const DUCKDB_CORPUS: &str = r#"
+select * from read_parquet('data/*.parquet') where amount > 1 order by 1 limit 10;
+from orders select customer, total where total > 10;
+select * exclude (note), [1, 2] as l, {'a': 1} as s, list_transform(l, x -> x + 1) from orders;
+select customer, count(*) from orders group by all order by all;
+select * from orders qualify row_number() over (partition by customer order by total desc) = 1;
+select * from trades t asof join quotes q on t.symbol = q.symbol and t.ts >= q.ts;
+create table orders as select * from read_csv('orders.csv', header = true);
+copy orders to 'orders.parquet' (format parquet);
+create macro add(a, b) as a + b;
+attach 'other.duckdb' as other (read_only);
+pivot sales on year using sum(amount);
+describe orders;
+summarize orders;
+insert or replace into kv values ('a', 1);
+select $$dollar; 'quoted'$$, E'it\'s', 1::integer, x::varchar[] from t;
+"#;
+
 fn format_all(text: &str, dialect: Dialect, options: &FormatOptions) -> String {
     let ranges = split_statements(text, dialect);
     format_ranges(text, &ranges, dialect, options)
@@ -119,6 +139,7 @@ fn formatting_the_corpus_never_changes_a_token_and_is_stable() {
         (SQLITE_CORPUS, Dialect::Sqlite),
         (MYSQL_CORPUS, Dialect::Mysql),
         (SQL_SERVER_CORPUS, Dialect::SqlServer),
+        (DUCKDB_CORPUS, Dialect::DuckDb),
     ] {
         for case in [
             KeywordCase::Upper,
@@ -148,6 +169,7 @@ fn formatting_keeps_every_statement_boundary() {
         (SQLITE_CORPUS, Dialect::Sqlite),
         (MYSQL_CORPUS, Dialect::Mysql),
         (SQL_SERVER_CORPUS, Dialect::SqlServer),
+        (DUCKDB_CORPUS, Dialect::DuckDb),
     ] {
         let formatted = format_all(corpus, dialect, &FormatOptions::default());
         let before = split_statements(corpus, dialect);
@@ -190,6 +212,7 @@ fn every_statement_formats_on_its_own_too() {
         (SQLITE_CORPUS, Dialect::Sqlite),
         (MYSQL_CORPUS, Dialect::Mysql),
         (SQL_SERVER_CORPUS, Dialect::SqlServer),
+        (DUCKDB_CORPUS, Dialect::DuckDb),
     ] {
         for range in split_statements(corpus, dialect) {
             let statement = &corpus[range];
