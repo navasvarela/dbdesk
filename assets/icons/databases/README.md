@@ -8,6 +8,7 @@ the New data source menu and in the data source dialog.
 | `postgresql.svg` | PostgreSQL | `#4169E1` |
 | `sqlite.svg` | SQLite | `#003B57` |
 | `mysql.svg` | MySQL (also shown for MariaDB, which the same driver serves) | `#4479A1` |
+| `sqlserver.svg` | A neutral database glyph for SQL Server, drawn for dbdesk (see below) | `#CC2927` |
 
 ## Source and licence
 
@@ -24,6 +25,10 @@ gets a shade that reads in the light and the dark theme (`Palette::driver` in
 The logos themselves remain trademarks of their owners. dbdesk shows them only to identify the
 database a data source connects to. See each project's policy, e.g.
 [PostgreSQL's](https://www.postgresql.org/about/policies/trademarks/).
+
+`sqlserver.svg` is the exception: Simple Icons no longer carries Microsoft's SQL Server logo
+(its last release with it was 12.4.0), so it is a plain database cylinder drawn for dbdesk,
+under the same licence as dbdesk, in the colour SQL Server's logo uses.
 
 ## Adding a database
 

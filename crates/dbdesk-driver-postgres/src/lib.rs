@@ -415,7 +415,7 @@ mod tests {
         };
         let mut connection = connect(&config, password.as_ref()).await.unwrap();
 
-        conformance::check_execution(&mut connection).await;
+        conformance::check_execution(&mut connection, conformance::Spelling::STANDARD).await;
         // Another database's connection and the cancel request are connections of their own,
         // which the server refuses unless they are encrypted too.
         let other = CatalogPath::root().child(NodeKind::Database, "postgres");
@@ -578,11 +578,15 @@ mod tests {
         };
         let mut connection = connect(&config, password.as_ref()).await.unwrap();
 
-        conformance::check_execution(&mut connection).await;
-        conformance::check_transactions(&mut connection).await;
-        conformance::check_describe_table(&mut connection, conformance::UnquotedNames::IgnoreCase)
-            .await;
-        conformance::check_validate(&mut connection).await;
+        conformance::check_execution(&mut connection, conformance::Spelling::STANDARD).await;
+        conformance::check_transactions(&mut connection, conformance::Spelling::STANDARD).await;
+        conformance::check_describe_table(
+            &mut connection,
+            conformance::UnquotedNames::IgnoreCase,
+            conformance::Spelling::STANDARD,
+        )
+        .await;
+        conformance::check_validate(&mut connection, conformance::Spelling::STANDARD).await;
         conformance::check_cancel(&mut connection, "SELECT pg_sleep(60)").await;
 
         Box::new(connection).close().await.unwrap();

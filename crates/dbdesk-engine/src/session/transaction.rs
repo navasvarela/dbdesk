@@ -22,7 +22,8 @@ pub(super) async fn begin_if_needed(
     if !needed {
         return Ok(Ok(()));
     }
-    let begun = run_command(worker, "BEGIN", Some(run)).await?;
+    let begin = worker.context.dialect().begin_transaction();
+    let begun = run_command(worker, begin, Some(run)).await?;
     if begun.is_ok() {
         set(worker, TransactionStatus::InTransaction);
     }

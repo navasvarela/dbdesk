@@ -8,12 +8,13 @@ use std::sync::Arc;
 
 use common::{
     TestEngine, mysql_test_servers, postgres_test_server, sqlite_data_source, sqlite_database,
+    sqlserver_test_server,
 };
 use dbdesk_core::{ConnectionConfig, DataSource, DataSourceId, Identifier, RelationName};
 use dbdesk_core::{Quoting, RejectionKind, TransactionStatus};
 use dbdesk_engine::{
-    Command, ConsoleId, EditFailure, Event, PasswordUpdate, RunId, RunOutcome, SessionState,
-    StatementCheck, StatementFailure, TransactionEnd, TransactionMode,
+    Command, ConsoleId, EditFailure, Event, PasswordUpdate, RunId, RunOutcome, RunPurpose,
+    SessionState, StatementCheck, StatementFailure, TransactionEnd, TransactionMode,
 };
 use dbdesk_store::HistoryOutcome;
 
@@ -61,6 +62,7 @@ fn execute_in(
         run: RunId(run),
         statements: statements.iter().map(|s| (*s).to_owned()).collect(),
         transactions,
+        purpose: RunPurpose::Run,
     });
 }
 
@@ -659,6 +661,136 @@ fn applies_and_rolls_back_edits_on_mysql() {
                 assert_eq!(rows, [[Some(r"C:\ada's".to_owned())]]);
                 break;
             }
+        }
+    }
+}
+
+/// The `UPDATE`s grid editing writes for SQL Server: bracketed names, every value an `N'…'`
+/// literal, so text outside the database's code page survives. Inside a transaction the
+/// console opened (manual mode), the edits are a `SAVE TRANSACTION` that a failure rolls back
+/// to. Needs `DBDESK_TEST_SQLSERVER_URL`; skipped without it.
+#[test]
+fn applies_and_rolls_back_edits_on_sqlserver() {
+    let Some((config, password)) = sqlserver_test_server() else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    engine.expect_started(vec![]);
+    let data_source = DataSource {
+        id: DataSourceId::generate(),
+        name: "test server".to_owned(),
+        color: None,
+        project: None,
+        config: ConnectionConfig::SqlServer(config),
+    };
+    let id = data_source.id;
+    engine.send(Command::SaveDataSource {
+        data_source,
+        password: PasswordUpdate::Set(password),
+    });
+    assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
+    execute(
+        &engine,
+        id,
+        1,
+        &[
+            "CREATE TABLE #people (id int PRIMARY KEY, name nvarchar(50) NOT NULL)",
+            "INSERT INTO #people VALUES (1, N'ada')",
+        ],
+    );
+    finish_run(&mut engine, 1);
+
+    edits(
+        &engine,
+        &["UPDATE [dbo].[#people] SET [name] = N'Zoë 李' WHERE [id] = N'1'"],
+    );
+    assert_eq!(expect_edits(&mut engine), Ok(()));
+    edits(
+        &engine,
+        &[
+            "UPDATE [#people] SET [name] = N'gone' WHERE [id] = N'1'",
+            "UPDATE [#people] SET [name] = NULL WHERE [id] = N'1'",
+        ],
+    );
+    assert_eq!(expect_edits(&mut engine).unwrap_err().statement, Some(1));
+
+    // The same inside a transaction the console opened itself.
+    execute(&engine, id, 2, &["BEGIN TRANSACTION"]);
+    finish_run(&mut engine, 2);
+    edits(
+        &engine,
+        &[
+            "UPDATE [#people] SET [name] = N'gone' WHERE [id] = N'1'",
+            "UPDATE [#people] SET [name] = NULL WHERE [id] = N'1'",
+        ],
+    );
+    assert_eq!(expect_edits(&mut engine).unwrap_err().statement, Some(1));
+    execute(&engine, id, 3, &["SELECT name FROM #people", "COMMIT"]);
+
+    loop {
+        if let Event::RowsFetched { rows, .. } = next_run_event(&mut engine) {
+            assert_eq!(rows, [[Some("Zoë 李".to_owned())]]);
+            break;
+        }
+    }
+}
+
+/// SQL Server explains through `SET SHOWPLAN_XML`, which the engine switches on in a batch of
+/// its own and off again afterwards: the plan arrives as one XML value, and the next
+/// statement runs as usual, even after an explain that failed. Needs
+/// `DBDESK_TEST_SQLSERVER_URL`; skipped without it.
+#[test]
+fn explains_on_sqlserver_with_showplan_and_switches_it_off() {
+    let Some((config, password)) = sqlserver_test_server() else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    engine.expect_started(vec![]);
+    let data_source = DataSource {
+        id: DataSourceId::generate(),
+        name: "test server".to_owned(),
+        color: None,
+        project: None,
+        config: ConnectionConfig::SqlServer(config),
+    };
+    let id = data_source.id;
+    engine.send(Command::SaveDataSource {
+        data_source,
+        password: PasswordUpdate::Set(password),
+    });
+    assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
+    let explain = |run: u64, sql: &str| Command::Execute {
+        console: CONSOLE,
+        data_source: id,
+        run: RunId(run),
+        statements: vec![sql.to_owned()],
+        transactions: TransactionMode::Auto,
+        purpose: RunPurpose::Explain,
+    };
+
+    engine.send(explain(
+        1,
+        "SELECT name FROM sys.objects WHERE object_id = 1",
+    ));
+    let plan = loop {
+        if let Event::RowsFetched { rows, .. } = next_run_event(&mut engine) {
+            break rows;
+        }
+    };
+    let xml = plan[0][0].clone().unwrap_or_default();
+    assert!(xml.contains("<ShowPlanXML"), "{xml}");
+    finish_run(&mut engine, 1);
+
+    engine.send(explain(2, "SELECT * FROM dbdesk_no_such_table"));
+    finish_run(&mut engine, 2);
+
+    execute(&engine, id, 3, &["SELECT 42"]);
+    loop {
+        if let Event::RowsFetched { rows, .. } = next_run_event(&mut engine) {
+            assert_eq!(rows, [[Some("42".to_owned())]]);
+            break;
         }
     }
 }

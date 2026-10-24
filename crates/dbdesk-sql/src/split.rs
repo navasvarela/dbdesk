@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use crate::dialect::Dialect;
+use crate::dialect::{Dialect, ScriptRules};
 use crate::lexer::{Token, TokenKind, tokenize};
 
 /// Splits a console's text into statements at top-level semicolons.
@@ -18,24 +18,36 @@ use crate::lexer::{Token, TokenKind, tokenize};
 /// In a dialect with the client-side `DELIMITER` command (MySQL), a line starting with it
 /// isn't a statement: it sets what ends the statements after it, until the next one, and
 /// with a delimiter other than `;`, semicolons never split.
+///
+/// In SQL Server's Transact-SQL, `GO` alone on a line (or followed by a count, which is
+/// ignored: the batch runs once) ends the statement before it whatever its blocks, and isn't
+/// a statement itself. `BEGIN … END` blocks can appear anywhere there, as control flow, and
+/// the body of a procedure, function or trigger runs to the next `GO`, semicolons and all,
+/// because the server reads the rest of the batch as the body.
 pub fn split_statements(sql: &str, dialect: Dialect) -> Vec<Range<usize>> {
     let tokens: Vec<Token> = tokenize(sql, dialect)
         .into_iter()
         .filter(|token| !token.kind.is_trivia())
         .collect();
+    let rules = dialect.script_rules();
     let mut splitter = Splitter {
         sql,
         tokens: &tokens,
+        rules,
         statements: Vec::new(),
         current: None,
         first_word: None,
+        words_seen: 0,
         block_depth: 0,
+        runs_to_batch_end: false,
         delimiter: None,
     };
     let mut index = 0;
     while index < tokens.len() {
-        index = if dialect.has_delimiter_command() && splitter.starts_delimiter_command(index) {
+        index = if rules.delimiter_command && splitter.starts_delimiter_command(index) {
             splitter.delimiter_command(index)
+        } else if rules.go_batches && splitter.is_go_line(index) {
+            splitter.end_batch(index)
         } else {
             splitter.step(index)
         };
@@ -48,17 +60,38 @@ struct Splitter<'a> {
     sql: &'a str,
     /// The meaningful tokens: no whitespace or comments.
     tokens: &'a [Token],
+    rules: ScriptRules,
     statements: Vec<Range<usize>>,
     current: Option<Range<usize>>,
     first_word: Option<String>,
+    /// Words read so far in the current statement.
+    words_seen: usize,
     block_depth: usize,
+    /// Whether the current statement is a Transact-SQL routine, whose body ends only with
+    /// its batch.
+    runs_to_batch_end: bool,
     /// What `DELIMITER` set, when it isn't `;`.
     delimiter: Option<String>,
 }
 
 /// After `END`, these close a block that didn't open with `BEGIN` or `CASE`, so they mustn't
-/// close one that did: `END IF` inside a MySQL procedure's `BEGIN … END`.
+/// close one that did: `END IF` inside a MySQL procedure's `BEGIN … END`. Not in
+/// Transact-SQL, where `END IF @x = 1 …` closes a block and starts the next statement.
 const END_OF_CONTROL_FLOW: &[&str] = &["if", "loop", "repeat", "while"];
+
+/// After Transact-SQL's `BEGIN`, these make it a statement rather than a block: `BEGIN TRAN`,
+/// `BEGIN DISTRIBUTED TRANSACTION`, `BEGIN DIALOG CONVERSATION`.
+const BEGIN_STATEMENTS: &[&str] = &["tran", "transaction", "distributed", "dialog"];
+
+/// After Transact-SQL's `END`, this makes it a statement rather than a block's end.
+const END_STATEMENTS: &[&str] = &["conversation"];
+
+/// What follows `CREATE`, `ALTER` or `CREATE OR ALTER` in a Transact-SQL routine, whose body
+/// is the rest of its batch.
+const BATCH_BODIED: &[&str] = &["proc", "procedure", "function", "trigger"];
+
+/// How many words into a statement its kind is settled: `create or alter procedure`.
+const KIND_WORDS: usize = 4;
 
 impl Splitter<'_> {
     fn word(&self, index: usize) -> Option<String> {
@@ -85,6 +118,40 @@ impl Splitter<'_> {
         self.first_token_from(line_end)
     }
 
+    /// Whether the token at `index` is a `GO` on a line of its own, optionally followed by a
+    /// count and a `--` comment.
+    fn is_go_line(&self, index: usize) -> bool {
+        let Some(token) = self.tokens.get(index) else {
+            return false;
+        };
+        if self.word(index).as_deref() != Some("go") {
+            return false;
+        }
+        let line_start = self.sql[..token.range.start]
+            .rfind('\n')
+            .map_or(0, |newline| newline + 1);
+        let rest = &self.sql[token.range.end..];
+        let line_rest = &rest[..rest.find('\n').unwrap_or(rest.len())];
+        let after = line_rest
+            .split_once("--")
+            .map_or(line_rest, |(code, _)| code)
+            .trim();
+        self.sql[line_start..token.range.start].trim().is_empty()
+            && after.chars().all(|c| c.is_ascii_digit())
+    }
+
+    /// Ends the statement before a `GO` line, and returns the index of the first token after
+    /// that line.
+    fn end_batch(&mut self, index: usize) -> usize {
+        let Some(go) = self.tokens.get(index) else {
+            return index + 1;
+        };
+        let rest = &self.sql[go.range.end..];
+        let line_end = go.range.end + rest.find('\n').unwrap_or(rest.len());
+        self.end_statement();
+        self.first_token_from(line_end)
+    }
+
     fn first_token_from(&self, offset: usize) -> usize {
         self.tokens
             .iter()
@@ -107,7 +174,9 @@ impl Splitter<'_> {
             return index + 1;
         }
         match token.kind {
-            TokenKind::Semicolon if self.block_depth == 0 => self.end_statement(),
+            TokenKind::Semicolon if self.block_depth == 0 && !self.runs_to_batch_end => {
+                self.end_statement();
+            }
             kind => {
                 if kind == TokenKind::Word {
                     self.track_blocks(index);
@@ -122,16 +191,31 @@ impl Splitter<'_> {
         let Some(word) = self.word(index) else {
             return;
         };
-        let starts_block =
-            word == "case" || (word == "begin" && self.first_word.as_deref() == Some("create"));
-        let ends_block = word == "end"
-            && !self
-                .word(index + 1)
-                .is_some_and(|next| END_OF_CONTROL_FLOW.contains(&next.as_str()));
+        let next = self.word(index + 1);
+        let next_is = |words: &[&str]| next.as_deref().is_some_and(|next| words.contains(&next));
+        let (starts_block, ends_block) = if self.rules.blocks_anywhere {
+            (
+                word == "case" || (word == "begin" && !next_is(BEGIN_STATEMENTS)),
+                word == "end" && !next_is(END_STATEMENTS),
+            )
+        } else {
+            (
+                word == "case" || (word == "begin" && self.first_word.as_deref() == Some("create")),
+                word == "end" && !next_is(END_OF_CONTROL_FLOW),
+            )
+        };
         if starts_block {
             self.block_depth += 1;
         } else if ends_block {
             self.block_depth = self.block_depth.saturating_sub(1);
+        }
+        self.words_seen += 1;
+        if self.rules.go_batches
+            && self.words_seen <= KIND_WORDS
+            && matches!(self.first_word.as_deref(), Some("create" | "alter"))
+            && BATCH_BODIED.contains(&word.as_str())
+        {
+            self.runs_to_batch_end = true;
         }
         self.first_word.get_or_insert(word);
     }
@@ -146,7 +230,9 @@ impl Splitter<'_> {
     fn end_statement(&mut self) {
         self.statements.extend(self.current.take());
         self.first_word = None;
+        self.words_seen = 0;
         self.block_depth = 0;
+        self.runs_to_batch_end = false;
     }
 }
 
@@ -256,6 +342,56 @@ mod tests {
                 "delimiter //\nselect 1; select 2",
                 Dialect::Postgres,
                 &["delimiter //\nselect 1", "select 2"],
+            ),
+        ];
+
+        for (sql, dialect, expected) in cases {
+            assert_eq!(statements(sql, dialect), expected, "{sql}");
+        }
+    }
+
+    #[test]
+    fn follows_sql_server_batches_and_blocks() {
+        let routines = "CREATE PROCEDURE p AS SELECT 1; SELECT 2;\n\
+            go\n\
+            create or alter function f() returns int as begin return 1; end\n\
+            GO 3 -- three times\n\
+            SELECT 3; SELECT 4";
+        let control_flow = "IF @n > 0 BEGIN SELECT 1; SELECT 2; END IF @n < 0 SELECT 3; \
+            BEGIN TRY SELECT 1/0; END TRY BEGIN CATCH SELECT ERROR_MESSAGE(); END CATCH; \
+            BEGIN TRAN; COMMIT";
+        let cases: [(&str, Dialect, &[&str]); 4] = [
+            (
+                routines,
+                Dialect::SqlServer,
+                &[
+                    "CREATE PROCEDURE p AS SELECT 1; SELECT 2;",
+                    "create or alter function f() returns int as begin return 1; end",
+                    "SELECT 3",
+                    "SELECT 4",
+                ],
+            ),
+            (
+                control_flow,
+                Dialect::SqlServer,
+                &[
+                    "IF @n > 0 BEGIN SELECT 1; SELECT 2; END IF @n < 0 SELECT 3",
+                    "BEGIN TRY SELECT 1/0; END TRY BEGIN CATCH SELECT ERROR_MESSAGE(); END CATCH",
+                    "BEGIN TRAN",
+                    "COMMIT",
+                ],
+            ),
+            // `GO` only separates on a line of its own, and never inside a string.
+            (
+                "SELECT 'a\nGO\n' AS go\nGO\nSELECT go FROM t GO",
+                Dialect::SqlServer,
+                &["SELECT 'a\nGO\n' AS go", "SELECT go FROM t GO"],
+            ),
+            // Only SQL Server has batches; elsewhere `go` is an ordinary word.
+            (
+                "select 1\ngo\nselect 2",
+                Dialect::Postgres,
+                &["select 1\ngo\nselect 2"],
             ),
         ];
 

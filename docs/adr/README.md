@@ -9,6 +9,7 @@ superseded ADR stays in place with its status updated and a link to the one repl
 | [0002](0002-native-drivers-behind-a-trait.md) | Native drivers behind a trait, not sqlx | Accepted |
 | [0003](0003-ui-engine-message-passing.md) | UI and engine communicate only by messages | Accepted |
 | [0004](0004-results-as-text.md) | Query results as text | Accepted |
+| [0005](0005-customisation-files-commands-then-wasm.md) | Customisation through files and commands now, WebAssembly plugins later | Accepted |
 
 ## Template
 

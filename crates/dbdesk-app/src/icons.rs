@@ -101,6 +101,7 @@ pub fn node(kind: NodeKind) -> Icon {
         NodeKind::Function => Icon::new(glyph::FUNCTION, Role::Success),
         NodeKind::Procedure => Icon::new(glyph::GEAR_SIX, Role::Success),
         NodeKind::Event => Icon::new(glyph::CLOCK, Role::Success),
+        NodeKind::Synonym => Icon::new(glyph::ARROW_BEND_UP_RIGHT, Role::Success),
         NodeKind::Sequence => Icon::new(glyph::LIST_NUMBERS, Role::Success),
         NodeKind::Column => Icon::new(glyph::TEXT_COLUMNS, Role::Weak),
         NodeKind::Index => Icon::new(glyph::LIST_MAGNIFYING_GLASS, Role::Warning),

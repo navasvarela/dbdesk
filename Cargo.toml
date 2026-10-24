@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT OR Apache-2.0"
@@ -15,6 +15,7 @@ dbdesk-core = { path = "crates/dbdesk-core" }
 dbdesk-driver-mysql = { path = "crates/dbdesk-driver-mysql" }
 dbdesk-driver-postgres = { path = "crates/dbdesk-driver-postgres" }
 dbdesk-driver-sqlite = { path = "crates/dbdesk-driver-sqlite" }
+dbdesk-driver-sqlserver = { path = "crates/dbdesk-driver-sqlserver" }
 dbdesk-engine = { path = "crates/dbdesk-engine" }
 dbdesk-sql = { path = "crates/dbdesk-sql" }
 dbdesk-store = { path = "crates/dbdesk-store" }
@@ -70,6 +71,15 @@ toml = "1.1.8"
 tracing = "0.1.44"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "registry", "std", "tracing-log"] }
+# SQL Server and Azure SQL, over TDS in pure Rust. No default features, which use native-tls
+# (OpenSSL on Linux): TLS is rustls instead. Its rustls feature also compiles in aws-lc-rs,
+# through tokio-rustls's default features, which makes rustls unable to pick a process-wide
+# provider on its own; the network drivers install ring as that provider before connecting
+# (see dbdesk-driver-sqlserver's `tls` module). The webpki roots back `verify-full` without a
+# CA file, as for the other engines.
+tiberius = { version = "0.13.0", default-features = false, features = ["tds80", "rustls", "rustls-webpki-roots"] }
+# Adapts tokio's TCP stream to the futures I/O traits tiberius takes.
+tokio-util = { version = "0.7.20", features = ["compat"] }
 # The update check's one HTTPS request. Blocking and small; it runs on the engine's blocking
 # pool. Its rustls feature uses the ring provider and webpki-roots, both already built for
 # PostgreSQL TLS.
@@ -93,3 +103,10 @@ unwrap_used = "deny"
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
+
+# tiberius 0.13.0's `cancel_query` stops reading at the end of the cancelled reply, but SQL
+# Server 2022 sends its acknowledgement as a message of its own, so the client was left one
+# reply behind. tiberius-rs/tiberius#460 fixes it; this is that pull request's commit (0.13.0,
+# four collation fixes from upstream `main`, and the fix). Drop this once a release has it.
+[patch.crates-io]
+tiberius = { git = "https://github.com/tiberius-rs/tiberius", rev = "f177f879dfb83d8a8d8276f02ae61859691b7d11" }

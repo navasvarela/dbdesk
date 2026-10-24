@@ -172,6 +172,12 @@ const SCENES: &[Scene] = &[
         keeps_pointer: false,
     },
     Scene {
+        name: "sqlserver-data-source-dialog",
+        data_sources: FixtureSources::Shop,
+        play: sqlserver_data_source_dialog,
+        keeps_pointer: false,
+    },
+    Scene {
         name: "explorer-menu",
         data_sources: FixtureSources::Shop,
         play: explorer_menu,
@@ -491,6 +497,10 @@ fn sqlite_data_source_dialog(harness: &mut Harness<'static, DbDeskApp>, _: &Fixt
 
 fn mysql_data_source_dialog(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
     open_new_data_source_dialog(harness, "MySQL / MariaDB");
+}
+
+fn sqlserver_data_source_dialog(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    open_new_data_source_dialog(harness, "SQL Server");
 }
 
 fn open_new_data_source_dialog(harness: &mut Harness<'static, DbDeskApp>, driver: &str) {

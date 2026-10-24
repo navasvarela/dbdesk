@@ -32,6 +32,8 @@ pub enum NodeKind {
     Sequence,
     /// A scheduled event (MySQL).
     Event,
+    /// Another name for an object, possibly in another database or server (SQL Server).
+    Synonym,
     Column,
     Index,
     Constraint,
@@ -48,6 +50,7 @@ pub enum FolderKind {
     Procedures,
     Sequences,
     Events,
+    Synonyms,
     Columns,
     Indexes,
     Constraints,
@@ -64,6 +67,7 @@ impl FolderKind {
             Self::Procedures => "procedures",
             Self::Sequences => "sequences",
             Self::Events => "events",
+            Self::Synonyms => "synonyms",
             Self::Columns => "columns",
             Self::Indexes => "indexes",
             Self::Constraints => "constraints",
@@ -164,6 +168,7 @@ impl CatalogPath {
             | NodeKind::Sequence
             | NodeKind::Procedure
             | NodeKind::Event
+            | NodeKind::Synonym
             | NodeKind::Index => Some(self.schema_qualified(&quote(&object.name), quoting)),
             // Function names already carry their argument list, e.g. `add(integer, integer)`.
             NodeKind::Function => Some(self.schema_qualified(&object.name, quoting)),

@@ -150,6 +150,7 @@ impl Engine {
                 run,
                 statements,
                 transactions,
+                purpose,
             } => self.execute(
                 console,
                 data_source,
@@ -157,6 +158,7 @@ impl Engine {
                     run,
                     statements,
                     transactions,
+                    purpose,
                 },
             ),
             Command::EndTransaction { console, end } => {

@@ -127,7 +127,7 @@ The toolbar's buttons, and their shortcuts while the editor has focus:
 | --- | --- | --- |
 | **Run** (▷) | ⌘↵ | Runs the selected text if there is a selection, otherwise the statement at the cursor. |
 | **Run all** (▷▷) | ⇧⌘↵ | Runs every statement in the console, in order, stopping at the first one that fails. |
-| **Explain** | ⌥⌘E | Shows how the database would run the statement at the cursor: `EXPLAIN` on PostgreSQL and MariaDB, `EXPLAIN QUERY PLAN` on SQLite, `EXPLAIN FORMAT=TREE` on MySQL 8 once the console has connected. |
+| **Explain** | ⌥⌘E | Shows how the database would run the statement at the cursor: `EXPLAIN` on PostgreSQL and MariaDB, `EXPLAIN QUERY PLAN` on SQLite, `EXPLAIN FORMAT=TREE` on MySQL 8 once the console has connected, and on SQL Server the estimated plan as XML (`SET SHOWPLAN_XML`), which **View value** shows indented. |
 | **Cancel** (□) | ⌘. | Stops the running statement, or discards rows not yet loaded. |
 | **History** | — | Opens the data source's query history. |
 | **Format** | ⌥⌘L | Formats the selected text, or the statement at the cursor (see [The editor](#the-editor)). |
@@ -156,6 +156,27 @@ DELIMITER ;
 The `DELIMITER` lines are dbdesk's to read and are never sent. MySQL's own quoting applies too:
 `"text"` is a string, as it is without `ANSI_QUOTES`, names are quoted with backticks, and a
 backslash inside a string escapes the next character.
+
+On SQL Server, `GO` alone on a line ends a batch, as in SQL Server Management Studio and
+`sqlcmd`, and is never sent; a count after it (`GO 3`) is ignored, and the batch runs once.
+Semicolons still split statements, except inside `BEGIN … END`, `BEGIN TRY … END CATCH` and
+the body of a procedure, function or trigger, which SQL Server reads up to the next `GO`:
+
+```sql
+CREATE OR ALTER PROCEDURE dbo.touch @n int AS
+SET NOCOUNT ON;
+UPDATE dbo.items SET price = price + 1 WHERE id = @n;
+GO
+EXEC dbo.touch @n = 1;
+```
+
+Each statement is sent as a batch of its own, so a variable lives only as long as the statement
+that declares it, even when both are selected and run together: `DECLARE @n int = 1; SELECT @n`
+is two batches, and the second doesn't know `@n`. Leave out the semicolon
+(`DECLARE @n int = 1 SELECT @n`), or put the statements inside `BEGIN … END`, to send them as
+one. Names are quoted with brackets (`[order]`), and the values dbdesk writes, such as a
+grid edit's, are `N'…'` strings so that any character survives. A statement that returns
+several result sets shows the first.
 
 The toolbar shows how the last run went: **Done in 12 ms**, **Failed** or **Cancelled**. While a
 statement runs, Run, Run all and Explain are disabled.
@@ -197,7 +218,7 @@ doesn't, yet).
   spreadsheet. Right-click a cell for **Copy selection**, **Copy value**, **Copy row** and
   **View value**.
 - **Viewing a long value.** Double-click a cell, or select it and press Space, to see the whole
-  value in a window. JSON is shown indented; **Copy** copies it as stored.
+  value in a window. JSON and XML are shown indented; **Copy** copies it as stored.
 - **Sorting and filtering.** Click a column header to sort by it (ascending, descending, off),
   and type in **Filter loaded rows** to keep the rows with a cell containing the text. Both
   work on the rows loaded so far, without asking the database again, and the grid says so.

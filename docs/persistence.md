@@ -8,7 +8,9 @@ dbdesk/
 ├── data_sources.toml     # data source configs, no secrets
 ├── settings.toml         # app settings: SQL formatting (more later: page size, fonts)
 ├── keymap.toml           # M5, key bindings (see features/keymap.md)
-├── actions.toml          # M5, custom catalog actions
+├── actions.toml          # H1/H2, custom SQL and command actions (see hackability.md)
+├── snippets.toml         # H1, console snippets
+├── theme.toml            # H1, colours
 ├── app.ron               # eframe storage: window size, egui_dock layout, open tabs
 ├── consoles/             # M4
 │   └── <data-source-id>/<console-name>.sql

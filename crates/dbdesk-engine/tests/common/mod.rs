@@ -13,7 +13,7 @@ use std::str::FromStr;
 
 use dbdesk_core::{
     ConnectionConfig, DataSource, DataSourceId, MysqlConfig, Password, PostgresConfig,
-    ServerConfig, SqliteConfig, TlsMode,
+    ServerConfig, SqlServerConfig, SqliteConfig, TlsMode,
 };
 use dbdesk_engine::{
     Command, EngineConfig, EngineHandle, Event, Release, ReleaseError, ReleaseFeed, Repaint,
@@ -221,6 +221,19 @@ pub fn mysql_test_servers() -> Vec<(MysqlConfig, Password)> {
         eprintln!("skipping: neither DBDESK_TEST_MYSQL_URL nor DBDESK_TEST_MARIADB_URL is set");
     }
     servers
+}
+
+/// The SQL Server named by `DBDESK_TEST_SQLSERVER_URL`
+/// (`sqlserver://user:password@host:port/database`), or `None`, with a note, so tests that
+/// need it skip.
+pub fn sqlserver_test_server() -> Option<(SqlServerConfig, Password)> {
+    let Ok(url) = std::env::var("DBDESK_TEST_SQLSERVER_URL") else {
+        eprintln!("skipping: DBDESK_TEST_SQLSERVER_URL is not set");
+        return None;
+    };
+    let rest = url.strip_prefix("sqlserver://").expect("sqlserver:// URL");
+    let (server, password) = parse_server(rest, "1433");
+    Some((SqlServerConfig { server }, password))
 }
 
 pub struct ParsedUrl {

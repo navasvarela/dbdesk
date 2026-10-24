@@ -10,7 +10,7 @@ use egui::{Id, Margin, ScrollArea, TextBuffer, TextEdit, Ui, vec2};
 use super::highlight::Marks;
 use super::{
     Candidate, FormatScope, LintOptions, QueryConsole, RecentCompletions, RunScope, RunState,
-    SubmittedStatement, TreeCatalog, cell_viewer, completion_popup, highlight, results,
+    SubmittedRun, TreeCatalog, cell_viewer, completion_popup, highlight, results,
 };
 use crate::icons::{self, Role};
 use crate::keymap::{Action, Keymap};
@@ -18,7 +18,7 @@ use crate::theme::Palette;
 use crate::widgets::{self, IconButton};
 use dbdesk_core::TransactionStatus;
 use dbdesk_core::{CatalogPath, RelationName};
-use dbdesk_engine::{RunId, RunOutcome, SessionState, TransactionEnd, TransactionMode};
+use dbdesk_engine::{RunId, RunOutcome, RunPurpose, SessionState, TransactionEnd, TransactionMode};
 use dbdesk_sql::{ProblemSource, Severity};
 use dbdesk_store::ExportFormat;
 
@@ -48,7 +48,7 @@ const SPLITTER_HEIGHT: f32 = 6.0;
 /// What the user asked a console to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConsoleAction {
-    Run(Vec<SubmittedStatement>),
+    Run(SubmittedRun),
     FetchMore(RunId),
     Cancel(RunId),
     EndTransaction(TransactionEnd),
@@ -213,8 +213,15 @@ fn perform(console: &QueryConsole, action: Action, actions: &mut Vec<ConsoleActi
         | Action::PreviousProblem => return,
     };
     let statements = console.statements_to_run(scope);
+    let purpose = match scope {
+        RunScope::Explain => RunPurpose::Explain,
+        RunScope::Current | RunScope::All => RunPurpose::Run,
+    };
     if !statements.is_empty() {
-        actions.push(ConsoleAction::Run(statements));
+        actions.push(ConsoleAction::Run(SubmittedRun {
+            statements,
+            purpose,
+        }));
     }
 }
 

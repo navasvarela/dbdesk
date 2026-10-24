@@ -38,5 +38,12 @@ pub fn of(driver: DriverKind) -> DatabaseBrand {
             light: Color32::from_rgb(0x44, 0x79, 0xA1),
             dark: Color32::from_rgb(0x7F, 0xB2, 0xDB),
         },
+        // A neutral glyph in SQL Server's red: Simple Icons no longer carries its logo.
+        DriverKind::SqlServer => DatabaseBrand {
+            logo_uri: "bytes://logos/sqlserver.svg",
+            logo_svg: include_bytes!("../../../assets/icons/databases/sqlserver.svg"),
+            light: Color32::from_rgb(0xCC, 0x29, 0x27),
+            dark: Color32::from_rgb(0xF0, 0x7C, 0x78),
+        },
     }
 }

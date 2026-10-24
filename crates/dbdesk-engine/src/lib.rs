@@ -24,8 +24,9 @@ mod settings;
 pub use export::Export;
 pub use handle::{EngineConfig, EngineError, EngineHandle};
 pub use protocol::{
-    Command, ConsoleId, EditFailure, Event, PasswordUpdate, RunId, RunOutcome, SessionState,
-    StatementCheck, StatementFailure, StatementSummary, TransactionEnd, TransactionMode,
+    Command, ConsoleId, EditFailure, Event, PasswordUpdate, RunId, RunOutcome, RunPurpose,
+    SessionState, StatementCheck, StatementFailure, StatementSummary, TransactionEnd,
+    TransactionMode,
 };
 pub use releases::{GithubReleases, Release, ReleaseError, ReleaseFeed};
 pub use repaint::Repaint;
