@@ -113,26 +113,23 @@ impl Lexer<'_> {
                 self.bump();
                 self.escape_string()
             }
+            ('n' | 'N', Some('\'')) if self.rules.national_strings => {
+                self.bump();
+                self.quoted('\'', TokenKind::String)
+            }
             ('"', _) if self.rules.double_quoted_strings => self.quoted('"', TokenKind::String),
             ('"', _) => self.quoted('"', TokenKind::QuotedIdentifier),
             ('`', _) if self.rules.backtick_identifiers => {
                 self.quoted('`', TokenKind::QuotedIdentifier)
             }
-            ('[', _) if self.rules.bracket_identifiers => {
-                self.bump();
-                self.bump_while(|c| c != ']');
-                self.bump();
-                TokenKind::QuotedIdentifier
-            }
+            ('[', _) if self.rules.bracket_identifiers => self.bracketed(),
             ('$', _) if self.rules.dollar_quoting => self.dollar(),
             (c, _) if c.is_ascii_digit() => self.number(),
             ('.', Some(c)) if c.is_ascii_digit() => self.number(),
-            (c, _) if is_word_start(c) => {
-                let rules = self.rules;
-                self.bump();
-                self.bump_while(|c| is_word_part(c, rules));
-                TokenKind::Word
+            ('@' | '#', Some(next)) if self.rules.sigil_identifiers && is_sigil_word_part(next) => {
+                self.word()
             }
+            (c, _) if is_word_start(c) => self.word(),
             (';', _) => {
                 self.bump();
                 TokenKind::Semicolon
@@ -152,6 +149,29 @@ impl Lexer<'_> {
                 .chars()
                 .next()
                 .is_none_or(char::is_whitespace)
+    }
+
+    fn word(&mut self) -> TokenKind {
+        let rules = self.rules;
+        self.bump();
+        self.bump_while(|c| is_word_part(c, rules));
+        TokenKind::Word
+    }
+
+    /// `[name]`, where `]]` stands for `]`. Only SQL Server reads it so, but SQLite has no
+    /// way to write `]` in a bracketed name at all, so no valid SQLite reads differently.
+    fn bracketed(&mut self) -> TokenKind {
+        self.bump();
+        while let Some(c) = self.bump() {
+            if c == ']' {
+                if self.peek() == Some(']') {
+                    self.bump();
+                } else {
+                    break;
+                }
+            }
+        }
+        TokenKind::QuotedIdentifier
     }
 
     fn line_comment(&mut self) -> TokenKind {
@@ -247,7 +267,15 @@ fn is_word_start(c: char) -> bool {
 }
 
 fn is_word_part(c: char, rules: LexicalRules) -> bool {
-    is_plain_word_part(c) || (c == '$' && rules.dollar_in_identifiers)
+    is_plain_word_part(c)
+        || (c == '$' && rules.dollar_in_identifiers)
+        || (matches!(c, '@' | '#') && rules.sigil_identifiers)
+}
+
+/// What may follow a Transact-SQL `@` or `#` for the two to be one name: `@@rowcount`,
+/// `##global`, `@x`. Anything else leaves the sigil a character of its own.
+fn is_sigil_word_part(c: char) -> bool {
+    is_word_start(c) || matches!(c, '@' | '#')
 }
 
 /// A character of an identifier in every dialect; also what a `$tag$` is made of.
@@ -286,7 +314,7 @@ mod tests {
     #[test]
     fn recognises_dialect_specific_quoting() {
         use TokenKind::*;
-        let cases: [Case; 9] = [
+        let cases: [Case; 12] = [
             (
                 "$fn$ a; $x$ b $fn$ ;",
                 Dialect::Postgres,
@@ -360,6 +388,51 @@ mod tests {
                 r"'C:\\' x",
                 Dialect::Mysql,
                 vec![(String, r"'C:\\'"), (Word, "x")],
+            ),
+            (
+                "select [a]]b], N'it''s', @x, @@rowcount, #tmp, ##g, a$b#c from \"t\"",
+                Dialect::SqlServer,
+                vec![
+                    (Word, "select"),
+                    (QuotedIdentifier, "[a]]b]"),
+                    (Punctuation, ","),
+                    (String, "N'it''s'"),
+                    (Punctuation, ","),
+                    (Word, "@x"),
+                    (Punctuation, ","),
+                    (Word, "@@rowcount"),
+                    (Punctuation, ","),
+                    (Word, "#tmp"),
+                    (Punctuation, ","),
+                    (Word, "##g"),
+                    (Punctuation, ","),
+                    (Word, "a$b#c"),
+                    (Word, "from"),
+                    (QuotedIdentifier, "\"t\""),
+                ],
+            ),
+            (
+                "/* a /* b */ c */ x @ 1, n'x'",
+                Dialect::SqlServer,
+                vec![
+                    (BlockComment, "/* a /* b */ c */"),
+                    (Word, "x"),
+                    (Punctuation, "@"),
+                    (Number, "1"),
+                    (Punctuation, ","),
+                    (String, "n'x'"),
+                ],
+            ),
+            // Only Transact-SQL has `@` names; elsewhere `@p` is a parameter marker's sign.
+            (
+                "@p N'x'",
+                Dialect::Sqlite,
+                vec![
+                    (Punctuation, "@"),
+                    (Word, "p"),
+                    (Word, "N"),
+                    (String, "'x'"),
+                ],
             ),
         ];
 

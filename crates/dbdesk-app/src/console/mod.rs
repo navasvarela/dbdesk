@@ -23,7 +23,7 @@ use dbdesk_core::{
     Cell, ColumnInfo, DataSourceId, RelationName, Row, TableDescription, TransactionStatus,
 };
 use dbdesk_engine::{
-    Command, ConsoleId, EditFailure, Event, Export, RunId, RunOutcome, SessionState,
+    Command, ConsoleId, EditFailure, Event, Export, RunId, RunOutcome, RunPurpose, SessionState,
     StatementFailure, StatementSummary, TransactionEnd, TransactionMode,
 };
 use dbdesk_sql::{Dialect, FormatOptions, format_ranges, split_statements, statement_at, tokenize};
@@ -45,6 +45,13 @@ pub struct SubmittedStatement {
     /// How many bytes at the start of `sql` aren't in the console's text, such as an
     /// `EXPLAIN` prefix. Error positions are shifted back by this much.
     pub prefix_len: usize,
+}
+
+/// A run as a console asks for it: its statements, and what running them is for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubmittedRun {
+    pub statements: Vec<SubmittedStatement>,
+    pub purpose: RunPurpose,
 }
 
 /// What a format covers.

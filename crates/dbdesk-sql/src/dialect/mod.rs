@@ -1,6 +1,6 @@
-//! Everything that differs between SQL dialects, in one place: the lexer's rules, the
-//! `sqlparser` dialect, the built-in functions, the `EXPLAIN` prefix, quoting and the
-//! catalog's system names.
+//! Everything that differs between SQL dialects, in one place: the lexer's rules, how scripts
+//! split into statements, the `sqlparser` dialect, the built-in functions, how to explain a
+//! statement, quoting and the catalog's system names.
 //!
 //! The rest of the crate asks a [`Dialect`] for these facts instead of matching on it, so a
 //! new dialect is a new variant here, its rows in each method and, if its lexical rules are
@@ -9,7 +9,7 @@
 mod functions;
 
 use dbdesk_core::{DriverKind, Quoting, ServerInfo};
-use sqlparser::dialect::{MySqlDialect, PostgreSqlDialect, SQLiteDialect};
+use sqlparser::dialect::{MsSqlDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect};
 
 /// The SQL flavour of a data source.
 ///
@@ -21,6 +21,8 @@ pub enum Dialect {
     /// MySQL and MariaDB, which one driver serves; their differences depend on the server's
     /// version, which only a connection knows.
     Mysql,
+    /// Microsoft SQL Server and Azure SQL: Transact-SQL.
+    SqlServer,
 }
 
 /// The lexical rules that differ between dialects. Strings in `'…'`, `--` line comments and
@@ -48,8 +50,46 @@ pub(crate) struct LexicalRules {
     pub dash_comments_need_space: bool,
     /// `` `backtick` `` identifiers.
     pub backtick_identifiers: bool,
-    /// `[bracketed]` identifiers.
+    /// `[bracketed]` identifiers, in which `]]` stands for `]`.
     pub bracket_identifiers: bool,
+    /// `N'…'` strings of national (Unicode) characters, one token like any string.
+    pub national_strings: bool,
+    /// Transact-SQL's names that start with `@` (variables), `@@` (system functions), `#` or
+    /// `##` (temporary tables), and may hold `@`, `#` and `$` after their first character.
+    pub sigil_identifiers: bool,
+}
+
+/// How a script divides into the statements dbdesk sends one at a time, beyond splitting at
+/// top-level semicolons.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ScriptRules {
+    /// The MySQL client's `DELIMITER //` command, which changes the statement terminator so
+    /// that a procedure's body can hold semicolons.
+    pub delimiter_command: bool,
+    /// `GO` alone on a line ends a batch, as in SQL Server's own tools. A procedure, function
+    /// or trigger's body then runs to the end of its batch, as the server reads it.
+    pub go_batches: bool,
+    /// Whether `BEGIN … END` blocks (whose semicolons don't split) can appear in any
+    /// statement, as Transact-SQL's control flow, rather than only in a `CREATE` statement's
+    /// body.
+    pub blocks_anywhere: bool,
+}
+
+/// The statements that mark a point inside an open transaction, so that a group of changes can
+/// be undone without ending it: what `keep` and `undo` run after the changes succeed or fail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Savepoint {
+    pub open: &'static str,
+    pub keep: &'static [&'static str],
+    pub undo: &'static [&'static str],
+}
+
+/// A session setting that makes the server describe statements instead of running them,
+/// switched on before the statement in a batch of its own and off again after it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExplainSetting {
+    pub on: &'static str,
+    pub off: &'static str,
 }
 
 /// A construct `sqlparser` rejects although the dialect's database accepts it. A statement
@@ -71,7 +111,7 @@ pub(crate) enum ParserGap {
 }
 
 impl Dialect {
-    pub const ALL: [Self; 3] = [Self::Postgres, Self::Sqlite, Self::Mysql];
+    pub const ALL: [Self; 4] = [Self::Postgres, Self::Sqlite, Self::Mysql, Self::SqlServer];
 
     pub(crate) fn lexical_rules(self) -> LexicalRules {
         match self {
@@ -86,6 +126,8 @@ impl Dialect {
                 dash_comments_need_space: false,
                 backtick_identifiers: false,
                 bracket_identifiers: false,
+                national_strings: true,
+                sigil_identifiers: false,
             },
             Self::Sqlite => LexicalRules {
                 escape_strings: false,
@@ -98,6 +140,8 @@ impl Dialect {
                 dash_comments_need_space: false,
                 backtick_identifiers: true,
                 bracket_identifiers: true,
+                national_strings: false,
+                sigil_identifiers: false,
             },
             Self::Mysql => LexicalRules {
                 escape_strings: false,
@@ -110,17 +154,48 @@ impl Dialect {
                 dash_comments_need_space: true,
                 backtick_identifiers: true,
                 bracket_identifiers: false,
+                national_strings: true,
+                sigil_identifiers: false,
+            },
+            // `"…"` is an identifier while `QUOTED_IDENTIFIER` is on, as every client library
+            // sets it and the driver does on connecting.
+            Self::SqlServer => LexicalRules {
+                escape_strings: false,
+                backslash_escapes: false,
+                double_quoted_strings: false,
+                dollar_quoting: false,
+                dollar_in_identifiers: true,
+                nested_block_comments: true,
+                hash_comments: false,
+                dash_comments_need_space: false,
+                backtick_identifiers: false,
+                bracket_identifiers: true,
+                national_strings: true,
+                sigil_identifiers: true,
             },
         }
     }
 
-    /// Whether scripts may change the statement terminator with the client-side
-    /// `DELIMITER //` command, as the `mysql` client and every MySQL tool accept, so that a
-    /// procedure's body can hold semicolons.
-    pub(crate) fn has_delimiter_command(self) -> bool {
+    /// The client-side commands and blocks that decide where statements end: MySQL's
+    /// `DELIMITER`, as the `mysql` client and every MySQL tool accept it, and SQL Server's
+    /// `GO`, as SQL Server Management Studio and `sqlcmd` do.
+    pub(crate) fn script_rules(self) -> ScriptRules {
         match self {
-            Self::Postgres | Self::Sqlite => false,
-            Self::Mysql => true,
+            Self::Postgres | Self::Sqlite => ScriptRules {
+                delimiter_command: false,
+                go_batches: false,
+                blocks_anywhere: false,
+            },
+            Self::Mysql => ScriptRules {
+                delimiter_command: true,
+                go_batches: false,
+                blocks_anywhere: false,
+            },
+            Self::SqlServer => ScriptRules {
+                delimiter_command: false,
+                go_batches: true,
+                blocks_anywhere: true,
+            },
         }
     }
 
@@ -131,6 +206,7 @@ impl Dialect {
             Self::Postgres => &PostgreSqlDialect {},
             Self::Sqlite => &SQLiteDialect {},
             Self::Mysql => &MySqlDialect {},
+            Self::SqlServer => &MsSqlDialect {},
         }
     }
 
@@ -163,6 +239,14 @@ impl Dialect {
                 ParserGap::Words(&["quick", "ignore"]),
                 ParserGap::InfixOperator("mod"),
             ],
+            Self::SqlServer => &[
+                // `… OPTION (MAXRECURSION 10)`: query hints.
+                ParserGap::Words(&["option"]),
+                // `INSERT INTO t EXEC p`
+                ParserGap::Words(&["exec"]),
+                ParserGap::Words(&["execute"]),
+                ParserGap::Words(&["delete", "top"]),
+            ],
         }
     }
 
@@ -170,17 +254,17 @@ impl Dialect {
     /// `replace` (which deletes a row with the same key first).
     pub(crate) fn insert_verbs(self) -> &'static [&'static str] {
         match self {
-            Self::Postgres => &["insert"],
+            Self::Postgres | Self::SqlServer => &["insert"],
             Self::Sqlite | Self::Mysql => &["insert", "replace"],
         }
     }
 
     /// First words of statements that commit the open transaction before they run, and
     /// commit themselves at once, so `ROLLBACK` undoes neither: MySQL's DDL and account
-    /// statements. PostgreSQL and SQLite run DDL inside the transaction.
+    /// statements. PostgreSQL, SQLite and SQL Server run DDL inside the transaction.
     pub(crate) fn implicit_commit_verbs(self) -> &'static [&'static str] {
         match self {
-            Self::Postgres | Self::Sqlite => &[],
+            Self::Postgres | Self::Sqlite | Self::SqlServer => &[],
             Self::Mysql => &[
                 "alter", "create", "drop", "grant", "rename", "revoke", "truncate",
             ],
@@ -192,13 +276,58 @@ impl Dialect {
     /// plain `EXPLAIN` lists virtual machine opcodes instead). On MySQL 8.0.16 and later,
     /// `EXPLAIN FORMAT=TREE`, which reads like PostgreSQL's plan; MariaDB, older MySQL, and a
     /// console that hasn't connected yet (`server` is `None`) get plain `EXPLAIN`, which they
-    /// all accept.
+    /// all accept. Nothing on SQL Server, which has no such prefix: see
+    /// [`explain_setting`](Self::explain_setting).
     pub fn explain_prefix(self, server: Option<&ServerInfo>) -> &'static str {
         match self {
             Self::Postgres => "EXPLAIN ",
             Self::Sqlite => "EXPLAIN QUERY PLAN ",
             Self::Mysql if server.is_some_and(has_tree_explain) => "EXPLAIN FORMAT=TREE ",
             Self::Mysql => "EXPLAIN ",
+            Self::SqlServer => "",
+        }
+    }
+
+    /// Opens a transaction. SQL Server needs the keyword: a bare `BEGIN` opens a block there.
+    pub fn begin_transaction(self) -> &'static str {
+        match self {
+            Self::Postgres | Self::Sqlite | Self::Mysql => "BEGIN",
+            Self::SqlServer => "BEGIN TRANSACTION",
+        }
+    }
+
+    /// The savepoint grid edits use inside a transaction the console already has open. SQL
+    /// Server writes it `SAVE TRANSACTION` and has no way to release one: it lasts until the
+    /// transaction ends.
+    pub fn edits_savepoint(self) -> Savepoint {
+        match self {
+            Self::Postgres | Self::Sqlite | Self::Mysql => Savepoint {
+                open: "SAVEPOINT dbdesk_edits",
+                keep: &["RELEASE SAVEPOINT dbdesk_edits"],
+                undo: &[
+                    "ROLLBACK TO SAVEPOINT dbdesk_edits",
+                    "RELEASE SAVEPOINT dbdesk_edits",
+                ],
+            },
+            Self::SqlServer => Savepoint {
+                open: "SAVE TRANSACTION dbdesk_edits",
+                keep: &[],
+                undo: &["ROLLBACK TRANSACTION dbdesk_edits"],
+            },
+        }
+    }
+
+    /// The setting to switch on around a statement, after the
+    /// [`explain_prefix`](Self::explain_prefix), to have it explained: SQL Server's
+    /// `SHOWPLAN_XML`, which answers with the estimated plan as one XML document and must be
+    /// set in a batch of its own. `None` where the prefix alone explains.
+    pub fn explain_setting(self) -> Option<ExplainSetting> {
+        match self {
+            Self::Postgres | Self::Sqlite | Self::Mysql => None,
+            Self::SqlServer => Some(ExplainSetting {
+                on: "SET SHOWPLAN_XML ON",
+                off: "SET SHOWPLAN_XML OFF",
+            }),
         }
     }
 
@@ -209,17 +338,27 @@ impl Dialect {
             Self::Postgres => functions::POSTGRES,
             Self::Sqlite => functions::SQLITE,
             Self::Mysql => functions::MYSQL,
+            Self::SqlServer => functions::SQL_SERVER,
         }
     }
 
     /// How SQL that dbdesk writes (qualified names, completions, grid edits) quotes
-    /// identifiers and strings.
+    /// identifiers and strings. Brackets on SQL Server, which mean an identifier whatever
+    /// the session's `QUOTED_IDENTIFIER`.
     pub fn quoting(self) -> Quoting {
         match self {
             Self::Postgres | Self::Sqlite => Quoting::STANDARD,
             Self::Mysql => Quoting {
-                identifier_quote: '`',
+                identifier_open: '`',
+                identifier_close: '`',
                 backslash_escapes: true,
+                string_prefix: "",
+            },
+            Self::SqlServer => Quoting {
+                identifier_open: '[',
+                identifier_close: ']',
+                backslash_escapes: false,
+                string_prefix: "N",
             },
         }
     }
@@ -227,7 +366,7 @@ impl Dialect {
     /// Whether a table name belongs to the system catalog, which the explorer doesn't list:
     /// PostgreSQL's `pg_*` tables (always on the search path) and its catalog schemas,
     /// SQLite's `sqlite_*` tables, `pragma_*` functions and `temp` schema, MySQL's own
-    /// databases. Names are compared case-insensitively.
+    /// databases, SQL Server's catalog schemas. Names are compared case-insensitively.
     pub fn is_system_name(self, schema: Option<&str>, table: &str) -> bool {
         let (table_prefixes, schemas): (&[&str], &[&str]) = match self {
             Self::Postgres => (&["pg_"], &["pg_catalog", "information_schema", "pg_toast"]),
@@ -236,6 +375,7 @@ impl Dialect {
                 &[],
                 &["mysql", "information_schema", "performance_schema", "sys"],
             ),
+            Self::SqlServer => (&[], &["sys", "INFORMATION_SCHEMA"]),
         };
         let table = table.to_ascii_lowercase();
         table_prefixes
@@ -270,6 +410,7 @@ impl From<DriverKind> for Dialect {
             DriverKind::Postgres => Self::Postgres,
             DriverKind::Sqlite => Self::Sqlite,
             DriverKind::Mysql => Self::Mysql,
+            DriverKind::SqlServer => Self::SqlServer,
         }
     }
 }
@@ -296,6 +437,8 @@ mod tests {
             (Dialect::Mysql, Some("Performance_Schema"), "threads", true),
             (Dialect::Mysql, Some("shop"), "orders", false),
             (Dialect::Mysql, None, "orders", false),
+            (Dialect::SqlServer, Some("sys"), "objects", true),
+            (Dialect::SqlServer, Some("dbo"), "orders", false),
         ];
         for (dialect, schema, table, expected) in cases {
             assert_eq!(
@@ -333,7 +476,12 @@ mod tests {
         let dialects: Vec<Dialect> = DriverKind::ALL.into_iter().map(Dialect::from).collect();
         assert_eq!(
             dialects,
-            [Dialect::Postgres, Dialect::Sqlite, Dialect::Mysql]
+            [
+                Dialect::Postgres,
+                Dialect::Sqlite,
+                Dialect::Mysql,
+                Dialect::SqlServer
+            ]
         );
     }
 }

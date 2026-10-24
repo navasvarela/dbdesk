@@ -2,7 +2,7 @@ use dbdesk_sql::{Dialect, Hazard, commits_implicitly, hazard};
 use dbdesk_store::ConsoleKey;
 use egui::{Align, Id, Layout, Modal};
 
-use crate::console::SubmittedStatement;
+use crate::console::SubmittedRun;
 
 pub enum HazardChoice {
     RunAnyway,
@@ -18,13 +18,13 @@ const COMMITS_AT_ONCE: &str = "This commits at once, together with anything the 
 /// themselves while the user may be counting on Rollback.
 pub struct HazardConfirmation {
     pub console: ConsoleKey,
-    pub statements: Vec<SubmittedStatement>,
+    pub run: SubmittedRun,
     warnings: Vec<String>,
 }
 
 /// The outcome of checking statements before running them.
 pub enum Review {
-    Safe(Vec<SubmittedStatement>),
+    Safe(SubmittedRun),
     NeedsConfirmation(HazardConfirmation),
 }
 
@@ -39,21 +39,18 @@ pub struct ReviewContext {
 
 /// Checks each statement for an `UPDATE` or `DELETE` that would change every row, and, when
 /// the user relies on Rollback, for one that commits by itself.
-pub fn review(
-    console: ConsoleKey,
-    statements: Vec<SubmittedStatement>,
-    context: ReviewContext,
-) -> Review {
-    let warnings: Vec<String> = statements
+pub fn review(console: ConsoleKey, run: SubmittedRun, context: ReviewContext) -> Review {
+    let warnings: Vec<String> = run
+        .statements
         .iter()
         .flat_map(|statement| statement_warnings(&statement.sql, context))
         .collect();
     if warnings.is_empty() {
-        Review::Safe(statements)
+        Review::Safe(run)
     } else {
         Review::NeedsConfirmation(HazardConfirmation {
             console,
-            statements,
+            run,
             warnings,
         })
     }

@@ -7,7 +7,7 @@ keychain, never in that file.
 ## Adding one
 
 Click **+** at the top of the explorer (or **New data source** on the Welcome tab) and choose
-**PostgreSQL**, **SQLite** or **MySQL / MariaDB**.
+**PostgreSQL**, **SQLite**, **MySQL / MariaDB** or **SQL Server**.
 
 ![The New PostgreSQL data source dialog](images/data-source-dialog.png)
 
@@ -69,6 +69,22 @@ install. Client certificates aren't supported yet.
 
 One data source type serves both: dbdesk tells MySQL and MariaDB apart once it connects, and
 **Test connection** says which it found ("Connected to MariaDB 11.4.4").
+
+**SQL Server** has the same fields too, for SQL Server and Azure SQL, with these defaults:
+
+![The New SQL Server data source dialog](images/sqlserver-data-source-dialog.png)
+
+| Field | Default | Notes |
+| --- | --- | --- |
+| Host | `localhost` | Name or IP address of the server. For Azure SQL, the server's name, such as `myserver.database.windows.net`. |
+| Port | `1433` | Named instances aren't looked up: give the instance's port. |
+| Database | `master` | The database the console works in. The explorer lists every database the login may open. |
+| User | `sa` | A SQL Server login. Windows and Microsoft Entra ID sign-in aren't supported yet. |
+| TLS | `prefer` | SQL Server always offers encryption, with a certificate of its own making unless it is given one, so `prefer` and `require` encrypt without checking it, and `verify-full` needs that server's CA file (or, for Azure SQL, nothing: its certificate is publicly signed). |
+| Password | none | Stored in the keychain when you save. |
+
+**Test connection** says which server it reached ("Connected to SQL Server 16.0.4305.5"; 16 is
+SQL Server 2022).
 
 **SQLite** adds:
 

@@ -1,6 +1,6 @@
 # More databases
 
-Status: **DB0 and DB1 built**; DB2 onwards planned. Order agreed on 2026-10-23; ClickHouse added
+Status: **DB0, DB1 and DB2 built**; DB3 onwards planned. Order agreed on 2026-10-23; ClickHouse added
 after DuckDB the same day.
 
 dbdesk speaks PostgreSQL and SQLite. This plan adds the next engines in order of how many
@@ -165,6 +165,27 @@ a row in the grid, and the conformance suite passes on both in CI.
 
 **Exit:** as for DB1, against SQL Server 2022, plus connecting to an Azure SQL database
 (TLS required).
+
+**As built**, where it differs from the plan above:
+
+- **Cancel** is the attention message, sent by the statement's own task, since `tiberius`
+  sends one. Its 0.13.0 release stopped reading at the end of the cancelled reply, though, and
+  SQL Server 2022 acknowledges in a message of its own, which left the client a reply behind
+  (each later query saw the previous one's result). dbdesk pins `tiberius` to the commit of
+  [tiberius-rs/tiberius#460](https://github.com/tiberius-rs/tiberius/pull/460), which fixes
+  it, until a release has it. `KILL` was not an option: it ends the whole session, and the
+  engine also cancels to discard unread rows.
+- **Validate** asks `sp_describe_first_result_set` instead: `SET NOEXEC ON` defers resolving
+  tables that don't exist, so it let a misspelt table through; the procedure catches unknown
+  tables and columns alike, and sees the session's temporary tables.
+- **Definitions** come from each database's `sys.sql_modules`, which holds what
+  `OBJECT_DEFINITION` returns but can be read from another database.
+- **`TOP`**: dbdesk generates no row limit to translate. **Open data** runs `SELECT *` and
+  pages through the result.
+- **TLS:** `tiberius`'s rustls support compiles in aws-lc-rs next to ring, so the network
+  drivers install ring as rustls's process-wide provider before connecting.
+- **Azure SQL** is supported in code (TLS, the gateway's redirect), but hasn't been tried: there
+  was no account to try it with.
 
 ### DB3 — DuckDB
 

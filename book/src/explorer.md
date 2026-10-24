@@ -57,6 +57,26 @@ data source
    └─ events          scheduled with CREATE EVENT
 ```
 
+**SQL Server**, which keeps schemas inside each database, as PostgreSQL does, and lets one
+connection browse them all:
+
+```text
+data source
+└─ database                 every database the login may open
+   └─ schema
+      ├─ tables
+      │  └─ table
+      │     ├─ columns      with their type, length and "not null"
+      │     ├─ indexes      with their key columns, clustered or not, and whether unique
+      │     ├─ constraints  primary key, unique, foreign key, check and default
+      │     └─ triggers
+      ├─ views
+      ├─ functions
+      ├─ procedures
+      ├─ sequences
+      └─ synonyms           with the object each one names
+```
+
 Each kind of object has its own icon and colour, and folders that have been loaded show how many
 objects they hold (`tables 5`).
 
@@ -94,6 +114,9 @@ Which objects have one depends on the database:
 - **MySQL and MariaDB**: tables, views, functions, procedures, events and triggers, as
   `SHOW CREATE …` gives them. A routine whose source you may run but not read shows a message
   instead.
+- **SQL Server**: views, functions, procedures and triggers, as SQL Server stores their source
+  (what `OBJECT_DEFINITION` returns), and synonyms. One created `WITH ENCRYPTION`, or that your
+  login may run but not read, shows a message instead.
 
 ## Filtering
 
@@ -108,10 +131,15 @@ Expand the parts you want to search first.
 
 ## System objects
 
-PostgreSQL's `pg_catalog`, `information_schema` and temporary schemas, SQLite's internal
-`sqlite_` tables, and MySQL's `mysql`, `information_schema`, `performance_schema` and `sys`
-databases are hidden. The eye button next to **+** shows or hides them, for every data
-source at once.
+The explorer hides each database's own objects:
+
+- PostgreSQL's `pg_catalog`, `information_schema` and temporary schemas;
+- SQLite's internal `sqlite_` tables;
+- MySQL's `mysql`, `information_schema`, `performance_schema` and `sys` databases;
+- SQL Server's `master`, `model`, `msdb` and `tempdb` databases, and in every database the
+  `sys`, `INFORMATION_SCHEMA` and `guest` schemas and those of the fixed database roles.
+
+The eye button next to **+** shows or hides them, for every data source at once.
 
 ## When the connection closes
 
