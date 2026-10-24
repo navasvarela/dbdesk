@@ -5,8 +5,8 @@ mod server;
 
 use dbdesk_core::{
     ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DriverKind, DuckDbConfig,
-    DuckDbDatabase, MysqlConfig, Password, PostgresConfig, ProjectId, SourceColor, SqlServerConfig,
-    SqliteConfig,
+    DuckDbDatabase, MysqlConfig, Password, PostgresConfig, ProjectId, SafetyLevel, SourceColor,
+    SqlServerConfig, SqliteConfig,
 };
 use dbdesk_engine::PasswordUpdate;
 
@@ -70,6 +70,7 @@ pub struct DataSourceForm {
     /// Optional: an empty name becomes [`ConnectionConfig::default_name`].
     pub name: String,
     pub color: Option<SourceColor>,
+    pub safety: SafetyLevel,
     /// Not edited in the dialog, only carried through it, so saving an edit keeps the data
     /// source in its project.
     pub project: Option<ProjectId>,
@@ -236,6 +237,7 @@ impl DataSourceForm {
         Self {
             name: String::new(),
             color: None,
+            safety: SafetyLevel::Normal,
             project: None,
             fields: DriverFields::new(driver),
         }
@@ -245,6 +247,7 @@ impl DataSourceForm {
         Self {
             name: data_source.name.clone(),
             color: data_source.color,
+            safety: data_source.safety,
             project: data_source.project,
             fields: DriverFields::from_config(&data_source.config),
         }
@@ -264,6 +267,7 @@ impl DataSourceForm {
             id,
             name,
             color: self.color,
+            safety: self.safety,
             project: self.project,
             config,
         })
@@ -360,6 +364,7 @@ mod tests {
                 id: DataSourceId::generate(),
                 name: "saved".to_owned(),
                 color: Some(SourceColor::Teal),
+                safety: SafetyLevel::ReadOnly,
                 project: Some(ProjectId::generate()),
                 config,
             };

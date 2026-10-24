@@ -28,6 +28,7 @@ fn postgres(server: ServerConfig) -> DataSource {
         id: DataSourceId::generate(),
         name: "shared".to_owned(),
         color: None,
+        safety: dbdesk_core::SafetyLevel::Normal,
         project: None,
         config: ConnectionConfig::Postgres(PostgresConfig { server }),
     }

@@ -32,6 +32,21 @@ pub(super) async fn apply(
     let SessionOwner::Console(console) = worker.context.owner else {
         return Ok(());
     };
+    if worker.context.read_only.is_some() {
+        let message = format!(
+            "\u{201c}{}\u{201d} is read-only, so its rows can't be edited.",
+            worker.context.name()
+        );
+        tracing::warn!(data_source = %worker.context.name(), "edits refused: read-only");
+        worker.context.send(Event::EditsApplied {
+            console,
+            result: Err(EditFailure {
+                statement: None,
+                message,
+            }),
+        });
+        return Ok(());
+    }
     let Some(wrapping) = wrapping(worker) else {
         let failure = EditFailure {
             statement: None,

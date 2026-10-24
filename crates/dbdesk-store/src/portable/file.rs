@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 
 use dbdesk_core::{
     ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase,
-    MysqlConfig, Port, PostgresConfig, ProjectId, ServerConfig, SourceColor, SqlServerConfig,
-    SqliteConfig, TlsMode,
+    MysqlConfig, Port, PostgresConfig, ProjectId, SafetyLevel, ServerConfig, SourceColor,
+    SqlServerConfig, SqliteConfig, TlsMode,
 };
 use serde::{Deserialize, Serialize};
 
@@ -89,6 +89,9 @@ pub(crate) struct PortableDataSource {
     name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     color: Option<SourceColor>,
+    /// A team's production data source stays careful or read-only on every machine.
+    #[serde(default, skip_serializing_if = "SafetyLevel::is_normal")]
+    safety: SafetyLevel,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     project: Option<ProjectId>,
     #[serde(flatten)]
@@ -102,6 +105,7 @@ impl PortableDataSource {
             id,
             name,
             color,
+            safety,
             project,
             config,
         } = data_source;
@@ -109,6 +113,7 @@ impl PortableDataSource {
             id: *id,
             name: name.clone(),
             color: *color,
+            safety: *safety,
             project: *project,
             config: PortableConfig::export(config, &path),
         }
@@ -120,6 +125,7 @@ impl PortableDataSource {
             id,
             name,
             color,
+            safety,
             project,
             config,
         } = self;
@@ -127,6 +133,7 @@ impl PortableDataSource {
             id,
             name,
             color,
+            safety,
             project,
             config: config.import(&path),
         }

@@ -68,6 +68,7 @@ fn reloads_saved_data_sources_and_stores_passwords_in_the_secret_store() {
         id: DataSourceId::generate(),
         name: "remote".to_owned(),
         color: None,
+        safety: dbdesk_core::SafetyLevel::Normal,
         project: None,
         config: ConnectionConfig::Postgres(PostgresConfig {
             server: ServerConfig {
@@ -459,6 +460,7 @@ fn connects_to_postgres_with_the_saved_password() {
         id: DataSourceId::generate(),
         name: "test server".to_owned(),
         color: None,
+        safety: dbdesk_core::SafetyLevel::Normal,
         project: None,
         config: ConnectionConfig::Postgres(parsed.config),
     };

@@ -264,6 +264,7 @@ pub fn sqlite_data_source(path: PathBuf) -> DataSource {
         id: DataSourceId::generate(),
         name: "app".to_owned(),
         color: None,
+        safety: dbdesk_core::SafetyLevel::Normal,
         project: None,
         config: ConnectionConfig::Sqlite(SqliteConfig {
             path,

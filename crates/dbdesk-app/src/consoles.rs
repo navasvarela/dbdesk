@@ -315,6 +315,7 @@ mod tests {
             id: DataSourceId::generate(),
             name: name.to_owned(),
             color: None,
+            safety: dbdesk_core::SafetyLevel::Normal,
             project: None,
             config: ConnectionConfig::Sqlite(SqliteConfig {
                 path: "/data/app.db".into(),

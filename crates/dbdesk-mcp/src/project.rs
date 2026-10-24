@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use dbdesk_core::{ConnectionConfig, DataSource};
+use dbdesk_core::DataSource;
 use dbdesk_store::{
     DataSourceFile, McpPermissions, Project, ProjectFile, ProjectStoreError, StoreError,
 };
@@ -91,7 +91,7 @@ impl ServedProject {
             .into_iter()
             .filter(|data_source| data_source.project == Some(project.id))
             .filter(|data_source| has_read_only_mode(slug, data_source))
-            .map(read_only)
+            .map(dbdesk_engine::read_only::connection_config)
             .collect();
         Ok(Self {
             project: project.clone(),
@@ -124,7 +124,7 @@ impl ServedProject {
 /// inside a function that writes.
 fn has_read_only_mode(slug: &str, data_source: &DataSource) -> bool {
     let driver = data_source.config.driver();
-    let supported = crate::read_only::mode(driver).is_some();
+    let supported = dbdesk_engine::read_only::mode(driver).is_some();
     if !supported {
         tracing::warn!(
             project = slug,
@@ -134,14 +134,6 @@ fn has_read_only_mode(slug: &str, data_source: &DataSource) -> bool {
         );
     }
     supported
-}
-
-/// SQLite files are opened read-only, the engine's own equivalent of a read-only transaction.
-fn read_only(mut data_source: DataSource) -> DataSource {
-    if let ConnectionConfig::Sqlite(config) = &mut data_source.config {
-        config.read_only = true;
-    }
-    data_source
 }
 
 fn warn_about_ignored_permissions(slug: &str, permissions: &McpPermissions) {
@@ -165,7 +157,8 @@ fn warn_about_ignored_permissions(slug: &str, permissions: &McpPermissions) {
 #[cfg(test)]
 mod tests {
     use dbdesk_core::{
-        DataSourceId, ProjectId, ServerConfig, SqlServerConfig, SqliteConfig, TlsMode,
+        ConnectionConfig, DataSourceId, ProjectId, ServerConfig, SqlServerConfig, SqliteConfig,
+        TlsMode,
     };
     use dbdesk_store::{ProjectSlug, Projects};
 
@@ -210,6 +203,7 @@ mod tests {
             id: DataSourceId::generate(),
             name: name.to_owned(),
             color: None,
+            safety: dbdesk_core::SafetyLevel::Normal,
             project,
             config: ConnectionConfig::Sqlite(SqliteConfig {
                 path: format!("/data/{name}.db").into(),

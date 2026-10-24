@@ -13,6 +13,7 @@ use jiff::Timestamp;
 
 use dbdesk_sql::{ExplainSetting, controls_transactions};
 
+use super::guard::{self, ReadOnly};
 use super::{Disconnected, Script, SessionContext, Worker, cancel_running_statement, transaction};
 use crate::{
     Event, RunId, RunOutcome, RunPurpose, StatementFailure, StatementSummary, TransactionMode,
@@ -130,13 +131,32 @@ async fn run_statements(
             sql: sql.clone(),
             started_at: Timestamp::now(),
         };
-        if let Err(error) = transaction::begin_if_needed(worker, transactions, run, sql).await? {
+        if let Some(read_only) = worker.context.read_only {
+            let dialect = worker.context.dialect();
+            if let Err(refusal) = ReadOnly::check(sql, dialect, worker.context.name()) {
+                report_refusal(worker.context, &statement, refusal);
+                outcome = RunOutcome::Failed;
+                break;
+            }
+            if let Err(error) = guard::open(worker, read_only).await? {
+                report_failure(worker, &statement, Duration::ZERO, &error);
+                guard::close(worker).await?;
+                outcome = RunOutcome::Failed;
+                break;
+            }
+        } else if let Err(error) =
+            transaction::begin_if_needed(worker, transactions, run, sql).await?
+        {
             report_failure(worker, &statement, Duration::ZERO, &error);
             outcome = RunOutcome::Failed;
             break;
         }
         tracing::info!(data_source = %worker.context.name(), "running {}", preview(sql));
         let end = run_statement(worker, statement, index == last).await?;
+        // Rows still being paged keep the read-only transaction open until they are done.
+        if !matches!(end, StatementEnd::Parked(_)) {
+            guard::close(worker).await?;
+        }
         // A parked statement still holds the connection, so it can't be asked. Only the last
         // statement parks, and one that returns rows hardly ever controls transactions.
         let failed = matches!(end, StatementEnd::Failed);
@@ -360,6 +380,20 @@ fn report_success(context: &SessionContext, statement: &StatementRef, summary: S
         run: statement.run,
         statement: statement.index,
         result: Ok(summary),
+    });
+}
+
+/// Reports a statement a read-only data source refused, without sending it. Not recorded in
+/// the history, which holds what was sent to the database.
+fn report_refusal(context: &SessionContext, statement: &StatementRef, message: String) {
+    tracing::warn!(data_source = %context.name(), "statement {}: {message}", statement.index + 1);
+    context.send(Event::StatementFinished {
+        run: statement.run,
+        statement: statement.index,
+        result: Err(StatementFailure {
+            message,
+            position: None,
+        }),
     });
 }
 
