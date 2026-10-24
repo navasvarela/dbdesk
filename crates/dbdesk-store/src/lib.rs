@@ -10,6 +10,7 @@ mod export;
 mod history;
 mod keymap;
 mod paths;
+mod portable;
 mod projects;
 mod secrets;
 mod settings;
@@ -24,6 +25,10 @@ pub use history::{
 };
 pub use keymap::{KeymapBindings, KeymapError, KeymapFile};
 pub use paths::{APP_NAME, AppPaths};
+pub use portable::{
+    DataSourceImport, Difference, EntryStatus, ImportChoice, ImportChoices, ImportPlan,
+    ImportPreview, Incoming, MissingPath, PortableError, ProjectImport, read_export, write_export,
+};
 pub use projects::{
     InvalidSlug, InvalidTimeout, McpOverrides, McpPermissions, Project, ProjectFile, ProjectSlug,
     ProjectStoreError, Projects, StatementTimeout,
