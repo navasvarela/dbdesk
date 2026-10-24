@@ -1438,15 +1438,13 @@ version = "0.5.0"
 dependencies = [
  "async-trait",
  "dbdesk-core",
+ "dbdesk-tls",
  "futures-util",
- "rustls",
  "tempfile",
- "thiserror 2.0.21",
  "tokio",
  "tokio-postgres",
  "tokio-postgres-rustls",
  "tracing",
- "webpki-roots",
 ]
 
 [[package]]
@@ -1545,6 +1543,17 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "toml",
+]
+
+[[package]]
+name = "dbdesk-tls"
+version = "0.3.0"
+dependencies = [
+ "dbdesk-core",
+ "rustls",
+ "tempfile",
+ "thiserror 2.0.21",
+ "webpki-roots",
 ]
 
 [[package]]

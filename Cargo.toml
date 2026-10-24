@@ -21,6 +21,7 @@ dbdesk-engine = { path = "crates/dbdesk-engine" }
 dbdesk-mcp = { path = "crates/dbdesk-mcp" }
 dbdesk-sql = { path = "crates/dbdesk-sql" }
 dbdesk-store = { path = "crates/dbdesk-store" }
+dbdesk-tls = { path = "crates/dbdesk-tls" }
 
 anyhow = "1.0.104"
 async-trait = "0.1.92"
