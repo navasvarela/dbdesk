@@ -23,10 +23,14 @@ dbdesk-store = { path = "crates/dbdesk-store" }
 anyhow = "1.0.104"
 async-trait = "0.1.92"
 directories = "6.0.0"
+# With default features off, every one dbdesk needs is listed. `links` is what lets
+# `ctx.open_url` and hyperlinks open the browser: without it egui-winit only logs
+# "feature \"links\" not enabled", and the manual, release page and repository links did nothing.
 eframe = { version = "0.36.2", default-features = false, features = [
     "accesskit",
     "default_fonts",
     "glow",
+    "links",
     "persistence",
     "wayland",
     "x11",
