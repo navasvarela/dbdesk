@@ -321,7 +321,7 @@ tests for the catalog, definitions and TLS, an engine test of grid edits in MySQ
 splitter, syntax-check and formatter corpora for the dialect, a UI test that adds a MySQL data
 source, and unit tests for the implicit-commit warning and the tree explain.
 
-**DB2 demo note:** built in #39, #42 and #DB2_CONSOLE_PR, the first milestone delivered as a
+**DB2 demo note:** built in #39, #42 and #44, the first milestone delivered as a
 native stack of pull requests. `docker compose up -d --wait` now also starts SQL Server 2022 (port 51433; on an
 Apple-silicon Mac it runs emulated, slowly). **+** → **SQL Server** opens the shared server form
 (`localhost:1433`, database `master`, user `sa`); **Test connection** says "Connected to SQL
