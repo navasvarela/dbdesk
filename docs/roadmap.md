@@ -361,7 +361,7 @@ value formatting, status results and reading a Parquet file from memory, an engi
 edits, lexer, syntax-check and formatter corpora for the dialect, and a UI test that adds an
 in-memory DuckDB data source.
 
-**DB4 demo note:** built in #56, #60 and the console pull request, as a native stack. `docker
+**DB4 demo note:** built in #56, #60 and #61, as a native stack. `docker
 compose up -d --wait` now also starts ClickHouse 25.8, over HTTP on port 58123 and HTTPS on
 58443. **+** → **ClickHouse** opens the shared server form (`localhost:8123`, database and user
 `default`) with TLS `disable`, `require` or `verify-full`; choosing `require` moves the port to
