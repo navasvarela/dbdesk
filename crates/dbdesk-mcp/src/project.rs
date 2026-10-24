@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use dbdesk_core::DataSource;
 use dbdesk_store::{
-    DataSourceFile, McpPermissions, Project, ProjectFile, ProjectStoreError, StoreError,
+    DataSourceFile, McpPermissions, Project, ProjectFile, ProjectStoreError, SchemaScope,
+    StoreError,
 };
 
 /// Why the server can't start for the project asked for. Each message says what to do.
@@ -45,6 +46,8 @@ pub struct Limits {
 pub struct ServedProject {
     pub project: Project,
     pub limits: Limits,
+    /// The schemas the catalog tools show and statements may name.
+    pub schemas: SchemaScope,
     pub data_sources: Vec<DataSource>,
 }
 
@@ -99,6 +102,7 @@ impl ServedProject {
                 max_rows: usize::try_from(permissions.max_rows.get()).unwrap_or(usize::MAX),
                 statement_timeout: permissions.statement_timeout.duration(),
             },
+            schemas: permissions.schemas.clone(),
             data_sources,
         })
     }

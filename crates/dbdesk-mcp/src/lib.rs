@@ -14,6 +14,7 @@ mod catalog;
 mod connections;
 mod project;
 mod read_only;
+mod scope;
 mod server;
 
 use std::sync::Arc;
