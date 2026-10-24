@@ -82,6 +82,7 @@ mod tests {
             ("SELECT 'create'", Dialect::Mysql, false),
             ("CREATE TABLE t (n int)", Dialect::Postgres, false),
             ("DROP TABLE t", Dialect::Sqlite, false),
+            ("CREATE TABLE t (n int)", Dialect::SqlServer, false),
         ];
         for (sql, dialect, expected) in cases {
             assert_eq!(

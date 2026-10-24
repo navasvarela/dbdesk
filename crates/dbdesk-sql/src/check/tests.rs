@@ -92,6 +92,33 @@ delete quick ignore from t where id = 2;
 values row(1, 'a'), row(2, 'b');
 "#;
 
+const VALID_SQL_SERVER: &str = r#"
+select top 10 [id], name from [dbo].[users] where active = 1 and created_at >= dateadd(day, -7, getdate()) order by 1 desc;
+select top (5) percent with ties id from t order by id;
+select N'it''s', 0x1F, 'a' + 'b', @x, @@rowcount, #tmp.id, ##g.id from #tmp, ##g;
+select a from t order by a offset 10 rows fetch next 5 rows only;
+select * from t with (nolock) where a = 1;
+select * from a cross apply (select top 1 b from c where c.a = a.id) x outer apply string_split(a.list, ',') s;
+select iif(a > 1, 'big', 'small'), isnull(b, 0), coalesce(c, d), case when e = 1 then 1 else 2 end from t;
+select cast(a as nvarchar(max)), convert(varchar(10), b, 120), try_convert(int, c) from t;
+select json_value(doc, '$.a'), (select a, b from t for json path) as j;
+select a, count(*) over (partition by b order by c rows between unbounded preceding and current row) from t;
+with n(i) as (select 1 union all select i + 1 from n where i < 5) select * from n option (maxrecursion 10);
+select * from t where a like N'%x%' and b in (select b from u) and not exists (select 1 from v where v.id = t.id);
+select pvt.* from (select a, b, c from t) s pivot (sum(c) for b in ([x], [y])) pvt;
+insert into t (a, b) values (1, N'x'), (2, N'y');
+insert into t (a) output inserted.id select a from u;
+insert into #tmp (a) exec dbo.get_rows;
+update t set a = a + 1 output deleted.a, inserted.a where id = 1;
+update top (10) t set a = 1 where b = 2;
+update t set t.a = u.a from t join u on u.id = t.id where u.b = 1;
+delete from t where id = 1;
+delete top (5) from t where a = 0;
+delete t from t join u on u.id = t.id;
+merge into t using s on t.id = s.id when matched then update set a = s.a when not matched by target then insert (id, a) values (s.id, s.a) when not matched by source then delete;
+values (1);
+"#;
+
 fn syntax_errors(corpus: &str, dialect: Dialect) -> Vec<(String, Problem)> {
     split_statements(corpus, dialect)
         .into_iter()
@@ -110,6 +137,7 @@ fn valid_statements_get_no_syntax_error() {
     assert_eq!(syntax_errors(VALID_POSTGRES, Dialect::Postgres), []);
     assert_eq!(syntax_errors(VALID_SQLITE, Dialect::Sqlite), []);
     assert_eq!(syntax_errors(VALID_MYSQL, Dialect::Mysql), []);
+    assert_eq!(syntax_errors(VALID_SQL_SERVER, Dialect::SqlServer), []);
 }
 
 #[test]
@@ -163,7 +191,7 @@ type LintCase = (&'static str, Dialect, &'static [(LintRule, &'static str)]);
 #[test]
 fn lint_rules_flag_what_they_describe_and_nothing_else() {
     use LintRule::*;
-    let cases: [LintCase; 10] = [
+    let cases: [LintCase; 13] = [
         (
             "select * from t where a = null",
             Dialect::Postgres,
@@ -214,6 +242,21 @@ fn lint_rules_flag_what_they_describe_and_nothing_else() {
             Dialect::Postgres,
             &[],
         ),
+        (
+            "update top (10) t set a = null where b <> NULL",
+            Dialect::SqlServer,
+            &[(NullComparison, "<> NULL")],
+        ),
+        (
+            "DELETE FROM [order]",
+            Dialect::SqlServer,
+            &[(DeleteWithoutWhere, "DELETE")],
+        ),
+        (
+            "insert into #t select * from u",
+            Dialect::SqlServer,
+            &[(SelectStarInInsert, "*")],
+        ),
     ];
     for (sql, dialect, expected) in cases {
         assert_eq!(lints(sql, dialect), expected, "{sql}");
@@ -229,13 +272,17 @@ fn rule_ids_read_back() {
 }
 
 #[test]
-fn still_reports_mysql_syntax_errors_around_its_gaps() {
-    for sql in [
+fn still_reports_mysql_and_sql_server_syntax_errors_around_their_gaps() {
+    let cases = [
         "select a from t where",
         "select a, from t",
         "update t set where id = 1",
-    ] {
-        let problems = check_statement(sql, Dialect::Mysql);
+    ];
+    for (sql, dialect) in cases
+        .into_iter()
+        .flat_map(|sql| [(sql, Dialect::Mysql), (sql, Dialect::SqlServer)])
+    {
+        let problems = check_statement(sql, dialect);
         assert!(
             problems
                 .iter()
