@@ -30,8 +30,8 @@ pub use portable::{
     ImportPreview, Incoming, MissingPath, PortableError, ProjectImport, read_export, write_export,
 };
 pub use projects::{
-    InvalidSlug, InvalidTimeout, McpOverrides, McpPermissions, Project, ProjectFile, ProjectSlug,
-    ProjectStoreError, Projects, StatementTimeout,
+    InvalidSchemaScope, InvalidSlug, InvalidTimeout, McpOverrides, McpPermissions, Project,
+    ProjectFile, ProjectSlug, ProjectStoreError, Projects, SchemaScope, StatementTimeout,
 };
 pub use secrets::{Keychain, SecretError, SecretStore};
 pub use settings::{

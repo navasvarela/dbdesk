@@ -155,6 +155,7 @@ fn a_read_only_postgres_data_source_refuses_writes_even_inside_a_function() {
         color: None,
         safety: SafetyLevel::Normal,
         project: None,
+        mcp_login: None,
         config: ConnectionConfig::Postgres(server.config.clone()),
     };
     let production = read_only(&normal);

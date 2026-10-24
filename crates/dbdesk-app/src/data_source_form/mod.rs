@@ -5,8 +5,8 @@ mod server;
 
 use dbdesk_core::{
     ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DriverKind, DuckDbConfig,
-    DuckDbDatabase, MysqlConfig, Password, PostgresConfig, ProjectId, SafetyLevel, SourceColor,
-    SqlServerConfig, SqliteConfig,
+    DuckDbDatabase, McpLogin, MysqlConfig, Password, PostgresConfig, ProjectId, SafetyLevel,
+    SourceColor, SqlServerConfig, SqliteConfig,
 };
 use dbdesk_engine::PasswordUpdate;
 
@@ -74,6 +74,8 @@ pub struct DataSourceForm {
     /// Not edited in the dialog, only carried through it, so saving an edit keeps the data
     /// source in its project.
     pub project: Option<ProjectId>,
+    /// Carried through the dialog like `project`.
+    pub mcp_login: Option<McpLogin>,
     pub fields: DriverFields,
 }
 
@@ -239,6 +241,7 @@ impl DataSourceForm {
             color: None,
             safety: SafetyLevel::Normal,
             project: None,
+            mcp_login: None,
             fields: DriverFields::new(driver),
         }
     }
@@ -249,6 +252,7 @@ impl DataSourceForm {
             color: data_source.color,
             safety: data_source.safety,
             project: data_source.project,
+            mcp_login: data_source.mcp_login.clone(),
             fields: DriverFields::from_config(&data_source.config),
         }
     }
@@ -269,6 +273,7 @@ impl DataSourceForm {
             color: self.color,
             safety: self.safety,
             project: self.project,
+            mcp_login: self.mcp_login.clone(),
             config,
         })
     }
@@ -366,6 +371,9 @@ mod tests {
                 color: Some(SourceColor::Teal),
                 safety: SafetyLevel::ReadOnly,
                 project: Some(ProjectId::generate()),
+                mcp_login: Some(McpLogin {
+                    user: "assistant".to_owned(),
+                }),
                 config,
             };
 

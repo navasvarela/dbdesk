@@ -21,17 +21,21 @@ use dbdesk_engine::{
 };
 use dbdesk_store::{
     ConsoleKey, ConsoleName, DataSourceFile, ExportFormat, FormatSettings, KeymapBindings,
-    KeywordCase, Projects, SavedConsole, Settings,
+    KeywordCase, Projects, SavedConsole, SecretStore, Settings,
 };
 
 #[test]
 fn saves_connects_disconnects_and_deletes_a_data_source() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("data_sources.toml");
-    let mut engine = TestEngine::start(&file, Arc::default());
+    let secrets = Arc::new(MemorySecrets::default());
+    let mut engine = TestEngine::start(&file, Arc::clone(&secrets));
     engine.expect_started(vec![]);
     let data_source = sqlite_data_source(sqlite_database(dir.path()));
     let id = data_source.id;
+    secrets
+        .set_mcp_password(id, &Password::new("left over"))
+        .unwrap();
 
     engine.send(Command::SaveDataSource {
         data_source: data_source.clone(),
@@ -56,6 +60,7 @@ fn saves_connects_disconnects_and_deletes_a_data_source() {
     engine.send(Command::DeleteDataSource(id));
     engine.expect(Event::DataSourceDeleted(id));
     assert!(DataSourceFile::new(&file).load().unwrap().is_empty());
+    assert_eq!(secrets.mcp(id), None, "the MCP login's password goes too");
     engine.shut_down();
 }
 
@@ -70,6 +75,7 @@ fn reloads_saved_data_sources_and_stores_passwords_in_the_secret_store() {
         color: None,
         safety: dbdesk_core::SafetyLevel::Normal,
         project: None,
+        mcp_login: None,
         config: ConnectionConfig::Postgres(PostgresConfig {
             server: ServerConfig {
                 host: "db.internal".to_owned(),
@@ -462,6 +468,7 @@ fn connects_to_postgres_with_the_saved_password() {
         color: None,
         safety: dbdesk_core::SafetyLevel::Normal,
         project: None,
+        mcp_login: None,
         config: ConnectionConfig::Postgres(parsed.config),
     };
     let id = data_source.id;

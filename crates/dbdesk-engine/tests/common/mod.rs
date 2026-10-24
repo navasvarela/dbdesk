@@ -34,8 +34,9 @@ const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Default)]
 pub struct MemorySecrets {
-    passwords: Mutex<HashMap<DataSourceId, Password>>,
-    /// Refuses every read and write, like a keychain that is locked or missing.
+    own: Mutex<HashMap<DataSourceId, Password>>,
+    mcp: Mutex<HashMap<DataSourceId, Password>>,
+    /// Refuses every read and write of either kind, like a keychain that is locked or missing.
     locked: AtomicBool,
 }
 
@@ -48,7 +49,11 @@ impl MemorySecrets {
     }
 
     pub fn get(&self, id: DataSourceId) -> Option<Password> {
-        self.passwords.lock().unwrap().get(&id).cloned()
+        self.own.lock().unwrap().get(&id).cloned()
+    }
+
+    pub fn mcp(&self, id: DataSourceId) -> Option<Password> {
+        self.mcp.lock().unwrap().get(&id).cloned()
     }
 
     fn check_unlocked(&self) -> Result<(), SecretError> {
@@ -67,13 +72,30 @@ impl SecretStore for MemorySecrets {
 
     fn set_password(&self, id: DataSourceId, password: &Password) -> Result<(), SecretError> {
         self.check_unlocked()?;
-        self.passwords.lock().unwrap().insert(id, password.clone());
+        self.own.lock().unwrap().insert(id, password.clone());
         Ok(())
     }
 
     fn delete_password(&self, id: DataSourceId) -> Result<(), SecretError> {
         self.check_unlocked()?;
-        self.passwords.lock().unwrap().remove(&id);
+        self.own.lock().unwrap().remove(&id);
+        Ok(())
+    }
+
+    fn mcp_password(&self, id: DataSourceId) -> Result<Option<Password>, SecretError> {
+        self.check_unlocked()?;
+        Ok(self.mcp(id))
+    }
+
+    fn set_mcp_password(&self, id: DataSourceId, password: &Password) -> Result<(), SecretError> {
+        self.check_unlocked()?;
+        self.mcp.lock().unwrap().insert(id, password.clone());
+        Ok(())
+    }
+
+    fn delete_mcp_password(&self, id: DataSourceId) -> Result<(), SecretError> {
+        self.check_unlocked()?;
+        self.mcp.lock().unwrap().remove(&id);
         Ok(())
     }
 }
@@ -266,6 +288,7 @@ pub fn sqlite_data_source(path: PathBuf) -> DataSource {
         color: None,
         safety: dbdesk_core::SafetyLevel::Normal,
         project: None,
+        mcp_login: None,
         config: ConnectionConfig::Sqlite(SqliteConfig {
             path,
             read_only: false,

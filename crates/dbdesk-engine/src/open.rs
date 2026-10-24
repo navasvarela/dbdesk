@@ -28,6 +28,11 @@ pub enum OpenError {
     PasswordNeeded(PasswordNeeded),
     #[error(transparent)]
     Placeholder(#[from] PlaceholderError),
+    #[error(
+        "the MCP login {user:?} has no saved password; set it in the data source's settings in \
+         dbdesk"
+    )]
+    NoMcpPassword { user: String },
     #[error(transparent)]
     Driver(#[from] DriverError),
     #[error("could not connect within {0:?}")]
@@ -67,6 +72,47 @@ pub async fn open_data_source(
         data_source,
         secrets,
         &PasswordUpdate::Keep,
+        Prompting::Never,
+    )
+    .await
+}
+
+/// Opens a connection for `dbdesk mcp`: as the data source's MCP login when it has one,
+/// with that login's own saved password, and otherwise as [`open_data_source`] does.
+///
+/// An MCP login without a saved password is an error rather than a reason to fall back to
+/// the data source's own login, whose grants are what the MCP login exists to narrow.
+///
+/// # Errors
+///
+/// [`OpenError`] as for [`open_data_source`], and [`OpenError::NoMcpPassword`].
+pub async fn open_data_source_for_mcp(
+    data_source: &DataSource,
+    secrets: &Arc<dyn SecretStore>,
+) -> Result<Box<dyn Connection>, OpenError> {
+    let Some(login) = &data_source.mcp_login else {
+        return open_data_source(data_source, secrets).await;
+    };
+    let Some(config) = data_source.config.with_user(&login.user) else {
+        return open_data_source(data_source, secrets).await;
+    };
+    let id = data_source.id;
+    let store = Arc::clone(secrets);
+    let password = tokio::task::spawn_blocking(move || store.mcp_password(id))
+        .await
+        .map_err(OpenError::Task)?
+        .map_err(OpenError::Password)?
+        .ok_or_else(|| OpenError::NoMcpPassword {
+            user: login.user.clone(),
+        })?;
+    let as_mcp = DataSource {
+        config,
+        ..data_source.clone()
+    };
+    open(
+        &as_mcp,
+        secrets,
+        &PasswordUpdate::Set(password),
         Prompting::Never,
     )
     .await

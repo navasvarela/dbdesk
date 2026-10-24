@@ -65,17 +65,27 @@ fn main() {
 }
 
 /// Passwords in memory, standing in for the OS keychain; the server process reads them from
-/// a file the test wrote.
-struct FileSecrets(HashMap<DataSourceId, Password>);
+/// a file the test wrote. Keyed by account as the keychain is: the data source's id, or the
+/// id and `/mcp` for its MCP login.
+struct FileSecrets(HashMap<String, Password>);
 
 impl SecretStore for FileSecrets {
     fn password(&self, id: DataSourceId) -> Result<Option<Password>, SecretError> {
-        Ok(self.0.get(&id).cloned())
+        Ok(self.0.get(&id.to_string()).cloned())
     }
     fn set_password(&self, _: DataSourceId, _: &Password) -> Result<(), SecretError> {
         Ok(())
     }
     fn delete_password(&self, _: DataSourceId) -> Result<(), SecretError> {
+        Ok(())
+    }
+    fn mcp_password(&self, id: DataSourceId) -> Result<Option<Password>, SecretError> {
+        Ok(self.0.get(&format!("{id}/mcp")).cloned())
+    }
+    fn set_mcp_password(&self, _: DataSourceId, _: &Password) -> Result<(), SecretError> {
+        Ok(())
+    }
+    fn delete_mcp_password(&self, _: DataSourceId) -> Result<(), SecretError> {
         Ok(())
     }
 }
@@ -92,7 +102,7 @@ fn serve_as_child(dir: &Path) {
     let secrets = FileSecrets(
         passwords
             .into_iter()
-            .map(|(id, password)| (id.parse().unwrap(), Password::new(password)))
+            .map(|(account, password)| (account, Password::new(password)))
             .collect(),
     );
     let config = McpConfig {
@@ -177,6 +187,7 @@ fn data_source(name: &str, project: ProjectId, config: ConnectionConfig) -> Data
         color: None,
         safety: dbdesk_core::SafetyLevel::Normal,
         project: Some(project),
+        mcp_login: None,
         config,
     }
 }
@@ -207,7 +218,7 @@ async fn run_directly(engine: &Engine, statements: &[String]) -> Vec<Vec<Option<
         engine
             .password
             .iter()
-            .map(|password| (engine.data_source.id, password.clone()))
+            .map(|password| (engine.data_source.id.to_string(), password.clone()))
             .collect(),
     ));
     let mut writable = engine.data_source.clone();
