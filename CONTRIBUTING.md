@@ -76,11 +76,56 @@ and docs is `feat/…`.
 
 - The title follows the commit format, because it becomes the merge commit's summary:
   `feat(console): save consoles between runs`.
-- A pull request that stacks on another one targets that branch, and says so in its
-  description.
+- Work that splits into layers that build on each other (a dialect, then a driver, then the
+  UI) is a stack: see [Stacked pull requests](#stacked-pull-requests). Independent changes are
+  separate pull requests against `main`.
 - `just lint` and `just test` pass before review. They run `cargo fmt --all --check`,
   `cargo clippy --workspace --all-targets --all-features -- -D warnings` and
   `cargo test --workspace`. See [testing](docs/testing.md) for the PostgreSQL tests.
 
 Commits and branches from before this convention (`M4: …`, `m4-daily-driver`) keep their
 names; history isn't rewritten.
+
+## Stacked pull requests
+
+A change that is easier to review in layers lands as a GitHub stack, with the
+[`gh stack`](https://gh.io/stacks) extension (`gh extension install github/gh-stack`). Each
+layer is a small pull request that GitHub retargets as the ones below it merge, with `main`'s
+required checks on every layer.
+
+```bash
+gh stack init feat/db3-duckdb-dialect
+```
+
+Commit the first layer, then start the next one on top of it:
+
+```bash
+gh stack add feat/db3-duckdb-driver
+```
+
+When every layer has commits, push them all and open one pull request per layer:
+
+```bash
+gh stack submit --auto --open
+```
+
+`--auto` titles each pull request after its branch, so give each one a Conventional Commits
+title and a description with `gh pr edit`.
+
+- **Keeping up with `main`:** `gh stack rebase`, then `gh stack push`. This rewrites the stack's
+  own branches (`--force-with-lease`). Never rebase or force-push `main`, nor a branch outside a
+  stack. Where force-pushing isn't possible, merging `origin/main` into the branch works too;
+  the squash merge flattens it.
+- **A fix in a lower layer:** commit it there, then `gh stack rebase --no-trunk` and
+  `gh stack push`.
+- **Merging:** GitHub doesn't queue auto-merge for stacked pull requests, and a plain
+  `gh pr merge` is refused. Once a layer's checks are green, merge it, and everything below it,
+  with:
+
+  ```bash
+  gh stack merge <pr-number> --squash --yes
+  ```
+
+  Each layer becomes its own squash commit on `main`, titled with its pull request's title. The
+  layers above it are retargeted to `main` automatically. The merge is all or nothing: if one
+  layer conflicts with `main`, nothing merges until it is brought up to date.
