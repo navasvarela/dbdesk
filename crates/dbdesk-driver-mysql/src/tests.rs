@@ -131,10 +131,11 @@ async fn runs_pages_cancels_and_reports_error_positions() {
             _ => UnquotedNames::ExactCase,
         };
 
-        conformance::check_execution(&mut connection).await;
-        conformance::check_transactions(&mut connection).await;
-        conformance::check_describe_table(&mut connection, names).await;
-        conformance::check_validate(&mut connection).await;
+        conformance::check_execution(&mut connection, conformance::Spelling::STANDARD).await;
+        conformance::check_transactions(&mut connection, conformance::Spelling::STANDARD).await;
+        conformance::check_describe_table(&mut connection, names, conformance::Spelling::STANDARD)
+            .await;
+        conformance::check_validate(&mut connection, conformance::Spelling::STANDARD).await;
         conformance::check_cancel(&mut connection, LONG_RUNNING).await;
 
         Box::new(connection).close().await.unwrap();
@@ -276,8 +277,7 @@ async fn walks_the_catalog_and_shows_definitions() {
 
 /// Both test servers make a self-signed certificate on first start, as MySQL 8 and MariaDB
 /// 11.4 do by default. Connecting with TLS also proves `mysql_async`'s rustls connector finds
-/// a crypto provider: it takes rustls's process-wide one, which only works while ring is the
-/// only provider compiled in.
+/// a crypto provider: it takes rustls's process-wide one, which `connect` installs.
 #[tokio::test]
 async fn encrypts_as_the_tls_mode_says() {
     for server in test_servers() {

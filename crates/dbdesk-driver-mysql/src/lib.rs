@@ -35,6 +35,7 @@ pub(crate) const MYSQL_QUOTING: Quoting = Quoting {
     identifier_open: '`',
     identifier_close: '`',
     backslash_escapes: true,
+    string_prefix: "",
 };
 
 /// Opens a connection, encrypted as `config.server.tls` says.
@@ -48,6 +49,7 @@ pub async fn connect(
     config: &MysqlConfig,
     password: Option<&Password>,
 ) -> Result<MysqlConnection, DriverError> {
+    install_crypto_provider();
     let ssl_opts = tls::ssl_opts(&config.server.tls).map_err(connect_error)?;
     let encrypted = base_opts(config, password).ssl_opts(ssl_opts);
     let (mut conn, opts) = match Conn::new(encrypted.clone()).await {
@@ -73,6 +75,17 @@ pub async fn connect(
         }),
         server_info,
     })
+}
+
+/// Makes ring rustls's process-wide crypto provider, unless one is installed already.
+///
+/// `mysql_async`'s rustls connector takes the process-wide provider, which rustls only picks
+/// by itself while a single provider is compiled in. The SQL Server driver's `tiberius` also
+/// compiles in aws-lc-rs, so whichever driver connects first installs ring, which every
+/// driver uses.
+fn install_crypto_provider() {
+    // An error only means a provider is installed already, which is what was wanted.
+    let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
 fn base_opts(config: &MysqlConfig, password: Option<&Password>) -> OptsBuilder {

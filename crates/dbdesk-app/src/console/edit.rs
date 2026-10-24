@@ -467,6 +467,23 @@ mod tests {
     }
 
     #[test]
+    fn writes_sql_server_updates_with_brackets_and_unicode_literals() {
+        let columns = [column("id"), column("name")];
+        let Editability::Editable(target) = edit_target(table(&["id", "name"], &["id"]), &columns)
+        else {
+            panic!("expected the result to be editable");
+        };
+        let rows = vec![cells(&[Some("1"), Some("ada")])];
+        let mut pending = PendingEdits::default();
+        pending.set(&rows, 0, 1, Some("Zoë's]".to_owned()));
+
+        assert_eq!(
+            pending.statements(&target, &columns, &rows, Dialect::SqlServer.quoting()),
+            ["UPDATE [public].[people] SET [name] = N'Zoë''s]' WHERE [id] = N'1'"]
+        );
+    }
+
+    #[test]
     fn writes_one_update_per_changed_row_keyed_by_the_loaded_key() {
         let columns = [column("id"), column("name"), column("note")];
         let Editability::Editable(target) =
