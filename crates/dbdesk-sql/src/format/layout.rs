@@ -350,11 +350,43 @@ impl<'a> Layout<'a> {
             self.node(group, sep);
             body = rest;
         }
+        if self.word(&nodes[clause.phrase.start]) == Some("select") {
+            body = self.select_top(body);
+        }
         match clause.kind {
             ClauseKind::List => self.list(body, level, lead),
             ClauseKind::Condition => self.conditions(body, level, lead),
             ClauseKind::Inline => self.inline(body, lead),
         }
+    }
+
+    /// Transact-SQL's `SELECT TOP (n) [PERCENT] [WITH TIES]` keeps its row limit on the
+    /// clause's line, ahead of the columns. Returns the rest of the clause.
+    fn select_top<'n>(&mut self, body: &'n [Node]) -> &'n [Node] {
+        let [top, count, rest @ ..] = body else {
+            return body;
+        };
+        if self.word(top) != Some("top") {
+            return body;
+        }
+        self.node(top, Sep::Space);
+        let sep = self.natural_sep(count);
+        self.node(count, sep);
+        let mut rest = rest;
+        for words in [&["percent"][..], &["with", "ties"]] {
+            let matches = rest.len() >= words.len()
+                && rest
+                    .iter()
+                    .zip(words)
+                    .all(|(node, word)| self.word(node) == Some(*word));
+            if matches {
+                for node in &rest[..words.len()] {
+                    self.node(node, Sep::Space);
+                }
+                rest = &rest[words.len()..];
+            }
+        }
+        rest
     }
 
     fn list(&mut self, body: &[Node], level: usize, lead: Sep) {

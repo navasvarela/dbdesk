@@ -1039,6 +1039,46 @@ mod tests {
     }
 
     #[test]
+    fn adds_a_sql_server_data_source_with_the_servers_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "No data sources yet.");
+
+        harness
+            .get_all_by_label("New data source")
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness.get_by_label("SQL Server").click();
+        harness.run();
+        harness.get_by_label_contains("New SQL Server data source");
+        harness.get_by_label("Save").click();
+
+        step_until_visible(&mut harness, "Expand master@localhost");
+        let saved = DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .load()
+            .unwrap();
+        let [saved] = saved.as_slice() else {
+            panic!("expected one data source, got {saved:?}");
+        };
+        let dbdesk_core::ConnectionConfig::SqlServer(config) = &saved.config else {
+            panic!("expected a SQL Server data source, got {saved:?}");
+        };
+        let server = &config.server;
+        assert_eq!(
+            (
+                server.host.as_str(),
+                server.port,
+                server.database.as_str(),
+                server.user.as_str()
+            ),
+            ("localhost", 1433, "master", "sa")
+        );
+    }
+
+    #[test]
     fn chooses_a_tls_mode_and_ca_file_for_a_postgres_data_source() {
         let dir = tempfile::tempdir().unwrap();
         let ca_file = dir.path().join("internal-ca.pem");

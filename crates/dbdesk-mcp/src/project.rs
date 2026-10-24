@@ -90,6 +90,7 @@ impl ServedProject {
             .map_err(StartError::DataSources)?
             .into_iter()
             .filter(|data_source| data_source.project == Some(project.id))
+            .filter(|data_source| has_read_only_mode(slug, data_source))
             .map(read_only)
             .collect();
         Ok(Self {
@@ -117,6 +118,22 @@ impl ServedProject {
                     .find(|data_source| data_source.id.to_string() == name_or_id)
             })
     }
+}
+
+/// Engines without a read-only mode of their own aren't served: the parser alone can't see
+/// inside a function that writes.
+fn has_read_only_mode(slug: &str, data_source: &DataSource) -> bool {
+    let driver = data_source.config.driver();
+    let supported = crate::read_only::mode(driver).is_some();
+    if !supported {
+        tracing::warn!(
+            project = slug,
+            data_source = %data_source.name,
+            "not served: dbdesk can't make {} read-only yet",
+            driver.display_name()
+        );
+    }
+    supported
 }
 
 /// SQLite files are opened read-only, the engine's own equivalent of a read-only transaction.
@@ -147,7 +164,9 @@ fn warn_about_ignored_permissions(slug: &str, permissions: &McpPermissions) {
 
 #[cfg(test)]
 mod tests {
-    use dbdesk_core::{DataSourceId, ProjectId, SqliteConfig};
+    use dbdesk_core::{
+        DataSourceId, ProjectId, ServerConfig, SqlServerConfig, SqliteConfig, TlsMode,
+    };
     use dbdesk_store::{ProjectSlug, Projects};
 
     use super::*;
@@ -200,7 +219,7 @@ mod tests {
     }
 
     #[test]
-    fn serves_only_the_projects_own_data_sources_read_only() {
+    fn serves_only_the_projects_own_data_sources_with_a_read_only_mode() {
         let shop = project("Shop", true);
         let other = project("Other", true);
         let files = files(
@@ -209,6 +228,19 @@ mod tests {
                 sqlite("orders", Some(shop.id)),
                 sqlite("elsewhere", Some(other.id)),
                 sqlite("loose", None),
+                DataSource {
+                    name: "erp".to_owned(),
+                    config: ConnectionConfig::SqlServer(SqlServerConfig {
+                        server: ServerConfig {
+                            host: "erp.internal".to_owned(),
+                            port: SqlServerConfig::DEFAULT_PORT,
+                            database: "erp".to_owned(),
+                            user: "reader".to_owned(),
+                            tls: TlsMode::default(),
+                        },
+                    }),
+                    ..sqlite("erp", Some(shop.id))
+                },
             ],
         );
 
@@ -225,6 +257,10 @@ mod tests {
         ));
         assert_eq!(served.data_source(&orders.id.to_string()), Some(orders));
         assert!(served.data_source("elsewhere").is_none());
+        assert!(
+            served.data_source("erp").is_none(),
+            "SQL Server has no read-only mode yet"
+        );
         assert_eq!(served.limits.max_rows, 500);
         assert_eq!(served.limits.statement_timeout, Duration::from_secs(30));
     }

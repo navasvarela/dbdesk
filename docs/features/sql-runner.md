@@ -224,7 +224,7 @@ console (78 KB) checks from cold in about 13 ms, over four frames.
 | Run | ⌘↵ | The selection (split into statements) if any, otherwise the statement at the cursor |
 | Run all | ⇧⌘↵ | Every statement in the console, in order, stopping at the first failure |
 | Cancel | ⌘. | Stops the running statement, or discards unread rows |
-| Explain | ⌥⌘E | The statement at the cursor (or the first one selected), prefixed with `EXPLAIN` (PostgreSQL, MariaDB), `EXPLAIN QUERY PLAN` (SQLite) or `EXPLAIN FORMAT=TREE` (MySQL 8.0.16 and later, once the console knows its server: `Dialect::explain_prefix`) |
+| Explain | ⌥⌘E | The statement at the cursor (or the first one selected), prefixed with `EXPLAIN` (PostgreSQL, MariaDB), `EXPLAIN QUERY PLAN` (SQLite) or `EXPLAIN FORMAT=TREE` (MySQL 8.0.16 and later, once the console knows its server: `Dialect::explain_prefix`). SQL Server has no prefix: the run carries `RunPurpose::Explain`, and the engine switches `Dialect::explain_setting` (`SET SHOWPLAN_XML ON`) on in a batch of its own before the statement and off after it, whatever happens |
 
 Shortcuts work while the console's editor has focus, and are taken before the editor sees
 them, so ⌘↵ runs instead of inserting a newline. These are the defaults; `keymap.toml` can
@@ -316,7 +316,10 @@ Each console has a mode, **Auto-commit** (the default) or **Manual commit**:
   answers from `sqlite3_get_autocommit`. tokio-postgres doesn't expose the status the protocol
   sends after each statement, so the driver compares `now()` (the transaction's start) with
   `statement_timestamp()`, and reads `in_failed_sql_transaction` as failed. MySQL reads the
-  `SERVER_STATUS_IN_TRANS` flag of the server's reply to `DO 0`. The engine asks after
+  `SERVER_STATUS_IN_TRANS` flag of the server's reply to `DO 0`. SQL Server reads `@@TRANCOUNT`,
+  and `XACT_STATE() = -1` as failed. Transactions are opened with
+  `Dialect::begin_transaction` (`BEGIN TRANSACTION` on SQL Server, where `BEGIN` opens a
+  block), and grid edits inside one use `Dialect::edits_savepoint`. The engine asks after
   statements that control transactions or fail, not after every statement.
 - **Implicit commits**: MySQL commits DDL and account statements at once, with whatever the
   open transaction held (`Dialect::implicit_commit_verbs`; `CREATE`/`DROP TEMPORARY TABLE` are

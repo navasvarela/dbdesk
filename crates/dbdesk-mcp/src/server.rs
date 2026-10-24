@@ -421,7 +421,10 @@ impl DbdeskMcp {
         data_source: &DataSource,
         work: impl for<'c> FnOnce(&'c mut dyn Connection) -> Work<'c, T>,
     ) -> Result<T, RunError> {
-        let driver = data_source.config.driver();
+        let Some(mode) = read_only::mode(data_source.config.driver()) else {
+            // `ServedProject` leaves such data sources out, so no call can name one.
+            unreachable!("a served data source without a read-only mode");
+        };
         let timeout = self.inner.project.limits.statement_timeout;
         let mut retried = false;
         let mut connection = loop {
@@ -431,7 +434,7 @@ impl DbdeskMcp {
                 .checkout(data_source.id)
                 .await
                 .map_err(|error| RunError::Driver(DriverError::Connect(Box::new(error))))?;
-            match read_only::begin(&mut *connection, driver, timeout).await {
+            match read_only::begin(&mut *connection, mode, timeout).await {
                 Ok(()) => break connection,
                 Err(DriverError::Connection(_)) if !retried => {
                     tracing::info!(data_source = %data_source.name, "reconnecting");
@@ -439,7 +442,7 @@ impl DbdeskMcp {
                     retried = true;
                 }
                 Err(error) => {
-                    let outcome = read_only::end(&mut *connection, driver, Err(error.into())).await;
+                    let outcome = read_only::end(&mut *connection, mode, Err(error.into())).await;
                     if outcome.as_ref().is_err_and(RunError::breaks_connection) {
                         connection.discard();
                     }
@@ -449,7 +452,7 @@ impl DbdeskMcp {
         };
         let cancel = connection.cancel_handle();
         let outcome = read_only::watched(cancel, timeout, work(&mut *connection)).await;
-        let outcome = read_only::end(&mut *connection, driver, outcome).await;
+        let outcome = read_only::end(&mut *connection, mode, outcome).await;
         if outcome.as_ref().is_err_and(RunError::breaks_connection) {
             connection.discard();
         }

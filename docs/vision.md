@@ -25,7 +25,10 @@
 
 - Feature parity with full database IDEs such as DBeaver or DataGrip. In particular: schema
   diffing, ER diagrams, refactorings, VCS integration, and a full SQL language server.
-- A plugin system loaded at runtime. Extension happens by adding crates to the workspace.
+- A plugin system that loads native code. Extension happens through files, external commands
+  and, later, sandboxed WebAssembly plugins (see [Hackability](hackability.md) and
+  [ADR 0005](adr/0005-customisation-files-commands-then-wasm.md)). New database engines are
+  still crates in the workspace.
 - Multi-user or server deployment. This is a single-user desktop app.
 - Windows as a first-class target. macOS first; Linux and Windows should work because
   `eframe` does, but nobody tests them until someone needs them.
@@ -45,13 +48,15 @@ dbdesk uses these terms everywhere (docs, code, UI):
 
 ## What "personalised" means concretely
 
-These are the hooks that make the tool mine rather than a clone of an existing IDE. They are planned
-for M5 but the architecture keeps room for them from the start:
+These are the hooks that make the tool mine rather than a clone of an existing IDE. The keymap
+is built (M5); the rest is planned in [Hackability](hackability.md):
 
 - **Keymap file** (`keymap.toml`): every UI action has a stable id, bindings are data.
 - **Custom tree actions** (`actions.toml`): templated SQL attached to catalog node kinds,
   e.g. "row count", "table size", "last 100 rows ordered by `created_at`".
+- **Command actions** (`actions.toml`): run your own programs on a table or the selected rows.
 - **Snippets**: named SQL fragments with placeholders, expandable in the query console.
+- **Themes** (`theme.toml`): your own colours on top of the light or dark theme.
 - **Per-data-source colour and safety flags**: e.g. production data sources get a red
   header and confirm before running `UPDATE`/`DELETE` without a `WHERE`.
 - **Own engine as a data source**: a driver for the storage engine built in

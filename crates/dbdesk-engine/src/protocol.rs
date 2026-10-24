@@ -91,6 +91,7 @@ pub enum Command {
         run: RunId,
         statements: Vec<String>,
         transactions: TransactionMode,
+        purpose: RunPurpose,
     },
     /// Commits or rolls back the console's open transaction. Answered by
     /// [`Event::TransactionEnded`].
@@ -379,6 +380,19 @@ pub struct StatementFailure {
     pub message: String,
     /// Byte offset into the statement's text, when the database reports one.
     pub position: Option<usize>,
+}
+
+/// What a run is for.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RunPurpose {
+    /// Running the statements.
+    #[default]
+    Run,
+    /// Having the database describe how it would run them. Where the dialect has an `EXPLAIN`
+    /// prefix, the console has put it in front already; where it explains through a session
+    /// setting instead (SQL Server's `SHOWPLAN_XML`), the engine switches that on before the
+    /// statements and off after them, whatever happens.
+    Explain,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

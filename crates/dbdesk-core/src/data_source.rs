@@ -123,6 +123,9 @@ pub enum ConnectionConfig {
     Sqlite(SqliteConfig),
     /// MySQL and MariaDB: one driver serves both.
     Mysql(MysqlConfig),
+    /// Microsoft SQL Server and Azure SQL.
+    #[serde(rename = "sqlserver")]
+    SqlServer(SqlServerConfig),
 }
 
 impl ConnectionConfig {
@@ -131,6 +134,7 @@ impl ConnectionConfig {
             Self::Postgres(_) => DriverKind::Postgres,
             Self::Sqlite(_) => DriverKind::Sqlite,
             Self::Mysql(_) => DriverKind::Mysql,
+            Self::SqlServer(_) => DriverKind::SqlServer,
         }
     }
 
@@ -140,15 +144,19 @@ impl ConnectionConfig {
     pub fn database(&self) -> Option<&str> {
         match self {
             Self::Postgres(config) => Some(&config.server.database),
+            Self::SqlServer(config) => Some(&config.server.database),
             Self::Sqlite(_) | Self::Mysql(_) => None,
         }
     }
 
     /// The schema unqualified names resolve to, as a new connection sees it. A fact of the
     /// configuration rather than of the dialect: on MySQL it is the database connected to.
+    /// On SQL Server it is each user's own setting, `dbo` unless an administrator chose
+    /// another.
     pub fn default_schema(&self) -> &str {
         match self {
             Self::Postgres(_) => "public",
+            Self::SqlServer(_) => "dbo",
             Self::Sqlite(_) => "main",
             Self::Mysql(config) => &config.server.database,
         }
@@ -159,6 +167,7 @@ impl ConnectionConfig {
         match self {
             Self::Postgres(config) => config.server.default_name(),
             Self::Mysql(config) => config.server.default_name(),
+            Self::SqlServer(config) => config.server.default_name(),
             Self::Sqlite(config) => config.path.file_name().map_or_else(
                 || config.path.display().to_string(),
                 |name| name.to_string_lossy().into_owned(),
@@ -172,7 +181,7 @@ impl DriverKind {
     /// Skipping the lookup for other drivers avoids pointless keychain prompts.
     pub fn uses_password(self) -> bool {
         match self {
-            Self::Postgres | Self::Mysql => true,
+            Self::Postgres | Self::Mysql | Self::SqlServer => true,
             Self::Sqlite => false,
         }
     }
@@ -184,6 +193,7 @@ impl fmt::Display for ConnectionConfig {
         match self {
             Self::Postgres(config) => config.server.fmt(f),
             Self::Mysql(config) => config.server.fmt(f),
+            Self::SqlServer(config) => config.server.fmt(f),
             Self::Sqlite(config) if config.read_only => {
                 write!(f, "{} (read-only)", config.path.display())
             }
@@ -246,6 +256,18 @@ impl MysqlConfig {
     pub const DEFAULT_PORT: u16 = 3306;
 }
 
+/// A SQL Server or Azure SQL database, signed in to with a SQL Server login. Its `database` is
+/// the one connected to; the explorer lists every database the login may open.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SqlServerConfig {
+    #[serde(flatten)]
+    pub server: ServerConfig,
+}
+
+impl SqlServerConfig {
+    pub const DEFAULT_PORT: u16 = 1433;
+}
+
 /// Whether and how a network connection is encrypted. The modes are libpq's `sslmode` values
 /// of the same names, so they mean what PostgreSQL users already expect.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -282,16 +304,18 @@ pub enum DriverKind {
     Postgres,
     Sqlite,
     Mysql,
+    SqlServer,
 }
 
 impl DriverKind {
-    pub const ALL: [Self; 3] = [Self::Postgres, Self::Sqlite, Self::Mysql];
+    pub const ALL: [Self; 4] = [Self::Postgres, Self::Sqlite, Self::Mysql, Self::SqlServer];
 
     pub fn display_name(self) -> &'static str {
         match self {
             Self::Postgres => "PostgreSQL",
             Self::Sqlite => "SQLite",
             Self::Mysql => "MySQL / MariaDB",
+            Self::SqlServer => "SQL Server",
         }
     }
 }
@@ -428,6 +452,35 @@ mod tests {
         assert_eq!(config.default_schema(), "shop");
         assert_eq!(config.database(), None);
         assert_eq!(config.to_string(), "root@localhost:3306/shop");
+        assert_eq!(
+            toml::from_str::<File>(&toml::to_string(&file).unwrap()).unwrap(),
+            file
+        );
+    }
+
+    #[test]
+    fn reads_a_sql_server_data_source_with_its_driver_tag() {
+        let text = r#"
+            [[data_source]]
+            id = "4b5f9a3e-8a52-4a7e-9c6b-1f0f2b0c9d11"
+            name = "sales"
+            driver = "sqlserver"
+            host = "localhost"
+            port = 1433
+            database = "sales"
+            user = "sa"
+
+            [data_source.tls]
+            mode = "require"
+        "#;
+
+        let file: File = toml::from_str(text).unwrap();
+
+        let config = &file.data_source[0].config;
+        assert_eq!(config.driver(), DriverKind::SqlServer);
+        assert_eq!(config.default_schema(), "dbo");
+        assert_eq!(config.database(), Some("sales"));
+        assert_eq!(config.to_string(), "sa@localhost:1433/sales");
         assert_eq!(
             toml::from_str::<File>(&toml::to_string(&file).unwrap()).unwrap(),
             file

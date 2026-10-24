@@ -49,24 +49,55 @@ pub(crate) struct Rows {
     pub(crate) row_count: Option<u64>,
 }
 
-/// Starts the engine's read-only transaction; on SQLite the connection itself was opened
-/// read-only. On PostgreSQL the time limit is also set on the server, which ends a runaway
-/// statement even if the cancel can't get through.
+/// How an engine refuses writes on its own, whatever the statement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReadOnlyMode {
+    /// A transaction started with `begin` and rolled back after each call.
+    Transaction {
+        begin: &'static str,
+        /// Whether the engine can also be told the time limit for the transaction, which
+        /// ends a runaway statement even if the cancel can't get through.
+        sets_timeout: bool,
+    },
+    /// The connection itself is opened read-only (see `ServedProject`).
+    Connection,
+}
+
+/// The engine's read-only mode, or `None` when it has none: such data sources aren't served.
+pub(crate) fn mode(driver: DriverKind) -> Option<ReadOnlyMode> {
+    match driver {
+        DriverKind::Postgres => Some(ReadOnlyMode::Transaction {
+            begin: "BEGIN READ ONLY",
+            sets_timeout: true,
+        }),
+        DriverKind::Mysql => Some(ReadOnlyMode::Transaction {
+            begin: "START TRANSACTION READ ONLY",
+            sets_timeout: false,
+        }),
+        DriverKind::Sqlite => Some(ReadOnlyMode::Connection),
+        // SQL Server has no read-only transaction. The plan (docs/mcp-server.md) has each
+        // such engine name its equivalent, such as a read-only login, before MCP serves it.
+        DriverKind::SqlServer => None,
+    }
+}
+
+/// Starts the read-only transaction, if the engine uses one.
 pub(crate) async fn begin(
     connection: &mut dyn Connection,
-    driver: DriverKind,
+    mode: ReadOnlyMode,
     timeout: Duration,
 ) -> Result<(), DriverError> {
-    let statements = match driver {
-        DriverKind::Postgres => vec![
-            "BEGIN READ ONLY".to_owned(),
-            format!("SET LOCAL statement_timeout = {}", timeout.as_millis()),
-        ],
-        DriverKind::Mysql => vec!["START TRANSACTION READ ONLY".to_owned()],
-        DriverKind::Sqlite => vec![],
+    let ReadOnlyMode::Transaction {
+        begin,
+        sets_timeout,
+    } = mode
+    else {
+        return Ok(());
     };
-    for statement in statements {
-        run_control(connection, &statement).await?;
+    run_control(connection, begin).await?;
+    if sets_timeout {
+        let set = format!("SET LOCAL statement_timeout = {}", timeout.as_millis());
+        run_control(connection, &set).await?;
     }
     Ok(())
 }
@@ -75,12 +106,12 @@ pub(crate) async fn begin(
 /// leaves the connection in an unknown state, so it counts as a broken connection.
 pub(crate) async fn end<T>(
     connection: &mut dyn Connection,
-    driver: DriverKind,
+    mode: ReadOnlyMode,
     outcome: Result<T, RunError>,
 ) -> Result<T, RunError> {
-    let rollback = match driver {
-        DriverKind::Postgres | DriverKind::Mysql => run_control(connection, "ROLLBACK").await,
-        DriverKind::Sqlite => Ok(()),
+    let rollback = match mode {
+        ReadOnlyMode::Transaction { .. } => run_control(connection, "ROLLBACK").await,
+        ReadOnlyMode::Connection => Ok(()),
     };
     match (outcome, rollback) {
         (outcome, Ok(())) => outcome,

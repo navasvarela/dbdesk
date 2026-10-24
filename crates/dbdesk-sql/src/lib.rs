@@ -24,7 +24,7 @@ mod transaction;
 
 pub use check::{LintRule, Problem, ProblemSource, Severity, check_statement, is_checkable};
 pub use classify::{StatementKind, Unclassified, classify};
-pub use dialect::Dialect;
+pub use dialect::{Dialect, ExplainSetting, Savepoint};
 pub use format::{FormatError, FormatOptions, Formatted, KeywordCase, format_ranges, same_meaning};
 pub use keywords::{is_keyword, keywords};
 pub use lexer::{Token, TokenKind, first_word, tokenize};

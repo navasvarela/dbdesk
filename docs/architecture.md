@@ -17,6 +17,7 @@ flowchart LR
         Engine --> PG[driver-postgres]
         Engine --> SQ[driver-sqlite]
         Engine --> MY[driver-mysql]
+        Engine --> MS[driver-sqlserver]
         Engine -->|Event + request_repaint| EvRx
     end
     Engine --> Store[dbdesk-store<br/>config, keychain, history]
@@ -32,6 +33,7 @@ flowchart LR
 | `dbdesk-driver-postgres` | `tokio-postgres` implementation of `Connection`. | core |
 | `dbdesk-driver-sqlite` | `rusqlite` implementation, run on `spawn_blocking`. | core |
 | `dbdesk-driver-mysql` | `mysql_async` implementation for MySQL and MariaDB; a statement's task owns the connection while its result is open, and cancel is `KILL QUERY` from a second connection. | core |
+| `dbdesk-driver-sqlserver` | `tiberius` implementation for SQL Server and Azure SQL; statements run as plain batches on a task that owns the connection while its result is open, and cancel is TDS's attention message, sent by that task. Uses `dbdesk-sql` only to place syntax errors, which SQL Server reports by line and token. | core, sql |
 | `dbdesk-engine` | Session lifecycle, command handling, cancellation, transactions, event emission. | core, sql, store, drivers |
 | `dbdesk-store` | Data source file (TOML), secrets (`SecretStore`, OS keychain via `keyring`), console files, query history (`rusqlite`), CSV/JSON export. All blocking; the engine calls it from the blocking pool. | core |
 | `dbdesk-app` | `eframe` binary: panels, widgets, app state, keymap. | core, engine, sql, store |

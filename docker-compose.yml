@@ -89,3 +89,35 @@ services:
       interval: 1s
       timeout: 5s
       retries: 60
+
+  # SQL Server 2022, Developer edition. Its image is built for x86-64 only: CI's Linux runner
+  # runs it natively, and Docker on an Apple-silicon Mac only under emulation, where it is slow
+  # and can crash. The image has no hook to create a database on first start, so the health
+  # check does it, which also makes `up --wait` return only once the server accepts logins.
+  # The sa password must pass SQL Server's complexity rule.
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    platform: linux/amd64
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Developer
+      MSSQL_SA_PASSWORD: Dbdesk-Test-2026
+    ports:
+      - "51433:1433"
+    healthcheck:
+      test:
+        - CMD
+        - /opt/mssql-tools18/bin/sqlcmd
+        - -C
+        - -S
+        - localhost
+        - -U
+        - sa
+        - -P
+        - Dbdesk-Test-2026
+        - -Q
+        - IF DB_ID('dbdesk') IS NULL CREATE DATABASE dbdesk
+      interval: 2s
+      timeout: 10s
+      retries: 60
+      start_period: 10s

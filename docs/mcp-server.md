@@ -204,6 +204,9 @@ every permission beyond `read` is ignored. This is safe to ship first.
   old file at once is safe; a test writes from two processes at the same time.
 - On PostgreSQL the time limit is also set as `SET LOCAL statement_timeout`; on every engine,
   dbdesk's watchdog cancels through the driver.
+- SQL Server (DB2) landed during MCP1. It has no read-only transaction, so `dbdesk mcp` leaves
+  its data sources out, with a warning in the log, until its equivalent is chosen (a read-only
+  login, most likely, with MCP2's separate login).
 
 ### MCP2 — Permissions
 

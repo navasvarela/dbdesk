@@ -78,6 +78,29 @@ DELIMITER ;
 show tables;
 "#;
 
+/// SQL Server statements, with `GO` batches, a procedure whose body runs to the end of its
+/// batch, and Transact-SQL's control flow.
+const SQL_SERVER_CORPUS: &str = r#"
+select top (10) [id], [order]]s], N'it''s', @x, @@rowcount from [dbo].[users] u with (nolock) where u.active = 1 -- note
+order by 1 desc offset 0 rows fetch next 10 rows only;
+declare @n int = 5, @name nvarchar(50) = N'x';
+set @n = @n + 1
+select * from #tmp t cross apply string_split(t.list, ',') s;
+insert into t (a, b) output inserted.id values (1, 0x1F);
+update t set a = isnull(a, 0) + 1 from t join u on u.id = t.id where u.b = 1;
+create table dbo.items (id int identity(1, 1) not null primary key, name nvarchar(100) not null, price decimal(10, 2) check (price > 0), created datetime2 default sysdatetime());
+GO
+CREATE OR ALTER PROCEDURE dbo.touch @n INT AS
+SET NOCOUNT ON;
+IF @n > 0 BEGIN UPDATE dbo.items SET price = price + 1 WHERE id = @n; END
+ELSE BEGIN SELECT 1 / 0; END
+GO
+begin try begin tran; delete from t where id = @n; commit; end try begin catch rollback; throw; end catch;
+exec dbo.touch @n = 1;
+merge into t using s on t.id = s.id when matched then update set a = s.a when not matched then insert (id) values (s.id);
+/* a /* nested */ comment */ select 1;
+"#;
+
 fn format_all(text: &str, dialect: Dialect, options: &FormatOptions) -> String {
     let ranges = split_statements(text, dialect);
     format_ranges(text, &ranges, dialect, options)
@@ -95,6 +118,7 @@ fn formatting_the_corpus_never_changes_a_token_and_is_stable() {
         (POSTGRES_CORPUS, Dialect::Postgres),
         (SQLITE_CORPUS, Dialect::Sqlite),
         (MYSQL_CORPUS, Dialect::Mysql),
+        (SQL_SERVER_CORPUS, Dialect::SqlServer),
     ] {
         for case in [
             KeywordCase::Upper,
@@ -115,12 +139,57 @@ fn formatting_the_corpus_never_changes_a_token_and_is_stable() {
     }
 }
 
+/// Formatting may move tokens between lines but never across a statement boundary: the
+/// formatted text splits into as many statements, each the same tokens as before.
+#[test]
+fn formatting_keeps_every_statement_boundary() {
+    for (corpus, dialect) in [
+        (POSTGRES_CORPUS, Dialect::Postgres),
+        (SQLITE_CORPUS, Dialect::Sqlite),
+        (MYSQL_CORPUS, Dialect::Mysql),
+        (SQL_SERVER_CORPUS, Dialect::SqlServer),
+    ] {
+        let formatted = format_all(corpus, dialect, &FormatOptions::default());
+        let before = split_statements(corpus, dialect);
+        let after = split_statements(&formatted, dialect);
+        assert_eq!(before.len(), after.len(), "{formatted}");
+        for (old, new) in before.into_iter().zip(after) {
+            assert!(
+                same_meaning(&corpus[old.clone()], &formatted[new.clone()], dialect),
+                "{} became {}",
+                &corpus[old],
+                &formatted[new]
+            );
+        }
+    }
+}
+
+#[test]
+fn keeps_sql_server_row_limits_on_the_select_line() {
+    let cases = [
+        (
+            "select top (5) percent with ties id, name from t order by id",
+            "SELECT TOP (5) PERCENT WITH TIES\n    id,\n    name\nFROM t\nORDER BY id",
+        ),
+        ("select top 1 * from t", "SELECT TOP 1 *\nFROM t"),
+        (
+            "select distinct top 3 a, b from t",
+            "SELECT DISTINCT TOP 3\n    a,\n    b\nFROM t",
+        ),
+    ];
+    for (sql, expected) in cases {
+        let formatted = format_all(sql, Dialect::SqlServer, &FormatOptions::default());
+        assert_eq!(formatted, expected, "{sql}");
+    }
+}
+
 #[test]
 fn every_statement_formats_on_its_own_too() {
     for (corpus, dialect) in [
         (POSTGRES_CORPUS, Dialect::Postgres),
         (SQLITE_CORPUS, Dialect::Sqlite),
         (MYSQL_CORPUS, Dialect::Mysql),
+        (SQL_SERVER_CORPUS, Dialect::SqlServer),
     ] {
         for range in split_statements(corpus, dialect) {
             let statement = &corpus[range];

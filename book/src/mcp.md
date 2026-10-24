@@ -104,6 +104,9 @@ Two checks, so one catching what the other misses:
    MySQL and MariaDB, and SQLite files are opened read-only. This is what stops a `SELECT` that
    calls a function which writes, since dbdesk can't see inside the function.
 
+SQL Server has no read-only transaction, so its data sources are left out of what the server
+offers for now; the log says so when the server starts.
+
 For airtight limits, also give the data source a database user that can only read.
 
 ## What dbdesk records

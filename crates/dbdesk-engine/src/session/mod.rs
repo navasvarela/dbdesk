@@ -27,7 +27,8 @@ use crate::events::EventSink;
 use crate::history::HistoryLog;
 use crate::open::open;
 use crate::{
-    ConsoleId, Event, PasswordUpdate, RunId, SessionState, TransactionEnd, TransactionMode,
+    ConsoleId, Event, PasswordUpdate, RunId, RunPurpose, SessionState, TransactionEnd,
+    TransactionMode,
 };
 
 /// Work for a session's connection. Answered with events, in the order received.
@@ -50,6 +51,7 @@ pub(crate) struct Script {
     pub(crate) run: RunId,
     pub(crate) statements: Vec<String>,
     pub(crate) transactions: TransactionMode,
+    pub(crate) purpose: RunPurpose,
 }
 
 /// Who a session works for, which decides how its state changes are reported.

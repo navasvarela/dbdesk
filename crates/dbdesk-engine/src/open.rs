@@ -93,6 +93,9 @@ async fn connect(
         ConnectionConfig::Mysql(config) => {
             Box::new(dbdesk_driver_mysql::connect(config, password).await?)
         }
+        ConnectionConfig::SqlServer(config) => {
+            Box::new(dbdesk_driver_sqlserver::connect(config, password).await?)
+        }
     })
 }
 
