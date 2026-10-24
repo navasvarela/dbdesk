@@ -7,5 +7,6 @@
 - [The explorer](explorer.md)
 - [Query consoles](consoles.md)
 - [Keyboard shortcuts](shortcuts.md)
+- [Connecting an AI assistant](mcp.md)
 - [Where dbdesk keeps its files](files.md)
 - [Troubleshooting](troubleshooting.md)
