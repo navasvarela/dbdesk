@@ -40,7 +40,7 @@ const SQL_SERVER_DEFAULTS: ServerDefaults = ServerDefaults {
 pub enum FormError {
     #[error("Host is required.")]
     HostMissing,
-    #[error("Port must be a number from 1 to 65535.")]
+    #[error("Port must be a number from 1 to 65535, or a ${{VARIABLE}}.")]
     InvalidPort,
     #[error("Database is required.")]
     DatabaseMissing,
@@ -267,7 +267,7 @@ mod tests {
             ConnectionConfig::Postgres(PostgresConfig {
                 server: ServerConfig {
                     host: "db.internal".to_owned(),
-                    port: 6432,
+                    port: 6432.into(),
                     database: "app".to_owned(),
                     user: "juan".to_owned(),
                     tls: TlsMode::VerifyFull {

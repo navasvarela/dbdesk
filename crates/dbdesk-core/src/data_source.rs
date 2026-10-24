@@ -5,6 +5,9 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::DriverError;
+use crate::placeholder::{PlaceholderError, Setting, Variables, expand, expand_path};
+
 /// Stable identity of a data source. Written once when the data source is created, so renaming
 /// it never breaks the keychain entry, consoles or history that refer to it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -162,6 +165,32 @@ impl ConnectionConfig {
         }
     }
 
+    /// These settings with every `${NAME}` placeholder replaced, and a leading `~` in paths
+    /// replaced by the home folder: what a driver connects with.
+    ///
+    /// # Errors
+    ///
+    /// [`PlaceholderError`] naming the setting that uses an unset variable, or whose port
+    /// doesn't resolve to a number.
+    pub fn resolve(&self, variables: &dyn Variables) -> Result<Self, PlaceholderError> {
+        Ok(match self {
+            Self::Postgres(config) => Self::Postgres(PostgresConfig {
+                server: config.server.resolve(variables)?,
+            }),
+            Self::Mysql(config) => Self::Mysql(MysqlConfig {
+                server: config.server.resolve(variables)?,
+            }),
+            Self::SqlServer(config) => Self::SqlServer(SqlServerConfig {
+                server: config.server.resolve(variables)?,
+            }),
+            Self::Sqlite(config) => Self::Sqlite(SqliteConfig {
+                path: expand_path(&config.path, variables)
+                    .map_err(PlaceholderError::in_setting(Setting::File))?,
+                read_only: config.read_only,
+            }),
+        })
+    }
+
     /// A name for a data source the user didn't name: `database@host`, or the file name.
     pub fn default_name(&self) -> String {
         match self {
@@ -207,7 +236,7 @@ impl fmt::Display for ConnectionConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerConfig {
     pub host: String,
-    pub port: u16,
+    pub port: Port,
     pub database: String,
     pub user: String,
     /// Absent from files written before TLS existed, which then get the default.
@@ -218,6 +247,95 @@ pub struct ServerConfig {
 impl ServerConfig {
     fn default_name(&self) -> String {
         format!("{}@{}", self.database, self.host)
+    }
+
+    /// The port to connect to, for drivers.
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError::Connect`] if the port is still a placeholder: the engine resolves
+    /// every setting before it connects, so this points at a caller that skipped that.
+    pub fn port_number(&self) -> Result<u16, DriverError> {
+        self.port.number().ok_or_else(|| {
+            DriverError::Connect(
+                format!("the port {} has not been resolved to a number", self.port).into(),
+            )
+        })
+    }
+
+    fn resolve(&self, variables: &dyn Variables) -> Result<Self, PlaceholderError> {
+        let text = |text: &str, setting| {
+            expand(text, variables).map_err(PlaceholderError::in_setting(setting))
+        };
+        Ok(Self {
+            host: text(&self.host, Setting::Host)?,
+            port: self.port.resolve(variables)?,
+            database: text(&self.database, Setting::Database)?,
+            user: text(&self.user, Setting::User)?,
+            tls: match &self.tls {
+                TlsMode::VerifyFull {
+                    ca_file: Some(path),
+                } => TlsMode::VerifyFull {
+                    ca_file: Some(
+                        expand_path(path, variables)
+                            .map_err(PlaceholderError::in_setting(Setting::CaFile))?,
+                    ),
+                },
+                tls => tls.clone(),
+            },
+        })
+    }
+}
+
+/// A server's port: a number, or text with a `${NAME}` placeholder that resolves to one when
+/// connecting. Written to the file as a number, or as a string when it has a placeholder.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Port {
+    Number(u16),
+    Placeholder(String),
+}
+
+impl Port {
+    /// The port number, once resolved. `None` for a placeholder: drivers only see ports that
+    /// [`ConnectionConfig::resolve`] has turned into numbers.
+    pub fn number(&self) -> Option<u16> {
+        match self {
+            Self::Number(port) => Some(*port),
+            Self::Placeholder(_) => None,
+        }
+    }
+
+    fn resolve(&self, variables: &dyn Variables) -> Result<Self, PlaceholderError> {
+        let Self::Placeholder(text) = self else {
+            return Ok(self.clone());
+        };
+        let value = expand(text, variables).map_err(PlaceholderError::in_setting(Setting::Port))?;
+        value
+            .trim()
+            .parse::<u16>()
+            .ok()
+            .filter(|port| *port != 0)
+            .map(Self::Number)
+            .ok_or(PlaceholderError::InvalidPort {
+                setting: Setting::Port,
+                value,
+            })
+    }
+}
+
+impl From<u16> for Port {
+    fn from(port: u16) -> Self {
+        Self::Number(port)
+    }
+}
+
+impl fmt::Display for Port {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Number(port) => port.fmt(f),
+            Self::Placeholder(text) => f.write_str(text),
+        }
     }
 }
 
@@ -323,6 +441,7 @@ impl DriverKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::placeholder::tests::Fixed;
 
     #[derive(Debug, PartialEq, Serialize, Deserialize)]
     struct File {
@@ -341,7 +460,7 @@ mod tests {
                     config: ConnectionConfig::Postgres(PostgresConfig {
                         server: ServerConfig {
                             host: "localhost".to_owned(),
-                            port: 5432,
+                            port: 5432.into(),
                             database: "app".to_owned(),
                             user: "juan".to_owned(),
                             tls: TlsMode::VerifyFull {
@@ -416,7 +535,7 @@ mod tests {
                     config: ConnectionConfig::Postgres(PostgresConfig {
                         server: ServerConfig {
                             host: "localhost".to_owned(),
-                            port: 5432,
+                            port: 5432.into(),
                             database: "app".to_owned(),
                             user: "juan".to_owned(),
                             tls,
@@ -577,7 +696,7 @@ mod tests {
         let postgres = ConnectionConfig::Postgres(PostgresConfig {
             server: ServerConfig {
                 host: "db.internal".to_owned(),
-                port: 6432,
+                port: 6432.into(),
                 database: "app".to_owned(),
                 user: "juan".to_owned(),
                 tls: TlsMode::Require,
@@ -590,5 +709,95 @@ mod tests {
 
         assert_eq!(postgres.to_string(), "juan@db.internal:6432/app");
         assert_eq!(sqlite.to_string(), "/data/app.db (read-only)");
+    }
+
+    #[test]
+    fn resolves_placeholders_in_every_setting_that_may_hold_one() {
+        let text = r#"
+            [[data_source]]
+            id = "4b5f9a3e-8a52-4a7e-9c6b-1f0f2b0c9d11"
+            name = "shared"
+            driver = "postgres"
+            host = "${PGHOST}"
+            port = "${PGPORT}"
+            database = "app_${ENV}"
+            user = "${PGUSER}"
+
+            [data_source.tls]
+            mode = "verify-full"
+            ca_file = "~/certs/${ENV}.pem"
+
+            [[data_source]]
+            id = "0d6c2f4e-1b8a-4c3d-9e7f-5a6b7c8d9e0f"
+            name = "local"
+            driver = "sqlite"
+            path = "${DATA}/shop.db"
+        "#;
+        let variables = Fixed::new(&[
+            ("PGHOST", "db.internal"),
+            ("PGPORT", "6432"),
+            ("ENV", "staging"),
+            ("PGUSER", "juan"),
+            ("DATA", "/srv"),
+        ]);
+
+        let file: File = toml::from_str(text).unwrap();
+        let resolved: Vec<ConnectionConfig> = file
+            .data_source
+            .iter()
+            .map(|ds| ds.config.resolve(&variables).unwrap())
+            .collect();
+
+        let ConnectionConfig::Postgres(postgres) = &resolved[0] else {
+            panic!("expected a PostgreSQL data source");
+        };
+        assert_eq!(
+            postgres.server.to_string(),
+            "juan@db.internal:6432/app_staging"
+        );
+        assert_eq!(postgres.server.port.number(), Some(6432));
+        assert_eq!(
+            postgres.server.tls,
+            TlsMode::VerifyFull {
+                ca_file: Some("/home/juan/certs/staging.pem".into())
+            }
+        );
+        let ConnectionConfig::Sqlite(sqlite) = &resolved[1] else {
+            panic!("expected a SQLite data source");
+        };
+        assert_eq!(sqlite.path, PathBuf::from("/srv/shop.db"));
+        let written = toml::to_string(&file).unwrap();
+        assert!(written.contains(r#"port = "${PGPORT}""#), "{written}");
+        assert_eq!(toml::from_str::<File>(&written).unwrap(), file);
+    }
+
+    #[test]
+    fn names_the_setting_an_unset_or_wrong_variable_is_in() {
+        let config = |host: &str, port: Port| {
+            ConnectionConfig::Mysql(MysqlConfig {
+                server: ServerConfig {
+                    host: host.to_owned(),
+                    port,
+                    database: "shop".to_owned(),
+                    user: "root".to_owned(),
+                    tls: TlsMode::Prefer,
+                },
+            })
+        };
+        let variables = Fixed::new(&[("WORD", "abc")]);
+        let cases = [
+            (
+                config("${DBHOST}", 3306.into()),
+                "could not resolve the host: ${DBHOST} is not set",
+            ),
+            (
+                config("localhost", Port::Placeholder("${WORD}".to_owned())),
+                "the port resolves to \"abc\", which is not a port number from 1 to 65535",
+            ),
+        ];
+        for (config, expected) in cases {
+            let error = config.resolve(&variables).unwrap_err();
+            assert_eq!(crate::describe_error(&error), expected);
+        }
     }
 }

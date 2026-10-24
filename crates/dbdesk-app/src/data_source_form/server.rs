@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use dbdesk_core::{ServerConfig, TlsMode};
+use dbdesk_core::{Port, ServerConfig, TlsMode, has_placeholder};
 
 use super::{FormError, required};
 
@@ -67,20 +67,27 @@ impl ServerFields {
     }
 
     pub fn to_config(&self) -> Result<ServerConfig, FormError> {
-        let port = self
-            .port
-            .trim()
-            .parse::<u16>()
-            .ok()
-            .filter(|port| *port != 0)
-            .ok_or(FormError::InvalidPort)?;
         Ok(ServerConfig {
             host: required(&self.host, FormError::HostMissing)?,
-            port,
+            port: self.port()?,
             database: required(&self.database, FormError::DatabaseMissing)?,
             user: required(&self.user, FormError::UserMissing)?,
             tls: self.tls_mode(),
         })
+    }
+
+    /// A number, or text with a `${NAME}` placeholder that must resolve to one when
+    /// connecting.
+    fn port(&self) -> Result<Port, FormError> {
+        let port = self.port.trim();
+        if has_placeholder(port) {
+            return Ok(Port::Placeholder(port.to_owned()));
+        }
+        port.parse::<u16>()
+            .ok()
+            .filter(|port| *port != 0)
+            .map(Port::Number)
+            .ok_or(FormError::InvalidPort)
     }
 
     fn tls_mode(&self) -> TlsMode {
@@ -190,12 +197,30 @@ mod tests {
             config,
             ServerConfig {
                 host: "db.internal".to_owned(),
-                port: 6432,
+                port: 6432.into(),
                 database: "postgres".to_owned(),
                 user: "postgres".to_owned(),
                 tls: TlsMode::Prefer,
             }
         );
+    }
+
+    #[test]
+    fn keeps_placeholders_as_typed_to_resolve_when_connecting() {
+        let config = fields(|f| {
+            f.host = " ${PGHOST} ".to_owned();
+            f.port = "${PGPORT}".to_owned();
+            f.user = "${USER}".to_owned();
+        })
+        .to_config()
+        .unwrap();
+
+        assert_eq!(config.host, "${PGHOST}");
+        assert_eq!(config.port, Port::Placeholder("${PGPORT}".to_owned()));
+        assert_eq!(config.user, "${USER}");
+        let fields = ServerFields::from_config(&config, DEFAULTS);
+        assert_eq!(fields.port, "${PGPORT}");
+        assert_eq!(fields.to_config(), Ok(config));
     }
 
     #[test]
@@ -241,7 +266,7 @@ mod tests {
         for tls in modes {
             let config = ServerConfig {
                 host: "db.internal".to_owned(),
-                port: 6432,
+                port: 6432.into(),
                 database: "app".to_owned(),
                 user: "juan".to_owned(),
                 tls,

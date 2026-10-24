@@ -61,7 +61,7 @@ pub async fn connect(
     password: Option<&Password>,
 ) -> Result<SqlServerConnection, DriverError> {
     tls::install_crypto_provider();
-    let mut tiberius_config = base_config(config, password);
+    let mut tiberius_config = base_config(config, config.server.port_number()?, password);
     tls::configure(&mut tiberius_config, &config.server.tls).map_err(connect_error)?;
     let mut client = open_client(tiberius_config).await?;
     client
@@ -79,11 +79,11 @@ pub async fn connect(
     })
 }
 
-fn base_config(config: &SqlServerConfig, password: Option<&Password>) -> Config {
+fn base_config(config: &SqlServerConfig, port: u16, password: Option<&Password>) -> Config {
     let server = &config.server;
     let mut tiberius_config = Config::new();
     tiberius_config.host(&server.host);
-    tiberius_config.port(server.port);
+    tiberius_config.port(port);
     tiberius_config.database(&server.database);
     tiberius_config.application_name(APPLICATION_NAME);
     // `tiberius` gives up on a statement after 30 seconds without a reply by default, and

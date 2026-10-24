@@ -5,11 +5,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dbdesk_core::{
-    Connection, ConnectionConfig, DataSource, DriverError, Password, ServerInfo, describe_error,
+    Connection, ConnectionConfig, DataSource, DriverError, Password, PlaceholderError, ServerInfo,
+    describe_error,
 };
 use dbdesk_store::{SecretError, SecretStore};
 use tokio::task::JoinError;
 
+use crate::environment::ProcessEnvironment;
 use crate::events::EventSink;
 use crate::{Event, PasswordUpdate};
 
@@ -23,6 +25,8 @@ pub enum OpenError {
     #[error("could not read the saved password")]
     Password(#[source] SecretError),
     #[error(transparent)]
+    Placeholder(#[from] PlaceholderError),
+    #[error(transparent)]
     Driver(#[from] DriverError),
     #[error("could not connect within {0:?}")]
     TimedOut(Duration),
@@ -35,14 +39,12 @@ pub(crate) async fn open(
     secrets: &Arc<dyn SecretStore>,
     password: &PasswordUpdate,
 ) -> Result<Box<dyn Connection>, OpenError> {
+    let config = data_source.config.resolve(&ProcessEnvironment)?;
     let password = resolve_password(data_source, secrets, password).await?;
-    tokio::time::timeout(
-        CONNECT_TIMEOUT,
-        connect(&data_source.config, password.as_ref()),
-    )
-    .await
-    .map_err(|_| OpenError::TimedOut(CONNECT_TIMEOUT))?
-    .map_err(OpenError::Driver)
+    tokio::time::timeout(CONNECT_TIMEOUT, connect(&config, password.as_ref()))
+        .await
+        .map_err(|_| OpenError::TimedOut(CONNECT_TIMEOUT))?
+        .map_err(OpenError::Driver)
 }
 
 async fn resolve_password(

@@ -7,6 +7,7 @@
 
 mod command_loop;
 mod console_files;
+mod environment;
 mod events;
 mod export;
 mod handle;
@@ -22,6 +23,7 @@ mod session;
 mod settings;
 mod updater;
 
+pub use environment::ProcessEnvironment;
 pub use export::Export;
 pub use handle::{EngineConfig, EngineError, EngineHandle};
 pub use open::{OpenError, open_data_source};

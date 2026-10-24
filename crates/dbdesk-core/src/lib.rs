@@ -9,6 +9,7 @@ mod data_source;
 mod error;
 mod execution;
 mod password;
+mod placeholder;
 mod quoting;
 mod table;
 
@@ -18,11 +19,14 @@ pub mod conformance;
 pub use catalog::{CatalogNode, CatalogPath, FolderKind, NodeKind, PathSegment};
 pub use connection::{Connection, Rejection, RejectionKind, ServerInfo};
 pub use data_source::{
-    ConnectionConfig, DataSource, DataSourceId, DriverKind, MysqlConfig, PostgresConfig, ProjectId,
-    ServerConfig, SourceColor, SqlServerConfig, SqliteConfig, TlsMode,
+    ConnectionConfig, DataSource, DataSourceId, DriverKind, MysqlConfig, Port, PostgresConfig,
+    ProjectId, ServerConfig, SourceColor, SqlServerConfig, SqliteConfig, TlsMode,
 };
 pub use error::{BoxError, DriverError, describe_error};
 pub use execution::{CancelHandle, Cell, ColumnInfo, ResultCursor, Row, TransactionStatus};
 pub use password::Password;
+pub use placeholder::{
+    ExpandError, PlaceholderError, Setting, Variables, expand, expand_path, has_placeholder,
+};
 pub use quoting::Quoting;
 pub use table::{Identifier, RelationName, TableDescription};

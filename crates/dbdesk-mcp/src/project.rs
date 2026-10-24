@@ -233,7 +233,7 @@ mod tests {
                     config: ConnectionConfig::SqlServer(SqlServerConfig {
                         server: ServerConfig {
                             host: "erp.internal".to_owned(),
-                            port: SqlServerConfig::DEFAULT_PORT,
+                            port: SqlServerConfig::DEFAULT_PORT.into(),
                             database: "erp".to_owned(),
                             user: "reader".to_owned(),
                             tls: TlsMode::default(),

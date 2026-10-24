@@ -422,7 +422,7 @@ fn postgres_data_source(url: &str) -> (DataSource, Password) {
         config: ConnectionConfig::Postgres(PostgresConfig {
             server: ServerConfig {
                 host: host.to_owned(),
-                port: port.parse().unwrap(),
+                port: port.parse::<u16>().unwrap().into(),
                 database: database.to_owned(),
                 user: user.to_owned(),
                 tls: TlsMode::default(),

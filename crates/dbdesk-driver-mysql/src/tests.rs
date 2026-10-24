@@ -44,7 +44,7 @@ fn parse_url(variable: &'static str, url: &str) -> TestServer {
         config: MysqlConfig {
             server: ServerConfig {
                 host: host.to_owned(),
-                port: port.parse().expect("numeric port"),
+                port: port.parse::<u16>().expect("numeric port").into(),
                 database: database.to_owned(),
                 user: user.to_owned(),
                 tls: TlsMode::default(),
@@ -112,7 +112,7 @@ async fn unreachable_server_is_a_connect_error() {
             host: "127.0.0.1".to_owned(),
             // Port 1 (tcpmux) is reserved and has no listener on any normal machine, so the
             // connection is refused immediately instead of timing out.
-            port: 1,
+            port: 1.into(),
             database: "mysql".to_owned(),
             user: "root".to_owned(),
             tls: TlsMode::Disable,

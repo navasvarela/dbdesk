@@ -191,7 +191,7 @@ fn server_from_env(variable: &str) -> Option<(ServerConfig, Password)> {
     Some((
         ServerConfig {
             host: host.to_owned(),
-            port: port.parse().ok()?,
+            port: port.parse::<u16>().ok()?.into(),
             database: database.to_owned(),
             user: user.to_owned(),
             tls: TlsMode::default(),

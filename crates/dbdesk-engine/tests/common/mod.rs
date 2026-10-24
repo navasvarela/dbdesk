@@ -312,7 +312,7 @@ fn parse_server(rest: &str, default_port: &str) -> (ServerConfig, Password) {
         .unwrap_or((host_port, default_port));
     let server = ServerConfig {
         host: host.to_owned(),
-        port: u16::from_str(port).expect("numeric port"),
+        port: u16::from_str(port).expect("numeric port").into(),
         database: database.to_owned(),
         user: user.to_owned(),
         tls: TlsMode::default(),
