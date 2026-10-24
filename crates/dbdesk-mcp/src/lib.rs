@@ -37,10 +37,12 @@ pub struct McpConfig {
     pub secrets: Arc<dyn SecretStore>,
 }
 
+/// [`StartError`] is boxed: it carries paths, I/O and TOML errors, which made this type large
+/// enough on Windows for clippy's `result_large_err`.
 #[derive(Debug, thiserror::Error)]
 pub enum ServeError {
     #[error(transparent)]
-    Start(#[from] StartError),
+    Start(Box<StartError>),
     #[error("the MCP client's handshake failed")]
     Initialize(#[source] Box<ServerInitializeError>),
     #[error("the MCP session ended with an error")]
@@ -67,7 +69,8 @@ where
     R: AsyncRead + Send + Unpin + 'static,
     W: AsyncWrite + Send + Unpin + 'static,
 {
-    let project = ServedProject::load(&config.projects, &config.data_sources, slug)?;
+    let project = ServedProject::load(&config.projects, &config.data_sources, slug)
+        .map_err(|error| ServeError::Start(Box::new(error)))?;
     tracing::info!(
         project = project.slug(),
         data_sources = project.data_sources.len(),
