@@ -68,7 +68,7 @@ impl HistoryOutcome {
 }
 
 /// Who ran a statement.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HistorySource {
     /// A query console in the app.
     App,
@@ -234,27 +234,33 @@ impl History {
         Ok(())
     }
 
-    /// The data source's statements containing `text` (ignoring ASCII case), newest first,
-    /// at most `limit` of them. Rows that don't parse (edited by hand, say) are skipped.
+    /// The statements `query` asks for, newest first, at most `limit` of them. Rows that
+    /// don't parse (edited by hand, say) are skipped.
     ///
     /// # Errors
     ///
     /// [`HistoryError::Database`] if the query fails.
     pub fn search(
         &self,
-        data_source: DataSourceId,
-        text: &str,
+        query: &HistoryQuery,
         limit: usize,
     ) -> Result<Vec<HistoryEntry>, HistoryError> {
         let mut statement = self.connection.prepare_cached(
             "SELECT executed_at, sql, duration_ms, rows, outcome, source FROM history
              WHERE data_source = ?1 AND sql LIKE '%' || ?2 || '%' ESCAPE '\\'
+               AND (?3 IS NULL OR source = ?3)
              ORDER BY executed_at DESC, id DESC
-             LIMIT ?3",
+             LIMIT ?4",
         )?;
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let data_source = query.data_source;
         let rows = statement.query_map(
-            params![data_source.to_string(), escape_like(text), limit],
+            params![
+                data_source.to_string(),
+                escape_like(&query.text),
+                query.source.map(HistorySource::as_str),
+                limit
+            ],
             |row| {
                 Ok(StoredRow {
                     executed_at: row.get(0)?,
@@ -271,6 +277,27 @@ impl History {
             entries.extend(row?.into_entry(data_source));
         }
         Ok(entries)
+    }
+}
+
+/// Which past statements to look up.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryQuery {
+    pub data_source: DataSourceId,
+    /// Statements containing it, ignoring ASCII case; empty for all.
+    pub text: String,
+    /// Only statements from there; `None` for all.
+    pub source: Option<HistorySource>,
+}
+
+impl HistoryQuery {
+    /// Every recorded statement of `data_source`.
+    pub fn all(data_source: DataSourceId) -> Self {
+        Self {
+            data_source,
+            text: String::new(),
+            source: None,
+        }
     }
 }
 
@@ -354,14 +381,57 @@ mod tests {
         }
 
         assert_eq!(
-            history.search(shop, "", 10).unwrap(),
+            history.search(&containing(shop, ""), 10).unwrap(),
             [newer.clone(), older]
         );
         assert_eq!(
-            history.search(shop, "count", 10).unwrap(),
+            history.search(&containing(shop, "count"), 10).unwrap(),
             std::slice::from_ref(&newer)
         );
-        assert_eq!(history.search(shop, "orders", 1).unwrap(), [newer]);
+        assert_eq!(
+            history.search(&containing(shop, "orders"), 1).unwrap(),
+            [newer]
+        );
+    }
+
+    fn containing(data_source: DataSourceId, text: &str) -> HistoryQuery {
+        HistoryQuery {
+            text: text.to_owned(),
+            ..HistoryQuery::all(data_source)
+        }
+    }
+
+    #[test]
+    fn filters_by_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let history = HistoryFile::new(dir.path().join("history.sqlite"))
+            .open()
+            .unwrap();
+        let shop = DataSourceId::generate();
+        let from_app = entry(shop, 1_000, "SELECT 1");
+        let from_mcp = HistoryEntry {
+            source: HistorySource::Mcp,
+            ..entry(shop, 2_000, "SELECT 2")
+        };
+        history.record(&from_app).unwrap();
+        history.record(&from_mcp).unwrap();
+
+        let only = |source| HistoryQuery {
+            source: Some(source),
+            ..HistoryQuery::all(shop)
+        };
+        assert_eq!(
+            history.search(&only(HistorySource::Mcp), 10).unwrap(),
+            std::slice::from_ref(&from_mcp)
+        );
+        assert_eq!(
+            history.search(&only(HistorySource::App), 10).unwrap(),
+            std::slice::from_ref(&from_app)
+        );
+        assert_eq!(
+            history.search(&HistoryQuery::all(shop), 10).unwrap(),
+            [from_mcp, from_app]
+        );
     }
 
     #[test]
@@ -377,7 +447,7 @@ mod tests {
 
         let found = |text| -> Vec<String> {
             history
-                .search(shop, text, 10)
+                .search(&containing(shop, text), 10)
                 .unwrap()
                 .into_iter()
                 .map(|entry| entry.sql)
@@ -423,7 +493,7 @@ mod tests {
         .unwrap();
 
         let sources: Vec<(String, HistorySource)> = history
-            .search(shop, "", 10)
+            .search(&containing(shop, ""), 10)
             .unwrap()
             .into_iter()
             .map(|entry| (entry.sql, entry.source))

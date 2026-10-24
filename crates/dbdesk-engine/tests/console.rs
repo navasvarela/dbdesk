@@ -19,7 +19,7 @@ use dbdesk_engine::{
     Command, ConsoleId, EditFailure, Event, PasswordUpdate, RunId, RunOutcome, RunPurpose,
     SessionState, StatementCheck, StatementFailure, TransactionEnd, TransactionMode,
 };
-use dbdesk_store::HistoryOutcome;
+use dbdesk_store::{HistoryOutcome, HistoryQuery};
 
 const CONSOLE: ConsoleId = ConsoleId(1);
 const ROWS: usize = 1200;
@@ -264,20 +264,20 @@ fn records_each_statement_in_the_history() {
     execute(&engine, id, 1, &["SELECT 1", "SELECT * FROM missing"]);
     while !matches!(next_run_event(&mut engine), Event::RunFinished { .. }) {}
 
-    engine.send(Command::SearchHistory {
-        data_source: id,
+    let query = HistoryQuery {
         text: "select".to_owned(),
-    });
+        ..HistoryQuery::all(id)
+    };
+    engine.send(Command::SearchHistory(query.clone()));
 
     let Event::HistoryFound {
-        data_source,
-        text,
+        query: answered,
         result: Ok(entries),
     } = next_run_event(&mut engine)
     else {
         panic!("expected history entries");
     };
-    assert_eq!((data_source, text.as_str()), (id, "select"));
+    assert_eq!(answered, query);
     let found: Vec<(&str, HistoryOutcome, Option<u64>)> = entries
         .iter()
         .map(|entry| (entry.sql.as_str(), entry.outcome, entry.rows))

@@ -2055,6 +2055,46 @@ mod tests {
         harness.get_by_value(&query.repeat(2));
     }
 
+    #[test]
+    fn marks_and_filters_statements_from_mcp_clients() {
+        let dir = tempfile::tempdir().unwrap();
+        let shop = save_shop(dir.path(), "CREATE TABLE orders (id INTEGER PRIMARY KEY)");
+        let from_assistant = "SELECT 'from an assistant'";
+        dbdesk_store::HistoryFile::new(dir.path().join("history.sqlite"))
+            .open()
+            .unwrap()
+            .record(&dbdesk_store::HistoryEntry {
+                data_source: shop.id,
+                executed_at: jiff::Timestamp::UNIX_EPOCH,
+                sql: from_assistant.to_owned(),
+                duration: None,
+                rows: Some(1),
+                outcome: dbdesk_store::HistoryOutcome::Ok,
+                source: dbdesk_store::HistorySource::Mcp,
+            })
+            .unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        open_orders(&mut harness, "0 rows");
+
+        harness.get_by_label("History").click();
+        step_until(&mut harness, "the history loading", |harness| {
+            harness.query_all_by_label("Insert").count() == 2
+        });
+        harness.get_by_label("MCP");
+        harness
+            .get_by(|node| {
+                node.role() == Role::ComboBox && node.value().as_deref() == Some("All sources")
+            })
+            .click();
+        harness.run();
+        harness.get_by_label("MCP clients").click();
+        step_until(&mut harness, "the MCP statements alone", |harness| {
+            harness.query_all_by_label("Insert").count() == 1
+        });
+        harness.get_by_label(from_assistant);
+    }
+
     fn count_orders(dir: &Path) -> i64 {
         rusqlite::Connection::open(dir.join("shop.db"))
             .unwrap()
