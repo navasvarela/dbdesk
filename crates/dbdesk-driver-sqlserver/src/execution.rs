@@ -19,13 +19,14 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use dbdesk_core::{CancelHandle, ColumnInfo, DriverError, Rejection, ResultCursor, Row};
+use dbdesk_sql::{Dialect, first_word};
 use futures_util::TryStreamExt;
 use tiberius::{QueryItem, QueryStream};
 use tokio::sync::{Mutex, OwnedMutexGuard, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
 use crate::errors::{rejection, statement_error};
-use crate::{SQL_SERVER_QUOTING, SqlClient, connection_error, values};
+use crate::{SQL_SERVER_QUOTING, SqlClient, column, connection_error, values};
 
 /// How long a read already under way may go on after a cancel before the stream is dropped.
 ///
@@ -253,9 +254,17 @@ async fn read_statement(
     };
     let Some(columns) = columns else {
         // Without a result set, the reply has been read to its end, so the client is free to
-        // ask how many rows the statement changed.
+        // ask how many rows the statement changed. A `SET` changes none, and the one that
+        // matters most, `SET SHOWPLAN_XML ON`, would have the question explained rather than
+        // answered.
         drop(stream);
-        let finished = rows_changed(client).await.map(|rows_changed| Started {
+        let is_set = first_word(sql, Dialect::SqlServer).as_deref() == Some("set");
+        let counted = if is_set {
+            Ok(None)
+        } else {
+            rows_changed(client).await
+        };
+        let finished = counted.map(|rows_changed| Started {
             columns: Vec::new(),
             rows_changed,
         });
@@ -383,7 +392,7 @@ async fn rows_changed(client: &mut SqlClient) -> Result<Option<u64>, DriverError
         .await
         .map_err(connection_error)?;
     Ok(row
-        .and_then(|row| row.get::<i64, _>(0))
+        .and_then(|row| column::<i64>(&row, 0))
         .and_then(|count| u64::try_from(count).ok()))
 }
 

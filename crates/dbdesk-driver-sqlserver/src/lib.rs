@@ -138,7 +138,7 @@ async fn server_info(client: &mut SqlClient) -> tiberius::Result<ServerInfo> {
         .await?;
     let text = |index: usize| {
         row.as_ref()
-            .and_then(|row| row.get::<&str, _>(index))
+            .and_then(|row| column::<&str>(row, index))
             .unwrap_or_default()
             .to_owned()
     };
@@ -151,6 +151,15 @@ async fn server_info(client: &mut SqlClient) -> tiberius::Result<ServerInfo> {
         product: product.to_owned(),
         version: text(0),
     })
+}
+
+/// Column `index` of `row`, or `None` if it is `NULL` or not a `T`. Never
+/// `tiberius::Row::get`, which panics on a type it can't convert.
+pub(crate) fn column<'a, T: tiberius::FromSql<'a>>(
+    row: &'a tiberius::Row,
+    index: usize,
+) -> Option<T> {
+    row.try_get(index).ok().flatten()
 }
 
 fn connect_error(error: impl Into<BoxError>) -> DriverError {
@@ -225,8 +234,8 @@ impl Connection for SqlServerConnection {
             .into_row()
             .await
             .map_err(connection_error)?;
-        let count: i32 = row.as_ref().and_then(|row| row.get(0)).unwrap_or(0);
-        let state: i16 = row.as_ref().and_then(|row| row.get(1)).unwrap_or(0);
+        let count: i32 = row.as_ref().and_then(|row| column(row, 0)).unwrap_or(0);
+        let state: i16 = row.as_ref().and_then(|row| column(row, 1)).unwrap_or(0);
         Ok(match (count, state) {
             (0, _) => TransactionStatus::Idle,
             (_, -1) => TransactionStatus::Failed,

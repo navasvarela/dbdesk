@@ -10,7 +10,7 @@
 use dbdesk_core::{CatalogNode, CatalogPath, DriverError, FolderKind, NodeKind, PathSegment};
 use tiberius::ToSql;
 
-use crate::{SQL_SERVER_QUOTING, SqlClient, connection_error};
+use crate::{SQL_SERVER_QUOTING, SqlClient, column, connection_error};
 
 /// A listing query's detail column when it has none: a typed `NULL`, because a bare one is an
 /// `int` that can't be read as text.
@@ -430,7 +430,7 @@ pub(crate) async fn definition(
         .into_row()
         .await
         .map_err(connection_error)?;
-    let definition: Option<&str> = row.as_ref().and_then(|row| row.get(0));
+    let definition: Option<&str> = row.as_ref().and_then(|row| column(row, 0));
     // `NULL` for a module created `WITH ENCRYPTION`, or that the login may run but not read.
     definition.map(str::to_owned).ok_or_else(|| {
         connection_error(format!(

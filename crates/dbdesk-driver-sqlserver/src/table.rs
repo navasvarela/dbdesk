@@ -7,7 +7,7 @@
 
 use dbdesk_core::{DriverError, RelationName, TableDescription};
 
-use crate::{SQL_SERVER_QUOTING, SqlClient, connection_error};
+use crate::{SQL_SERVER_QUOTING, SqlClient, column, connection_error};
 
 /// How long `tempdb` stores a local temporary table's name, before its 12-digit suffix.
 const TEMPORARY_NAME_PADDED_LENGTH: usize = 116;
@@ -38,8 +38,8 @@ pub(crate) async fn describe_table(
         .await
         .map_err(connection_error)?;
     let names = found.as_ref().and_then(|row| {
-        let schema: &str = row.get(0)?;
-        let name: &str = row.get(1)?;
+        let schema: &str = column(row, 0)?;
+        let name: &str = column(row, 1)?;
         Some((schema.to_owned(), name.to_owned()))
     });
     let Some((schema, stored_name)) = names else {
@@ -100,7 +100,7 @@ async fn names_of(
         .map_err(connection_error)?;
     rows.iter()
         .map(|row| {
-            row.get::<&str, _>(0)
+            column::<&str>(row, 0)
                 .map(str::to_owned)
                 .ok_or_else(|| connection_error(format!("{sql} returned no name")))
         })
