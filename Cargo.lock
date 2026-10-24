@@ -1038,7 +1038,7 @@ checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 
 [[package]]
 name = "dbdesk-app"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "dbdesk-core",
@@ -1068,7 +1068,7 @@ dependencies = [
 
 [[package]]
 name = "dbdesk-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "serde",
@@ -1080,7 +1080,7 @@ dependencies = [
 
 [[package]]
 name = "dbdesk-driver-mysql"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "dbdesk-core",
@@ -1094,7 +1094,7 @@ dependencies = [
 
 [[package]]
 name = "dbdesk-driver-postgres"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "dbdesk-core",
@@ -1111,7 +1111,7 @@ dependencies = [
 
 [[package]]
 name = "dbdesk-driver-sqlite"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "dbdesk-core",
@@ -1122,7 +1122,7 @@ dependencies = [
 
 [[package]]
 name = "dbdesk-driver-sqlserver"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "dbdesk-core",
@@ -1140,7 +1140,7 @@ dependencies = [
 
 [[package]]
 name = "dbdesk-engine"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "dbdesk-core",
  "dbdesk-driver-mysql",
@@ -1162,7 +1162,7 @@ dependencies = [
 
 [[package]]
 name = "dbdesk-sql"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "dbdesk-core",
  "sqlparser",
@@ -1170,7 +1170,7 @@ dependencies = [
 
 [[package]]
 name = "dbdesk-store"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "dbdesk-core",
  "directories",
