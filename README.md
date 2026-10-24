@@ -91,6 +91,7 @@ UI: **egui** (via `eframe`) with **egui_dock** for dockable panels.
 | [Roadmap](docs/roadmap.md) | Milestones M0–M5, and the release (R1–R3), database (DB0–DB5), object helpers (E0–E4), MCP (P0, MCP1–MCP3), hackability (H1–H3), well-rounded (W1–W6) and design and documentation (D1–D4) tracks, with exit criteria |
 | [Releasing](docs/releasing.md) | Plan for downloadable builds: packaging, signing, the release workflow (proposed) |
 | [More databases](docs/databases.md) | Which engines come next (MySQL/MariaDB, SQL Server, DuckDB, ClickHouse, Oracle later) and what each needs (proposed) |
+| [Adding a database](docs/adding-a-database.md) | How to contribute support for a new database engine, step by step |
 | [Creating and changing database objects](docs/entity-helpers.md) | Dialogs for tables, views and users that show the SQL before running it (proposed) |
 | [MCP server](docs/mcp-server.md) | Projects of data sources, and an MCP server with permissions per project and global defaults (proposed) |
 | [Hackability](docs/hackability.md) | Custom actions, snippets and themes in files, command actions, then WebAssembly plugins (proposed) |

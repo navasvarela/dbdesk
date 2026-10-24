@@ -84,3 +84,9 @@ and docs is `feat/…`.
 
 Commits and branches from before this convention (`M4: …`, `m4-daily-driver`) keep their
 names; history isn't rewritten.
+
+## Adding a database
+
+Support for a new database engine follows the steps in
+[Adding a database](docs/adding-a-database.md): the dialect, the driver crate, the wiring, the
+app, the test server and the documentation, one pull request each.
