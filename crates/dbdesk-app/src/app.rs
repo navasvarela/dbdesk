@@ -135,6 +135,15 @@ impl DbDeskApp {
         })
     }
 
+    /// Makes the export and import file dialogs answer `path`, for tests and screenshots.
+    #[cfg(test)]
+    pub fn answer_file_dialogs_with(&mut self, path: &std::path::Path) {
+        let export = path.to_owned();
+        let import = path.to_owned();
+        self.pick_data_sources_export = Box::new(move || Some(export.clone()));
+        self.pick_data_sources_import = Box::new(move || Some(import.clone()));
+    }
+
     /// The open consoles, for tests that look at what a console drew.
     #[cfg(test)]
     pub fn open_consoles(&self) -> impl Iterator<Item = &crate::console::QueryConsole> {

@@ -57,6 +57,19 @@ path = "/Users/juan/data/chinook.db"
 read_only = true
 ```
 
+## Exports of data sources (W1)
+
+- **File › Export data sources…** writes `[[data_source]]` tables in `data_sources.toml`'s
+  format, plus `format_version = 1` and `[[project]]` tables (id, name, slug, `mcp_enabled`,
+  MCP overrides). Built by `dbdesk_store::write_export` from types that list every field an
+  export may carry; a field added to `DataSource` or `Project` fails to compile there until
+  someone decides whether it travels. Never a password, token or command.
+- Paths beside the exported file are written relative to it, paths under the home folder as
+  `~/…`; `read_export` resolves both again. Paths with `${…}` are left alone.
+- A newer `format_version` is refused. Ids (and project slugs) must be unique in the file.
+- Import matches by id (projects by id, then by slug), previews before writing, and writes
+  `projects.toml` then `data_sources.toml`, each once.
+
 ## Secrets
 
 - Passwords go to the OS keychain via `keyring`: service `dbdesk`, account `<data-source-id>`.

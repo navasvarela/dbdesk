@@ -153,9 +153,28 @@ gone through; if it fails, the reason is shown in the dialog.
 
 **Cancel**, **Esc** or a click outside the dialog closes it without saving.
 
+## Placeholders: `${VARIABLE}`
+
+Host, port, database, user, a SQLite file and a CA file may hold `${NAME}` placeholders, which
+dbdesk replaces with the environment variable `NAME` each time it connects. One shared list of
+data sources then works on machines whose settings differ: each machine sets `PGHOST`, say, and
+the data source's host is `${PGHOST}`. A placeholder can be part of a value
+(`db-${ENV}.internal`), and a path starting with `~` is in your home folder.
+
+![Placeholders in the host, port and user, with what each resolves to](images/data-source-placeholders.png)
+
+Under each field with a placeholder, the dialog shows what it resolves to now, or which variable
+isn't set. Connecting with an unset variable stops with an error that names the setting:
+*could not resolve the host: ${PGHOST} is not set*.
+
+Variables come from the environment dbdesk was started in. On macOS, an app opened from the
+Finder or the Dock doesn't see what your shell profile sets; start it from a terminal
+(`open -a dbdesk`, after exporting the variables), or set them with `launchctl setenv`.
+
 ## Passwords and the keychain
 
-PostgreSQL passwords are stored in your operating system's credential store: the Keychain on
+PostgreSQL, MySQL and SQL Server passwords are stored in your operating system's credential
+store: the Keychain on
 macOS, Credential Manager on Windows, the Secret Service (GNOME Keyring, KWallet) on Linux.
 Each entry has the service name `dbdesk` and, as its account, the data source's ID, a long
 string that never changes even if you rename the data source.
@@ -166,7 +185,14 @@ string that never changes even if you rename the data source.
 - **When dbdesk connects** — the explorer, each console, and Test connection with an empty
   password field — it reads the password from the keychain. On macOS the system may ask whether
   to let dbdesk use it; see [Troubleshooting](troubleshooting.md#the-keychain-keeps-asking).
+- **When there is none**, or the keychain can't be read (locked, declined, or missing on this
+  system), connecting asks for the password. **Save to keychain** is ticked, so you are asked
+  once. Whatever you type is also kept in memory until dbdesk quits, so the data source still
+  connects if the keychain refuses it or you untick the box. A server that needs no password
+  (local *trust* login, say) works with the field left empty.
 - **When you delete** a data source, its keychain entry is removed too.
+
+![Connecting asks for the password a data source has none saved for](images/password-prompt.png)
 
 SQLite data sources have no password, so dbdesk never asks the keychain for them.
 
