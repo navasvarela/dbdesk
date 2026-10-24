@@ -157,6 +157,22 @@ impl<'a> Tokens<'a> {
                         .is_some_and(|close| self.word(close + 1).as_deref() == Some("as"))
             }
             ParserGap::Operator(operator) => self.spells_at(index, operator),
+            ParserGap::ElementByPosition => {
+                self.text(index).is_some_and(|text| text.starts_with('.'))
+                    && self.tokens[index].kind == TokenKind::Number
+                    && index
+                        .checked_sub(1)
+                        .and_then(|before| self.tokens.get(before))
+                        .is_some_and(|before| before.range.end == self.tokens[index].range.start)
+            }
+            ParserGap::WithExpressionAlias => {
+                let names_a_query = self.word(index + 1).is_some()
+                    && self.word(index + 2).as_deref() == Some("as")
+                    && self.text(index + 3) == Some("(");
+                current.as_deref() == Some("with")
+                    && !names_a_query
+                    && self.word(index + 1).as_deref() != Some("recursive")
+            }
             ParserGap::InfixOperator(operator) => {
                 current.as_deref() == Some(operator) && self.text(index + 1) != Some("(")
             }

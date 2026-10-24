@@ -121,6 +121,21 @@ insert or replace into kv values ('a', 1);
 select $$dollar; 'quoted'$$, E'it\'s', 1::integer, x::varchar[] from t;
 "#;
 
+/// ClickHouse statements: its clauses (`FINAL`, `PREWHERE`, `ARRAY JOIN`, `LIMIT BY`,
+/// `SETTINGS`), table engines, `#` comments and backslash escapes.
+const CLICKHOUSE_CORPUS: &str = r#"
+select toDate(ts) as day, count() from events where ts >= now() - interval 7 day group by day order by day limit 10;
+select `user id`, "event" from events final prewhere event = 'click' where user_id > 0 # note
+;
+select x, y from t array join arr as x left array join arr2 as y;
+select uniq(user_id), quantile(0.9)(duration), countIf(ok) from events limit 2 by user_id settings max_threads = 4;
+select 'it\'s', 'a''b', $$dollar$$, [1, 2][1], tuple(1, 'a').2 from t;
+create table events (ts DateTime, event LowCardinality(String), user_id UInt64) engine = MergeTree order by (event, ts) partition by toYYYYMM(ts);
+insert into events (ts, event) values (now(), 'click');
+optimize table events final;
+system flush logs;
+"#;
+
 fn format_all(text: &str, dialect: Dialect, options: &FormatOptions) -> String {
     let ranges = split_statements(text, dialect);
     format_ranges(text, &ranges, dialect, options)
@@ -140,6 +155,7 @@ fn formatting_the_corpus_never_changes_a_token_and_is_stable() {
         (MYSQL_CORPUS, Dialect::Mysql),
         (SQL_SERVER_CORPUS, Dialect::SqlServer),
         (DUCKDB_CORPUS, Dialect::DuckDb),
+        (CLICKHOUSE_CORPUS, Dialect::ClickHouse),
     ] {
         for case in [
             KeywordCase::Upper,
@@ -170,6 +186,7 @@ fn formatting_keeps_every_statement_boundary() {
         (MYSQL_CORPUS, Dialect::Mysql),
         (SQL_SERVER_CORPUS, Dialect::SqlServer),
         (DUCKDB_CORPUS, Dialect::DuckDb),
+        (CLICKHOUSE_CORPUS, Dialect::ClickHouse),
     ] {
         let formatted = format_all(corpus, dialect, &FormatOptions::default());
         let before = split_statements(corpus, dialect);
@@ -205,6 +222,21 @@ fn keeps_sql_server_row_limits_on_the_select_line() {
     }
 }
 
+/// ClickHouse's names are case-sensitive, functions, types and columns alike, and columns are
+/// often named like keywords: its words keep their case, and only the layout changes.
+#[test]
+fn keeps_the_case_of_every_clickhouse_word() {
+    let formatted = format_all(
+        "select date, array(1) from t array join arr as x where user = 'ada'",
+        Dialect::ClickHouse,
+        &FormatOptions::default(),
+    );
+    assert_eq!(
+        formatted,
+        "select\n    date,\n    array(1)\nfrom t\narray join arr as x\nwhere user = 'ada'"
+    );
+}
+
 #[test]
 fn every_statement_formats_on_its_own_too() {
     for (corpus, dialect) in [
@@ -213,6 +245,7 @@ fn every_statement_formats_on_its_own_too() {
         (MYSQL_CORPUS, Dialect::Mysql),
         (SQL_SERVER_CORPUS, Dialect::SqlServer),
         (DUCKDB_CORPUS, Dialect::DuckDb),
+        (CLICKHOUSE_CORPUS, Dialect::ClickHouse),
     ] {
         for range in split_statements(corpus, dialect) {
             let statement = &corpus[range];
