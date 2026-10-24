@@ -9,7 +9,8 @@ use std::time::{Duration, Instant};
 use dbdesk_core::{DataSourceId, Password};
 use dbdesk_engine::{EngineConfig, Release, ReleaseError, ReleaseFeed};
 use dbdesk_store::{
-    ConsoleFiles, DataSourceFile, HistoryFile, KeymapFile, SecretError, SecretStore, SettingsFile,
+    ConsoleFiles, DataSourceFile, HistoryFile, KeymapFile, ProjectFile, SecretError, SecretStore,
+    SettingsFile,
 };
 use egui_kittest::kittest::Queryable;
 use egui_kittest::{Harness, HarnessBuilder};
@@ -79,6 +80,7 @@ pub fn start_app(
 ) -> Harness<'static, DbDeskApp> {
     let config = EngineConfig {
         data_sources: DataSourceFile::new(dir.join("data_sources.toml")),
+        projects: ProjectFile::new(dir.join("projects.toml")),
         secrets: Arc::new(secrets),
         consoles: ConsoleFiles::new(dir.join("consoles")),
         history: HistoryFile::new(dir.join("history.sqlite")),

@@ -21,6 +21,7 @@ mod icons;
 mod keymap;
 mod keymap_window;
 mod log_console;
+mod project_dialog;
 mod rollback_dialog;
 #[cfg(test)]
 mod screenshots;
@@ -44,7 +45,7 @@ use anyhow::{Context as _, anyhow};
 use dbdesk_engine::{EngineConfig, GithubReleases};
 use dbdesk_store::{
     APP_NAME, AppPaths, ConsoleFiles, DataSourceFile, HistoryFile, Keychain, KeymapFile,
-    SettingsFile,
+    ProjectFile, SettingsFile,
 };
 
 use crate::app::DbDeskApp;
@@ -65,6 +66,7 @@ fn main() -> anyhow::Result<()> {
     let log_feed = telemetry.log_feed;
     let engine_config = EngineConfig {
         data_sources: DataSourceFile::new(paths.data_sources_file()),
+        projects: ProjectFile::new(paths.projects_file()),
         secrets: Arc::new(Keychain),
         consoles: ConsoleFiles::new(paths.consoles_dir()),
         history: HistoryFile::new(paths.history_file()),

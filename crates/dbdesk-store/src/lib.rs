@@ -10,6 +10,7 @@ mod export;
 mod history;
 mod keymap;
 mod paths;
+mod projects;
 mod secrets;
 mod settings;
 
@@ -21,6 +22,10 @@ pub use export::{ExportError, ExportFormat, export_rows};
 pub use history::{History, HistoryEntry, HistoryError, HistoryFile, HistoryOutcome};
 pub use keymap::{KeymapBindings, KeymapError, KeymapFile};
 pub use paths::{APP_NAME, AppPaths};
+pub use projects::{
+    InvalidSlug, InvalidTimeout, McpOverrides, McpPermissions, Project, ProjectFile, ProjectSlug,
+    ProjectStoreError, Projects, StatementTimeout,
+};
 pub use secrets::{Keychain, SecretError, SecretStore};
 pub use settings::{
     FormatSettings, KeywordCase, LintSettings, Settings, SettingsError, SettingsFile,

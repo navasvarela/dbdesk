@@ -18,7 +18,7 @@ pub mod conformance;
 pub use catalog::{CatalogNode, CatalogPath, FolderKind, NodeKind, PathSegment};
 pub use connection::{Connection, Rejection, RejectionKind, ServerInfo};
 pub use data_source::{
-    ConnectionConfig, DataSource, DataSourceId, DriverKind, MysqlConfig, PostgresConfig,
+    ConnectionConfig, DataSource, DataSourceId, DriverKind, MysqlConfig, PostgresConfig, ProjectId,
     ServerConfig, SourceColor, SqliteConfig, TlsMode,
 };
 pub use error::{BoxError, DriverError, describe_error};

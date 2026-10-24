@@ -13,6 +13,7 @@ mod handle;
 mod history;
 mod keymap;
 mod open;
+mod projects;
 mod protocol;
 mod registry;
 mod releases;

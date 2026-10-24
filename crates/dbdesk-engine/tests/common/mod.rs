@@ -20,8 +20,8 @@ use dbdesk_engine::{
     SessionState,
 };
 use dbdesk_store::{
-    ConsoleFiles, DataSourceFile, HistoryFile, KeymapBindings, KeymapFile, SecretError,
-    SecretStore, Settings, SettingsFile,
+    ConsoleFiles, DataSourceFile, HistoryFile, KeymapBindings, KeymapFile, ProjectFile, Projects,
+    SecretError, SecretStore, Settings, SettingsFile,
 };
 
 pub const EVENT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -88,6 +88,7 @@ impl TestEngine {
         let dir = data_sources_file.parent().unwrap_or(Path::new("."));
         let config = EngineConfig {
             data_sources: DataSourceFile::new(data_sources_file),
+            projects: ProjectFile::new(dir.join("projects.toml")),
             secrets,
             consoles: ConsoleFiles::new(dir.join("consoles")),
             history: HistoryFile::new(dir.join("history.sqlite")),
@@ -120,9 +121,19 @@ impl TestEngine {
 
     /// Expects the start-up events of an engine with no saved consoles.
     pub fn expect_started(&mut self, data_sources: Vec<DataSource>) {
+        self.expect_started_with_projects(Projects::default(), data_sources);
+    }
+
+    /// Expects the start-up events of an engine with these projects and no saved consoles.
+    pub fn expect_started_with_projects(
+        &mut self,
+        projects: Projects,
+        data_sources: Vec<DataSource>,
+    ) {
         self.expect(Event::Started);
         self.expect_keymap(Ok(KeymapBindings::new()));
         self.expect_settings(Ok(Settings::default()));
+        self.expect(Event::ProjectsLoaded(projects));
         self.expect(Event::DataSourcesLoaded(data_sources));
         self.expect(Event::ConsolesLoaded(vec![]));
     }
@@ -174,6 +185,7 @@ pub fn sqlite_data_source(path: PathBuf) -> DataSource {
         id: DataSourceId::generate(),
         name: "app".to_owned(),
         color: None,
+        project: None,
         config: ConnectionConfig::Sqlite(SqliteConfig {
             path,
             read_only: false,

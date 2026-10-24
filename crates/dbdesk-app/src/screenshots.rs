@@ -16,10 +16,10 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use dbdesk_core::{
-    ConnectionConfig, DataSource, DataSourceId, Password, PostgresConfig, ServerConfig,
+    ConnectionConfig, DataSource, DataSourceId, Password, PostgresConfig, ProjectId, ServerConfig,
     SourceColor, SqliteConfig, TlsMode,
 };
-use dbdesk_store::DataSourceFile;
+use dbdesk_store::{DataSourceFile, Project, ProjectFile, ProjectSlug, Projects};
 use egui::accesskit::Role;
 use egui::{Theme, Vec2};
 use egui_kittest::kittest::{By, Queryable};
@@ -135,6 +135,9 @@ enum FixtureSources {
     None,
     /// The `shop` SQLite database, plus `warehouse` on PostgreSQL when one is configured.
     Shop,
+    /// The same, grouped into projects, with two more SQLite data sources over the shop
+    /// database: `archive` beside `shop`, and `scratch` in no project.
+    Projects,
 }
 
 const SCENES: &[Scene] = &[
@@ -173,6 +176,13 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::Shop,
         play: explorer_menu,
         keeps_pointer: false,
+    },
+    Scene {
+        name: "explorer-projects",
+        data_sources: FixtureSources::Projects,
+        play: explorer_projects,
+        // The Move to project submenu stays open only while the pointer is over it.
+        keeps_pointer: true,
     },
     Scene {
         name: "explorer-filter",
@@ -314,12 +324,16 @@ impl Fixture {
             id: DataSourceId::generate(),
             name: "shop".to_owned(),
             color: Some(SourceColor::Orange),
+            project: None,
             config: ConnectionConfig::Sqlite(SqliteConfig {
                 path: shop,
                 read_only: false,
             }),
         }];
         data_sources.extend(postgres.iter().map(|(data_source, _)| data_source.clone()));
+        if sources == FixtureSources::Projects {
+            group_into_projects(dir.path(), &mut data_sources);
+        }
         DataSourceFile::new(dir.path().join("data_sources.toml"))
             .save(&data_sources)
             .unwrap();
@@ -345,11 +359,46 @@ impl Fixture {
         let mut harness = start_app(builder, self.dir.path(), log_feed(), secrets);
         let ready = match self.sources {
             FixtureSources::None => "No data sources yet",
-            FixtureSources::Shop => "Expand shop",
+            FixtureSources::Shop | FixtureSources::Projects => "Expand shop",
         };
         step_until_visible(&mut harness, ready);
         harness
     }
+}
+
+/// Puts `shop` and a new `archive` in a "Web shop" project, `warehouse` (if there is one) in
+/// "Reporting", and adds `scratch` in no project; writes `projects.toml`.
+fn group_into_projects(dir: &Path, data_sources: &mut Vec<DataSource>) {
+    let project = |name: &str| {
+        Project::new(
+            ProjectId::generate(),
+            name.to_owned(),
+            ProjectSlug::from_name(name),
+        )
+    };
+    let web_shop = project("Web shop");
+    let reporting = project("Reporting");
+    let sqlite_copy = |shop: &DataSource, name: &str, project: Option<ProjectId>| DataSource {
+        id: DataSourceId::generate(),
+        name: name.to_owned(),
+        color: None,
+        project,
+        ..shop.clone()
+    };
+    let shop = &mut data_sources[0];
+    shop.project = Some(web_shop.id);
+    let shop = shop.clone();
+    for data_source in data_sources.iter_mut().skip(1) {
+        data_source.project = Some(reporting.id);
+    }
+    data_sources.push(sqlite_copy(&shop, "archive", Some(web_shop.id)));
+    data_sources.push(sqlite_copy(&shop, "scratch", None));
+    ProjectFile::new(dir.join("projects.toml"))
+        .save(&Projects {
+            projects: vec![web_shop, reporting],
+            ..Projects::default()
+        })
+        .unwrap();
 }
 
 /// Parses `postgres://user:password@host:port/database`, the form the tests' URL takes.
@@ -363,6 +412,7 @@ fn postgres_data_source(url: &str) -> (DataSource, Password) {
         id: DataSourceId::generate(),
         name: "warehouse".to_owned(),
         color: Some(SourceColor::Red),
+        project: None,
         config: ConnectionConfig::Postgres(PostgresConfig {
             server: ServerConfig {
                 host: host.to_owned(),
@@ -458,6 +508,13 @@ fn explorer_menu(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
     expand(harness, &["shop", "main", "tables", "orders", "columns"]);
     step_until_visible(harness, "customer_id");
     harness.get_by_label("orders").click_secondary();
+    harness.run_ok();
+}
+
+fn explorer_projects(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    harness.get_by_label("scratch").click_secondary();
+    harness.run_ok();
+    harness.get_by_label("Move to project").hover();
     harness.run_ok();
 }
 

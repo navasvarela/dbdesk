@@ -1,5 +1,6 @@
-use dbdesk_core::{DataSource, DataSourceId, SourceColor};
+use dbdesk_core::{DataSource, DataSourceId, ProjectId, SourceColor};
 use dbdesk_engine::{Event, SessionState};
+use dbdesk_store::Project;
 
 use crate::catalog_tree::CatalogTree;
 
@@ -8,6 +9,7 @@ use crate::catalog_tree::CatalogTree;
 pub struct AppState {
     pub engine_status: EngineStatus,
     pub data_sources: DataSources,
+    pub projects: ProjectList,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +37,55 @@ pub enum DataSources {
     Unavailable(String),
     /// Sorted by name, case-insensitively.
     Loaded(Vec<DataSourceEntry>),
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub enum ProjectList {
+    #[default]
+    Loading,
+    /// `projects.toml` can't be read; every data source shows ungrouped until it is fixed.
+    Unavailable(String),
+    /// Sorted by name, case-insensitively.
+    Loaded(Vec<Project>),
+}
+
+impl ProjectList {
+    pub fn projects(&self) -> &[Project] {
+        match self {
+            Self::Loaded(projects) => projects,
+            Self::Loading | Self::Unavailable(_) => &[],
+        }
+    }
+
+    pub fn get(&self, id: ProjectId) -> Option<&Project> {
+        self.projects().iter().find(|project| project.id == id)
+    }
+
+    fn set(&mut self, mut projects: Vec<Project>) {
+        sort_projects(&mut projects);
+        *self = Self::Loaded(projects);
+    }
+
+    fn upsert(&mut self, project: &Project) {
+        let Self::Loaded(projects) = self else {
+            return;
+        };
+        match projects.iter_mut().find(|p| p.id == project.id) {
+            Some(existing) => *existing = project.clone(),
+            None => projects.push(project.clone()),
+        }
+        sort_projects(projects);
+    }
+
+    fn remove(&mut self, id: ProjectId) {
+        if let Self::Loaded(projects) = self {
+            projects.retain(|project| project.id != id);
+        }
+    }
+}
+
+fn sort_projects(projects: &mut [Project]) {
+    projects.sort_by_key(|project| project.name.to_lowercase());
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,6 +132,12 @@ impl AppState {
             }
             Event::DataSourceSaved(data_source) => self.data_sources.upsert(data_source),
             Event::DataSourceDeleted(id) => self.data_sources.remove(*id),
+            Event::ProjectsLoaded(projects) => self.projects.set(projects.projects.clone()),
+            Event::ProjectsUnavailable { error } => {
+                self.projects = ProjectList::Unavailable(error.clone());
+            }
+            Event::ProjectSaved(project) => self.projects.upsert(project),
+            Event::ProjectDeleted(id) => self.projects.remove(*id),
             Event::SessionChanged { id, state } => {
                 if let Some(entry) = self.data_sources.entry_mut(*id) {
                     entry.set_session(state);
@@ -93,6 +150,7 @@ impl AppState {
             }
             // The dialogs, the definition window and the consoles track these themselves.
             Event::DataSourceSaveFailed { .. }
+            | Event::ProjectSaveFailed { .. }
             | Event::ConsolesLoaded(_)
             | Event::KeymapLoaded { .. }
             | Event::SettingsLoaded { .. }
@@ -198,6 +256,7 @@ mod tests {
             id: DataSourceId::generate(),
             name: name.to_owned(),
             color: None,
+            project: None,
             config: ConnectionConfig::Sqlite(SqliteConfig {
                 path: format!("/data/{name}.db").into(),
                 read_only: false,
@@ -238,6 +297,41 @@ mod tests {
         state.apply(&Event::DataSourceDeleted(beta.id));
 
         assert_eq!(names(&state), ["Alpha", "gamma"]);
+    }
+
+    #[test]
+    fn keeps_projects_sorted_through_saves_renames_and_deletes() {
+        let project = |name: &str| {
+            Project::new(
+                ProjectId::generate(),
+                name.to_owned(),
+                dbdesk_store::ProjectSlug::from_name(name),
+            )
+        };
+        let project_names = |state: &AppState| -> Vec<String> {
+            state
+                .projects
+                .projects()
+                .iter()
+                .map(|project| project.name.clone())
+                .collect()
+        };
+        let mut state = AppState::default();
+        let mut shop = project("shop");
+        state.apply(&Event::ProjectsLoaded(dbdesk_store::Projects {
+            mcp_defaults: dbdesk_store::McpPermissions::default(),
+            projects: vec![shop.clone(), project("Analytics")],
+        }));
+        assert_eq!(project_names(&state), ["Analytics", "shop"]);
+
+        shop.name = "Archive".to_owned();
+        state.apply(&Event::ProjectSaved(shop.clone()));
+        state.apply(&Event::ProjectSaved(project("Billing")));
+        assert_eq!(project_names(&state), ["Analytics", "Archive", "Billing"]);
+
+        state.apply(&Event::ProjectDeleted(shop.id));
+        assert_eq!(project_names(&state), ["Analytics", "Billing"]);
+        assert!(state.projects.get(shop.id).is_none());
     }
 
     #[test]
