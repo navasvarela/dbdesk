@@ -19,7 +19,7 @@ use dbdesk_core::{
 use dbdesk_engine::{Command, ConsoleId, Event, Export, PasswordUpdate, Release, SessionState};
 use dbdesk_store::{
     ConsoleKey, ConsoleName, DataSourceFile, ExportFormat, FormatSettings, KeymapBindings,
-    KeywordCase, SavedConsole, Settings,
+    KeywordCase, Projects, SavedConsole, Settings,
 };
 
 #[test]
@@ -66,6 +66,7 @@ fn reloads_saved_data_sources_and_stores_passwords_in_the_secret_store() {
         id: DataSourceId::generate(),
         name: "remote".to_owned(),
         color: None,
+        project: None,
         config: ConnectionConfig::Postgres(PostgresConfig {
             server: ServerConfig {
                 host: "db.internal".to_owned(),
@@ -121,6 +122,7 @@ fn saves_console_files_in_order_and_reloads_them_after_a_restart() {
     restarted.expect(Event::Started);
     restarted.expect_keymap(Ok(KeymapBindings::new()));
     restarted.expect_settings(Ok(Settings::default()));
+    restarted.expect(Event::ProjectsLoaded(Projects::default()));
     restarted.expect(Event::DataSourcesLoaded(vec![]));
     restarted.expect(Event::ConsolesLoaded(vec![SavedConsole {
         key: key("console"),
@@ -286,6 +288,7 @@ fn never_overwrites_an_unreadable_data_sources_file() {
     engine.expect(Event::Started);
     engine.expect_keymap(Ok(KeymapBindings::new()));
     engine.expect_settings(Ok(Settings::default()));
+    engine.expect(Event::ProjectsLoaded(Projects::default()));
     assert!(matches!(
         engine.next_event(),
         Event::DataSourcesUnavailable { .. }
@@ -395,6 +398,7 @@ fn connects_to_postgres_with_the_saved_password() {
         id: DataSourceId::generate(),
         name: "test server".to_owned(),
         color: None,
+        project: None,
         config: ConnectionConfig::Postgres(parsed.config),
     };
     let id = data_source.id;

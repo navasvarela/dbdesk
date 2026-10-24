@@ -373,6 +373,7 @@ fn committing_a_failed_postgres_transaction_rolls_it_back() {
         id: DataSourceId::generate(),
         name: "test server".to_owned(),
         color: None,
+        project: None,
         config: ConnectionConfig::Postgres(server.config),
     };
     let id = data_source.id;
@@ -566,6 +567,7 @@ fn applies_and_rolls_back_edits_on_postgres() {
         id: DataSourceId::generate(),
         name: "test server".to_owned(),
         color: None,
+        project: None,
         config: ConnectionConfig::Postgres(server.config),
     };
     let id = data_source.id;
@@ -619,6 +621,7 @@ fn applies_and_rolls_back_edits_on_mysql() {
             id: DataSourceId::generate(),
             name: "test server".to_owned(),
             color: None,
+            project: None,
             config: ConnectionConfig::Mysql(config),
         };
         let id = data_source.id;
@@ -678,6 +681,7 @@ fn applies_and_rolls_back_edits_on_sqlserver() {
         id: DataSourceId::generate(),
         name: "test server".to_owned(),
         color: None,
+        project: None,
         config: ConnectionConfig::SqlServer(config),
     };
     let id = data_source.id;
@@ -748,6 +752,7 @@ fn explains_on_sqlserver_with_showplan_and_switches_it_off() {
         id: DataSourceId::generate(),
         name: "test server".to_owned(),
         color: None,
+        project: None,
         config: ConnectionConfig::SqlServer(config),
     };
     let id = data_source.id;
@@ -879,6 +884,7 @@ fn never_validates_inside_a_postgres_transaction() {
         id: DataSourceId::generate(),
         name: "test server".to_owned(),
         color: None,
+        project: None,
         config: ConnectionConfig::Postgres(server.config),
     };
     let id = data_source.id;

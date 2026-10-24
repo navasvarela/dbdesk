@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use dbdesk_core::{DataSource, DataSourceId, describe_error};
-use dbdesk_store::{ConsoleFiles, KeymapFile, SecretError, SecretStore, SettingsFile};
+use dbdesk_core::{DataSource, DataSourceId, ProjectId, describe_error};
+use dbdesk_store::{ConsoleFiles, KeymapFile, Project, SecretError, SecretStore, SettingsFile};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::task::{JoinError, JoinSet};
 
@@ -12,6 +12,7 @@ use crate::export;
 use crate::history::HistoryLog;
 use crate::keymap;
 use crate::open::{create_sqlite_database, test_connection};
+use crate::projects::{ProjectError, ProjectRegistry};
 use crate::registry::{Registry, RegistryError};
 use crate::releases::{self, ReleaseFeed};
 use crate::session::{Script, Services, Session, SessionOwner, SessionRequest};
@@ -41,6 +42,8 @@ pub(crate) async fn run(
     events.send(Event::Started);
     events.send(keymap::load(&config.keymap).await);
     events.send(settings::load(&config.settings).await);
+    let projects = ProjectRegistry::load(config.projects).await;
+    events.send(projects.loaded_event());
     let registry = Registry::load(config.data_sources).await;
     events.send(registry.loaded_event());
     events.send(console_files::load(&config.consoles).await);
@@ -49,6 +52,7 @@ pub(crate) async fn run(
     let mut engine = Engine {
         history,
         registry,
+        projects,
         secrets: config.secrets,
         console_files: config.consoles,
         keymap_file: config.keymap,
@@ -78,6 +82,7 @@ struct ConsoleSession {
 
 struct Engine {
     registry: Registry,
+    projects: ProjectRegistry,
     history: HistoryLog,
     secrets: Arc<dyn SecretStore>,
     console_files: ConsoleFiles,
@@ -104,6 +109,19 @@ impl Engine {
                 password,
             } => self.save(data_source, password).await,
             Command::DeleteDataSource(id) => self.delete(id).await,
+            Command::CreateProject { id, name } => {
+                let result = self.projects.create(id, &name).await;
+                self.report_project(id, result);
+            }
+            Command::RenameProject { id, name } => {
+                let result = self.projects.rename(id, &name).await;
+                self.report_project(id, result);
+            }
+            Command::DeleteProject(id) => self.delete_project(id).await,
+            Command::MoveToProject {
+                data_source,
+                project,
+            } => self.move_to_project(data_source, project).await,
             Command::TestConnection {
                 data_source,
                 password,
@@ -271,6 +289,76 @@ impl Engine {
             Ok(false) => tracing::warn!(%id, "delete requested for an unknown data source"),
             Err(error) => {
                 tracing::error!(%id, "could not delete data source: {}", describe_error(&error));
+            }
+        }
+    }
+
+    fn report_project(&self, id: ProjectId, result: Result<Project, ProjectError>) {
+        match result {
+            Ok(project) => {
+                tracing::info!(project = %project.name, slug = %project.slug, "saved project");
+                self.events.send(Event::ProjectSaved(project));
+            }
+            Err(error) => {
+                let error = describe_error(&error);
+                tracing::error!(%id, "could not save project: {error}");
+                self.events.send(Event::ProjectSaveFailed { id, error });
+            }
+        }
+    }
+
+    /// Moves the data sources out first: if that fails, the project stays and nothing has
+    /// changed; if forgetting the project then fails, it is only left empty.
+    async fn delete_project(&mut self, id: ProjectId) {
+        if !self.projects.contains(id) {
+            self.report_project_failure(id, &ProjectError::Unknown);
+            return;
+        }
+        let moved = match self.registry.leave_project(id).await {
+            Ok(moved) => moved,
+            Err(error) => {
+                self.report_project_failure(id, &error);
+                return;
+            }
+        };
+        for data_source in moved {
+            self.events.send(Event::DataSourceSaved(data_source));
+        }
+        match self.projects.remove(id).await {
+            Ok(()) => {
+                tracing::info!(%id, "deleted project");
+                self.events.send(Event::ProjectDeleted(id));
+            }
+            Err(error) => self.report_project_failure(id, &error),
+        }
+    }
+
+    fn report_project_failure(&self, id: ProjectId, error: &(dyn std::error::Error + 'static)) {
+        let error = describe_error(error);
+        tracing::error!(%id, "could not delete project: {error}");
+        self.events.send(Event::ProjectSaveFailed { id, error });
+    }
+
+    async fn move_to_project(&mut self, id: DataSourceId, project: Option<ProjectId>) {
+        let result = match project {
+            Some(project) if !self.projects.contains(project) => {
+                Err(describe_error(&ProjectError::Unknown))
+            }
+            _ => self
+                .registry
+                .move_to_project(id, project)
+                .await
+                .map_err(|error| describe_error(&error)),
+        };
+        match result {
+            Ok(data_source) => {
+                let project = project.map_or_else(|| "none".to_owned(), |id| id.to_string());
+                tracing::info!(data_source = %data_source.name, %project, "moved data source");
+                self.events.send(Event::DataSourceSaved(data_source));
+            }
+            Err(error) => {
+                tracing::error!(%id, "could not move data source: {error}");
+                self.events.send(Event::DataSourceSaveFailed { id, error });
             }
         }
     }

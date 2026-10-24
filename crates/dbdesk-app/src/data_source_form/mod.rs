@@ -5,7 +5,7 @@ mod server;
 
 use dbdesk_core::{
     ConnectionConfig, DataSource, DataSourceId, DriverKind, MysqlConfig, Password, PostgresConfig,
-    SourceColor, SqlServerConfig, SqliteConfig,
+    ProjectId, SourceColor, SqlServerConfig, SqliteConfig,
 };
 use dbdesk_engine::PasswordUpdate;
 
@@ -56,6 +56,9 @@ pub struct DataSourceForm {
     /// Optional: an empty name becomes [`ConnectionConfig::default_name`].
     pub name: String,
     pub color: Option<SourceColor>,
+    /// Not edited in the dialog, only carried through it, so saving an edit keeps the data
+    /// source in its project.
+    pub project: Option<ProjectId>,
     pub fields: DriverFields,
 }
 
@@ -167,6 +170,7 @@ impl DataSourceForm {
         Self {
             name: String::new(),
             color: None,
+            project: None,
             fields: DriverFields::new(driver),
         }
     }
@@ -175,6 +179,7 @@ impl DataSourceForm {
         Self {
             name: data_source.name.clone(),
             color: data_source.color,
+            project: data_source.project,
             fields: DriverFields::from_config(&data_source.config),
         }
     }
@@ -193,6 +198,7 @@ impl DataSourceForm {
             id,
             name,
             color: self.color,
+            project: self.project,
             config,
         })
     }
@@ -275,6 +281,7 @@ mod tests {
                 id: DataSourceId::generate(),
                 name: "saved".to_owned(),
                 color: Some(SourceColor::Teal),
+                project: Some(ProjectId::generate()),
                 config,
             };
 

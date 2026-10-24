@@ -32,6 +32,24 @@ impl FromStr for DataSourceId {
     }
 }
 
+/// Stable identity of a project, a named group of data sources. Like [`DataSourceId`], written
+/// once, so renaming a project never breaks the data sources (or MCP clients) that refer to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ProjectId(Uuid);
+
+impl ProjectId {
+    pub fn generate() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
+
+impl fmt::Display for ProjectId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 /// A saved connection configuration. Never holds a password; those live in the OS keychain.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DataSource {
@@ -41,6 +59,11 @@ pub struct DataSource {
     /// a local copy at a glance. Optional, and absent from files written before it existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<SourceColor>,
+    /// The project the data source is grouped under; `None` is "No project". Absent from
+    /// files written before projects existed. An id `projects.toml` doesn't know also means
+    /// no project, rather than an error, so deleting that file never loses a data source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<ProjectId>,
     #[serde(flatten)]
     pub config: ConnectionConfig,
 }
@@ -314,6 +337,7 @@ mod tests {
                     id: DataSourceId::generate(),
                     name: "local".to_owned(),
                     color: None,
+                    project: None,
                     config: ConnectionConfig::Postgres(PostgresConfig {
                         server: ServerConfig {
                             host: "localhost".to_owned(),
@@ -330,6 +354,7 @@ mod tests {
                     id: DataSourceId::generate(),
                     name: "chinook".to_owned(),
                     color: None,
+                    project: None,
                     config: ConnectionConfig::Sqlite(SqliteConfig {
                         path: "/tmp/chinook.db".into(),
                         read_only: true,
@@ -387,6 +412,7 @@ mod tests {
                     id: DataSourceId::generate(),
                     name: "local".to_owned(),
                     color: None,
+                    project: None,
                     config: ConnectionConfig::Postgres(PostgresConfig {
                         server: ServerConfig {
                             host: "localhost".to_owned(),
@@ -478,6 +504,71 @@ mod tests {
         let text = toml::to_string(&file).unwrap();
 
         assert!(text.contains("color = \"violet\""), "{text}");
+        assert_eq!(toml::from_str::<File>(&text).unwrap(), file);
+    }
+
+    /// A file as dbdesk 0.2.0 wrote it, before projects existed.
+    const FILE_FROM_0_2_0: &str = r#"
+        # dbdesk data sources. Safe to edit by hand while dbdesk is closed.
+        # Passwords are stored in the OS keychain, never in this file.
+        # Comments are not preserved when dbdesk saves this file.
+
+        [[data_source]]
+        id = "4b5f9a3e-8a52-4a7e-9c6b-1f0f2b0c9d11"
+        name = "production"
+        color = "red"
+        driver = "postgres"
+        host = "db.internal"
+        port = 5432
+        database = "app"
+        user = "juan"
+
+        [data_source.tls]
+        mode = "verify-full"
+        ca_file = "/etc/ssl/internal-ca.pem"
+
+        [[data_source]]
+        id = "0d6c2f4e-1b8a-4c3d-9e7f-5a6b7c8d9e0f"
+        name = "shop"
+        driver = "mysql"
+        host = "localhost"
+        port = 3306
+        database = "shop"
+        user = "root"
+
+        [data_source.tls]
+        mode = "prefer"
+
+        [[data_source]]
+        id = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d"
+        name = "chinook.db"
+        driver = "sqlite"
+        path = "/data/chinook.db"
+        read_only = true
+    "#;
+
+    #[test]
+    fn files_from_0_2_0_load_unchanged_with_every_data_source_in_no_project() {
+        let file: File = toml::from_str(FILE_FROM_0_2_0).unwrap();
+
+        assert_eq!(file.data_source.len(), 3);
+        assert!(file.data_source.iter().all(|ds| ds.project.is_none()));
+        assert_eq!(file.data_source[0].color, Some(SourceColor::Red));
+        let text = toml::to_string(&file).unwrap();
+        assert!(!text.contains("project"), "{text}");
+        assert_eq!(toml::from_str::<File>(&text).unwrap(), file);
+    }
+
+    #[test]
+    fn writes_the_project_only_when_set() {
+        let mut file: File = toml::from_str(FILE_FROM_0_2_0).unwrap();
+        let project = ProjectId::generate();
+        file.data_source[2].project = Some(project);
+
+        let text = toml::to_string(&file).unwrap();
+
+        assert_eq!(text.matches("project = ").count(), 1, "{text}");
+        assert!(text.contains(&format!("project = \"{project}\"")), "{text}");
         assert_eq!(toml::from_str::<File>(&text).unwrap(), file);
     }
 

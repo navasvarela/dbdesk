@@ -1,4 +1,4 @@
-use dbdesk_core::{DataSource, DataSourceId, describe_error};
+use dbdesk_core::{DataSource, DataSourceId, ProjectId, describe_error};
 use dbdesk_store::{DataSourceFile, StoreError};
 use tokio::task::JoinError;
 
@@ -8,6 +8,8 @@ use crate::Event;
 pub(crate) enum RegistryError {
     #[error("data sources can't be changed until data_sources.toml is fixed: {0}")]
     Unavailable(String),
+    #[error("there is no such data source")]
+    Unknown,
     #[error(transparent)]
     Store(#[from] StoreError),
     #[error("a background task failed")]
@@ -85,6 +87,43 @@ impl Registry {
         })
         .await?;
         Ok(removed)
+    }
+
+    /// Puts the data source in `project` (`None` for no project) and saves the file.
+    pub(crate) async fn move_to_project(
+        &mut self,
+        id: DataSourceId,
+        project: Option<ProjectId>,
+    ) -> Result<DataSource, RegistryError> {
+        let mut moved = None;
+        self.update(|data_sources| {
+            if let Some(data_source) = data_sources.iter_mut().find(|ds| ds.id == id) {
+                data_source.project = project;
+                moved = Some(data_source.clone());
+            }
+        })
+        .await?;
+        moved.ok_or(RegistryError::Unknown)
+    }
+
+    /// Moves every data source in `project` to no project, saves the file, and returns the
+    /// data sources it moved.
+    pub(crate) async fn leave_project(
+        &mut self,
+        project: ProjectId,
+    ) -> Result<Vec<DataSource>, RegistryError> {
+        let mut moved = Vec::new();
+        self.update(|data_sources| {
+            for data_source in data_sources
+                .iter_mut()
+                .filter(|ds| ds.project == Some(project))
+            {
+                data_source.project = None;
+                moved.push(data_source.clone());
+            }
+        })
+        .await?;
+        Ok(moved)
     }
 
     /// Applies `change` to a copy, saves the copy, and only then keeps it, so memory and

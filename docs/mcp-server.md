@@ -1,6 +1,6 @@
 # MCP server
 
-Status: **planned**, nothing built yet. Proposed on 2026-10-24.
+Status: **P0 (projects) built**; the MCP server itself is not built yet. Proposed on 2026-10-24.
 
 The [Model Context Protocol](https://modelcontextprotocol.io) (MCP) lets AI assistants and
 coding agents call tools that an application provides. This plan gives dbdesk an MCP server, so

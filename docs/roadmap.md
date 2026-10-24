@@ -374,6 +374,19 @@ projects with permissions per project. The full plan is in [MCP server](mcp-serv
 - **P0 — Projects:**
   - data sources grouped into projects in `projects.toml`, shown as groups in the explorer;
   - useful without MCP.
+
+  **P0 demo note:** built. In the explorer, right-click a data source → **Move to project ›** →
+  **New project…**, type `Analytics`, and the data source sits under a foldable **Analytics**
+  header, with the rest under **No project**. **Rename…** and **Delete…** are on the header's
+  menu; deleting moves its data sources to No project and deletes none. Typing a project's
+  name in the filter shows all its data sources. Restart the app and the grouping is still
+  there: projects live in `projects.toml` (with the MCP defaults written out, and every project
+  off for MCP), membership in an optional `project` id on each data source. A
+  `data_sources.toml` from 0.2.0 loads unchanged. A project keeps the slug made from its first
+  name through renames, so MCP client configurations won't break. Covered by store tests (the
+  file format, slugs, broken files refused), engine tests (create, rename, move, delete,
+  restart, a broken `projects.toml` never overwritten), a serde test of a 0.2.0 file, and a
+  kittest UI test of the whole flow.
 - **MCP1 — Read-only server:**
   - `dbdesk mcp --project <slug>` over stdio, with catalog, describe, query and explain tools;
   - read-only transactions, row and time limits, and every call logged and recorded in the

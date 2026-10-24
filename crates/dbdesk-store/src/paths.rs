@@ -28,6 +28,11 @@ impl AppPaths {
         self.dirs.config_dir().join("data_sources.toml")
     }
 
+    /// Projects and their MCP permissions. Not guaranteed to exist yet.
+    pub fn projects_file(&self) -> PathBuf {
+        self.dirs.config_dir().join("projects.toml")
+    }
+
     /// Query console files, one folder per data source. Not guaranteed to exist yet.
     pub fn consoles_dir(&self) -> PathBuf {
         self.dirs.config_dir().join("consoles")

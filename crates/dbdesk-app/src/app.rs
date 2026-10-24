@@ -19,6 +19,9 @@ use crate::history_window::{HistoryAction, HistoryWindow};
 use crate::keymap::{self, Keymap};
 use crate::keymap_window::{self, KeymapWindowAction};
 use crate::log_console::{LogConsole, LogFeed};
+use crate::project_dialog::{
+    DeleteProjectChoice, DeleteProjectConfirmation, ProjectDialogAction, ProjectNameDialog,
+};
 use crate::rollback_dialog::{Closing, RollbackChoice, RollbackConfirmation};
 use crate::settings::AppSettings;
 use crate::settings_window::{self, SettingsWindowAction};
@@ -45,6 +48,8 @@ pub struct DbDeskApp {
     explorer_options: ExplorerOptions,
     data_source_dialog: Option<DataSourceDialog>,
     delete_confirmation: Option<DeleteConfirmation>,
+    project_dialog: Option<ProjectNameDialog>,
+    delete_project_confirmation: Option<DeleteProjectConfirmation>,
     definition_window: Option<DefinitionWindow>,
     history_window: Option<HistoryWindow>,
     rollback_confirmation: Option<RollbackConfirmation>,
@@ -91,6 +96,8 @@ impl DbDeskApp {
             explorer_options: ExplorerOptions::default(),
             data_source_dialog: None,
             delete_confirmation: None,
+            project_dialog: None,
+            delete_project_confirmation: None,
             definition_window: None,
             history_window: None,
             rollback_confirmation: None,
@@ -138,6 +145,13 @@ impl DbDeskApp {
             .is_some_and(|dialog| dialog.apply(event))
         {
             self.data_source_dialog = None;
+        }
+        if self
+            .project_dialog
+            .as_mut()
+            .is_some_and(|dialog| dialog.apply(event))
+        {
+            self.project_dialog = None;
         }
         if let Some(window) = &mut self.definition_window {
             window.apply(event);
@@ -304,6 +318,33 @@ impl DbDeskApp {
                     self.send(command);
                 }
             }
+            ExplorerAction::NewProject { then_move } => {
+                self.project_dialog = Some(ProjectNameDialog::create(then_move));
+            }
+            ExplorerAction::RenameProject(id) => {
+                if let Some(project) = self.state.projects.get(id) {
+                    self.project_dialog = Some(ProjectNameDialog::rename(project));
+                }
+            }
+            ExplorerAction::DeleteProject(id) => {
+                if let Some(project) = self.state.projects.get(id) {
+                    let members = self
+                        .state
+                        .data_sources
+                        .entries()
+                        .iter()
+                        .filter(|entry| entry.data_source.project == Some(id))
+                        .count();
+                    self.delete_project_confirmation =
+                        Some(DeleteProjectConfirmation::new(project, members));
+                }
+            }
+            ExplorerAction::MoveToProject(data_source, project) => {
+                self.send(Command::MoveToProject {
+                    data_source,
+                    project,
+                });
+            }
         }
     }
 
@@ -345,6 +386,50 @@ impl DbDeskApp {
                 self.send(Command::CreateSqliteDatabase(path));
             }
             DialogAction::Close => self.data_source_dialog = None,
+        }
+    }
+
+    fn show_project_dialog(&mut self, ctx: &egui::Context) {
+        let Some(action) = self
+            .project_dialog
+            .as_mut()
+            .and_then(|dialog| dialog.show(ctx))
+        else {
+            return;
+        };
+        match action {
+            ProjectDialogAction::Create {
+                id,
+                name,
+                then_move,
+            } => {
+                self.send(Command::CreateProject { id, name });
+                // Commands are handled in order, so the project exists by the time this runs.
+                if let Some(data_source) = then_move {
+                    self.send(Command::MoveToProject {
+                        data_source,
+                        project: Some(id),
+                    });
+                }
+            }
+            ProjectDialogAction::Rename { id, name } => {
+                self.send(Command::RenameProject { id, name });
+            }
+            ProjectDialogAction::Close => self.project_dialog = None,
+        }
+    }
+
+    fn show_delete_project_confirmation(&mut self, ctx: &egui::Context) {
+        let Some(choice) = self
+            .delete_project_confirmation
+            .as_ref()
+            .and_then(|confirmation| confirmation.show(ctx))
+        else {
+            return;
+        };
+        self.delete_project_confirmation = None;
+        if let DeleteProjectChoice::Confirmed(id) = choice {
+            self.send(Command::DeleteProject(id));
         }
     }
 
@@ -636,6 +721,7 @@ impl eframe::App for DbDeskApp {
                     palette,
                     log_console: &mut self.log_console,
                     data_sources: &self.state.data_sources,
+                    projects: self.state.projects.projects(),
                     saved_consoles,
                     explorer_options: &mut self.explorer_options,
                     explorer_actions: &mut explorer_actions,
@@ -677,6 +763,8 @@ impl eframe::App for DbDeskApp {
         self.send_if(confirmed);
         self.show_data_source_dialog(&ctx);
         self.show_delete_confirmation(&ctx);
+        self.show_project_dialog(&ctx);
+        self.show_delete_project_confirmation(&ctx);
         if self
             .definition_window
             .as_ref()
@@ -748,8 +836,8 @@ mod tests {
 
     use dbdesk_core::{DataSourceId, Password};
     use dbdesk_store::{
-        ConsoleFiles, ConsoleName, DataSourceFile, HistoryFile, KeymapFile, SecretError,
-        SecretStore, SettingsFile,
+        ConsoleFiles, ConsoleName, DataSourceFile, HistoryFile, KeymapFile, ProjectFile,
+        SecretError, SecretStore, SettingsFile,
     };
     use egui::accesskit::Role;
     use egui_kittest::Harness;
@@ -786,6 +874,7 @@ mod tests {
     fn engine_config_with_releases(dir: &Path, releases: FixedReleases) -> EngineConfig {
         EngineConfig {
             data_sources: DataSourceFile::new(dir.join("data_sources.toml")),
+            projects: ProjectFile::new(dir.join("projects.toml")),
             secrets: Arc::new(NoSecrets),
             consoles: ConsoleFiles::new(dir.join("consoles")),
             history: HistoryFile::new(dir.join("history.sqlite")),
@@ -841,6 +930,7 @@ mod tests {
             id: DataSourceId::generate(),
             name: "shop".to_owned(),
             color: None,
+            project: None,
             config: dbdesk_core::ConnectionConfig::Sqlite(dbdesk_core::SqliteConfig {
                 path: database,
                 read_only: false,
@@ -1041,6 +1131,144 @@ mod tests {
                 ca_file: Some(ca_file)
             }
         );
+    }
+
+    /// Replaces the explorer filter's text, `old`, with `new`. The field is found by its
+    /// placeholder while empty, and by its text otherwise.
+    fn replace_filter(harness: &mut Harness<'_, DbDeskApp>, old: &str, new: &str) {
+        let old = old.to_owned();
+        let filter = move || {
+            let old = old.clone();
+            egui_kittest::kittest::By::new().predicate(move |node| {
+                node.role() == Role::TextInput
+                    && if old.is_empty() {
+                        node.placeholder() == Some("Filter loaded nodes")
+                    } else {
+                        node.value().as_deref() == Some(old.as_str())
+                    }
+            })
+        };
+        harness.get(filter()).focus();
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.key_press(egui::Key::Backspace);
+        harness.run();
+        if !new.is_empty() {
+            harness
+                .get(
+                    egui_kittest::kittest::By::new()
+                        .predicate(|node| node.placeholder() == Some("Filter loaded nodes")),
+                )
+                .type_text(new);
+        }
+        harness.run();
+    }
+
+    fn saved_project_of(dir: &Path, name: &str) -> Option<dbdesk_core::ProjectId> {
+        DataSourceFile::new(dir.join("data_sources.toml"))
+            .load()
+            .unwrap()
+            .into_iter()
+            .find(|data_source| data_source.name == name)
+            .and_then(|data_source| data_source.project)
+    }
+
+    #[test]
+    fn groups_data_sources_into_projects_that_survive_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let shop = save_shop(dir.path(), "CREATE TABLE orders (id INTEGER PRIMARY KEY)");
+        let warehouse = dbdesk_core::DataSource {
+            id: DataSourceId::generate(),
+            name: "warehouse".to_owned(),
+            ..shop.clone()
+        };
+        DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .save(&[shop, warehouse])
+            .unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "Expand warehouse");
+        assert!(
+            harness.query_by_label("No project").is_none(),
+            "without projects there are no group headers"
+        );
+
+        // A new project from a data source's menu takes that data source with it.
+        harness.get_by_label("shop").click_secondary();
+        harness.run();
+        harness.get_by_label("Move to project").hover();
+        harness.run();
+        harness.get_by_label("New project…").click();
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::TextInput, "Name")
+            .type_text("Analytics");
+        harness.run();
+        harness.get_by_label("Create").click();
+        step_until_visible(&mut harness, "Collapse Analytics");
+        step_until(&mut harness, "shop moving into the project", |_| {
+            saved_project_of(dir.path(), "shop").is_some()
+        });
+        harness.get_by_label("Collapse No project");
+        assert_eq!(saved_project_of(dir.path(), "warehouse"), None);
+
+        harness.get_by_label("Analytics").click_secondary();
+        harness.run();
+        harness.get_by_label("Rename…").click();
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness
+            .get_by_role_and_label(Role::TextInput, "Name")
+            .type_text("Data");
+        harness.key_press(egui::Key::Enter);
+        step_until_visible(&mut harness, "Collapse Data");
+
+        // The filter matches project names: a matching project shows all its data sources.
+        replace_filter(&mut harness, "", "dat");
+        step_until(&mut harness, "warehouse being filtered out", |harness| {
+            harness.query_by_label("Expand warehouse").is_none()
+        });
+        harness.get_by_label("Expand shop");
+        replace_filter(&mut harness, "dat", "ware");
+        step_until(&mut harness, "the project being filtered out", |harness| {
+            harness.query_by_label("Collapse Data").is_none()
+        });
+        harness.get_by_label("Expand warehouse");
+        replace_filter(&mut harness, "ware", "");
+        drop(harness);
+
+        let projects = ProjectFile::new(dir.path().join("projects.toml"))
+            .load()
+            .unwrap();
+        let [project] = projects.projects.as_slice() else {
+            panic!("expected one project, got {projects:?}");
+        };
+        assert_eq!(
+            (
+                project.name.as_str(),
+                project.slug.as_str(),
+                project.mcp_enabled
+            ),
+            ("Data", "analytics", false)
+        );
+        assert_eq!(saved_project_of(dir.path(), "shop"), Some(project.id));
+
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "Collapse Data");
+        harness.get_by_label("Data").click_secondary();
+        harness.run();
+        harness.get_by_label("Delete…").click();
+        harness.run();
+        harness.get_by_label_contains("Its data source moves to No project");
+        harness.get_by_label("Delete").click();
+        step_until(&mut harness, "the project going away", |harness| {
+            harness.query_by_label("Collapse Data").is_none()
+        });
+        harness.get_by_label("Expand shop");
+        step_until(&mut harness, "shop leaving the project", |_| {
+            saved_project_of(dir.path(), "shop").is_none()
+        });
     }
 
     #[test]

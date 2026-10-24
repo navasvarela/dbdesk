@@ -2,10 +2,12 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use dbdesk_core::{
-    CatalogNode, CatalogPath, ColumnInfo, DataSource, DataSourceId, Password, Rejection,
+    CatalogNode, CatalogPath, ColumnInfo, DataSource, DataSourceId, Password, ProjectId, Rejection,
     RelationName, Row, ServerInfo, TableDescription, TransactionStatus,
 };
-use dbdesk_store::{ConsoleKey, HistoryEntry, KeymapBindings, SavedConsole, Settings};
+use dbdesk_store::{
+    ConsoleKey, HistoryEntry, KeymapBindings, Project, Projects, SavedConsole, Settings,
+};
 
 use crate::{Export, Release};
 
@@ -32,6 +34,29 @@ pub enum Command {
     },
     /// Disconnects, forgets the data source and removes its saved password.
     DeleteDataSource(DataSourceId),
+    /// Adds a project, invisible to MCP, with a slug made from its name. The UI picks the id,
+    /// so it can move a data source into the new project right after. Answered by
+    /// [`Event::ProjectSaved`] or [`Event::ProjectSaveFailed`].
+    CreateProject {
+        id: ProjectId,
+        name: String,
+    },
+    /// Changes a project's name, keeping its slug. Answered by [`Event::ProjectSaved`] or
+    /// [`Event::ProjectSaveFailed`].
+    RenameProject {
+        id: ProjectId,
+        name: String,
+    },
+    /// Moves the project's data sources to no project, then forgets the project. Never
+    /// deletes a data source. Answered by an [`Event::DataSourceSaved`] per data source moved,
+    /// then [`Event::ProjectDeleted`], or by [`Event::ProjectSaveFailed`].
+    DeleteProject(ProjectId),
+    /// Puts a data source in a project, or in no project. Answered by
+    /// [`Event::DataSourceSaved`] or [`Event::DataSourceSaveFailed`].
+    MoveToProject {
+        data_source: DataSourceId,
+        project: Option<ProjectId>,
+    },
     /// Connects with these settings without saving them, then disconnects.
     /// Answered by [`Event::ConnectionTested`].
     TestConnection {
@@ -188,6 +213,22 @@ pub enum Event {
         error: String,
     },
     DataSourceDeleted(DataSourceId),
+    /// What `projects.toml` holds, read at start-up, right before the data sources. No
+    /// projects if there is no file.
+    ProjectsLoaded(Projects),
+    /// `projects.toml` exists but can't be read. Changing projects is refused until it is
+    /// fixed, so a broken file is never overwritten.
+    ProjectsUnavailable {
+        error: String,
+    },
+    /// A project was created or renamed.
+    ProjectSaved(Project),
+    ProjectSaveFailed {
+        id: ProjectId,
+        error: String,
+    },
+    /// The project is gone; its data sources were moved to no project first.
+    ProjectDeleted(ProjectId),
     /// Every saved console file, read once at start-up, right after the data sources.
     ConsolesLoaded(Vec<SavedConsole>),
     /// The bindings `keymap.toml` sets, read at start-up (before the data sources) and on

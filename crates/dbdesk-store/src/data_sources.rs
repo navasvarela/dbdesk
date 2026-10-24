@@ -117,6 +117,7 @@ mod tests {
             id: DataSourceId::generate(),
             name: name.to_owned(),
             color: None,
+            project: None,
             config: ConnectionConfig::Sqlite(SqliteConfig {
                 path: format!("/data/{name}.db").into(),
                 read_only: false,

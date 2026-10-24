@@ -6,6 +6,28 @@ a data source that isn't connected connects it first.
 
 Click the arrow before a node, or double-click its name, to expand or collapse it.
 
+## Projects
+
+Projects group data sources, say one per application you work on. Once there is at least one
+project, the explorer shows each project as a header you can fold, with its data sources under
+it, and the data sources in no project under **No project**. With no projects, it lists the data
+sources on their own, as before.
+
+![Data sources grouped into projects, with Move to project open](images/explorer-projects.png)
+
+- **New project…** is in the **+** menu, on every project header's menu, and at the bottom of
+  **Move to project**. From **Move to project**, the data source moves into the new project.
+- **Move to project ›** on a data source's menu lists the projects and **No project**; the one
+  it is in now is marked.
+- **Rename…** on a project changes only its name.
+- **Delete…** on a project moves its data sources to **No project** first. No data source is
+  deleted.
+
+Each project also has a short **slug**, made from its first name: lower case, with hyphens for
+spaces (`Web shop` becomes `web-shop`). Hover over a project to see it. Renaming a project keeps
+its slug, so whatever refers to it by slug keeps working. A data source belongs to at most one
+project, and a project may hold data sources of any colour and engine.
+
 ## What the tree contains
 
 **PostgreSQL**
@@ -122,7 +144,9 @@ Which objects have one depends on the database:
 
 Type in the box at the top of the explorer to filter the tree by name, ignoring case. An object
 that matches is shown with everything under it, and the nodes leading to it stay open even if
-they don't match themselves.
+they don't match themselves. Data sources and projects are matched by name too: a project
+whose name matches shows all its data sources, and data sources and projects with nothing
+matching are hidden while you type.
 
 ![The explorer filtered by "order"](images/explorer-filter.png)
 

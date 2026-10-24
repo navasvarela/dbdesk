@@ -1,12 +1,16 @@
 //! The connection explorer panel: data sources and their catalogs as a lazily loaded tree.
 //! It only reports what the user asked for; the app turns that into engine commands.
 
-use dbdesk_core::{CatalogNode, CatalogPath, DataSourceId, DriverKind, NodeKind, Quoting};
+use std::collections::BTreeSet;
+
+use dbdesk_core::{
+    CatalogNode, CatalogPath, DataSourceId, DriverKind, NodeKind, ProjectId, Quoting,
+};
 use dbdesk_engine::SessionState;
 use dbdesk_sql::Dialect;
-use dbdesk_store::ConsoleKey;
+use dbdesk_store::{ConsoleKey, Project};
 use egui::{
-    Color32, CornerRadius, Id, Label, Rect, Response, ScrollArea, Sense, Shape, TextEdit,
+    Color32, CornerRadius, Id, Label, Rect, Response, RichText, ScrollArea, Sense, Shape, TextEdit,
     TextStyle, Ui, WidgetInfo, WidgetType, vec2,
 };
 
@@ -41,6 +45,15 @@ pub enum ExplorerAction {
     OpenSavedConsole(ConsoleKey),
     /// Opens a console that selects everything from the table or view at `path`.
     OpenData(DataSourceId, CatalogPath),
+    /// Asks for a new project's name; from a data source's Move to project menu, that data
+    /// source then moves into it.
+    NewProject {
+        then_move: Option<DataSourceId>,
+    },
+    RenameProject(ProjectId),
+    DeleteProject(ProjectId),
+    /// Puts the data source in the project, or in no project.
+    MoveToProject(DataSourceId, Option<ProjectId>),
 }
 
 /// The explorer's own view settings.
@@ -51,11 +64,24 @@ pub struct ExplorerOptions {
     pub filter: String,
     /// Show `pg_catalog`, `information_schema`, `sqlite_sequence` and the like.
     pub show_system: bool,
+    /// Project groups the user folded. Groups start open, so a new project's data sources
+    /// are in sight.
+    pub collapsed_groups: BTreeSet<Group>,
+}
+
+/// A group of data sources in the explorer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Group {
+    Project(ProjectId),
+    /// Data sources in no project, or in one `projects.toml` doesn't know.
+    NoProject,
 }
 
 /// What the explorer shows.
 pub struct ExplorerView<'a> {
     pub data_sources: &'a DataSources,
+    /// Sorted by name. With none, data sources are listed without group headers.
+    pub projects: &'a [Project],
     /// Offered for reopening in each data source's menu.
     pub saved_consoles: &'a SavedConsoles,
 }
@@ -78,7 +104,7 @@ pub fn show(
                 format!("Can't read data sources: {error}"),
             );
         }
-        DataSources::Loaded(entries) if entries.is_empty() => {
+        DataSources::Loaded(entries) if entries.is_empty() && view.projects.is_empty() => {
             ui.weak("No data sources yet. Add one with +.");
         }
         DataSources::Loaded(entries) => {
@@ -87,11 +113,215 @@ pub fn show(
                 needle: (!needle.is_empty()).then_some(needle.as_str()),
                 show_system: options.show_system,
             };
+            let tree = SourcesView {
+                projects: view.projects,
+                saved_consoles: view.saved_consoles,
+            };
+            let collapsed = &mut options.collapsed_groups;
             ScrollArea::both().auto_shrink(false).show(ui, |ui| {
-                for entry in entries {
-                    data_source_tree(ui, entry, view.saved_consoles, &filter, actions);
+                if view.projects.is_empty() {
+                    data_sources(ui, &tree, entries.iter(), &filter, actions);
+                } else {
+                    for (group, members) in groups(view.projects, entries) {
+                        group_tree(ui, &tree, group, &members, &filter, collapsed, actions);
+                    }
                 }
             });
+        }
+    }
+}
+
+/// What every data source row needs besides its entry.
+struct SourcesView<'a> {
+    projects: &'a [Project],
+    saved_consoles: &'a SavedConsoles,
+}
+
+/// Each project with its data sources, in the projects' order, then No project. Entries keep
+/// their order (by name) within a group.
+fn groups<'a>(
+    projects: &'a [Project],
+    entries: &'a [DataSourceEntry],
+) -> Vec<(GroupHeader<'a>, Vec<&'a DataSourceEntry>)> {
+    let in_project = |entry: &DataSourceEntry, id: ProjectId| entry.data_source.project == Some(id);
+    let known = |entry: &DataSourceEntry| {
+        entry
+            .data_source
+            .project
+            .is_some_and(|id| projects.iter().any(|project| project.id == id))
+    };
+    projects
+        .iter()
+        .map(|project| {
+            let members = entries
+                .iter()
+                .filter(|e| in_project(e, project.id))
+                .collect();
+            (GroupHeader::Project(project), members)
+        })
+        .chain(std::iter::once((
+            GroupHeader::NoProject,
+            entries.iter().filter(|entry| !known(entry)).collect(),
+        )))
+        .collect()
+}
+
+#[derive(Debug, Clone, Copy)]
+enum GroupHeader<'a> {
+    Project(&'a Project),
+    NoProject,
+}
+
+impl GroupHeader<'_> {
+    fn group(self) -> Group {
+        match self {
+            Self::Project(project) => Group::Project(project.id),
+            Self::NoProject => Group::NoProject,
+        }
+    }
+
+    fn label(&self) -> &str {
+        match self {
+            Self::Project(project) => &project.name,
+            Self::NoProject => "No project",
+        }
+    }
+}
+
+/// A foldable project header with its data sources under it. While filtering, a project
+/// whose name matches shows all its data sources; otherwise it shows only those that match,
+/// and is hidden when none does.
+fn group_tree(
+    ui: &mut Ui,
+    tree: &SourcesView<'_>,
+    header: GroupHeader<'_>,
+    members: &[&DataSourceEntry],
+    filter: &TreeFilter<'_>,
+    collapsed: &mut BTreeSet<Group>,
+    actions: &mut Vec<ExplorerAction>,
+) {
+    let shows_every_member = matches!(header, GroupHeader::Project(_))
+        && filter
+            .needle
+            .is_none_or(|needle| filter.matches(header.label(), needle));
+    let members_filter = if shows_every_member {
+        filter.below_match()
+    } else {
+        filter.clone()
+    };
+    let shown: Vec<&DataSourceEntry> = members
+        .iter()
+        .copied()
+        .filter(|entry| members_filter.source_visibility(entry) != Visibility::Hidden)
+        .collect();
+    let filtering = filter.needle.is_some();
+    if filtering && !shows_every_member && shown.is_empty() {
+        return;
+    }
+    // No project is only worth a header when something is in it.
+    if matches!(header, GroupHeader::NoProject) && members.is_empty() {
+        return;
+    }
+    let group = header.group();
+    let forced_open = filtering && !shows_every_member;
+    let expanded = forced_open || !collapsed.contains(&group);
+    let response = group_header_row(ui, header, members.len(), expanded);
+    if response.toggled {
+        if expanded {
+            collapsed.insert(group);
+        } else {
+            collapsed.remove(&group);
+        }
+    }
+    response
+        .name
+        .context_menu(|ui| group_menu(ui, header, actions));
+    if expanded {
+        ui.indent(Id::new(("explorer_group", group)), |ui| {
+            if members.is_empty() {
+                ui.weak("No data sources. Use Move to project on one.");
+            }
+            data_sources(ui, tree, shown.into_iter(), &members_filter, actions);
+        });
+    }
+}
+
+struct GroupHeaderResponse {
+    name: Response,
+    toggled: bool,
+}
+
+fn group_header_row(
+    ui: &mut Ui,
+    header: GroupHeader<'_>,
+    count: usize,
+    expanded: bool,
+) -> GroupHeaderResponse {
+    let palette = Palette::for_visuals(ui.visuals());
+    let row = ui.horizontal(|ui| {
+        let toggled = expander(ui, expanded, header.label()).clicked();
+        let (glyph, color) = match header {
+            GroupHeader::Project(_) => (icons::FOLDER_SIMPLE, palette.primary),
+            GroupHeader::NoProject => (icons::FOLDER_SIMPLE_DASHED, palette.text_weak),
+        };
+        ui.label(widgets::glyph(glyph).color(color));
+        let text = RichText::new(header.label()).strong();
+        let text = match header {
+            GroupHeader::Project(_) => text,
+            GroupHeader::NoProject => text.color(palette.text_weak),
+        };
+        let name = ui.add(Label::new(text).selectable(false).sense(Sense::click()));
+        widgets::count_badge(ui, count);
+        (name, toggled)
+    });
+    let (name, toggled) = row.inner;
+    let toggled = toggled || name.double_clicked();
+    let name = match header {
+        GroupHeader::Project(project) => name.on_hover_text(format!("Slug: {}", project.slug)),
+        GroupHeader::NoProject => name,
+    };
+    GroupHeaderResponse { name, toggled }
+}
+
+fn group_menu(ui: &mut Ui, header: GroupHeader<'_>, actions: &mut Vec<ExplorerAction>) {
+    if let GroupHeader::Project(project) = header {
+        if widgets::menu_item(ui, icons::PENCIL_SIMPLE, "Rename…").clicked() {
+            actions.push(ExplorerAction::RenameProject(project.id));
+        }
+        if widgets::menu_item(ui, icons::TRASH, "Delete…").clicked() {
+            actions.push(ExplorerAction::DeleteProject(project.id));
+        }
+        ui.separator();
+    }
+    new_project_item(ui, None, actions);
+}
+
+fn new_project_item(
+    ui: &mut Ui,
+    then_move: Option<DataSourceId>,
+    actions: &mut Vec<ExplorerAction>,
+) {
+    if widgets::menu_item(ui, icons::FOLDER_SIMPLE_PLUS, "New project…").clicked() {
+        actions.push(ExplorerAction::NewProject { then_move });
+    }
+}
+
+/// Data source rows, each hidden while filtering unless it or something loaded under it
+/// matches.
+fn data_sources<'a>(
+    ui: &mut Ui,
+    tree: &SourcesView<'_>,
+    entries: impl Iterator<Item = &'a DataSourceEntry>,
+    filter: &TreeFilter<'_>,
+    actions: &mut Vec<ExplorerAction>,
+) {
+    for entry in entries {
+        match filter.source_visibility(entry) {
+            Visibility::Hidden => {}
+            Visibility::Shown => {
+                data_source_tree(ui, entry, tree, false, &filter.below_match(), actions);
+            }
+            Visibility::LeadsToMatch => data_source_tree(ui, entry, tree, true, filter, actions),
         }
     }
 }
@@ -101,9 +331,11 @@ fn toolbar(ui: &mut Ui, options: &mut ExplorerOptions, actions: &mut Vec<Explore
     widgets::toolbar(ui, |ui| {
         let new = ui.menu_button(widgets::glyph(icons::PLUS).size(15.0), |ui| {
             new_data_source_menu(ui, actions);
+            ui.separator();
+            new_project_item(ui, None, actions);
         });
         widgets::name(
-            new.response.on_hover_text("New data source"),
+            new.response.on_hover_text("New data source or project"),
             WidgetType::Button,
             "New data source",
             true,
@@ -151,13 +383,14 @@ pub fn new_data_source_menu(ui: &mut Ui, actions: &mut Vec<ExplorerAction>) {
 fn data_source_tree(
     ui: &mut Ui,
     entry: &DataSourceEntry,
-    saved_consoles: &SavedConsoles,
+    tree: &SourcesView<'_>,
+    forced_open: bool,
     filter: &TreeFilter<'_>,
     actions: &mut Vec<ExplorerAction>,
 ) {
     let id = entry.data_source.id;
     let root = CatalogPath::root();
-    let expanded = entry.catalog.is_expanded(&root);
+    let expanded = forced_open || entry.catalog.is_expanded(&root);
     let palette = Palette::for_visuals(ui.visuals());
     let row_background = ui.painter().add(Shape::Noop);
     let row = ui.horizontal(|ui| {
@@ -194,7 +427,7 @@ fn data_source_tree(
     if response.double_clicked() {
         actions.push(toggle_expansion(id, &root, expanded));
     }
-    response.context_menu(|ui| data_source_menu(ui, entry, saved_consoles, actions));
+    response.context_menu(|ui| data_source_menu(ui, entry, tree, actions));
     if expanded {
         let tree = TreeView {
             id,
@@ -210,7 +443,7 @@ fn data_source_tree(
 fn data_source_menu(
     ui: &mut Ui,
     entry: &DataSourceEntry,
-    saved_consoles: &SavedConsoles,
+    tree: &SourcesView<'_>,
     actions: &mut Vec<ExplorerAction>,
 ) {
     let id = entry.data_source.id;
@@ -231,14 +464,50 @@ fn data_source_menu(
     if widgets::menu_item(ui, icons::TERMINAL_WINDOW, "New query console").clicked() {
         actions.push(ExplorerAction::NewConsole(id));
     }
-    saved_consoles_menu(ui, id, saved_consoles, actions);
+    saved_consoles_menu(ui, id, tree.saved_consoles, actions);
     ui.separator();
     if widgets::menu_item(ui, icons::PENCIL_SIMPLE, "Edit…").clicked() {
         actions.push(ExplorerAction::Edit(id));
     }
+    move_to_project_menu(ui, entry, tree.projects, actions);
     if widgets::menu_item(ui, icons::TRASH, "Delete…").clicked() {
         actions.push(ExplorerAction::Delete(id));
     }
+}
+
+/// Every project to move the data source to, then No project, then a new one. Its current
+/// group is shown checked and does nothing.
+fn move_to_project_menu(
+    ui: &mut Ui,
+    entry: &DataSourceEntry,
+    projects: &[Project],
+    actions: &mut Vec<ExplorerAction>,
+) {
+    let id = entry.data_source.id;
+    let current = entry
+        .data_source
+        .project
+        .filter(|current| projects.iter().any(|project| project.id == *current));
+    let label = widgets::icon_text(
+        ui,
+        icons::ARROW_SQUARE_RIGHT,
+        Color32::PLACEHOLDER,
+        "Move to project",
+    );
+    let menu = ui.menu_button(label, |ui| {
+        for project in projects {
+            let here = current == Some(project.id);
+            if ui.radio(here, &project.name).clicked() && !here {
+                actions.push(ExplorerAction::MoveToProject(id, Some(project.id)));
+            }
+        }
+        if ui.radio(current.is_none(), "No project").clicked() && current.is_some() {
+            actions.push(ExplorerAction::MoveToProject(id, None));
+        }
+        ui.separator();
+        new_project_item(ui, Some(id), actions);
+    });
+    widgets::name(menu.response, WidgetType::Button, "Move to project", true);
 }
 
 /// One data source's loaded catalog, as the tree functions need it.
@@ -250,6 +519,7 @@ struct TreeView<'a> {
 }
 
 /// Which loaded nodes to draw.
+#[derive(Clone)]
 struct TreeFilter<'a> {
     /// Lowercase filter text; `None` shows everything.
     needle: Option<&'a str>,
@@ -266,6 +536,25 @@ enum Visibility {
 }
 
 impl TreeFilter<'_> {
+    fn matches(&self, label: &str, needle: &str) -> bool {
+        label.to_lowercase().contains(needle)
+    }
+
+    /// A data source is shown, with everything under it, when its name matches; otherwise
+    /// only for what matches in its loaded catalog.
+    fn source_visibility(&self, entry: &DataSourceEntry) -> Visibility {
+        let Some(needle) = self.needle else {
+            return Visibility::Shown;
+        };
+        if self.matches(&entry.data_source.name, needle) {
+            Visibility::Shown
+        } else if self.has_matching_descendant(&entry.catalog, &CatalogPath::root()) {
+            Visibility::LeadsToMatch
+        } else {
+            Visibility::Hidden
+        }
+    }
+
     fn visibility(&self, catalog: &CatalogTree, node: &CatalogNode) -> Visibility {
         if node.system && !self.show_system {
             return Visibility::Hidden;
@@ -273,7 +562,7 @@ impl TreeFilter<'_> {
         let Some(needle) = self.needle else {
             return Visibility::Shown;
         };
-        if node.label.to_lowercase().contains(needle) {
+        if self.matches(&node.label, needle) {
             Visibility::Shown
         } else if self.has_matching_descendant(catalog, &node.path) {
             Visibility::LeadsToMatch

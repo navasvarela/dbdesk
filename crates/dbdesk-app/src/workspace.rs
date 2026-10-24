@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use dbdesk_core::SourceColor;
-use dbdesk_store::ConsoleKey;
+use dbdesk_store::{ConsoleKey, Project};
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Color32, FontId, Id, Ui, WidgetText};
 use egui_dock::tab_viewer::OnCloseResponse;
@@ -117,6 +117,7 @@ pub struct Panels<'a> {
     pub palette: &'static Palette,
     pub log_console: &'a mut LogConsole,
     pub data_sources: &'a DataSources,
+    pub projects: &'a [Project],
     pub saved_consoles: &'a SavedConsoles,
     pub explorer_options: &'a mut ExplorerOptions,
     /// What the user asked for in the explorer this frame, for the app to act on.
@@ -191,6 +192,7 @@ impl TabViewer for Panels<'_> {
                 ui,
                 &explorer::ExplorerView {
                     data_sources: self.data_sources,
+                    projects: self.projects,
                     saved_consoles: self.saved_consoles,
                 },
                 self.explorer_options,

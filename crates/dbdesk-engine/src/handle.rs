@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dbdesk_store::{
-    ConsoleFiles, DataSourceFile, HistoryFile, KeymapFile, SecretStore, SettingsFile,
+    ConsoleFiles, DataSourceFile, HistoryFile, KeymapFile, ProjectFile, SecretStore, SettingsFile,
 };
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender, error::TryRecvError};
@@ -33,6 +33,7 @@ pub enum EngineError {
 /// Where the engine keeps what it persists, and where it learns about new releases.
 pub struct EngineConfig {
     pub data_sources: DataSourceFile,
+    pub projects: ProjectFile,
     pub secrets: Arc<dyn SecretStore>,
     pub consoles: ConsoleFiles,
     pub history: HistoryFile,
