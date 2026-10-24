@@ -1,6 +1,6 @@
 [package]
 name = "dbdesk-mcp"
-description = "dbdesk's MCP server: a project's data sources, read-only, for AI assistants."
+description = "dbdesk's MCP server: a project's data sources, with its permissions, for AI assistants."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -32,4 +32,8 @@ workspace = true
 
 [[test]]
 name = "stdio"
+harness = false
+
+[[test]]
+name = "permissions"
 harness = false

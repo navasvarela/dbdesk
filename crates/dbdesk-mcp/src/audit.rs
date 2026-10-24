@@ -65,6 +65,24 @@ impl Audit {
         );
     }
 
+    /// A call refused before it reached the database because the project lacks
+    /// `permission`, so the log says what to switch on to allow it.
+    pub(crate) fn refused_for_permission(
+        &self,
+        tool: &str,
+        data_source: &str,
+        permission: &str,
+        reason: &str,
+    ) {
+        tracing::warn!(
+            project = %self.project,
+            data_source,
+            tool,
+            missing_permission = permission,
+            "MCP call refused: {reason}"
+        );
+    }
+
     /// A call the database failed or refused. [`READ_ONLY_VIOLATION`] is what a read-only
     /// transaction raises for a write it caught, which the parser couldn't see.
     pub(crate) fn failed(

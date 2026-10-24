@@ -1,21 +1,25 @@
-//! dbdesk's MCP server: lets an AI assistant browse and query the data sources of one
-//! project, read-only, through the Model Context Protocol. See `docs/mcp-server.md`.
+//! dbdesk's MCP server: lets an AI assistant browse, query and, where the project allows it,
+//! change the data sources of one project, through the Model Context Protocol. See
+//! `docs/mcp-server.md`.
 //!
 //! The app's binary runs it as `dbdesk mcp --project <slug>`, over standard input and output;
 //! this crate holds everything but the command line, so it can be tested without the app.
 //!
-//! Reading is enforced twice: [`dbdesk_sql::classify`] refuses any statement that isn't a
-//! read (or can't be parsed) before it is sent, and every call runs inside the database's
+//! Reading is enforced twice: [`dbdesk_sql::analyze`] refuses any statement that isn't a
+//! read (or can't be parsed) before it is sent, and every read runs inside the database's
 //! own read-only transaction, which catches what the parser can't see, such as a function
-//! that writes.
+//! that writes. Changes go through the `execute` tool only, each statement allowed by the
+//! project's permission for its kind; beyond reading, only the grants of a data source's MCP
+//! login are airtight.
 
 mod audit;
 mod catalog;
 mod connections;
+mod execute;
 mod project;
-mod read_only;
 mod scope;
 mod server;
+mod transaction;
 
 use std::sync::Arc;
 
@@ -24,7 +28,7 @@ use rmcp::ServiceExt as _;
 use rmcp::service::ServerInitializeError;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-pub use project::{Limits, ServedProject, StartError};
+pub use project::{Changes, Limits, Permission, ServedProject, StartError};
 
 use crate::audit::Audit;
 use crate::connections::Connections;
@@ -50,6 +54,21 @@ pub enum ServeError {
     Session(#[source] tokio::task::JoinError),
 }
 
+/// Beyond reading, dbdesk's own checks can be fooled (a function can do anything), so only a
+/// login whose grants the database enforces makes the permissions airtight.
+fn warn_about_shared_logins(project: &ServedProject) {
+    for data_source in &project.data_sources {
+        if data_source.mcp_login.is_none() && data_source.config.driver().uses_password() {
+            tracing::warn!(
+                project = project.slug(),
+                data_source = %data_source.name,
+                "this project allows changes, and the data source has no MCP login of its own: \
+                 only a dedicated login's grants are airtight beyond reading"
+            );
+        }
+    }
+}
+
 /// Serves the project with `slug` over standard input and output until the client closes
 /// them. Nothing else may write to standard output: it carries the protocol.
 ///
@@ -72,12 +91,21 @@ where
 {
     let project = ServedProject::load(&config.projects, &config.data_sources, slug)
         .map_err(|error| ServeError::Start(Box::new(error)))?;
+    let allowed = project.changes.names();
     tracing::info!(
         project = project.slug(),
         data_sources = project.data_sources.len(),
         max_rows = project.limits.max_rows,
-        "serving the project to an MCP client, read-only"
+        "serving the project to an MCP client: {}",
+        if allowed.is_empty() {
+            "read-only".to_owned()
+        } else {
+            format!("reading, and {}", allowed.join(", "))
+        }
     );
+    if !allowed.is_empty() {
+        warn_about_shared_logins(&project);
+    }
     let audit = Audit::open(project.slug(), &config.history);
     let connections = Connections::new(config.secrets, &project.data_sources);
     connections.sweep_idle();

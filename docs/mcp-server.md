@@ -1,6 +1,7 @@
 # MCP server
 
-Status: **P0 (projects) and MCP1 (the read-only server) built**; MCP2 and MCP3 are next.
+Status: **P0 (projects), MCP1 (the read-only server) and MCP2 (permissions) built**; MCP3 is
+next.
 Proposed on 2026-10-24.
 
 The [Model Context Protocol](https://modelcontextprotocol.io) (MCP) lets AI assistants and
@@ -218,6 +219,40 @@ permissions with their fallback to the defaults. Also the separate MCP login per
 - Switching `schema` on in the project lets the `CREATE TABLE` through.
 - With an MCP login whose role lacks `INSERT`, the database refuses the insert even though the
   project allows it.
+
+**As built** (2026-10-24):
+- `execute` takes one or more statements separated by semicolons. Each is classified before
+  anything runs; one the project doesn't allow refuses the whole call, and the log line names
+  the missing permission (`missing_permission="schema"`). Transaction control is always
+  refused, since every call is a transaction of its own. A project that only reads doesn't list
+  `execute` at all, so it looks to a client exactly as in MCP1.
+- The statements run in one transaction (`BEGIN READ WRITE` on PostgreSQL, `START TRANSACTION
+  READ WRITE` on MySQL and MariaDB), committed only if all succeed. MySQL's DDL commits on its
+  own, so a call holding some reports `atomic: false`, and its error says what stayed
+  committed. Each statement gets the time limit and returns at most `max_rows` rows.
+- SQLite files are opened read-only only when the project only reads. Otherwise every call sets
+  `PRAGMA query_only` for itself: on for reads, off for `execute`.
+- The transactions are the engine's: `dbdesk_engine::read_only`, which the consoles of
+  read-only data sources share (W2), gained `ReadOnlyMode::QueryOnly` for that SQLite case,
+  and `dbdesk_engine::read_write` beside it opens, commits and rolls back `execute`'s.
+- Classification, beyond MCP1's: `CALL` is admin, because a procedure can do anything;
+  `LOAD DATA` and extensions are admin; `DROP DATABASE`, roles and users are admin. Built-in
+  functions that end sessions, change settings, touch the server's files or reach other servers
+  (`pg_terminate_backend`, `set_config`, `pg_read_file`, `lo_export`, `dblink`, SQLite's
+  `load_extension`…) make any statement admin, `query`'s included: some of them work inside a
+  read-only transaction. A corpus per dialect (`crates/dbdesk-sql/tests/classify/`) pins all
+  this.
+- **`schemas`** is `"all"` or a list, in `[mcp_defaults]` and each project. It hides other
+  schemas from `list_objects`, refuses paths, tables and statements that name them, and refuses
+  statements whose names can't all be read (grants, procedures, anything unparseable). On
+  PostgreSQL each call sets `search_path` to the list, so unqualified names resolve there;
+  elsewhere unqualified names need the connection's default schema in the list.
+- **The MCP login** is `mcp_login = { user = "…" }` on a data source, with its password in the
+  keychain entry `<id>/mcp`. `dbdesk mcp` always signs in with it when it is set, and fails
+  rather than falling back when its password is missing. When a project allows changes, the
+  server warns at start-up for each data source without one.
+- SQL Server stays unserved: a read-only login, now possible, is its likely equivalent, but
+  isn't switched on yet.
 
 ### MCP3 — In the app
 

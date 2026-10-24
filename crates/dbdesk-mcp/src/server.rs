@@ -10,7 +10,7 @@ use dbdesk_core::{
     RelationName, describe_error,
 };
 use dbdesk_engine::read_only::{self as guard, Refusal};
-use dbdesk_sql::{Dialect, StatementKind, analyze};
+use dbdesk_sql::{Dialect, NamedSchemas, StatementKind, analyze};
 use dbdesk_store::{HistoryOutcome, SchemaScope};
 use jiff::Timestamp;
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -23,24 +23,28 @@ use serde_json::{Value, json};
 use crate::audit::{Audit, Ran};
 use crate::catalog::{self, NodeJson, PathStep};
 use crate::connections::Connections;
+use crate::execute::ExecuteArgs;
 use crate::project::ServedProject;
-use crate::read_only::{self, Rows, RunError};
 use crate::scope::Scope;
+use crate::transaction::{self, Access, CallSettings, Rows, RunError, Watchdog};
 
-/// Work to run on a connection inside the read-only transaction. Boxed because it borrows
-/// the connection for as long as it runs.
-type Work<'c, T> = Pin<Box<dyn Future<Output = Result<T, DriverError>> + Send + 'c>>;
+/// Work to run on a connection inside a call's transaction. Boxed because it borrows the
+/// connection for as long as it runs.
+pub(crate) type Work<'c, T> = Pin<Box<dyn Future<Output = Result<T, RunError>> + Send + 'c>>;
+
+/// Catalog work, which [`DbdeskMcp::on_connection`] runs under one watchdog.
+type CatalogWork<'c, T> = Pin<Box<dyn Future<Output = Result<T, DriverError>> + Send + 'c>>;
 
 #[derive(Clone)]
 pub(crate) struct DbdeskMcp {
-    inner: Arc<Inner>,
+    pub(crate) inner: Arc<Inner>,
     tool_router: ToolRouter<Self>,
 }
 
-struct Inner {
-    project: ServedProject,
-    connections: Arc<Connections>,
-    audit: Audit,
+pub(crate) struct Inner {
+    pub(crate) project: ServedProject,
+    pub(crate) connections: Arc<Connections>,
+    pub(crate) audit: Audit,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -89,20 +93,20 @@ struct StatementArgs {
 
 /// A failed call, as the client sees it: enough to fix the call and try again.
 #[derive(Debug)]
-struct ToolError {
+pub(crate) struct ToolError {
     kind: &'static str,
-    message: String,
+    pub(crate) message: String,
     sqlstate: Option<String>,
     /// Byte offset into the SQL the client sent.
-    position: Option<usize>,
+    pub(crate) position: Option<usize>,
 }
 
 impl ToolError {
-    fn refused(message: impl Into<String>) -> Self {
+    pub(crate) fn refused(message: impl Into<String>) -> Self {
         Self::plain("refused", message)
     }
 
-    fn invalid(message: impl Into<String>) -> Self {
+    pub(crate) fn invalid(message: impl Into<String>) -> Self {
         Self::plain("invalid_arguments", message)
     }
 
@@ -163,13 +167,18 @@ fn reply(outcome: Result<Value, ToolError>) -> ToolResult {
 #[tool_router]
 impl DbdeskMcp {
     pub(crate) fn new(project: ServedProject, connections: Arc<Connections>, audit: Audit) -> Self {
+        let mut tool_router = Self::tool_router();
+        // A project that only reads has nothing for execute to run, so clients don't see it.
+        if !project.changes.any() {
+            tool_router.remove_route("execute");
+        }
         Self {
             inner: Arc::new(Inner {
                 project,
                 connections,
                 audit,
             }),
-            tool_router: Self::tool_router(),
+            tool_router,
         }
     }
 
@@ -202,7 +211,8 @@ impl DbdeskMcp {
             "limits": {
                 "max_rows": project.limits.max_rows,
                 "statement_timeout_ms": project.limits.statement_timeout.as_millis(),
-                "read_only": true,
+                "read_only": !project.changes.any(),
+                "allows": project.changes.names(),
                 "schemas": match &project.schemas {
                     SchemaScope::All => json!("all"),
                     SchemaScope::Only(schemas) => json!(schemas),
@@ -246,16 +256,32 @@ impl DbdeskMcp {
     async fn explain(&self, Parameters(args): Parameters<StatementArgs>) -> ToolResult {
         reply(self.statement_json("explain", args, true).await)
     }
+
+    /// Runs statements that change data or the schema, in order, in one transaction that is
+    /// committed only if they all succeed (on MySQL and MariaDB, DDL commits on its own).
+    /// Each statement must be one the project's permissions allow: write for INSERT, UPDATE,
+    /// DELETE, MERGE and TRUNCATE; schema for CREATE, ALTER, DROP and other DDL; admin for
+    /// grants, settings and anything the parser can't read. Returns rows affected per
+    /// statement, and the rows of any that return some (up to the row limit).
+    #[tool(annotations(
+        read_only_hint = false,
+        destructive_hint = true,
+        idempotent_hint = false,
+        open_world_hint = false
+    ))]
+    async fn execute(&self, Parameters(args): Parameters<ExecuteArgs>) -> ToolResult {
+        reply(self.execute_json(args).await)
+    }
 }
 
 impl DbdeskMcp {
     /// The project's allow-list as `data_source` applies it; `None` when all are allowed.
-    fn scope(&self, data_source: &DataSource) -> Option<Scope> {
+    pub(crate) fn scope(&self, data_source: &DataSource) -> Option<Scope> {
         Scope::new(&self.inner.project.schemas, &data_source.config)
     }
 
     /// Refuses a call before it reaches the database, and logs why.
-    fn refuse(&self, tool: &str, data_source: &DataSource, reason: String) -> ToolError {
+    pub(crate) fn refuse(&self, tool: &str, data_source: &DataSource, reason: String) -> ToolError {
         self.inner.audit.refused(tool, &data_source.name, &reason);
         ToolError::refused(reason)
     }
@@ -272,7 +298,7 @@ impl DbdeskMcp {
         }
     }
 
-    fn data_source(&self, tool: &str, name: &str) -> Result<&DataSource, ToolError> {
+    pub(crate) fn data_source(&self, tool: &str, name: &str) -> Result<&DataSource, ToolError> {
         self.inner.project.data_source(name).ok_or_else(|| {
             let known: Vec<&str> = self
                 .inner
@@ -378,6 +404,7 @@ impl DbdeskMcp {
         let data_source = self.data_source(tool, &args.data_source)?;
         let dialect = Dialect::from(data_source.config.driver());
         let sql = args.sql.trim().trim_end_matches(';').trim_end();
+        // The same check as the consoles of read-only data sources make.
         let refusal = guard::check(sql, dialect).err();
         let kind = match &refusal {
             None => Some(StatementKind::Read),
@@ -389,6 +416,10 @@ impl DbdeskMcp {
         }
         if let Some(refusal) = refusal {
             let reason = match refusal {
+                Refusal::Changes(_) if self.inner.project.changes.any() => format!(
+                    "{}, and {tool} only runs statements that read; use execute",
+                    refusal.reason()
+                ),
                 Refusal::Changes(_) => {
                     format!("{}, and this project only allows reading", refusal.reason())
                 }
@@ -399,10 +430,8 @@ impl DbdeskMcp {
         // The statement parsed above, so only a parser bug could fail here; it is refused
         // like any statement whose names can't be read.
         if let Some(scope) = self.scope(data_source) {
-            let schemas = analyze(sql, dialect)
-                .map_or(dbdesk_sql::NamedSchemas::Unknown, |analysis| {
-                    analysis.schemas
-                });
+            let schemas =
+                analyze(sql, dialect).map_or(NamedSchemas::Unknown, |analysis| analysis.schemas);
             if let Err(reason) = scope.check(&schemas) {
                 return Err(self.refuse(tool, data_source, reason));
             }
@@ -420,8 +449,12 @@ impl DbdeskMcp {
         let clock = Instant::now();
         let to_run = statement.clone();
         let outcome = self
-            .run_statement(data_source, move |connection| {
-                Box::pin(async move { read_only::fetch(connection, &to_run, max_rows).await })
+            .run_call(data_source, Access::Read, move |connection, watchdog| {
+                Box::pin(async move {
+                    watchdog
+                        .watch(transaction::fetch(connection, &to_run, max_rows))
+                        .await
+                })
             })
             .await;
         let elapsed = clock.elapsed();
@@ -444,18 +477,21 @@ impl DbdeskMcp {
         Ok(rows_json(&rows, elapsed))
     }
 
+    /// Runs catalog work in a read-only call, under the time limit as a whole.
     async fn on_connection<T: Send>(
         &self,
         tool: &str,
         data_source: &DataSource,
-        work: impl for<'c> FnOnce(&'c mut dyn Connection) -> Work<'c, T>,
+        work: impl for<'c> FnOnce(&'c mut dyn Connection) -> CatalogWork<'c, T> + Send + 'static,
     ) -> Result<T, ToolError> {
-        self.run_statement(data_source, work)
-            .await
-            .map_err(|error| self.failure(tool, data_source, error, 0))
+        self.run_call(data_source, Access::Read, move |connection, watchdog| {
+            Box::pin(async move { watchdog.watch(work(connection)).await })
+        })
+        .await
+        .map_err(|error| self.failure(tool, data_source, error, 0))
     }
 
-    fn failure(
+    pub(crate) fn failure(
         &self,
         tool: &str,
         data_source: &DataSource,
@@ -472,21 +508,28 @@ impl DbdeskMcp {
         error
     }
 
-    /// Runs `work` on the data source's connection inside the read-only transaction, under
-    /// the time limit. A connection the server closed while it sat idle fails on `BEGIN`;
-    /// that is retried once on a new connection, before `work` has run.
-    async fn run_statement<T: Send>(
+    /// Runs `work` on the data source's connection inside a transaction for `access`,
+    /// committed or rolled back as [`transaction::end`] decides. A connection the server
+    /// closed while it sat idle fails on `BEGIN`; that is retried once on a new connection,
+    /// before `work` has run.
+    pub(crate) async fn run_call<T: Send>(
         &self,
         data_source: &DataSource,
-        work: impl for<'c> FnOnce(&'c mut dyn Connection) -> Work<'c, T>,
+        access: Access,
+        work: impl for<'c> FnOnce(&'c mut dyn Connection, Watchdog) -> Work<'c, T>,
     ) -> Result<T, RunError> {
-        let Some(mode) = guard::mode(data_source.config.driver()) else {
-            // `ServedProject` leaves such data sources out, so no call can name one.
-            unreachable!("a served data source without a read-only mode");
+        let writable = self.inner.project.changes.any();
+        let Some(mode) = transaction::mode(data_source.config.driver(), access, writable) else {
+            // `ServedProject` leaves out data sources without a read-only mode, and every
+            // engine with one has a read-write mode too, so no call can name one.
+            unreachable!("a served data source without a transaction for this call");
         };
         let timeout = self.inner.project.limits.statement_timeout;
         let scope = self.scope(data_source);
-        let search_path = scope.as_ref().and_then(Scope::search_path);
+        let settings = CallSettings {
+            timeout,
+            search_path: scope.as_ref().and_then(Scope::search_path),
+        };
         let mut retried = false;
         let mut connection = loop {
             let mut connection = self
@@ -495,16 +538,7 @@ impl DbdeskMcp {
                 .checkout(data_source.id)
                 .await
                 .map_err(|error| RunError::Driver(DriverError::Connect(Box::new(error))))?;
-            let begun = match guard::begin(&mut *connection, mode, Some(timeout)).await {
-                Ok(()) => match search_path {
-                    Some(statement) => {
-                        read_only::set_search_path(&mut *connection, statement).await
-                    }
-                    None => Ok(()),
-                },
-                Err(error) => Err(error),
-            };
-            match begun {
+            match transaction::begin(&mut *connection, mode, &settings).await {
                 Ok(()) => break connection,
                 Err(DriverError::Connection(_)) if !retried => {
                     tracing::info!(data_source = %data_source.name, "reconnecting");
@@ -512,7 +546,7 @@ impl DbdeskMcp {
                     retried = true;
                 }
                 Err(error) => {
-                    let outcome = read_only::end(&mut *connection, mode, Err(error.into())).await;
+                    let outcome = transaction::end(&mut *connection, mode, Err(error.into())).await;
                     if outcome.as_ref().is_err_and(RunError::breaks_connection) {
                         connection.discard();
                     }
@@ -520,9 +554,9 @@ impl DbdeskMcp {
                 }
             }
         };
-        let cancel = connection.cancel_handle();
-        let outcome = read_only::watched(cancel, timeout, work(&mut *connection)).await;
-        let outcome = read_only::end(&mut *connection, mode, outcome).await;
+        let watchdog = Watchdog::new(connection.cancel_handle(), timeout);
+        let outcome = work(&mut *connection, watchdog).await;
+        let outcome = transaction::end(&mut *connection, mode, outcome).await;
         if outcome.as_ref().is_err_and(RunError::breaks_connection) {
             connection.discard();
         }
@@ -618,13 +652,23 @@ impl ServerHandler for DbdeskMcp {
         let project = &self.inner.project;
         let mut instructions = format!(
             "Databases of the dbdesk project \"{}\". Start with list_data_sources; the other \
-             tools take a data source's name. Everything is read-only: query and explain run \
-             one statement that only reads, in a read-only transaction, return at most {} \
-             rows, and are cancelled after {} s. Statements that change anything are refused.",
+             tools take a data source's name. query and explain run one statement that only \
+             reads, in a read-only transaction. Every call returns at most {} rows, and a \
+             statement is cancelled after {} s.",
             project.project.name,
             project.limits.max_rows,
             project.limits.statement_timeout.as_secs()
         );
+        let allowed = project.changes.names();
+        if allowed.is_empty() {
+            instructions.push_str(" Statements that change anything are refused.");
+        } else {
+            instructions.push_str(&format!(
+                " execute runs statements that change something, in one transaction; this \
+                 project allows {} beyond reading, and refuses the rest.",
+                allowed.join(", ")
+            ));
+        }
         if let SchemaScope::Only(schemas) = &project.schemas {
             instructions.push_str(&format!(
                 " Only these schemas can be listed or named: {}.",

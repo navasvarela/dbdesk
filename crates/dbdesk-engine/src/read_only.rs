@@ -25,6 +25,11 @@ pub enum ReadOnlyMode {
     },
     /// The connection itself is opened read-only; see [`connection_config`].
     Connection,
+    /// A writable SQLite connection told to refuse writes with `PRAGMA query_only`, for one
+    /// that also runs changes ([`crate::read_write`]), as the MCP server's does when a project
+    /// allows them. Weaker than [`Self::Connection`]: a statement could switch it off, so
+    /// [`check`] must have refused anything but reading first (`PRAGMA` is administration).
+    QueryOnly,
 }
 
 /// The engine's read-only mode, or `None` when it has none dbdesk can use.
@@ -44,6 +49,15 @@ pub fn mode(driver: DriverKind) -> Option<ReadOnlyMode> {
         // setting) isn't wired into its driver yet. The plan (docs/mcp-server.md) has each
         // such engine name its equivalent, such as a read-only login, before MCP serves it.
         DriverKind::SqlServer | DriverKind::DuckDb | DriverKind::ClickHouse => None,
+    }
+}
+
+/// The read-only mode on a connection that also runs changes: as [`mode`], except that a
+/// SQLite file can't be opened read-only, so [`ReadOnlyMode::QueryOnly`] stands in.
+pub fn mode_on_writable_connection(driver: DriverKind) -> Option<ReadOnlyMode> {
+    match mode(driver)? {
+        ReadOnlyMode::Connection => Some(ReadOnlyMode::QueryOnly),
+        other => Some(other),
     }
 }
 
@@ -100,12 +114,13 @@ pub async fn begin(
     mode: ReadOnlyMode,
     timeout: Option<Duration>,
 ) -> Result<(), DriverError> {
-    let ReadOnlyMode::Transaction {
-        begin,
-        sets_timeout,
-    } = mode
-    else {
-        return Ok(());
+    let (begin, sets_timeout) = match mode {
+        ReadOnlyMode::Transaction {
+            begin,
+            sets_timeout,
+        } => (begin, sets_timeout),
+        ReadOnlyMode::QueryOnly => return run_control(connection, "PRAGMA query_only = ON").await,
+        ReadOnlyMode::Connection => return Ok(()),
     };
     run_control(connection, begin).await?;
     if let Some(timeout) = timeout.filter(|_| sets_timeout) {
@@ -126,11 +141,14 @@ pub async fn rollback(
 ) -> Result<(), DriverError> {
     match mode {
         ReadOnlyMode::Transaction { .. } => run_control(connection, "ROLLBACK").await,
-        ReadOnlyMode::Connection => Ok(()),
+        ReadOnlyMode::Connection | ReadOnlyMode::QueryOnly => Ok(()),
     }
 }
 
-async fn run_control(connection: &mut dyn Connection, sql: &str) -> Result<(), DriverError> {
+pub(crate) async fn run_control(
+    connection: &mut dyn Connection,
+    sql: &str,
+) -> Result<(), DriverError> {
     connection.execute(sql).await?.finish().await.map(drop)
 }
 
