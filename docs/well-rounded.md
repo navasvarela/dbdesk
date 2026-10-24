@@ -1,0 +1,215 @@
+# A well-rounded app
+
+Status: **planned**, nothing built yet. Proposed on 2026-10-24.
+
+dbdesk browses, queries and edits PostgreSQL, SQLite, MySQL and MariaDB, and ships as a
+download. This plan gathers the gaps that still keep it from being the database tool someone
+uses every day without missing another one. Many come from follow-ups that earlier milestones
+left open in the [roadmap](roadmap.md).
+
+The work is in six milestones, W1 to W6. Each is useful on its own.
+
+## Order and why
+
+1. **W1 — Portable configuration.** Asked for first. It needs P0's projects, from the
+   [MCP plan](mcp-server.md), so the export can carry them.
+2. **W2 — Safety per data source.** It turns the colour that marks production into rules, and
+   reuses the read-only enforcement MCP1 builds.
+3. **W3 — Connections you can rely on.** SSH tunnels make reachable the many databases that
+   only accept connections through a jump host. Noticing dropped connections fixes the
+   "connected" status that can be wrong.
+4. **W4 — History as an audit trail.** It extends the query history every statement already
+   goes to, rather than adding a second log.
+5. **W5 — Power in the grid.** Inserting and deleting rows, following foreign keys, sorting and
+   filtering in the database, CSV import, and exporting every row.
+6. **W6 — Files and parameters.** Opening `.sql` files from disk, and `:name` parameters.
+
+Signed installs, which remove macOS's "could not verify" warning and the repeated Keychain
+prompts, are already planned as R2 in [Release binaries](releasing.md).
+
+## W1 — Portable configuration
+
+`data_sources.toml` already holds every data source without secrets. This milestone makes it
+portable, so a configuration can be recreated on another machine or shared with a team.
+
+- **File › Export data sources…:**
+  - pick data sources or whole projects;
+  - writes one TOML file in the same format as `data_sources.toml`, with a format version, the
+    chosen projects and their MCP settings;
+  - never a password, a token or a command action (see [Hackability](hackability.md)).
+- **File › Import data sources…:**
+  - **A preview first.** Each entry shows as **new**, **unchanged**, or **differs** (with what
+    differs), and you choose **update**, **skip** or **import as a copy** for each.
+  - **Same id, same data source.** The stable ids already in the file match entries up, so
+    importing twice never duplicates them. A copy gets a new id.
+  - **Projects** are matched by id, then by slug.
+- **Paths that travel:**
+  - **On export,** SQLite files and TLS certificate files are written as `~/…` when under the
+    home folder, or relative to the exported file when beside it.
+  - **On import,** they are resolved again, and a path that doesn't exist on this machine is
+    shown in the preview.
+- **`${VARIABLE}` placeholders** in host, port, database, user and paths, resolved from the
+  environment when connecting. One shared file can then serve a team whose machines differ.
+  - The form shows the placeholder and, beside it, what it currently resolves to.
+  - An unset variable stops the connection with a clear error.
+- **A password prompt on first connect.** A data source that needs a password and has none saved
+  asks for it, with **Save to keychain** ticked. This closes the M1 follow-up "prompting for a
+  password when none is saved". It also covers a keychain that is locked or unavailable.
+
+**Exit:**
+- I export two projects on one Mac, import them on another, enter each password once, and
+  connect.
+- Importing the same file again changes nothing.
+- A data source using `${PGHOST}` connects wherever that variable is set.
+
+## W2 — Safety per data source
+
+- **A safety level per data source,** next to its colour in the dialog:
+  - **Normal:** today's behaviour. `UPDATE` or `DELETE` without `WHERE` asks first.
+  - **Careful:** every change asks first (DML, DDL, and grid edits), naming the data source. New
+    consoles start in manual commit mode.
+  - **Read-only:** changes are refused. The statement check from the MCP plan classifies each
+    statement, and the console runs in the database's read-only mode (`BEGIN READ ONLY`,
+    `START TRANSACTION READ ONLY`, or a read-only SQLite connection), exactly as MCP1 does.
+- **The data source's colour** may suggest a level (red suggests Careful), but the level is its
+  own setting. Colour stays a look.
+- **The console toolbar** shows the level, and a read-only console says why a statement was
+  refused.
+- This closes the M1/M3 follow-up "per-data-source safety levels".
+
+**Exit:**
+- A read-only data source refuses an `INSERT`, a `CREATE TABLE`, and a write hidden in a
+  function.
+- A careful one asks before a grid edit, naming the data source.
+
+## W3 — Connections you can rely on
+
+- **SSH tunnels**, set per data source in a new **SSH** section of the shared server form:
+  - **Settings:** host, port and user.
+  - **Login:** with the SSH agent, a key file (with a passphrase stored in the keychain), or a
+    password stored in the keychain.
+  - **Built on [`russh`](https://crates.io/crates/russh)** (pure Rust, so nothing to install),
+    as a local port forward the driver connects through.
+  - **Host keys** are checked against `~/.ssh/known_hosts`. An unknown key asks once, showing
+    its fingerprint. A changed key is refused.
+  - **One tunnel per data source,** shared by its sessions, and closed with the last of them.
+  - **Tested** against an SSH server container in `docker-compose.yml` that forwards to the
+    PostgreSQL service.
+- **Noticing dropped connections:**
+  - **How it's noticed.** A session that has been idle for a while pings before its next
+    statement. An error that means the connection is gone (each driver says which errors do)
+    marks the session **Disconnected**, with the reason. The explorer's dot and tooltip stop
+    claiming "connected".
+  - **What happens next.** The explorer reconnects on its next request. A console reconnects
+    only when asked, with **Reconnect** in its toolbar, because its transaction, temporary
+    tables and session settings are gone and it says so.
+  - This closes the M1/M2 follow-up "detecting dropped connections".
+
+**Exit:**
+- I connect to the test PostgreSQL through the SSH container with a key, and an unknown host key
+  asks first.
+- Restarting the database server shows the console as disconnected, and **Reconnect** works.
+
+## W4 — History as an audit trail
+
+The query history already records every statement:
+- the data source, time and SQL;
+- the duration, the rows, and the outcome.
+
+MCP1 adds where each came from. This milestone makes it answer "what changed, when, and from
+where" without a second log:
+
+- **Where each statement came from:** `source` becomes one of console, grid edit, object helper
+  ([E0–E4](entity-helpers.md)), action ([H1](hackability.md)) or MCP. **History** can filter by
+  it.
+- **Grid edits with their before values:** each `UPDATE` the grid submits is stored with the row's
+  key and the values it replaced. The history window can then show, and copy, the statement that
+  would put them back. This doesn't undo by itself: putting values back is a statement you review
+  and run.
+- **Retention:** keep the history for N days, or the last N entries per data source, set in View
+  › Settings. Old entries are pruned at start-up. This closes the M4 follow-up.
+- **Searching every data source at once,** and **exporting** the history (or a search) as CSV or
+  JSON.
+- **Sensitive statements** stay out, as the object helpers' plan requires for passwords.
+
+A tamper-proof audit belongs on the server (for example `pgaudit` on PostgreSQL), not in a
+client. The manual says so.
+
+**Exit:**
+- I edit two cells, and the history shows them as grid edits with their old values, and the
+  statement to put them back.
+- A search across data sources finds a statement from MCP.
+- Entries older than the retention go at the next start.
+
+## W5 — Power in the grid
+
+- **Inserting and deleting rows** in a table's data, next to today's cell editing:
+  - **Add row** opens an empty row with each column's default shown;
+  - **Delete** marks rows;
+  - **Submit** runs the `INSERT`s and `DELETE`s with the `UPDATE`s, all or none, as edits do now.
+  - Deleting needs the same primary key editing does.
+- **Following foreign keys:**
+  - a value in a foreign key column is a link that opens the referenced row;
+  - **Referencing rows ›** on a row lists the tables that point at it, and opens the matching
+    rows.
+- **Sorting and filtering in the database.** A **Sort and filter in the database** switch in the
+  grid re-runs the query with the sort and a `WHERE` built from the filter, wrapped as a
+  subquery. The sort and filter then cover every row, not only those loaded. Today's
+  client-side sort stays the default, because it needs no new query. This closes the M4
+  follow-up.
+- **Exporting every row.** Export offers **All rows**, which re-runs the query and streams rows to
+  the file without holding them in memory. This closes the M4 follow-up.
+- **Importing a CSV into a table:**
+  - map the file's columns to the table's, with types checked against a preview;
+  - insert in batches in one transaction, and roll back on the first failure, which is shown
+    with its line number.
+
+**Exit:**
+- I add, edit and delete rows in one submit.
+- I follow an order's `customer_id` to the customer, and back to their orders.
+- I sort 100,000 rows in the database, export them all, and import a CSV of 10,000 rows into a
+  table.
+
+## W6 — Files and parameters
+
+- **Opening `.sql` files from disk:**
+  - **File › Open…**, recent files, and dropping a file on the window;
+  - the file opens in a console bound to a data source you pick (remembered per file);
+  - **Save** writes back to the file;
+  - a file changed on disk while open asks whether to reload.
+
+  Console files in the config folder keep working as now.
+- **Query parameters.** `:name`, `?` and `$1` (whichever the dialect uses) in a statement open a
+  small form before it runs, with each value's last use remembered. Values are sent as bound
+  parameters where the driver supports them, never pasted into the SQL.
+- **Find and replace** in the editor, with regular expressions.
+
+**Exit:**
+- I open a `.sql` file from a project folder, run it against a data source, edit and save it.
+- A statement with `:since` asks for the date and remembers it for next time.
+
+## Decisions
+
+Proposed defaults; each is confirmed when its milestone starts.
+
+| Question | Proposed | Consequence |
+| --- | --- | --- |
+| Export format | **The same TOML as `data_sources.toml`**, plus a format version and the projects | Hand-editable, and diffable in git. |
+| Matching on import | **By id**, then the user decides each entry | Re-importing is safe. A copy is an explicit choice. |
+| Read-only data sources | **The same checks as MCP's read-only projects** | One way to enforce read-only, tested once. |
+| SSH | **`russh`, with host keys checked against `known_hosts`** | Nothing to install. An unknown host asks, and a changed key is refused. |
+| Grid edits in the history | **Store the values they replaced**, and offer the statement to put them back, never undo silently | It explains every change, without dbdesk ever writing anything you didn't review. |
+| Database-side sort and filter | **Off by default**, a switch per grid | Today's behaviour stays. Re-running a query is a deliberate step. |
+
+## Risks
+
+- **Secrets leaking through an export.** Exports are built from an allow-list of fields, not by
+  copying the file minus some. A test exports every kind of data source and searches the result
+  for every saved password.
+- **SSH host keys.** Accepting an unknown key without asking would invite man-in-the-middle
+  attacks. The fingerprint is always shown, and a changed key is always refused.
+- **Re-running queries.** Sorting in the database and exporting every row run the query again,
+  which on a busy server costs time and may see different data. The grid says which rows it
+  shows.
+- **History size.** Storing before values makes the history grow faster. Retention bounds it,
+  and large values are stored truncated with a note.
