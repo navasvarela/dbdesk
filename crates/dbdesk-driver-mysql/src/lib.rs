@@ -32,7 +32,8 @@ const APPLICATION_NAME: &str = "dbdesk";
 /// the session's `sql_mode`. The same as `dbdesk-sql`'s MySQL dialect, which this crate
 /// doesn't depend on.
 pub(crate) const MYSQL_QUOTING: Quoting = Quoting {
-    identifier_quote: '`',
+    identifier_open: '`',
+    identifier_close: '`',
     backslash_escapes: true,
 };
 
