@@ -11,6 +11,7 @@ dbdesk keeps everything in one folder per platform:
 | File | What it holds |
 | --- | --- |
 | `data_sources.toml` (settings folder) | Your data sources. No passwords. |
+| `projects.toml` (settings folder) | Your projects. Which project a data source is in is written in `data_sources.toml`. |
 | `consoles/<data source id>/*.sql` (settings folder) | Your query consoles, one file each. See [Query consoles](consoles.md#consoles-are-saved). |
 | `history.sqlite` (settings folder) | Every statement your consoles ran, with its time, duration and outcome. |
 | `keymap.toml` (settings folder) | Your shortcuts, if you changed any. See [Keyboard shortcuts](shortcuts.md#changing-them). |
@@ -32,6 +33,7 @@ overwritten, and comments are not kept.
 id = "6f1c0d9e-3b8a-4c3e-9f57-2d1e8a7b5c40"
 name = "local"
 color = "teal"
+project = "5b0c7d1e-2f3a-4b5c-8d6e-7f8091a2b3c4"
 driver = "postgres"
 host = "localhost"
 port = 5432
@@ -63,6 +65,8 @@ read_only = true
 - `id` identifies the data source for good, including its keychain entry. Don't change it; for
   a new data source by hand, any unique UUID will do.
 - `color` is optional: `red`, `orange`, `yellow`, `green`, `teal`, `blue`, `violet` or `pink`.
+- `project` is optional: the `id` of a project in `projects.toml`. Left out, or naming a project
+  that doesn't exist, the data source is in **No project**.
 - `tls` is optional for PostgreSQL, and `mode` defaults to `prefer`: `disable`, `prefer`,
   `require` or `verify-full`. `ca_file` is only read with `verify-full`.
 - `read_only` is optional and defaults to `false`.
@@ -70,6 +74,38 @@ read_only = true
 If the file can't be read — say, a typo while editing it — the explorer shows the error and
 dbdesk refuses to save or delete anything, so it never overwrites your file with an empty list.
 Fix the file and restart dbdesk.
+
+## projects.toml
+
+Like `data_sources.toml`, edit it only while dbdesk is closed; comments are not kept.
+
+```toml
+[mcp_defaults]
+read = true
+write = false
+schema = false
+admin = false
+max_rows = 500
+statement_timeout = "30s"
+
+[[project]]
+id = "5b0c7d1e-2f3a-4b5c-8d6e-7f8091a2b3c4"
+name = "Web shop"
+slug = "web-shop"
+mcp_enabled = false
+```
+
+- `id` is what data sources point at. Don't change it.
+- `slug` is lower-case letters, digits and single hyphens, and must be unique. It is kept when
+  the project is renamed.
+- `mcp_defaults` and `mcp_enabled` are for the coming MCP server, which lets AI assistants read
+  a project's databases. Nothing uses them yet, and a new project starts with `mcp_enabled =
+  false`. A `[project.mcp]` table under a project overrides the defaults for that project.
+
+Unknown keys are refused rather than ignored, so a setting that is misspelt, or one written by a
+newer dbdesk, never goes unnoticed. If the file can't be read, the explorer lists every data
+source ungrouped and dbdesk refuses to change projects until the file is fixed, so it never
+overwrites it.
 
 ## Starting over
 
