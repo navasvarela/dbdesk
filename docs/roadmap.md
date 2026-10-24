@@ -344,6 +344,23 @@ arriving, engine tests of grid edits and explain, lexer, splitter, syntax-check 
 corpora for the dialect, and a UI test that adds a SQL Server data source. Not tried: connecting
 to Azure SQL, for want of an account.
 
+**DB3 demo note:** built in #49, #52 and #DB3_CONSOLE_PR, as a native stack. **+** → **DuckDB**
+opens a form with **File** (with **Browse…**, **New…** and **Read-only**, as for SQLite) or **In
+memory**; **Test connection** says "Connected to DuckDB 1.5.6", and nothing is installed:
+DuckDB is compiled into dbdesk. In an in-memory data source, `SELECT * FROM
+'/path/orders.parquet'` or `read_csv(…)` queries files directly. The explorer lists the database
+(and attached ones), schemas, tables, views, macros and sequences, and **Show definition** gives
+DuckDB's own `CREATE` statement, tables included. A trillion-row cross join stops at ⌘., `EXPLAIN`
+shows DuckDB's text plan, and editing a cell writes a standard `UPDATE`, refused inside an open
+transaction since DuckDB has no savepoints. The downloads grow by about 13 MB (the stripped
+binary from 27.0 MB to 68.0 MB), inside the 30 MB budget. Underneath: rows arrive as Arrow
+chunks and are formatted by Arrow, statements without rows answer with a status the driver reads
+to the end, and `Command::CreateDatabaseFile` creates SQLite and DuckDB files alike. Covered by
+the whole conformance suite on DuckDB in every CI job, driver tests for the catalog, definitions,
+value formatting, status results and reading a Parquet file from memory, an engine test of grid
+edits, lexer, syntax-check and formatter corpora for the dialect, and a UI test that adds an
+in-memory DuckDB data source.
+
 ## Object helpers track
 
 Dialogs that write, show and run the SQL to create and change tables, views and users, from a

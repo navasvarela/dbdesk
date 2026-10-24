@@ -7,7 +7,7 @@ keychain, never in that file.
 ## Adding one
 
 Click **+** at the top of the explorer (or **New data source** on the Welcome tab) and choose
-**PostgreSQL**, **SQLite**, **MySQL / MariaDB** or **SQL Server**.
+**PostgreSQL**, **SQLite**, **MySQL / MariaDB**, **SQL Server** or **DuckDB**.
 
 ![The New PostgreSQL data source dialog](images/data-source-dialog.png)
 
@@ -104,6 +104,20 @@ SQL Server 2022).
   database. **New…** is the only way dbdesk creates one.
 - **Read-only** — opens the file read-only. Statements that would change it fail with SQLite's
   error.
+
+**DuckDB** has two kinds of database, chosen under **Database**:
+
+![The New DuckDB data source dialog](images/duckdb-data-source-dialog.png)
+
+- **File** — a DuckDB database file (`.duckdb`), with **File**, **Browse…**, **New…** and
+  **Read-only** as for SQLite. Only one program at a time may have a DuckDB file open for
+  writing, so connecting fails while another program (the `duckdb` command, say) has it open.
+- **In memory** — an empty database that lives as long as the connection, for querying files
+  rather than storing data: DuckDB reads CSV, Parquet and JSON files directly. Each console has
+  its own, and everything created in it is gone when it disconnects.
+
+DuckDB is part of dbdesk, so there is nothing to install. **Test connection** says which
+version it is ("Connected to DuckDB 1.5.6").
 
 ## Testing the connection
 

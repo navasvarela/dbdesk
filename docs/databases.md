@@ -1,6 +1,6 @@
 # More databases
 
-Status: **DB0, DB1 and DB2 built**; DB3 onwards planned. Order agreed on 2026-10-23; ClickHouse added
+Status: **DB0 to DB3 built**; DB4 onwards planned. Order agreed on 2026-10-23; ClickHouse added
 after DuckDB the same day.
 
 dbdesk speaks PostgreSQL and SQLite. This plan adds the next engines in order of how many
@@ -205,6 +205,28 @@ a row in the grid, and the conformance suite passes on both in CI.
 
 **Exit:** I open a DuckDB file and query a Parquet file from an in-memory data source, and the
 release packages stay within the size budget agreed below.
+
+**As built**, where it differs from the plan above or settles what it left open:
+
+- **Bundled, DuckDB 1.5.6.** The `duckdb` crate 1.10506.1, with `bundled`, `parquet` and
+  `json` and no default features, which would download a prebuilt library while building.
+  Measured on an Apple-silicon Mac, the stripped release binary went from 27.0 MB to 68.0 MB,
+  and from 12.7 MB to 26.1 MB with `gzip -9`: the downloads grow by about 13 MB, inside the
+  30 MB budget, and the release build takes 4 min 21 s instead of 1 min 44 s. The crate's next
+  release, 1.20000.0, bundles a development build of DuckDB 2.0, so it is pinned with `~`
+  until a release of the crate bundles a released 2.0.
+- **Results** are read as DuckDB streams them, in Arrow chunks, and formatted by Arrow, which
+  knows every DuckDB type. What DuckDB's Arrow export loses is lost: a `HUGEINT` beyond 38
+  digits, a `TIME WITH TIME ZONE`'s offset, and `BIT` arrives as bytes.
+- **Statements without rows** answer with a status (one `Success` or `Count` column), which the
+  driver reads to its end, since that is what runs the statement, and reports as no result.
+- **The crate's gaps:** its `is_autocommit` always answers yes, so the transaction status
+  compares two `txid_current()` calls, and the iterator `stream_arrow` returns panics on a
+  failed fetch, so the driver steps the statement itself.
+- **No savepoints in DuckDB:** grid edits inside a transaction the console opened are refused,
+  with a message to commit or roll back first.
+- **Macros** are listed under functions, with a definition rebuilt from their parameters and
+  body.
 
 ### DB4 — ClickHouse
 
