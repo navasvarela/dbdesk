@@ -123,7 +123,7 @@ Planned (M3):
 - Open table data → new console with `SELECT * FROM <table>` and run it
 - Open a definition in a query console instead of the read-only window
 
-Later (M5): custom actions from `actions.toml`, e.g.
+Later (H1 in [Hackability](../hackability.md)): custom actions from `actions.toml`, e.g.
 
 ```toml
 [[action]]

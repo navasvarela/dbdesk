@@ -386,6 +386,19 @@ projects with permissions per project. The full plan is in [MCP server](mcp-serv
 - **MCP3 — In the app:** project settings, Copy MCP configuration, MCP statements marked in the
   history, and a manual chapter.
 
+## Hackability track
+
+Customisation without rebuilding dbdesk, from files to commands to plugins. The full plan is in
+[Hackability](hackability.md), and the decision in
+[ADR 0005](adr/0005-customisation-files-commands-then-wasm.md).
+
+- **H1 — Files:** `actions.toml` (SQL actions on tree nodes and grid selections, bindable in the
+  keymap), `snippets.toml` and `theme.toml`.
+- **H2 — Commands:** actions that run your own programs, with no shell and never a secret,
+  getting the selection on stdin and sending output to the viewer, a console or the log.
+- **H3 — WebAssembly plugins (later):** sandboxed and capability-based, over the same extension
+  points, started once at least three real needs outgrow H1 and H2.
+
 ## Design and documentation track
 
 Runs alongside the feature milestones rather than after them: each item is usable on its own.
