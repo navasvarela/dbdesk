@@ -75,6 +75,15 @@ pub(crate) struct ScriptRules {
     pub blocks_anywhere: bool,
 }
 
+/// The statements that mark a point inside an open transaction, so that a group of changes can
+/// be undone without ending it: what `keep` and `undo` run after the changes succeed or fail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Savepoint {
+    pub open: &'static str,
+    pub keep: &'static [&'static str],
+    pub undo: &'static [&'static str],
+}
+
 /// A session setting that makes the server describe statements instead of running them,
 /// switched on before the statement in a batch of its own and off again after it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -279,6 +288,35 @@ impl Dialect {
         }
     }
 
+    /// Opens a transaction. SQL Server needs the keyword: a bare `BEGIN` opens a block there.
+    pub fn begin_transaction(self) -> &'static str {
+        match self {
+            Self::Postgres | Self::Sqlite | Self::Mysql => "BEGIN",
+            Self::SqlServer => "BEGIN TRANSACTION",
+        }
+    }
+
+    /// The savepoint grid edits use inside a transaction the console already has open. SQL
+    /// Server writes it `SAVE TRANSACTION` and has no way to release one: it lasts until the
+    /// transaction ends.
+    pub fn edits_savepoint(self) -> Savepoint {
+        match self {
+            Self::Postgres | Self::Sqlite | Self::Mysql => Savepoint {
+                open: "SAVEPOINT dbdesk_edits",
+                keep: &["RELEASE SAVEPOINT dbdesk_edits"],
+                undo: &[
+                    "ROLLBACK TO SAVEPOINT dbdesk_edits",
+                    "RELEASE SAVEPOINT dbdesk_edits",
+                ],
+            },
+            Self::SqlServer => Savepoint {
+                open: "SAVE TRANSACTION dbdesk_edits",
+                keep: &[],
+                undo: &["ROLLBACK TRANSACTION dbdesk_edits"],
+            },
+        }
+    }
+
     /// The setting to switch on around a statement, after the
     /// [`explain_prefix`](Self::explain_prefix), to have it explained: SQL Server's
     /// `SHOWPLAN_XML`, which answers with the estimated plan as one XML document and must be
@@ -314,11 +352,13 @@ impl Dialect {
                 identifier_open: '`',
                 identifier_close: '`',
                 backslash_escapes: true,
+                string_prefix: "",
             },
             Self::SqlServer => Quoting {
                 identifier_open: '[',
                 identifier_close: ']',
                 backslash_escapes: false,
+                string_prefix: "N",
             },
         }
     }
@@ -370,6 +410,7 @@ impl From<DriverKind> for Dialect {
             DriverKind::Postgres => Self::Postgres,
             DriverKind::Sqlite => Self::Sqlite,
             DriverKind::Mysql => Self::Mysql,
+            DriverKind::SqlServer => Self::SqlServer,
         }
     }
 }
@@ -435,7 +476,12 @@ mod tests {
         let dialects: Vec<Dialect> = DriverKind::ALL.into_iter().map(Dialect::from).collect();
         assert_eq!(
             dialects,
-            [Dialect::Postgres, Dialect::Sqlite, Dialect::Mysql]
+            [
+                Dialect::Postgres,
+                Dialect::Sqlite,
+                Dialect::Mysql,
+                Dialect::SqlServer
+            ]
         );
     }
 }

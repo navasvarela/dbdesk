@@ -102,6 +102,57 @@ pub async fn check_invalid_path(connection: &mut dyn Connection) {
 const TABLE_ROWS: u64 = 1200;
 const PAGE: usize = 500;
 
+/// How an engine spells the few statements the checks can't write one way for all of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Spelling {
+    temporary_tables: TemporaryTables,
+    /// Opens a transaction.
+    begin: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TemporaryTables {
+    /// `CREATE TEMPORARY TABLE name`.
+    Keyword,
+    /// `CREATE TABLE #name`, and `#name` wherever it is used.
+    HashPrefix,
+}
+
+impl Spelling {
+    /// PostgreSQL, SQLite and MySQL.
+    pub const STANDARD: Self = Self {
+        temporary_tables: TemporaryTables::Keyword,
+        begin: "BEGIN",
+    };
+
+    /// SQL Server, where `BEGIN` alone opens a block, not a transaction.
+    pub const SQL_SERVER: Self = Self {
+        temporary_tables: TemporaryTables::HashPrefix,
+        begin: "BEGIN TRANSACTION",
+    };
+
+    /// What statements call the temporary table `name`.
+    fn temporary(self, name: &str) -> String {
+        match self.temporary_tables {
+            TemporaryTables::Keyword => name.to_owned(),
+            TemporaryTables::HashPrefix => format!("#{name}"),
+        }
+    }
+
+    /// Creates the temporary table `name` with `columns`, a parenthesised list.
+    fn create_temporary(self, name: &str, columns: &str) -> String {
+        match self.temporary_tables {
+            TemporaryTables::Keyword => format!("CREATE TEMPORARY TABLE {name} {columns}"),
+            TemporaryTables::HashPrefix => format!("CREATE TABLE #{name} {columns}"),
+        }
+    }
+}
+
+/// The numbers `0` to `9` as a derived table with one column, `d`.
+const DIGITS: &str = "(SELECT 0 AS d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 \
+     UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 \
+     UNION ALL SELECT 8 UNION ALL SELECT 9)";
+
 /// Runs `sql` to completion, reading every row, and returns what `finish` reports.
 async fn run_to_end(connection: &mut dyn Connection, sql: &str) -> Option<u64> {
     let mut cursor = connection
@@ -115,34 +166,39 @@ async fn run_to_end(connection: &mut dyn Connection, sql: &str) -> Option<u64> {
 }
 
 /// Statements run, results page lazily, NULL is distinct from text, a cursor can be
-/// abandoned halfway, and errors point at the offending text. Uses only SQL that PostgreSQL,
-/// SQLite and MySQL all accept, and a temporary table.
-pub async fn check_execution(connection: &mut dyn Connection) {
+/// abandoned halfway, and errors point at the offending text. Uses only SQL that every engine
+/// accepts, apart from how a temporary table is named. The rows come from a cross join of
+/// digits rather than a recursive query, which SQL Server writes without `RECURSIVE` and MySQL
+/// stops at 1,000 levels.
+pub async fn check_execution(connection: &mut dyn Connection, spelling: Spelling) {
+    let table = spelling.temporary("dbdesk_conformance");
     run_to_end(
         connection,
-        "CREATE TEMPORARY TABLE dbdesk_conformance (id integer, name text)",
+        &spelling.create_temporary("dbdesk_conformance", "(id integer, name text)"),
     )
     .await;
     let inserted = run_to_end(
         connection,
-        "INSERT INTO dbdesk_conformance \
-         WITH RECURSIVE s(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM s WHERE n < 40) \
-         SELECT (b.n - 1) * 40 + a.n, concat('row ', (b.n - 1) * 40 + a.n) \
-         FROM s a CROSS JOIN s b WHERE b.n <= 30",
+        &format!(
+            "INSERT INTO {table} SELECT n.n, concat('row ', n.n) FROM \
+             (SELECT a.d + 10 * b.d + 100 * c.d + 1000 * e.d + 1 AS n \
+             FROM {DIGITS} a CROSS JOIN {DIGITS} b CROSS JOIN {DIGITS} c \
+             CROSS JOIN {DIGITS} e) n WHERE n.n <= {TABLE_ROWS}"
+        ),
     )
     .await;
     assert_eq!(inserted, Some(TABLE_ROWS), "rows inserted");
 
-    check_paging(connection).await;
+    check_paging(connection, &table).await;
     check_null(connection).await;
-    check_abandon(connection).await;
-    check_error_position(connection).await;
-    run_to_end(connection, "DROP TABLE dbdesk_conformance").await;
+    check_abandon(connection, &table).await;
+    check_error_position(connection, &table).await;
+    run_to_end(connection, &format!("DROP TABLE {table}")).await;
 }
 
-async fn check_paging(connection: &mut dyn Connection) {
+async fn check_paging(connection: &mut dyn Connection, table: &str) {
     let mut cursor = connection
-        .execute("SELECT id, name FROM dbdesk_conformance ORDER BY id")
+        .execute(&format!("SELECT id, name FROM {table} ORDER BY id"))
         .await
         .expect("select");
     let names: Vec<&str> = cursor.columns().iter().map(|c| c.name.as_str()).collect();
@@ -181,9 +237,9 @@ async fn check_null(connection: &mut dyn Connection) {
     cursor.finish().await.expect("finish null");
 }
 
-async fn check_abandon(connection: &mut dyn Connection) {
+async fn check_abandon(connection: &mut dyn Connection, table: &str) {
     let mut cursor = connection
-        .execute("SELECT id FROM dbdesk_conformance ORDER BY id")
+        .execute(&format!("SELECT id FROM {table} ORDER BY id"))
         .await
         .expect("select");
     assert_eq!(cursor.next_page(10).await.expect("first rows").len(), 10);
@@ -202,10 +258,11 @@ async fn finish_ignoring_cancellation(cursor: Box<dyn ResultCursor>) {
     }
 }
 
-async fn check_error_position(connection: &mut dyn Connection) {
-    // A syntax error, because that is where both engines report a position (SQLite gives
+async fn check_error_position(connection: &mut dyn Connection, table: &str) {
+    // A syntax error, because that is where every engine reports a position (SQLite gives
     // none for unknown tables or columns).
-    let sql = "SELECT id FROM dbdesk_conformance WHERE WHERE id = 1";
+    let sql = format!("SELECT id FROM {table} WHERE WHERE id = 1");
+    let sql = sql.as_str();
     let expected = sql.rfind("WHERE").expect("second WHERE");
     let error = match connection.execute(sql).await {
         Ok(cursor) => {
@@ -230,25 +287,26 @@ async fn check_error_position(connection: &mut dyn Connection) {
 /// The transaction status follows `BEGIN`, `COMMIT` and `ROLLBACK`, committed changes stay,
 /// rolled back ones don't, and a failure inside a transaction leaves it open (PostgreSQL also
 /// marks it failed) until it is rolled back.
-pub async fn check_transactions(connection: &mut dyn Connection) {
+pub async fn check_transactions(connection: &mut dyn Connection, spelling: Spelling) {
     assert_eq!(
         status(connection).await,
         TransactionStatus::Idle,
         "at first"
     );
+    let table = spelling.temporary("dbdesk_transactions");
     run_to_end(
         connection,
-        "CREATE TEMPORARY TABLE dbdesk_transactions (n integer)",
+        &spelling.create_temporary("dbdesk_transactions", "(n integer)"),
     )
     .await;
 
-    run_to_end(connection, "BEGIN").await;
+    run_to_end(connection, spelling.begin).await;
     assert_eq!(
         status(connection).await,
         TransactionStatus::InTransaction,
         "after BEGIN"
     );
-    run_to_end(connection, "INSERT INTO dbdesk_transactions VALUES (1)").await;
+    run_to_end(connection, &format!("INSERT INTO {table} VALUES (1)")).await;
     run_to_end(connection, "COMMIT").await;
     assert_eq!(
         status(connection).await,
@@ -256,8 +314,8 @@ pub async fn check_transactions(connection: &mut dyn Connection) {
         "after COMMIT"
     );
 
-    run_to_end(connection, "BEGIN").await;
-    run_to_end(connection, "INSERT INTO dbdesk_transactions VALUES (2)").await;
+    run_to_end(connection, spelling.begin).await;
+    run_to_end(connection, &format!("INSERT INTO {table} VALUES (2)")).await;
     let failed = connection
         .execute("SELECT * FROM dbdesk_no_such_table")
         .await;
@@ -275,7 +333,7 @@ pub async fn check_transactions(connection: &mut dyn Connection) {
     );
 
     let mut cursor = connection
-        .execute("SELECT n FROM dbdesk_transactions")
+        .execute(&format!("SELECT n FROM {table}"))
         .await
         .expect("select");
     let rows = cursor.next_page(PAGE).await.expect("rows");
@@ -285,7 +343,7 @@ pub async fn check_transactions(connection: &mut dyn Connection) {
         vec![vec![Some("1".to_owned())]],
         "only the committed row"
     );
-    run_to_end(connection, "DROP TABLE dbdesk_transactions").await;
+    run_to_end(connection, &format!("DROP TABLE {table}")).await;
 }
 
 /// How an engine matches an unquoted table name, which a description must follow.
@@ -301,16 +359,22 @@ pub enum UnquotedNames {
 /// Tables resolve as statements would, with their columns in table order and their primary
 /// key in key order; views and missing tables are `None`. The view is an ordinary one,
 /// dropped first in case an earlier run failed, because MySQL has no temporary views.
-pub async fn check_describe_table(connection: &mut dyn Connection, names: UnquotedNames) {
+pub async fn check_describe_table(
+    connection: &mut dyn Connection,
+    names: UnquotedNames,
+    spelling: Spelling,
+) {
     run_to_end(
         connection,
-        "CREATE TEMPORARY TABLE dbdesk_describe (id integer, part varchar(50), note text, \
-         PRIMARY KEY (part, id))",
+        &spelling.create_temporary(
+            "dbdesk_describe",
+            "(id integer, part varchar(50), note text, PRIMARY KEY (part, id))",
+        ),
     )
     .await;
     run_to_end(
         connection,
-        "CREATE TEMPORARY TABLE dbdesk_keyless (n integer)",
+        &spelling.create_temporary("dbdesk_keyless", "(n integer)"),
     )
     .await;
     run_to_end(connection, "DROP VIEW IF EXISTS dbdesk_describe_view").await;
@@ -331,23 +395,23 @@ pub async fn check_describe_table(connection: &mut dyn Connection, names: Unquot
         UnquotedNames::ExactCase => "dbdesk_describe",
     };
     let described = connection
-        .describe_table(&unquoted(written))
+        .describe_table(&unquoted(&spelling.temporary(written)))
         .await
         .expect("describe")
         .expect("the table exists");
-    assert_eq!(described.name, "dbdesk_describe");
+    assert_eq!(described.name, spelling.temporary("dbdesk_describe"));
     assert!(!described.schema.is_empty());
     assert_eq!(described.columns, ["id", "part", "note"]);
     assert_eq!(described.primary_key, ["part", "id"]);
     if names == UnquotedNames::ExactCase {
         let other_case = connection
-            .describe_table(&unquoted("DBDESK_DESCRIBE"))
+            .describe_table(&unquoted(&spelling.temporary("DBDESK_DESCRIBE")))
             .await
             .expect("describe");
         assert_eq!(other_case, None, "names match exactly");
     }
     let keyless = connection
-        .describe_table(&unquoted("dbdesk_keyless"))
+        .describe_table(&unquoted(&spelling.temporary("dbdesk_keyless")))
         .await
         .expect("describe")
         .expect("the table exists");
@@ -360,33 +424,34 @@ pub async fn check_describe_table(connection: &mut dyn Connection, names: Unquot
         assert_eq!(found, None, "{not_a_table}");
     }
     for drop in [
-        "DROP VIEW dbdesk_describe_view",
-        "DROP TABLE dbdesk_keyless",
-        "DROP TABLE dbdesk_describe",
+        "DROP VIEW dbdesk_describe_view".to_owned(),
+        format!("DROP TABLE {}", spelling.temporary("dbdesk_keyless")),
+        format!("DROP TABLE {}", spelling.temporary("dbdesk_describe")),
     ] {
-        run_to_end(connection, drop).await;
+        run_to_end(connection, &drop).await;
     }
 }
 
 /// Validating prepares without running: an accepted `INSERT` inserts nothing, the connection's
 /// temporary tables are visible, unknown names and syntax errors are told apart (syntax errors
 /// with their position), and no transaction is left open.
-pub async fn check_validate(connection: &mut dyn Connection) {
+pub async fn check_validate(connection: &mut dyn Connection, spelling: Spelling) {
+    let table = spelling.temporary("dbdesk_validate");
     run_to_end(
         connection,
-        "CREATE TEMPORARY TABLE dbdesk_validate (n integer)",
+        &spelling.create_temporary("dbdesk_validate", "(n integer)"),
     )
     .await;
     for accepted in [
-        "SELECT n FROM dbdesk_validate WHERE n > 1",
-        "INSERT INTO dbdesk_validate VALUES (1)",
-        "DELETE FROM dbdesk_validate",
+        format!("SELECT n FROM {table} WHERE n > 1"),
+        format!("INSERT INTO {table} VALUES (1)"),
+        format!("DELETE FROM {table}"),
     ] {
-        let rejection = connection.validate(accepted).await.expect("validate");
+        let rejection = connection.validate(&accepted).await.expect("validate");
         assert_eq!(rejection, None, "{accepted}");
     }
     let mut cursor = connection
-        .execute("SELECT count(*) FROM dbdesk_validate")
+        .execute(&format!("SELECT count(*) FROM {table}"))
         .await
         .expect("count");
     let rows = cursor.next_page(PAGE).await.expect("read the count");
@@ -398,20 +463,20 @@ pub async fn check_validate(connection: &mut dyn Connection) {
     );
 
     for (unknown, sql) in [
-        ("table", "SELECT * FROM dbdesk_no_such_table"),
-        ("column", "SELECT missing FROM dbdesk_validate"),
+        ("table", "SELECT * FROM dbdesk_no_such_table".to_owned()),
+        ("column", format!("SELECT missing FROM {table}")),
     ] {
         let rejection = connection
-            .validate(sql)
+            .validate(&sql)
             .await
             .expect("validate")
             .unwrap_or_else(|| panic!("an unknown {unknown} is rejected"));
         assert_eq!(rejection.kind, RejectionKind::UnknownName, "{rejection:?}");
         assert!(!rejection.message.is_empty());
     }
-    let sql = "SELECT n n n FROM dbdesk_validate";
+    let sql = format!("SELECT n n n FROM {table}");
     let rejection = connection
-        .validate(sql)
+        .validate(&sql)
         .await
         .expect("validate")
         .expect("a syntax error is rejected");
@@ -422,7 +487,7 @@ pub async fn check_validate(connection: &mut dyn Connection) {
         "{rejection:?}"
     );
     assert_eq!(status(connection).await, TransactionStatus::Idle);
-    run_to_end(connection, "DROP TABLE dbdesk_validate").await;
+    run_to_end(connection, &format!("DROP TABLE {table}")).await;
 }
 
 async fn status(connection: &mut dyn Connection) -> TransactionStatus {

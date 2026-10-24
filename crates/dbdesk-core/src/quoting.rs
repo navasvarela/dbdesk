@@ -14,6 +14,9 @@ pub struct Quoting {
     /// Whether a backslash inside a string literal escapes the next character, so a literal
     /// backslash has to be written twice.
     pub backslash_escapes: bool,
+    /// Written before a string literal's opening quote: `N` on SQL Server, where a plain
+    /// `'…'` is read in the database's code page and loses the characters it lacks.
+    pub string_prefix: &'static str,
 }
 
 impl Quoting {
@@ -22,6 +25,7 @@ impl Quoting {
         identifier_open: '"',
         identifier_close: '"',
         backslash_escapes: false,
+        string_prefix: "",
     };
 
     /// Quotes `name` even where it needs no quoting, as generated statements must not depend
@@ -55,7 +59,7 @@ impl Quoting {
         } else {
             text.to_owned()
         };
-        format!("'{}'", escaped.replace('\'', "''"))
+        format!("{}'{}'", self.string_prefix, escaped.replace('\'', "''"))
     }
 }
 
@@ -67,12 +71,14 @@ mod tests {
         identifier_open: '`',
         identifier_close: '`',
         backslash_escapes: true,
+        string_prefix: "",
     };
 
     const BRACKETS: Quoting = Quoting {
         identifier_open: '[',
         identifier_close: ']',
         backslash_escapes: false,
+        string_prefix: "N",
     };
 
     #[test]
@@ -103,5 +109,6 @@ mod tests {
 
         assert_eq!(Quoting::STANDARD.string_literal(text), r"'it''s C:\temp'");
         assert_eq!(BACKTICKS.string_literal(text), r"'it''s C:\\temp'");
+        assert_eq!(BRACKETS.string_literal("José"), "N'José'");
     }
 }

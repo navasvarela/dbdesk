@@ -13,6 +13,7 @@ dbdesk-core.workspace = true
 dbdesk-driver-mysql.workspace = true
 dbdesk-driver-postgres.workspace = true
 dbdesk-driver-sqlite.workspace = true
+dbdesk-driver-sqlserver.workspace = true
 dbdesk-sql.workspace = true
 dbdesk-store.workspace = true
 jiff.workspace = true

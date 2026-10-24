@@ -1,33 +1,25 @@
 //! Applying the grid's edits: generated `UPDATE`s, all or none.
 
 use dbdesk_core::{DriverError, TransactionStatus, describe_error};
+use dbdesk_sql::Savepoint;
 
 use super::{Disconnected, SessionOwner, Worker, transaction};
 use crate::{EditFailure, Event};
 
 /// How the edits are wrapped: a transaction of their own, or a savepoint inside the console's
 /// open one (PostgreSQL refuses `SAVEPOINT` outside a transaction, and a nested `BEGIN` would
-/// fail).
-struct Wrapping {
-    open: &'static str,
-    keep: &'static [&'static str],
-    undo: &'static [&'static str],
+/// fail). Both are spelt as the dialect writes them.
+fn wrapping(worker: &Worker<'_>) -> Savepoint {
+    let dialect = worker.context.dialect();
+    match worker.transaction {
+        TransactionStatus::Idle => Savepoint {
+            open: dialect.begin_transaction(),
+            keep: &["COMMIT"],
+            undo: &["ROLLBACK"],
+        },
+        TransactionStatus::InTransaction | TransactionStatus::Failed => dialect.edits_savepoint(),
+    }
 }
-
-const OWN_TRANSACTION: Wrapping = Wrapping {
-    open: "BEGIN",
-    keep: &["COMMIT"],
-    undo: &["ROLLBACK"],
-};
-
-const SAVEPOINT: Wrapping = Wrapping {
-    open: "SAVEPOINT dbdesk_edits",
-    keep: &["RELEASE SAVEPOINT dbdesk_edits"],
-    undo: &[
-        "ROLLBACK TO SAVEPOINT dbdesk_edits",
-        "RELEASE SAVEPOINT dbdesk_edits",
-    ],
-};
 
 /// Runs `statements`, each of which must change exactly one row, and reports
 /// [`Event::EditsApplied`]. On any failure, everything they changed is undone.
@@ -38,11 +30,8 @@ pub(super) async fn apply(
     let SessionOwner::Console(console) = worker.context.owner else {
         return Ok(());
     };
-    let wrapping = match worker.transaction {
-        TransactionStatus::Idle => &OWN_TRANSACTION,
-        TransactionStatus::InTransaction | TransactionStatus::Failed => &SAVEPOINT,
-    };
-    let result = match run_wrapped(worker, wrapping, statements).await? {
+    let wrapping = wrapping(worker);
+    let result = match run_wrapped(worker, &wrapping, statements).await? {
         Ok(()) => Ok(()),
         Err(failure) => {
             for undo in wrapping.undo {
@@ -75,7 +64,7 @@ pub(super) async fn apply(
 
 async fn run_wrapped(
     worker: &mut Worker<'_>,
-    wrapping: &Wrapping,
+    wrapping: &Savepoint,
     statements: &[String],
 ) -> Result<Result<(), EditFailure>, Disconnected> {
     let unwrapped = |error: DriverError| EditFailure {

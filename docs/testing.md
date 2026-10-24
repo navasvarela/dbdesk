@@ -50,6 +50,13 @@ Each driver crate runs the suite against its own backend:
   `DBDESK_TEST_MARIADB_URL` is unset. Both make a self-signed certificate on first start, so
   the TLS tests need no fixture of their own. `check_describe_table` asks the server's
   `lower_case_table_names` whether unquoted names match ignoring case: on Linux they don't.
+- **SQL Server**: the `sqlserver` container (2022, port 51433), skipped when
+  `DBDESK_TEST_SQLSERVER_URL` is unset. Its image is x86-64 only: native on CI's Linux runner,
+  emulated (slowly, and it can crash) by Docker on an Apple-silicon Mac. The image can't
+  create a database on first start, so the compose health check creates `dbdesk`. The suite
+  runs with `Spelling::SQL_SERVER`: temporary tables are `#name`, and a transaction opens with
+  `BEGIN TRANSACTION`, since `BEGIN` alone opens a block there. The server makes its own
+  certificate, so the TLS tests need no fixture.
 
 Every server engine follows the same pattern: a service in `docker-compose.yml` and its URL in
 `test-servers.env`, which CI reads too. To run everything locally:
