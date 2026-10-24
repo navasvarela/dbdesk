@@ -174,6 +174,10 @@ impl DataSourceDialog {
                         server_rows(ui, &mut fields.server, password_hint);
                         None
                     }
+                    DriverFields::ClickHouse(fields) => {
+                        server_rows(ui, &mut fields.server, password_hint);
+                        None
+                    }
                     DriverFields::Sqlite(fields) => file_rows(
                         ui,
                         FileEngine::Sqlite,
@@ -292,7 +296,7 @@ impl DataSourceDialog {
 /// encrypt. An engine's own rows go before or after them.
 fn server_rows(ui: &mut Ui, fields: &mut ServerFields, password_hint: &str) {
     let defaults = fields.defaults;
-    let default_port = defaults.port.to_string();
+    let default_port = fields.default_port().to_string();
     setting_row(ui, "Host", &mut fields.host, defaults.host, Resolve::Text);
     setting_row(ui, "Port", &mut fields.port, &default_port, Resolve::Text);
     setting_row(
@@ -318,11 +322,12 @@ fn server_rows(ui: &mut Ui, fields: &mut ServerFields, password_hint: &str) {
 /// The TLS mode and, for `verify-full`, the file of authorities to trust.
 fn tls_rows(ui: &mut Ui, fields: &mut ServerFields) {
     let label = ui.label("TLS");
+    let mut chosen = fields.tls;
     egui::ComboBox::from_id_salt("data_source_tls")
         .selected_text(fields.tls.label())
         .show_ui(ui, |ui| {
-            for choice in TlsChoice::ALL {
-                ui.selectable_value(&mut fields.tls, choice, choice.label())
+            for &choice in fields.tls_choices() {
+                ui.selectable_value(&mut chosen, choice, choice.label())
                     .on_hover_text(choice.description());
             }
         })
@@ -330,6 +335,9 @@ fn tls_rows(ui: &mut Ui, fields: &mut ServerFields) {
         .labelled_by(label.id)
         .on_hover_text(fields.tls.description());
     ui.end_row();
+    if chosen != fields.tls {
+        fields.choose_tls(chosen);
+    }
     if fields.tls != TlsChoice::VerifyFull {
         return;
     }

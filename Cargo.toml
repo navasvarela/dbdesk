@@ -13,6 +13,7 @@ publish = false
 [workspace.dependencies]
 dbdesk-core = { path = "crates/dbdesk-core" }
 dbdesk-driver-mysql = { path = "crates/dbdesk-driver-mysql" }
+dbdesk-driver-clickhouse = { path = "crates/dbdesk-driver-clickhouse" }
 dbdesk-driver-duckdb = { path = "crates/dbdesk-driver-duckdb" }
 dbdesk-driver-postgres = { path = "crates/dbdesk-driver-postgres" }
 dbdesk-driver-sqlite = { path = "crates/dbdesk-driver-sqlite" }
@@ -26,6 +27,10 @@ dbdesk-tls = { path = "crates/dbdesk-tls" }
 anyhow = "1.0.104"
 async-trait = "0.1.92"
 directories = "6.0.0"
+# ClickHouse's official client, over its HTTP interface. No default features (lz4 compression)
+# and none of its TLS ones: dbdesk hands it a hyper client with dbdesk-tls's rustls
+# configuration, which also covers `require` and a CA file.
+clickhouse = { version = "0.15.3", default-features = false }
 # DuckDB 1.5.6, compiled into dbdesk (`bundled`) with its Parquet and JSON extensions, so there
 # is nothing to install. No default features: they would download a prebuilt libduckdb while
 # building. Measured when added (DB3): the stripped binary grows by about 36 MB, 12 MB with gzip,
@@ -67,6 +72,9 @@ rfd = "0.17.2"
 # tests add the client to drive it.
 rmcp = { version = "3.7.0", default-features = false, features = ["macros", "server", "transport-io"] }
 rusqlite = { version = "0.40.2", features = ["bundled", "column_decltype"] }
+# The HTTP client ClickHouse's client runs on, with rustls for HTTPS.
+hyper-rustls = { version = "0.27.7", default-features = false, features = ["http1", "tls12"] }
+hyper-util = { version = "0.1.19", features = ["client-legacy", "http1", "tokio"] }
 # TLS for network connections. rustls rather than OpenSSL leaves nothing to link (see
 # docs/releasing.md), and the ring provider builds with only a C compiler, where aws-lc-rs
 # also wants CMake and NASM on Windows.

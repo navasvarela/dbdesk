@@ -75,11 +75,11 @@ pub(crate) fn mode(driver: DriverKind) -> Option<ReadOnlyMode> {
             sets_timeout: false,
         }),
         DriverKind::Sqlite => Some(ReadOnlyMode::Connection),
-        // SQL Server has no read-only transaction, and DuckDB's read-only mode is a choice of
-        // the data source, not of the connection MCP would open. The plan
-        // (docs/mcp-server.md) has each such engine name its equivalent, such as a read-only
-        // login, before MCP serves it.
-        DriverKind::SqlServer | DriverKind::DuckDb => None,
+        // SQL Server has no read-only transaction, DuckDB's read-only mode is a choice of the
+        // data source, not of the connection MCP would open, and ClickHouse's (the `readonly`
+        // setting) isn't wired into its driver yet. The plan (docs/mcp-server.md) has each
+        // such engine name its equivalent, such as a read-only login, before MCP serves it.
+        DriverKind::SqlServer | DriverKind::DuckDb | DriverKind::ClickHouse => None,
     }
 }
 

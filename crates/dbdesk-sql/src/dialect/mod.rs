@@ -362,6 +362,19 @@ impl Dialect {
         }
     }
 
+    /// Why the grid never edits this database's rows, or `None` where it may. A ClickHouse
+    /// table has no key that tells its rows apart (its `PRIMARY KEY` is its sort order and
+    /// may repeat), and its `UPDATE` rewrites data in the background rather than change a row
+    /// at once.
+    pub fn read_only_results(self) -> Option<&'static str> {
+        match self {
+            Self::ClickHouse => Some(
+                "ClickHouse tables have no key that tells their rows apart, so rows can't be edited here",
+            ),
+            Self::Postgres | Self::Sqlite | Self::Mysql | Self::SqlServer | Self::DuckDb => None,
+        }
+    }
+
     /// The savepoint grid edits use inside a transaction the console already has open. SQL
     /// Server writes it `SAVE TRANSACTION` and has no way to release one: it lasts until the
     /// transaction ends. DuckDB has no savepoints at all, so `None`.
@@ -494,6 +507,7 @@ impl From<DriverKind> for Dialect {
             DriverKind::Mysql => Self::Mysql,
             DriverKind::SqlServer => Self::SqlServer,
             DriverKind::DuckDb => Self::DuckDb,
+            DriverKind::ClickHouse => Self::ClickHouse,
         }
     }
 }
@@ -568,7 +582,8 @@ mod tests {
                 Dialect::Sqlite,
                 Dialect::Mysql,
                 Dialect::SqlServer,
-                Dialect::DuckDb
+                Dialect::DuckDb,
+                Dialect::ClickHouse
             ]
         );
     }

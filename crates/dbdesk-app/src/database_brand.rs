@@ -52,5 +52,13 @@ pub fn of(driver: DriverKind) -> DatabaseBrand {
             light: Color32::from_rgb(0x8A, 0x78, 0x00),
             dark: Color32::from_rgb(0xFF, 0xF0, 0x00),
         },
+        // ClickHouse's yellow on the dark theme; on the light one, an amber dark enough to
+        // see and apart from DuckDB's gold.
+        DriverKind::ClickHouse => DatabaseBrand {
+            logo_uri: "bytes://logos/clickhouse.svg",
+            logo_svg: include_bytes!("../../../assets/icons/databases/clickhouse.svg"),
+            light: Color32::from_rgb(0x9A, 0x6A, 0x00),
+            dark: Color32::from_rgb(0xFF, 0xCC, 0x01),
+        },
     }
 }
