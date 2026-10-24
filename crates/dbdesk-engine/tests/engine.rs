@@ -9,8 +9,8 @@ mod common;
 use std::sync::Arc;
 
 use common::{
-    FixedReleases, MemorySecrets, TestEngine, postgres_test_server, sqlite_data_source,
-    sqlite_database,
+    FakeInstaller, FixedReleases, MemorySecrets, TestEngine, postgres_test_server,
+    sqlite_data_source, sqlite_database,
 };
 use dbdesk_core::{
     CatalogPath, ConnectionConfig, DataSource, DataSourceId, FolderKind, NodeKind, Password,
@@ -246,6 +246,32 @@ fn reports_the_newest_release_or_why_it_is_unknown() {
     engine.expect(Event::LatestRelease(Err(
         "no release has been published yet".to_owned(),
     )));
+}
+
+#[test]
+fn installs_an_update_reporting_progress_or_why_it_failed() {
+    let dir = tempfile::tempdir().unwrap();
+    let data_sources = dir.path().join("data_sources.toml");
+    let cases = [
+        (FakeInstaller::Installs("9.9.9"), Ok("9.9.9".to_owned())),
+        (
+            FakeInstaller::Fails("not from an app bundle"),
+            Err("not from an app bundle".to_owned()),
+        ),
+    ];
+    for (installer, expected) in cases {
+        let mut engine = TestEngine::start_with_installer(&data_sources, installer);
+        engine.expect_started(vec![]);
+        engine.send(Command::InstallUpdate);
+        // The engine reports each whole percent once.
+        for downloaded in [0, 50, 100] {
+            engine.expect(Event::UpdateProgress {
+                downloaded,
+                total: Some(100),
+            });
+        }
+        engine.expect(Event::UpdateInstalled(expected));
+    }
 }
 
 #[test]

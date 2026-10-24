@@ -1,7 +1,7 @@
-//! Whether a newer dbdesk has been released: what Help › Check for updates shows, and the
-//! notice in the status bar.
+//! Whether a newer dbdesk has been released, and installing it: what Help › Check for updates
+//! shows, and the notice in the status bar.
 
-use dbdesk_engine::{Command, Event, Release};
+use dbdesk_engine::{Command, Event, InstallSupport, Release};
 use dbdesk_store::Settings;
 use semver::Version;
 
@@ -10,6 +10,18 @@ use crate::version;
 /// The GitHub repository whose releases are dbdesk's, as `owner/name`. The same repository
 /// as `repository` in Cargo.toml; a test keeps them in step.
 pub const RELEASES_REPOSITORY: &str = "navasvarela/dbdesk";
+
+/// The update manifest the installer reads: the `latest.json` the release workflow attaches to
+/// every release. GitHub redirects `latest/download` to the newest published release, so
+/// drafts are never offered.
+pub const UPDATE_MANIFEST_URL: &str =
+    "https://github.com/navasvarela/dbdesk/releases/latest/download/latest.json";
+
+/// The public half of the key the release workflow signs update packages with. The private
+/// half is the `CARGO_PACKAGER_SIGN_PRIVATE_KEY` repository secret. A package whose signature
+/// doesn't match is refused before anything is replaced. Changing it means every copy older
+/// than the change must be updated by hand once (see docs/releasing.md).
+pub const UPDATE_PUBLIC_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDMwNUI0ODk5QkUxNEEyRjQKUldUMG9oUyttVWhiTUtlVmM0aVBkRSt3VVpzQWxOTTRKQ1RkK3FGcTZBSEduTUx3TjUzemdBVEcK";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpdateStatus {
@@ -26,28 +38,128 @@ pub enum UpdateStatus {
     Failed(String),
 }
 
+/// Where installing an available update has got to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InstallState {
+    Idle,
+    Downloading {
+        downloaded: u64,
+        total: Option<u64>,
+    },
+    /// Installed over this copy; it starts at the next launch.
+    Installed {
+        version: String,
+    },
+    Failed(String),
+}
+
+impl InstallState {
+    /// How far the download has got, from 0 to 1, when its size is known.
+    pub fn fraction(&self) -> Option<f32> {
+        match *self {
+            Self::Downloading {
+                downloaded,
+                total: Some(total),
+            } if total > 0 => Some((downloaded as f64 / total as f64).min(1.0) as f32),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Updates {
     status: UpdateStatus,
     /// Set once the check at start-up has been decided on, so a later settings reload
     /// doesn't check again.
     start_decided: bool,
+    /// Whether this copy can replace itself; decided once at start-up from how it was
+    /// installed.
+    support: InstallSupport,
+    install: InstallState,
+    /// Set when the user chose to restart into an installed update, until the app quits or
+    /// the quit is cancelled.
+    restart_after_quit: bool,
     pub dialog_open: bool,
 }
 
 impl Default for Updates {
     fn default() -> Self {
-        Self {
-            status: UpdateStatus::NotChecked,
-            start_decided: false,
-            dialog_open: false,
-        }
+        Self::new(InstallSupport::Unsupported(String::new()))
     }
 }
 
 impl Updates {
+    pub fn new(support: InstallSupport) -> Self {
+        Self {
+            status: UpdateStatus::NotChecked,
+            start_decided: false,
+            support,
+            install: InstallState::Idle,
+            restart_after_quit: false,
+            dialog_open: false,
+        }
+    }
+
     pub fn status(&self) -> &UpdateStatus {
         &self.status
+    }
+
+    pub fn support(&self) -> &InstallSupport {
+        &self.support
+    }
+
+    pub fn install_state(&self) -> &InstallState {
+        &self.install
+    }
+
+    /// The status bar's link to the dialog, while there is something to say.
+    pub fn notice(&self) -> Option<String> {
+        let UpdateStatus::Available { version, .. } = &self.status else {
+            return None;
+        };
+        Some(match &self.install {
+            InstallState::Idle | InstallState::Failed(_) => {
+                format!("dbdesk {version} is available")
+            }
+            state @ InstallState::Downloading { .. } => match state.fraction() {
+                Some(fraction) => format!("Downloading dbdesk {version}… {:.0}%", fraction * 100.0),
+                None => format!("Downloading dbdesk {version}…"),
+            },
+            InstallState::Installed { .. } => "Restart to finish updating".to_owned(),
+        })
+    }
+
+    /// Install and restart: downloads and installs the available update, once. `None` when
+    /// there is nothing to install, this copy can't replace itself, or it is already under way.
+    pub fn install(&mut self) -> Option<Command> {
+        let can_start = matches!(self.status, UpdateStatus::Available { .. })
+            && self.support == InstallSupport::Supported
+            && matches!(self.install, InstallState::Idle | InstallState::Failed(_));
+        if !can_start {
+            return None;
+        }
+        self.install = InstallState::Downloading {
+            downloaded: 0,
+            total: None,
+        };
+        Some(Command::InstallUpdate)
+    }
+
+    /// Restart now: true when an installed update is waiting for the app to start again. The
+    /// app then quits through its usual checks for open transactions.
+    pub fn request_restart(&mut self) -> bool {
+        self.restart_after_quit = matches!(self.install, InstallState::Installed { .. });
+        self.restart_after_quit
+    }
+
+    /// The quit was cancelled, so the restart is too: quitting later shouldn't start dbdesk
+    /// again unasked.
+    pub fn cancel_restart(&mut self) {
+        self.restart_after_quit = false;
+    }
+
+    pub fn restart_after_quit(&self) -> bool {
+        self.restart_after_quit
     }
 
     /// The check at start-up, once, when the settings allow it. Its outcome only shows if
@@ -69,8 +181,23 @@ impl Updates {
     }
 
     pub fn apply(&mut self, event: &Event) {
-        if let Event::LatestRelease(result) = event {
-            self.status = status_for(result, version::VERSION);
+        match event {
+            Event::LatestRelease(result) => self.status = status_for(result, version::VERSION),
+            Event::UpdateProgress { downloaded, total } => {
+                self.install = InstallState::Downloading {
+                    downloaded: *downloaded,
+                    total: *total,
+                };
+            }
+            Event::UpdateInstalled(Ok(version)) => {
+                self.install = InstallState::Installed {
+                    version: version.clone(),
+                };
+            }
+            Event::UpdateInstalled(Err(error)) => {
+                self.install = InstallState::Failed(error.clone())
+            }
+            _ => {}
         }
     }
 }
@@ -212,6 +339,65 @@ mod tests {
             updates.status(),
             &UpdateStatus::Failed("offline".to_owned())
         );
+    }
+
+    fn available() -> Updates {
+        let mut updates = Updates::new(InstallSupport::Supported);
+        updates.apply(&Event::LatestRelease(release("v99.0.0")));
+        updates
+    }
+
+    #[test]
+    fn installs_only_an_available_update_on_a_copy_that_can_replace_itself() {
+        let mut updates = available();
+        assert!(matches!(updates.install(), Some(Command::InstallUpdate)));
+        assert!(updates.install().is_none(), "installed twice at once");
+
+        let mut up_to_date = Updates::new(InstallSupport::Supported);
+        up_to_date.apply(&Event::LatestRelease(release(&format!(
+            "v{}",
+            version::VERSION
+        ))));
+        assert!(up_to_date.install().is_none());
+
+        let mut from_a_deb = Updates::new(InstallSupport::Unsupported("a .deb".to_owned()));
+        from_a_deb.apply(&Event::LatestRelease(release("v99.0.0")));
+        assert!(from_a_deb.install().is_none());
+    }
+
+    #[test]
+    fn follows_the_download_then_restarts_only_into_an_installed_update() {
+        let mut updates = available();
+        assert!(
+            !updates.request_restart(),
+            "restarted with nothing installed"
+        );
+        let _ = updates.install();
+
+        updates.apply(&Event::UpdateProgress {
+            downloaded: 25,
+            total: Some(100),
+        });
+        assert_eq!(updates.install_state().fraction(), Some(0.25));
+
+        updates.apply(&Event::UpdateInstalled(
+            Err("signature mismatch".to_owned()),
+        ));
+        assert_eq!(
+            updates.install_state(),
+            &InstallState::Failed("signature mismatch".to_owned())
+        );
+        assert!(!updates.request_restart());
+        assert!(
+            updates.install().is_some(),
+            "a failed install can't be retried"
+        );
+
+        updates.apply(&Event::UpdateInstalled(Ok("99.0.0".to_owned())));
+        assert!(updates.request_restart());
+        assert!(updates.restart_after_quit());
+        updates.cancel_restart();
+        assert!(!updates.restart_after_quit());
     }
 
     #[test]

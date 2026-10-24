@@ -254,7 +254,8 @@ plan, including the decisions it needs first, is in [Releasing](releasing.md).
   licence files, and the Install chapter rewritten.
 - **R2 — Trusted installs:** macOS signing and notarization, Windows signing, a Homebrew cask,
   generated release notes.
-- **R3 — Updates:** an in-app update notice, then automatic updates.
+- **R3 — Updates:** an in-app update notice, then installing updates from the app (macOS and
+  the AppImage), with signed packages and a `latest.json` on each release.
 
 **Update notice demo note:** built, ahead of R2. Start a build older than the newest release,
 and the status bar says "dbdesk 0.2.0 is available"; click it for the version you have and

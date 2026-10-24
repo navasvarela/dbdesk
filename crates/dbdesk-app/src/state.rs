@@ -155,6 +155,8 @@ impl AppState {
             | Event::KeymapLoaded { .. }
             | Event::SettingsLoaded { .. }
             | Event::LatestRelease(_)
+            | Event::UpdateProgress { .. }
+            | Event::UpdateInstalled(_)
             | Event::HistoryFound { .. }
             | Event::ExportFinished { .. }
             | Event::TableDescribed { .. }

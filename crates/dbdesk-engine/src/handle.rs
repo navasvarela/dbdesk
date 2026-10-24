@@ -10,7 +10,7 @@ use tokio::task::{JoinError, JoinHandle};
 
 use crate::command_loop;
 use crate::events::EventSink;
-use crate::{Command, Event, ReleaseFeed, Repaint};
+use crate::{Command, Event, ReleaseFeed, Repaint, UpdateInstaller};
 
 /// How long [`EngineHandle::shutdown`] waits for in-flight work before abandoning it.
 ///
@@ -40,6 +40,7 @@ pub struct EngineConfig {
     pub keymap: KeymapFile,
     pub settings: SettingsFile,
     pub releases: Arc<dyn ReleaseFeed>,
+    pub updater: Arc<dyn UpdateInstaller>,
 }
 
 /// The UI's connection to a running engine.

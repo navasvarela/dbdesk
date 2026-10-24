@@ -55,6 +55,9 @@ rusqlite = { version = "0.40.2", features = ["bundled", "column_decltype"] }
 # docs/releasing.md), and the ring provider builds with only a C compiler, where aws-lc-rs
 # also wants CMake and NASM on Windows.
 rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+# Downloads, verifies and installs updates in the formats cargo-packager signs (R3). Its
+# rustls feature uses reqwest's ring provider and the OS's root certificates.
+cargo-packager-updater = "0.2.3"
 # Compares the running version with the newest release's tag, for the update check.
 semver = "1.0.28"
 serde = { version = "1.0.229", features = ["derive"] }
