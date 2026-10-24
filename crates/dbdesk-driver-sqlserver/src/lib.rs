@@ -170,6 +170,15 @@ pub struct SqlServerConnection {
     server_info: ServerInfo,
 }
 
+impl SqlServerConnection {
+    /// The client, once no statement holds it, unless a lost cancel acknowledgement has left
+    /// it out of step with the server.
+    async fn client(&self) -> Result<tokio::sync::MutexGuard<'_, SqlClient>, DriverError> {
+        self.cancel.ensure_in_step()?;
+        Ok(self.client.lock().await)
+    }
+}
+
 #[async_trait]
 impl Connection for SqlServerConnection {
     fn server_info(&self) -> &ServerInfo {
@@ -177,18 +186,19 @@ impl Connection for SqlServerConnection {
     }
 
     async fn ping(&mut self) -> Result<(), DriverError> {
-        execution::run_quietly(&mut *self.client.lock().await, "SELECT 1").await
+        execution::run_quietly(&mut *self.client().await?, "SELECT 1").await
     }
 
     async fn children(&mut self, path: &CatalogPath) -> Result<Vec<CatalogNode>, DriverError> {
-        catalog::children(&mut *self.client.lock().await, path).await
+        catalog::children(&mut *self.client().await?, path).await
     }
 
     async fn definition(&mut self, path: &CatalogPath) -> Result<String, DriverError> {
-        catalog::definition(&mut *self.client.lock().await, path).await
+        catalog::definition(&mut *self.client().await?, path).await
     }
 
     async fn execute(&mut self, sql: &str) -> Result<Box<dyn ResultCursor>, DriverError> {
+        self.cancel.ensure_in_step()?;
         execution::execute(&self.client, &self.cancel, sql).await
     }
 
@@ -196,18 +206,18 @@ impl Connection for SqlServerConnection {
         &mut self,
         table: &RelationName,
     ) -> Result<Option<TableDescription>, DriverError> {
-        table::describe_table(&mut *self.client.lock().await, table).await
+        table::describe_table(&mut *self.client().await?, table).await
     }
 
     async fn validate(&mut self, sql: &str) -> Result<Option<Rejection>, DriverError> {
-        execution::validate(&mut *self.client.lock().await, sql).await
+        execution::validate(&mut *self.client().await?, sql).await
     }
 
     /// `@@TRANCOUNT` counts the open transactions (nested `BEGIN TRANSACTION`s included), and
     /// `XACT_STATE()` is `-1` once an error has doomed the transaction, which then only
     /// accepts `ROLLBACK`.
     async fn transaction_status(&mut self) -> Result<TransactionStatus, DriverError> {
-        let mut client = self.client.lock().await;
+        let mut client = self.client().await?;
         let row = client
             .simple_query("SELECT @@TRANCOUNT, XACT_STATE()")
             .await

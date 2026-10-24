@@ -13,6 +13,7 @@
 //! leaves the connection ready for the next statement.
 
 use std::future::Future;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, PoisonError};
 use std::time::Duration;
 
@@ -41,9 +42,24 @@ const CANCEL_GRACE: Duration = Duration::from_millis(100);
 #[derive(Default)]
 pub(crate) struct CancelSlot {
     running: std::sync::Mutex<Option<watch::Sender<bool>>>,
+    /// Set when a cancel's acknowledgement never arrived: the server's reply to the next
+    /// statement could then be taken for the reply to the one after it, so the connection
+    /// refuses all further use rather than ever show a statement's result for another's.
+    out_of_step: AtomicBool,
 }
 
 impl CancelSlot {
+    /// Fails if a lost acknowledgement has left the connection out of step with the server.
+    pub(crate) fn ensure_in_step(&self) -> Result<(), DriverError> {
+        if self.out_of_step.load(Ordering::Acquire) {
+            return Err(connection_error(
+                "the connection was left out of step with the server by a cancel whose \
+                 acknowledgement never arrived; reconnect to go on",
+            ));
+        }
+        Ok(())
+    }
+
     fn arm(&self) -> Cancellation {
         let (sender, receiver) = watch::channel(false);
         *self.running.lock().unwrap_or_else(PoisonError::into_inner) = Some(sender);
@@ -182,7 +198,10 @@ async fn run_statement(
     };
     let source = match client.cancel_query().await {
         Ok(()) => CancelError::Cancelled,
-        Err(error) => CancelError::Unacknowledged(error),
+        Err(error) => {
+            slot.out_of_step.store(true, Ordering::Release);
+            CancelError::Unacknowledged(error)
+        }
     };
     let error = DriverError::Statement {
         source: Box::new(source),
@@ -456,5 +475,23 @@ impl ResultCursor for SqlServerCursor {
         self.pages.close();
         (&mut self.task).await.map_err(connection_error)??;
         Ok(self.rows_changed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn refuses_all_use_once_out_of_step() {
+        let slot = CancelSlot::default();
+        assert!(slot.ensure_in_step().is_ok());
+
+        slot.out_of_step.store(true, Ordering::Release);
+
+        assert!(matches!(
+            slot.ensure_in_step(),
+            Err(DriverError::Connection(_))
+        ));
     }
 }
