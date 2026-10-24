@@ -344,6 +344,26 @@ Dialogs that write, show and run the SQL to create and change tables, views and 
   - Edit, Rename, Drop.
 - **E4 — Modify table:** `ALTER TABLE` from a changed table, with SQLite's table rebuild last.
 
+## MCP track
+
+An MCP server, so AI assistants can browse and query dbdesk's data sources, grouped into
+projects with permissions per project. The full plan is in [MCP server](mcp-server.md).
+
+- **P0 — Projects:**
+  - data sources grouped into projects in `projects.toml`, shown as groups in the explorer;
+  - useful without MCP.
+- **MCP1 — Read-only server:**
+  - `dbdesk mcp --project <slug>` over stdio, with catalog, describe, query and explain tools;
+  - read-only transactions, row and time limits, and every call logged and recorded in the
+    history.
+- **MCP2 — Permissions:**
+  - an `execute` tool, gated by the project's `write`, `schema` and `admin` permissions, which
+    fall back to global defaults that only read;
+  - statements classified by the parser;
+  - an optional separate MCP login per data source.
+- **MCP3 — In the app:** project settings, Copy MCP configuration, MCP statements marked in the
+  history, and a manual chapter.
+
 ## Design and documentation track
 
 Runs alongside the feature milestones rather than after them: each item is usable on its own.
