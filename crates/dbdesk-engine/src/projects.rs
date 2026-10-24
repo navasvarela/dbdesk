@@ -1,5 +1,7 @@
 use dbdesk_core::{ProjectId, describe_error};
-use dbdesk_store::{McpOverrides, Project, ProjectFile, ProjectStoreError, Projects};
+use dbdesk_store::{
+    McpOverrides, McpPermissions, Project, ProjectFile, ProjectStoreError, Projects,
+};
 use tokio::task::JoinError;
 
 use crate::Event;
@@ -137,6 +139,18 @@ impl ProjectRegistry {
             project.mcp_enabled = mcp_enabled;
             project.mcp = overrides;
             Ok(project.clone())
+        })
+        .await
+    }
+
+    /// Replaces the MCP defaults and saves the file.
+    pub(crate) async fn save_mcp_defaults(
+        &mut self,
+        defaults: McpPermissions,
+    ) -> Result<McpPermissions, ProjectError> {
+        self.update(|projects| {
+            projects.mcp_defaults = defaults.clone();
+            Ok(defaults)
         })
         .await
     }

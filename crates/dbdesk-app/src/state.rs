@@ -143,6 +143,7 @@ impl AppState {
             }
             Event::ProjectSaved(project) => self.projects.upsert(project),
             Event::ProjectDeleted(id) => self.projects.remove(*id),
+            Event::McpDefaultsSaved(defaults) => self.mcp_defaults = defaults.clone(),
             Event::SessionChanged { id, state } => {
                 if let Some(entry) = self.data_sources.entry_mut(*id) {
                     entry.set_session(state);
@@ -156,6 +157,7 @@ impl AppState {
             // The dialogs, the definition window and the consoles track these themselves.
             Event::DataSourceSaveFailed { .. }
             | Event::ProjectSaveFailed { .. }
+            | Event::McpDefaultsSaveFailed { .. }
             | Event::ConsolesLoaded(_)
             | Event::KeymapLoaded { .. }
             | Event::SettingsLoaded { .. }

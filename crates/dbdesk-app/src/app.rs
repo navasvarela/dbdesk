@@ -5,7 +5,7 @@ use dbdesk_core::{CatalogPath, DataSource, DataSourceId};
 use dbdesk_engine::{
     Command, EngineConfig, EngineError, EngineHandle, Event, PasswordKept, Repaint,
 };
-use dbdesk_store::{ConsoleKey, ExportFormat};
+use dbdesk_store::{ConsoleKey, ExportFormat, McpPermissions};
 use egui::{Frame, Margin, RichText, ThemePreference};
 use egui_dock::{DockArea, DockState};
 
@@ -25,6 +25,7 @@ use crate::import_dialog::{ImportAction, ImportDialog};
 use crate::keymap::{self, Keymap};
 use crate::keymap_window::{self, KeymapWindowAction};
 use crate::log_console::{LogConsole, LogFeed};
+use crate::mcp_settings::McpDefaultsEditor;
 use crate::password_prompt::{PasswordPrompt, PromptAction};
 use crate::project_dialog::{
     DeleteProjectChoice, DeleteProjectConfirmation, ProjectDialogAction, ProjectNameDialog,
@@ -58,6 +59,8 @@ pub struct DbDeskApp {
     delete_confirmation: Option<DeleteConfirmation>,
     project_dialog: Option<ProjectNameDialog>,
     project_settings: Option<ProjectSettingsDialog>,
+    /// View › Settings › MCP's draft, kept while the window is closed.
+    mcp_defaults: McpDefaultsEditor,
     delete_project_confirmation: Option<DeleteProjectConfirmation>,
     definition_window: Option<DefinitionWindow>,
     history_window: Option<HistoryWindow>,
@@ -117,6 +120,7 @@ impl DbDeskApp {
             delete_confirmation: None,
             project_dialog: None,
             project_settings: None,
+            mcp_defaults: McpDefaultsEditor::new(&McpPermissions::default()),
             delete_project_confirmation: None,
             definition_window: None,
             history_window: None,
@@ -173,6 +177,12 @@ impl DbDeskApp {
 
     fn apply(&mut self, event: &Event) {
         self.state.apply(event);
+        match event {
+            Event::ProjectsLoaded(projects) => self.mcp_defaults.follow(&projects.mcp_defaults),
+            Event::McpDefaultsSaved(defaults) => self.mcp_defaults.follow(defaults),
+            Event::McpDefaultsSaveFailed { error } => self.mcp_defaults.failed(error),
+            _ => {}
+        }
         if self
             .data_source_dialog
             .as_mut()
@@ -825,7 +835,10 @@ impl DbDeskApp {
         if !self.settings.window_open {
             return;
         }
-        match settings_window::show(ctx, &self.settings) {
+        match settings_window::show(ctx, &self.settings, &mut self.mcp_defaults) {
+            Some(SettingsWindowAction::SaveMcpDefaults(defaults)) => {
+                self.send(Command::SaveMcpDefaults(defaults));
+            }
             Some(SettingsWindowAction::Save(settings)) => {
                 self.settings.set(settings.clone());
                 self.send(Command::SaveSettings(settings));
@@ -1577,6 +1590,95 @@ mod tests {
         step_until(&mut harness, "the reset being saved", |_| {
             saved_project(dir.path()).mcp.write.is_none()
         });
+    }
+
+    #[test]
+    fn saves_the_mcp_defaults_from_the_settings_window() {
+        let dir = tempfile::tempdir().unwrap();
+        save_shop(dir.path(), "CREATE TABLE orders (id INTEGER PRIMARY KEY)");
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "Expand shop");
+
+        harness.get_by_label("View").click();
+        harness.run();
+        harness.get_by_label("Settings…").click();
+        harness.run();
+        harness.get_by_label("Schema").click();
+        harness.run();
+        harness.get_by_label("Only").click();
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::TextInput, "Allowed schemas")
+            .focus();
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::TextInput, "Allowed schemas")
+            .type_text("public, reports");
+        harness.run();
+        harness.get_by_label("Save MCP defaults").click();
+        step_until(&mut harness, "the defaults being saved", |_| {
+            ProjectFile::new(dir.path().join("projects.toml"))
+                .load()
+                .is_ok_and(|projects| projects.mcp_defaults.schema)
+        });
+        let defaults = ProjectFile::new(dir.path().join("projects.toml"))
+            .load()
+            .unwrap()
+            .mcp_defaults;
+        assert_eq!(
+            defaults.schemas,
+            dbdesk_store::SchemaScope::Only(vec!["public".to_owned(), "reports".to_owned()])
+        );
+        assert!(defaults.read && !defaults.write, "only what was changed");
+    }
+
+    #[test]
+    fn copies_a_projects_mcp_configuration() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut shop = save_shop(dir.path(), "CREATE TABLE orders (id INTEGER PRIMARY KEY)");
+        let project = dbdesk_store::Project::new(
+            dbdesk_core::ProjectId::generate(),
+            "Shop EU".to_owned(),
+            dbdesk_store::ProjectSlug::from_name("Shop EU"),
+        );
+        ProjectFile::new(dir.path().join("projects.toml"))
+            .save(&dbdesk_store::Projects {
+                projects: vec![project.clone()],
+                ..dbdesk_store::Projects::default()
+            })
+            .unwrap();
+        shop.project = Some(project.id);
+        DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .save(&[shop])
+            .unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "Collapse Shop EU");
+
+        harness.get_by_label("Shop EU").click_secondary();
+        harness.run();
+        harness.get_by_label("Copy MCP configuration").click();
+        harness.step();
+
+        let copied = harness
+            .output()
+            .platform_output
+            .commands
+            .iter()
+            .find_map(|command| match command {
+                egui::OutputCommand::CopyText(text) => Some(text.clone()),
+                _ => None,
+            })
+            .expect("the configuration is copied");
+        let parsed: serde_json::Value = serde_json::from_str(&copied).unwrap();
+        let entry = &parsed["mcpServers"]["dbdesk-shop-eu"];
+        assert_eq!(
+            entry["args"],
+            serde_json::json!(["mcp", "--project", "shop-eu"])
+        );
+        let command = std::path::PathBuf::from(entry["command"].as_str().unwrap());
+        assert!(command.is_absolute(), "{copied}");
     }
 
     #[test]

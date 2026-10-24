@@ -136,6 +136,20 @@ impl Engine {
                 let result = self.projects.save_mcp(id, mcp_enabled, overrides).await;
                 self.report_project(id, result);
             }
+            Command::SaveMcpDefaults(defaults) => {
+                let event = match self.projects.save_mcp_defaults(defaults).await {
+                    Ok(defaults) => {
+                        tracing::info!("saved the MCP defaults");
+                        Event::McpDefaultsSaved(defaults)
+                    }
+                    Err(error) => {
+                        let error = describe_error(&error);
+                        tracing::error!("could not save the MCP defaults: {error}");
+                        Event::McpDefaultsSaveFailed { error }
+                    }
+                };
+                self.events.send(event);
+            }
             Command::SaveMcpPassword { id, password } => self.save_mcp_password(id, password).await,
             Command::DeleteProject(id) => self.delete_project(id).await,
             Command::MoveToProject {

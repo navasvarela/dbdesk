@@ -24,6 +24,7 @@ mod keymap;
 mod keymap_window;
 mod log_console;
 mod mcp;
+mod mcp_client_config;
 mod mcp_settings;
 mod password_prompt;
 mod project_dialog;

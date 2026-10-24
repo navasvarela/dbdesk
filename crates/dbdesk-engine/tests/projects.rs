@@ -12,7 +12,8 @@ use common::{MemorySecrets, TestEngine, sqlite_data_source};
 use dbdesk_core::{DataSource, DataSourceId, Password, ProjectId};
 use dbdesk_engine::{Command, Event, PasswordUpdate};
 use dbdesk_store::{
-    DataSourceFile, KeymapBindings, McpOverrides, Project, ProjectFile, SchemaScope, Settings,
+    DataSourceFile, KeymapBindings, McpOverrides, McpPermissions, Project, ProjectFile,
+    SchemaScope, Settings,
 };
 
 fn save(engine: &mut TestEngine, data_source: &DataSource) {
@@ -202,7 +203,7 @@ fn never_overwrites_an_unreadable_projects_file() {
 }
 
 #[test]
-fn saves_a_projects_mcp_settings_and_an_mcp_logins_password() {
+fn saves_mcp_settings_defaults_and_an_mcp_logins_password() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("data_sources.toml");
     let secrets = Arc::new(MemorySecrets::default());
@@ -229,6 +230,16 @@ fn saves_a_projects_mcp_settings_and_an_mcp_logins_password() {
         vec![saved.clone()]
     );
     assert_eq!(saved.slug, project.slug, "the slug never changes");
+
+    let defaults = McpPermissions {
+        schema: true,
+        ..McpPermissions::default()
+    };
+    engine.send(Command::SaveMcpDefaults(defaults.clone()));
+    engine.expect(Event::McpDefaultsSaved(defaults.clone()));
+    let file = projects_file(dir.path()).load().unwrap();
+    assert_eq!(file.mcp_defaults, defaults);
+    assert_eq!(file.projects, vec![saved], "the projects are untouched");
 
     let id = DataSourceId::generate();
     engine.send(Command::SaveMcpPassword {

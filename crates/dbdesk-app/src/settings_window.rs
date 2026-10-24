@@ -1,26 +1,39 @@
 //! View → Settings: how SQL is formatted, what the console checks while typing, and whether
-//! to look for updates. Each change is saved to `settings.toml` at once.
+//! to look for updates, each change saved to `settings.toml` at once; and the MCP defaults,
+//! saved to `projects.toml` with their own button.
 
 use dbdesk_sql::LintRule;
-use dbdesk_store::{KeywordCase, Settings};
+use dbdesk_store::{KeywordCase, McpPermissions, Settings};
 use egui::{Grid, RichText, Window};
 
+use crate::mcp_settings::McpDefaultsEditor;
 use crate::settings::{AppSettings, INDENT_WIDTHS};
 
 pub enum SettingsWindowAction {
     /// Write these settings to the file.
     Save(Settings),
+    /// Write these MCP defaults to `projects.toml`.
+    SaveMcpDefaults(McpPermissions),
     Reload,
     Close,
 }
 
-pub fn show(ctx: &egui::Context, settings: &AppSettings) -> Option<SettingsWindowAction> {
+pub fn show(
+    ctx: &egui::Context,
+    settings: &AppSettings,
+    mcp: &mut McpDefaultsEditor,
+) -> Option<SettingsWindowAction> {
     let mut open = true;
     let action = Window::new("Settings")
         .id(egui::Id::new("settings_window"))
         .open(&mut open)
         .resizable(false)
-        .show(ctx, |ui| contents(ui, settings))
+        .show(ctx, |ui| {
+            let action = contents(ui, settings);
+            ui.separator();
+            ui.strong("MCP");
+            action.or_else(|| mcp.show(ui).map(SettingsWindowAction::SaveMcpDefaults))
+        })
         .and_then(|response| response.inner.flatten());
     if open {
         action
