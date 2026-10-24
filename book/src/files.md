@@ -68,6 +68,9 @@ read_only = true
 - `color` is optional: `red`, `orange`, `yellow`, `green`, `teal`, `blue`, `violet` or `pink`.
 - `project` is optional: the `id` of a project in `projects.toml`. Left out, or naming a project
   that doesn't exist, the data source is in **No project**.
+- `mcp_login` is optional, for network engines: `mcp_login = { user = "assistant" }` is the
+  user AI assistants sign in as (see [The MCP login](mcp.md#the-mcp-login)). Its password is
+  in the keychain.
 - `tls` is optional for PostgreSQL, and `mode` defaults to `prefer`: `disable`, `prefer`,
   `require` or `verify-full`. `ca_file` is only read with `verify-full`.
 - `read_only` is optional and defaults to `false`. It opens a SQLite file read-only; `safety`
@@ -99,23 +102,29 @@ schema = false
 admin = false
 max_rows = 500
 statement_timeout = "30s"
+schemas = "all"
 
 [[project]]
 id = "5b0c7d1e-2f3a-4b5c-8d6e-7f8091a2b3c4"
 name = "Web shop"
 slug = "web-shop"
-mcp_enabled = false
+mcp_enabled = true
+
+[project.mcp]
+write = true
+schemas = ["public"]
 ```
 
 - `id` is what data sources point at. Don't change it.
 - `slug` is lower-case letters, digits and single hyphens, and must be unique. It is kept when
   the project is renamed.
-- `mcp_enabled` lets an AI assistant read the project's databases through `dbdesk mcp`; see
+- `mcp_enabled` lets AI assistants use the project's databases through `dbdesk mcp`; see
   [Connecting an AI assistant](mcp.md). A new project starts with it `false`.
 - `mcp_defaults` sets what MCP clients may do in every project, and a `[project.mcp]` table
-  under a project overrides it for that project. For now only reading is possible, so `write`,
-  `schema` and `admin` are ignored; `max_rows` and `statement_timeout` (such as `"30s"` or
-  `"2m"`) limit each call.
+  under a project overrides it for that project. `read`, `write`, `schema` and `admin` are the
+  [permissions](mcp.md#permissions); `max_rows` and `statement_timeout` (such as `"30s"` or
+  `"2m"`) limit each call; `schemas` is `"all"` or a list such as `["public", "reports"]`.
+  Project settings and View › Settings › MCP edit all of these.
 
 Unknown keys are refused rather than ignored, so a setting that is misspelt, or one written by a
 newer dbdesk, never goes unnoticed. If the file can't be read, the explorer lists every data

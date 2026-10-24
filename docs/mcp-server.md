@@ -1,7 +1,7 @@
 # MCP server
 
-Status: **P0 (projects), MCP1 (the read-only server) and MCP2 (permissions) built**; MCP3 is
-next.
+Status: **built**: P0 (projects), MCP1 (the read-only server), MCP2 (permissions) and MCP3
+(in the app). What remains is under Later.
 Proposed on 2026-10-24.
 
 The [Model Context Protocol](https://modelcontextprotocol.io) (MCP) lets AI assistants and
@@ -264,6 +264,24 @@ permissions with their fallback to the defaults. Also the separate MCP login per
 
 **Exit:** starting from a fresh install, I set up an MCP client for a project using only the
 app and the manual.
+
+**As built** (2026-10-24):
+- **Project settings…** on a project header holds the MCP switch and every permission and
+  limit. Each starts at the default, and once changed shows **Reset**. It warns when write,
+  schema or admin is on and a data source that signs in with a password has no MCP login. It
+  also notes that SQLite files have no logins, and that SQL Server isn't served yet.
+- The data source dialog has **MCP login** and **MCP password** for network engines. Clearing
+  the login also removes its keychain entry.
+- **View › Settings… › MCP** edits `[mcp_defaults]`. Unlike the rest of the window, it has its
+  own Save button, so a limit typed digit by digit doesn't rewrite `projects.toml` at each
+  keystroke.
+- **Copy MCP configuration** uses `std::env::current_exe` with symbolic links resolved: inside
+  the `.app` bundle on macOS, the installed `.exe` on Windows. On Linux it uses `$APPIMAGE`
+  when set, because the running executable sits in the AppImage's temporary mount.
+- The History window marks MCP statements and filters by source. The search became a
+  `HistoryQuery` (data source, text, source), carried by the engine's command and event.
+- The manual's "Connecting an AI assistant" chapter covers the setup, the permissions and how
+  they are enforced, the MCP login with an example role, and where query results go.
 
 ## Later
 
