@@ -18,6 +18,7 @@ Every kind has:
 - **Colour** — optional. The colour tints the data source's row in the explorer, the tabs of its
   consoles and a band along the top of each console. Giving production a red and your local copy
   nothing makes it hard to run something in the wrong place.
+- **Safety** — how careful dbdesk is with the data. See [Safety levels](#safety-levels).
 
 **PostgreSQL** adds:
 
@@ -152,6 +153,34 @@ isn't a number, show a message under the form instead. The dialog stays open unt
 gone through; if it fails, the reason is shown in the dialog.
 
 **Cancel**, **Esc** or a click outside the dialog closes it without saving.
+
+## Safety levels
+
+A colour only marks a data source. Its **safety level** decides what its consoles may change:
+
+| Level | What happens |
+| --- | --- |
+| **Normal** | Changes run when asked. Only an `UPDATE` or `DELETE` without `WHERE` asks first (see [Query consoles](consoles.md#statements-that-change-every-row)). |
+| **Careful** | Every change asks first, naming the data source: statements that change data or the schema, and edits in the grid. New consoles start in **Manual commit** mode. |
+| **Read-only** | Changes are refused. dbdesk reads each statement before sending it and refuses anything but reading, then runs it in the database's own read-only mode, which also stops a write hidden in a function. The grid can't be edited. |
+
+![Red suggests Careful in the data source dialog](images/safety-level.png)
+
+Picking red for a data source whose level is Normal suggests **Careful**, since red usually marks
+production; **Make it careful** takes the suggestion. The level is its own setting, so a red data
+source can stay Normal, and a careful one can be any colour.
+
+Read-only uses the same checks as an AI assistant's read-only projects (see
+[Connecting an AI assistant](mcp.md)):
+
+- **PostgreSQL** runs each statement in `BEGIN READ ONLY`, **MySQL and MariaDB** in
+  `START TRANSACTION READ ONLY`, rolled back once its rows are read. **SQLite** opens the file
+  read-only.
+- **SQL Server**, **DuckDB** and **ClickHouse** have no read-only mode dbdesk uses yet:
+  statements are still checked, but a write inside a procedure or function isn't stopped. The
+  dialog says so. (A DuckDB file can also be opened with its own **Read-only** box ticked.)
+- Anything that isn't a plain read is refused, including `SET`, `BEGIN` and statements dbdesk
+  can't parse, since what they do can't be told.
 
 ## Placeholders: `${VARIABLE}`
 

@@ -44,7 +44,8 @@ Follow-ups left out of M1:
 - ~~A file picker for SQLite paths.~~ Done: **Browse…** and **New…** (create an empty database).
 - ~~Prompting for a password when none is saved or the keychain is unavailable.~~ Done in W1.
 - Noticing when an established connection drops (the session still shows "connected").
-- Duplicate data source; colour and safety level per data source.
+- Duplicate data source; ~~colour and safety level per data source~~ (colour in M4, safety
+  levels in W2).
 - Preserving comments in `data_sources.toml` (`toml_edit`).
 
 ## M2 — Connection explorer
@@ -495,6 +496,21 @@ The gaps that keep dbdesk from being an everyday tool. The full plan is in
   import preview.
 - **W2 — Safety per data source:** Normal, Careful (confirm every change) and Read-only
   (enforced as for MCP).
+
+  **W2 demo note:** built. In the data source dialog, pick **Red** and it suggests **Careful**
+  (**Make it careful**); the level is saved as `safety = "careful"` and travels in exports. Open
+  a console on it: the toolbar shows **Careful**, the console starts in **Manual commit**, and
+  an `UPDATE` asks *Run on "production"?* first; editing a cell and pressing **Submit** asks
+  *Apply edits to "production"?*. Make it **Read-only**: an `INSERT` or `CREATE TABLE` is
+  refused before it is sent (*Refused: this statement changes data, and "production" is
+  read-only.*), `SELECT f()` on a PostgreSQL function that inserts fails with the database's
+  read-only transaction error, rows still page in 500s, and the grid isn't editable. The
+  statement check and the read-only modes moved from `dbdesk-mcp` to `dbdesk_engine::read_only`,
+  which the MCP server and consoles now share. SQL Server, DuckDB and ClickHouse have no
+  read-only mode dbdesk uses yet, so only the check applies there, and the dialog says so. Covered by engine tests (SQLite refusals and
+  edits; PostgreSQL `INSERT`, `CREATE TABLE`, a write inside a function, and paging inside the
+  read-only transaction), the read-only module's tests, hazard dialog tests, and kittest tests
+  of a careful grid edit, a read-only refusal and red suggesting Careful.
 - **W3 — Connections you can rely on:** SSH tunnels with `russh`, and noticing and reconnecting
   dropped connections.
 - **W4 — History as an audit trail:**

@@ -29,6 +29,10 @@ dbdesk/
   the error. A broken file is never overwritten with an empty list.
 - `color` is optional (one of `red`, `orange`, `yellow`, `green`, `teal`, `blue`, `violet`,
   `pink`) and only written when set, so files from before it existed load unchanged.
+- `safety` is optional (`normal`, `careful` or `read-only`) and only written when it isn't
+  `normal` (W2). Exports carry it.
+- `host`, `port`, `database`, `user`, `path` and `ca_file` may hold `${NAME}` placeholders,
+  resolved when connecting; a port with one is written as a string (W1).
 - Comments and unknown fields are **not** preserved when dbdesk rewrites the file (it is written
   with `serde` + `toml`), and the file header says so. Switching to `toml_edit` to edit the
   document in place is a follow-up if hand-editing becomes common.
