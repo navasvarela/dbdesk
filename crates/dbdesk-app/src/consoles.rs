@@ -6,12 +6,12 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use dbdesk_core::{CatalogPath, DataSource, DataSourceId};
-use dbdesk_engine::{Command, ConsoleId, Event, RunId, TransactionMode};
+use dbdesk_engine::{Command, ConsoleId, Event, RunId, RunPurpose, TransactionMode};
 use dbdesk_sql::{Dialect, FormatOptions};
 use dbdesk_store::{ConsoleKey, ConsoleName, ExportFormat};
 
 use crate::console::{
-    ConsoleAction, FormatScope, QueryConsole, RecentCompletions, RunScope, SubmittedStatement,
+    ConsoleAction, FormatScope, QueryConsole, RecentCompletions, RunScope, SubmittedRun,
 };
 use crate::hazard_dialog::{self, HazardChoice, HazardConfirmation, Review, ReviewContext};
 use crate::rollback_dialog::Closing;
@@ -126,7 +126,11 @@ impl Consoles {
         let name = path.qualified_name(quoting)?;
         let key = self.open(data_source, format!("SELECT * FROM {name};\n"));
         let statements = self.open.get(&key)?.statements_to_run(RunScope::All);
-        let command = self.start_run(&key, statements)?;
+        let run = SubmittedRun {
+            statements,
+            purpose: RunPurpose::Run,
+        };
+        let command = self.start_run(&key, run)?;
         Some((key, command))
     }
 
@@ -213,7 +217,7 @@ impl Consoles {
     pub fn handle(&mut self, key: &ConsoleKey, action: ConsoleAction) -> Option<Command> {
         let id = self.open.get(key)?.id();
         match action {
-            ConsoleAction::Run(statements) => self.submit(key, statements),
+            ConsoleAction::Run(run) => self.submit(key, run),
             ConsoleAction::FetchMore(run) => Some(Command::FetchMore { console: id, run }),
             ConsoleAction::Cancel(run) => Some(Command::Cancel { console: id, run }),
             ConsoleAction::EndTransaction(end) => {
@@ -243,15 +247,15 @@ impl Consoles {
     /// Runs the statements, unless one would change every row of a table or commit what the
     /// user may mean to roll back: then the confirmation is shown first and nothing runs
     /// until the user answers.
-    fn submit(&mut self, key: &ConsoleKey, statements: Vec<SubmittedStatement>) -> Option<Command> {
+    fn submit(&mut self, key: &ConsoleKey, run: SubmittedRun) -> Option<Command> {
         let console = self.open.get(key)?;
         let context = ReviewContext {
             dialect: console.dialect(),
             relies_on_rollback: console.transaction_mode() == TransactionMode::Manual
                 || console.has_open_transaction(),
         };
-        match hazard_dialog::review(key.clone(), statements, context) {
-            Review::Safe(statements) => self.start_run(key, statements),
+        match hazard_dialog::review(key.clone(), run, context) {
+            Review::Safe(run) => self.start_run(key, run),
             Review::NeedsConfirmation(confirmation) => {
                 self.hazard = Some(confirmation);
                 None
@@ -259,21 +263,19 @@ impl Consoles {
         }
     }
 
-    fn start_run(
-        &mut self,
-        key: &ConsoleKey,
-        statements: Vec<SubmittedStatement>,
-    ) -> Option<Command> {
+    fn start_run(&mut self, key: &ConsoleKey, submitted: SubmittedRun) -> Option<Command> {
         let console = self.open.get_mut(key)?;
         self.next_run += 1;
         let run = RunId(self.next_run);
-        console.begin_run(run, &statements);
+        console.begin_run(run, &submitted.statements);
         Some(Command::Execute {
             console: console.id(),
             data_source: console.data_source(),
             run,
             transactions: console.transaction_mode(),
-            statements: statements
+            purpose: submitted.purpose,
+            statements: submitted
+                .statements
                 .into_iter()
                 .map(|statement| statement.sql)
                 .collect(),
@@ -284,9 +286,7 @@ impl Consoles {
         let choice = self.hazard.as_ref()?.show(ctx)?;
         let confirmation = self.hazard.take()?;
         match choice {
-            HazardChoice::RunAnyway => {
-                self.start_run(&confirmation.console, confirmation.statements)
-            }
+            HazardChoice::RunAnyway => self.start_run(&confirmation.console, confirmation.run),
             HazardChoice::Cancel => None,
         }
     }
@@ -308,6 +308,7 @@ mod tests {
     use dbdesk_store::SavedConsole;
 
     use super::*;
+    use crate::console::SubmittedStatement;
 
     fn data_source(name: &str) -> DataSource {
         DataSource {
@@ -322,8 +323,8 @@ mod tests {
     }
 
     fn run(statements: &[&str]) -> ConsoleAction {
-        ConsoleAction::Run(
-            statements
+        ConsoleAction::Run(SubmittedRun {
+            statements: statements
                 .iter()
                 .map(|sql| SubmittedStatement {
                     sql: (*sql).to_owned(),
@@ -331,7 +332,8 @@ mod tests {
                     prefix_len: 0,
                 })
                 .collect(),
-        )
+            purpose: RunPurpose::Run,
+        })
     }
 
     fn named(data_source: &DataSource, name: &str) -> ConsoleKey {
