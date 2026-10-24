@@ -3,7 +3,7 @@
 use dbdesk_core::{DataSource, DriverKind, ProjectId};
 use dbdesk_engine::Event;
 use dbdesk_store::{McpOverrides, McpPermissions, Project, ProjectSlug};
-use egui::{Align, Button, Id, Layout, Modal, RichText, Ui};
+use egui::{Align, Button, Id, Label, Layout, Modal, RichText, Ui};
 
 use crate::icons;
 use crate::mcp_settings::{self, SchemasField};
@@ -157,17 +157,17 @@ fn warnings(ui: &mut Ui, permissions: &McpPermissions, members: &[&DataSource]) 
         .map(|data_source| data_source.name.as_str())
         .collect();
     if changes && !without_login.is_empty() {
-        widgets::status(
-            ui,
-            icons::WARNING,
-            palette.warning,
-            &format!(
-                "No MCP login on {}. Beyond reading, dbdesk's own checks can be fooled (a \
-                 function can do anything), so only a dedicated login's grants are airtight. \
-                 Set one in the data source's settings.",
-                without_login.join(", ")
-            ),
+        let text = format!(
+            "No MCP login on {}. Beyond reading, dbdesk's own checks can be fooled (a function \
+             can do anything), so only a dedicated login's grants are airtight. Set one in the \
+             data source's settings.",
+            without_login.join(", ")
         );
+        // A plain status line doesn't wrap, and this one is long enough to widen the dialog.
+        ui.horizontal_top(|ui| {
+            ui.label(widgets::glyph(icons::WARNING).color(palette.warning));
+            ui.add(Label::new(RichText::new(text).color(palette.warning)).wrap());
+        });
     }
     let has_sqlite = members
         .iter()
