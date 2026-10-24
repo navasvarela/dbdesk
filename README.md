@@ -88,12 +88,13 @@ UI: **egui** (via `eframe`) with **egui_dock** for dockable panels.
 | [Testing](docs/testing.md) | Driver conformance suite, UI testing strategy, screenshots, the manual's build |
 | [Brand](docs/brand.md) | The logo, its files, and the colour palette |
 | [Look and feel](docs/features/look-and-feel.md) | Themes, panels, fonts, icons, data source colours |
-| [Roadmap](docs/roadmap.md) | Milestones M0–M5, and the release (R1–R3), database (DB0–DB5), object helpers (E0–E4), MCP (P0, MCP1–MCP3), hackability (H1–H3) and design and documentation (D1–D4) tracks, with exit criteria |
+| [Roadmap](docs/roadmap.md) | Milestones M0–M5, and the release (R1–R3), database (DB0–DB5), object helpers (E0–E4), MCP (P0, MCP1–MCP3), hackability (H1–H3), well-rounded (W1–W6) and design and documentation (D1–D4) tracks, with exit criteria |
 | [Releasing](docs/releasing.md) | Plan for downloadable builds: packaging, signing, the release workflow (proposed) |
 | [More databases](docs/databases.md) | Which engines come next (MySQL/MariaDB, SQL Server, DuckDB, ClickHouse, Oracle later) and what each needs (proposed) |
 | [Creating and changing database objects](docs/entity-helpers.md) | Dialogs for tables, views and users that show the SQL before running it (proposed) |
 | [MCP server](docs/mcp-server.md) | Projects of data sources, and an MCP server with permissions per project and global defaults (proposed) |
 | [Hackability](docs/hackability.md) | Custom actions, snippets and themes in files, command actions, then WebAssembly plugins (proposed) |
+| [A well-rounded app](docs/well-rounded.md) | Portable configuration, safety levels, SSH and reconnection, history as an audit trail, grid and file features (proposed) |
 | [Contributing](CONTRIBUTING.md) | How commits, branches and pull requests are named |
 | [ADRs](docs/adr/README.md) | Architecture decision records |
 

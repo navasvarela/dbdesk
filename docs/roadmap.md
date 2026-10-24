@@ -399,6 +399,30 @@ Customisation without rebuilding dbdesk, from files to commands to plugins. The 
 - **H3 — WebAssembly plugins (later):** sandboxed and capability-based, over the same extension
   points, started once at least three real needs outgrow H1 and H2.
 
+## Well-rounded track
+
+The gaps that keep dbdesk from being an everyday tool. The full plan is in
+[A well-rounded app](well-rounded.md).
+
+- **W1 — Portable configuration:**
+  - export and import data sources and projects, with no secrets, and a preview that matches
+    entries by id;
+  - paths that travel, and `${VARIABLE}` placeholders;
+  - a password prompt on first connect.
+- **W2 — Safety per data source:** Normal, Careful (confirm every change) and Read-only
+  (enforced as for MCP).
+- **W3 — Connections you can rely on:** SSH tunnels with `russh`, and noticing and reconnecting
+  dropped connections.
+- **W4 — History as an audit trail:**
+  - where each statement came from, and grid edits with the values they replaced;
+  - retention, a search across data sources, and export.
+- **W5 — Power in the grid:**
+  - insert and delete rows, and follow foreign keys;
+  - sort and filter in the database;
+  - export every row, and import a CSV.
+- **W6 — Files and parameters:** open and save `.sql` files, `:name` parameters, find and
+  replace.
+
 ## Design and documentation track
 
 Runs alongside the feature milestones rather than after them: each item is usable on its own.
