@@ -27,6 +27,8 @@ pub fn show(
     let action = Window::new("Settings")
         .id(egui::Id::new("settings_window"))
         .open(&mut open)
+        // The MCP section made the window taller than a small screen.
+        .vscroll(true)
         .resizable(false)
         .show(ctx, |ui| {
             let action = contents(ui, settings);
