@@ -1,12 +1,16 @@
 //! How SQL that dbdesk writes itself quotes identifiers and strings, which differs between
-//! dialects: MySQL reads `"x"` as a string and `\` inside a string as an escape.
+//! dialects: MySQL reads `"x"` as a string and `\` inside a string as an escape, and SQL
+//! Server reads `"x"` as an identifier only while the session's `QUOTED_IDENTIFIER` is on.
 
 /// The quoting rules of one dialect, for generated SQL. `dbdesk-sql`'s `Dialect::quoting`
 /// says which applies to a data source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Quoting {
-    /// Opens and closes a quoted identifier; doubled inside one to stand for itself.
-    pub identifier_quote: char,
+    /// Opens a quoted identifier.
+    pub identifier_open: char,
+    /// Closes a quoted identifier; doubled inside one to stand for itself. The same as
+    /// `identifier_open` except for SQL Server's `[brackets]`.
+    pub identifier_close: char,
     /// Whether a backslash inside a string literal escapes the next character, so a literal
     /// backslash has to be written twice.
     pub backslash_escapes: bool,
@@ -15,16 +19,17 @@ pub struct Quoting {
 impl Quoting {
     /// Standard SQL, as PostgreSQL and SQLite read it: `"identifier"`, `'it''s'`.
     pub const STANDARD: Self = Self {
-        identifier_quote: '"',
+        identifier_open: '"',
+        identifier_close: '"',
         backslash_escapes: false,
     };
 
     /// Quotes `name` even where it needs no quoting, as generated statements must not depend
     /// on whether a name happens to be a keyword.
     pub fn identifier(self, name: &str) -> String {
-        let quote = self.identifier_quote;
-        let doubled = format!("{quote}{quote}");
-        format!("{quote}{}{quote}", name.replace(quote, &doubled))
+        let (open, close) = (self.identifier_open, self.identifier_close);
+        let doubled = format!("{close}{close}");
+        format!("{open}{}{close}", name.replace(close, &doubled))
     }
 
     /// Quotes `name` unless it is a plain lowercase identifier, which reads the same quoted or
@@ -59,8 +64,15 @@ mod tests {
     use super::*;
 
     const BACKTICKS: Quoting = Quoting {
-        identifier_quote: '`',
+        identifier_open: '`',
+        identifier_close: '`',
         backslash_escapes: true,
+    };
+
+    const BRACKETS: Quoting = Quoting {
+        identifier_open: '[',
+        identifier_close: ']',
+        backslash_escapes: false,
     };
 
     #[test]
@@ -76,6 +88,8 @@ mod tests {
             (BACKTICKS, "order`s", "`order``s`", "`order``s`"),
             (BACKTICKS, "Users", "`Users`", "`Users`"),
             (BACKTICKS, "users_2", "`users_2`", "users_2"),
+            (BRACKETS, "a]b[c", "[a]]b[c]", "[a]]b[c]"),
+            (BRACKETS, "order", "[order]", "order"),
         ];
         for (quoting, name, always, if_needed) in cases {
             assert_eq!(quoting.identifier(name), always, "{name}");
