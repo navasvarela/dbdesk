@@ -344,7 +344,7 @@ arriving, engine tests of grid edits and explain, lexer, splitter, syntax-check 
 corpora for the dialect, and a UI test that adds a SQL Server data source. Not tried: connecting
 to Azure SQL, for want of an account.
 
-**DB3 demo note:** built in #49, #52 and #DB3_CONSOLE_PR, as a native stack. **+** → **DuckDB**
+**DB3 demo note:** built in #49, #52 and #55, as a native stack. **+** → **DuckDB**
 opens a form with **File** (with **Browse…**, **New…** and **Read-only**, as for SQLite) or **In
 memory**; **Test connection** says "Connected to DuckDB 1.5.6", and nothing is installed:
 DuckDB is compiled into dbdesk. In an in-memory data source, `SELECT * FROM
