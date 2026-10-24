@@ -13,11 +13,12 @@ dbdesk keeps everything in one folder per platform:
 | `data_sources.toml` (settings folder) | Your data sources. No passwords. |
 | `projects.toml` (settings folder) | Your projects. Which project a data source is in is written in `data_sources.toml`. |
 | `consoles/<data source id>/*.sql` (settings folder) | Your query consoles, one file each. See [Query consoles](consoles.md#consoles-are-saved). |
-| `history.sqlite` (settings folder) | Every statement your consoles ran, with its time, duration and outcome. |
+| `history.sqlite` (settings folder) | Every statement your consoles and MCP clients ran, with its time, duration and outcome. |
 | `keymap.toml` (settings folder) | Your shortcuts, if you changed any. See [Keyboard shortcuts](shortcuts.md#changing-them). |
 | `settings.toml` (settings folder) | Your choices in **View → Settings…**, such as how SQL is formatted and whether to check for updates. |
 | `app.ron` (window state folder) | The window's size and position, the panel layout, the theme you picked. |
 | `logs/dbdesk.YYYY-MM-DD.log` (window state folder) | One log file per day. The last seven are kept. |
+| `logs/dbdesk-mcp.YYYY-MM-DD.log` (window state folder) | The same for `dbdesk mcp`, the server AI assistants use. |
 
 Passwords are not in any of these files: they are in your system's keychain, under the service
 name `dbdesk`. See [Data sources](data-sources.md#passwords-and-the-keychain).
@@ -98,9 +99,12 @@ mcp_enabled = false
 - `id` is what data sources point at. Don't change it.
 - `slug` is lower-case letters, digits and single hyphens, and must be unique. It is kept when
   the project is renamed.
-- `mcp_defaults` and `mcp_enabled` are for the coming MCP server, which lets AI assistants read
-  a project's databases. Nothing uses them yet, and a new project starts with `mcp_enabled =
-  false`. A `[project.mcp]` table under a project overrides the defaults for that project.
+- `mcp_enabled` lets an AI assistant read the project's databases through `dbdesk mcp`; see
+  [Connecting an AI assistant](mcp.md). A new project starts with it `false`.
+- `mcp_defaults` sets what MCP clients may do in every project, and a `[project.mcp]` table
+  under a project overrides it for that project. For now only reading is possible, so `write`,
+  `schema` and `admin` are ignored; `max_rows` and `statement_timeout` (such as `"30s"` or
+  `"2m"`) limit each call.
 
 Unknown keys are refused rather than ignored, so a setting that is misspelt, or one written by a
 newer dbdesk, never goes unnoticed. If the file can't be read, the explorer lists every data

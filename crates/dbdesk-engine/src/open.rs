@@ -19,7 +19,7 @@ use crate::{Event, PasswordUpdate};
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum OpenError {
+pub enum OpenError {
     #[error("could not read the saved password")]
     Password(#[source] SecretError),
     #[error(transparent)]
@@ -62,6 +62,22 @@ async fn resolve_password(
                 .map_err(OpenError::Password)
         }
     }
+}
+
+/// Opens a connection to a saved data source with its saved password, if it needs one.
+///
+/// For other front ends than the app's UI, such as `dbdesk mcp`, so every way in connects
+/// through the same drivers, keychain and timeout.
+///
+/// # Errors
+///
+/// [`OpenError`] if the password can't be read, the driver fails, or connecting takes longer
+/// than the connect timeout.
+pub async fn open_data_source(
+    data_source: &DataSource,
+    secrets: &Arc<dyn SecretStore>,
+) -> Result<Box<dyn Connection>, OpenError> {
+    open(data_source, secrets, &PasswordUpdate::Keep).await
 }
 
 /// The one place that maps a configuration to its driver.

@@ -8,7 +8,7 @@
 use std::time::{Duration, Instant};
 
 use dbdesk_core::{CancelHandle, DriverError, ResultCursor, describe_error};
-use dbdesk_store::{HistoryEntry, HistoryOutcome};
+use dbdesk_store::{HistoryEntry, HistoryOutcome, HistorySource};
 use jiff::Timestamp;
 
 use dbdesk_sql::{ExplainSetting, controls_transactions};
@@ -373,7 +373,9 @@ fn report_failure(
     let (message, position) = match error {
         // The outer "the statement failed" adds nothing in a console that shows the result
         // of each statement; the database's own message is what matters.
-        DriverError::Statement { source, position } => (describe_error(source.as_ref()), *position),
+        DriverError::Statement {
+            source, position, ..
+        } => (describe_error(source.as_ref()), *position),
         other => (describe_error(other), None),
     };
     tracing::warn!(data_source = %context.name(), "statement {} failed: {message}", statement.index + 1);
@@ -404,6 +406,7 @@ fn history_entry(
         duration: Some(elapsed),
         rows,
         outcome,
+        source: HistorySource::App,
     }
 }
 

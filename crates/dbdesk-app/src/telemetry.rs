@@ -16,6 +16,10 @@ use crate::log_console::{self, LogFeed};
 /// Daily log files kept before the oldest is deleted.
 const MAX_LOG_FILES: usize = 7;
 
+const APP_LOG_PREFIX: &str = "dbdesk";
+/// Its own files, so a server running beside the app never interleaves lines with it.
+const MCP_LOG_PREFIX: &str = "dbdesk-mcp";
+
 pub struct Telemetry {
     pub log_feed: LogFeed,
     /// Flushes the file log when dropped, so it must live until the app exits.
@@ -30,7 +34,7 @@ pub struct Telemetry {
 /// Must be called on the thread that will run the UI (see `log_console::pipeline`).
 pub fn init(logs_dir: &Path) -> anyhow::Result<Telemetry> {
     let (console_layer, log_feed) = log_console::pipeline();
-    let (file_writer, file_guard) = match open_log_files(logs_dir) {
+    let (file_writer, file_guard) = match open_log_files(logs_dir, APP_LOG_PREFIX) {
         Ok((writer, guard)) => (Some(writer), Ok(guard)),
         Err(error) => (None, Err(error)),
     };
@@ -55,6 +59,38 @@ pub fn init(logs_dir: &Path) -> anyhow::Result<Telemetry> {
         log_feed,
         file_guard,
     })
+}
+
+/// Installs the global `tracing` subscriber for `dbdesk mcp`, which has no window: everything
+/// goes to standard error, which MCP clients keep in their own logs, and to daily
+/// `dbdesk-mcp` files beside the app's. Never to standard output, which carries the protocol.
+///
+/// Returns the guard that flushes the file log, which must live until the server stops, or
+/// `None` when file logging is unavailable (the reason is logged).
+pub fn init_headless(logs_dir: &Path) -> anyhow::Result<Option<WorkerGuard>> {
+    let (file_writer, file_guard) = match open_log_files(logs_dir, MCP_LOG_PREFIX) {
+        Ok((writer, guard)) => (Some(writer), Ok(guard)),
+        Err(error) => (None, Err(error)),
+    };
+    let file_layer = file_writer.map(|writer| {
+        fmt::layer()
+            .with_writer(writer)
+            .with_ansi(false)
+            .with_filter(targets())
+    });
+    let stderr_layer = fmt::layer()
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .with_filter(targets());
+    tracing_subscriber::registry()
+        .with(stderr_layer)
+        .with(file_layer)
+        .try_init()
+        .context("could not install the tracing subscriber")?;
+    log_panics();
+    Ok(file_guard
+        .inspect_err(|error| tracing::warn!("file logging disabled: {error:#}"))
+        .ok())
 }
 
 /// Logs every panic as an error, then lets the default hook print it as before.
@@ -103,10 +139,10 @@ pub fn targets() -> Targets {
         .with_default(Level::WARN)
 }
 
-fn open_log_files(logs_dir: &Path) -> anyhow::Result<(NonBlocking, WorkerGuard)> {
+fn open_log_files(logs_dir: &Path, prefix: &str) -> anyhow::Result<(NonBlocking, WorkerGuard)> {
     let appender = RollingFileAppender::builder()
         .rotation(Rotation::DAILY)
-        .filename_prefix("dbdesk")
+        .filename_prefix(prefix)
         .filename_suffix("log")
         .max_log_files(MAX_LOG_FILES)
         .build(logs_dir)

@@ -1,6 +1,7 @@
 # MCP server
 
-Status: **P0 (projects) built**; the MCP server itself is not built yet. Proposed on 2026-10-24.
+Status: **P0 (projects) and MCP1 (the read-only server) built**; MCP2 and MCP3 are next.
+Proposed on 2026-10-24.
 
 The [Model Context Protocol](https://modelcontextprotocol.io) (MCP) lets AI assistants and
 coding agents call tools that an application provides. This plan gives dbdesk an MCP server, so
@@ -180,6 +181,32 @@ every permission beyond `read` is ignored. This is safe to ship first.
 - A `DELETE` hidden in a CTE is refused by the parser.
 - `SELECT` on a function that writes is refused by the database's read-only transaction.
 - Both refusals appear in the log.
+
+**As built** (2026-10-24):
+- **rmcp 3.7.0**, the official SDK under the `modelcontextprotocol` organisation, released two
+  days before this milestone. It is very actively maintained: seven minor releases in the two
+  and a half months before (3.1 to 3.7), with small API churn between them (3.7 deprecates
+  `ServerInfo` for `ServerConfig`). Only its `server`, `macros` and `transport-io` features are
+  used; the tests add `client` and `transport-child-process`. Its `schemars` dependency brings
+  `chrono` along. Nothing in it changed the plan; expect to adjust a few names on upgrades.
+- The server is the `dbdesk-mcp` crate; `dbdesk mcp --project <slug>` in the app's binary
+  parses its arguments strictly and runs it on a tokio runtime, with no window.
+- Statements are classified by `dbdesk_sql::classify`, which walks every nested statement and
+  query in `sqlparser`'s tree (its `visitor` feature), so a `DELETE` inside a `WITH`, `SELECT …
+  INTO` and `FOR UPDATE` are caught. Unknown statement types count as admin, and `EXPLAIN` of a
+  write is refused even though it wouldn't run, to keep the rule simple.
+- `DriverError::Statement` gained a `sqlstate`, which PostgreSQL and MySQL report and SQLite
+  doesn't have.
+- Projects and data sources are read once, when the server starts; restarting the server picks
+  up changes.
+- `history.sqlite` gained a `source` column (`app` or `mcp`) and switched to WAL mode with a
+  busy timeout. The migration runs in an immediate transaction, so two processes opening an
+  old file at once is safe; a test writes from two processes at the same time.
+- On PostgreSQL the time limit is also set as `SET LOCAL statement_timeout`; on every engine,
+  dbdesk's watchdog cancels through the driver.
+- SQL Server (DB2) landed during MCP1. It has no read-only transaction, so `dbdesk mcp` leaves
+  its data sources out, with a warning in the log, until its equivalent is chosen (a read-only
+  login, most likely, with MCP2's separate login).
 
 ### MCP2 — Permissions
 

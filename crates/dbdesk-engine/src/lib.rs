@@ -24,6 +24,7 @@ mod updater;
 
 pub use export::Export;
 pub use handle::{EngineConfig, EngineError, EngineHandle};
+pub use open::{OpenError, open_data_source};
 pub use protocol::{
     Command, ConsoleId, EditFailure, Event, PasswordUpdate, RunId, RunOutcome, RunPurpose,
     SessionState, StatementCheck, StatementFailure, StatementSummary, TransactionEnd,

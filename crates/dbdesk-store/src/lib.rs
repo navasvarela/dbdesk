@@ -19,7 +19,9 @@ pub use consoles::{
 };
 pub use data_sources::{DataSourceFile, StoreError};
 pub use export::{ExportError, ExportFormat, export_rows};
-pub use history::{History, HistoryEntry, HistoryError, HistoryFile, HistoryOutcome};
+pub use history::{
+    History, HistoryEntry, HistoryError, HistoryFile, HistoryOutcome, HistorySource,
+};
 pub use keymap::{KeymapBindings, KeymapError, KeymapFile};
 pub use paths::{APP_NAME, AppPaths};
 pub use projects::{

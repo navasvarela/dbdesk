@@ -12,13 +12,16 @@ const UNKNOWN_NAMES: &[u16] = &[1049, 1054, 1146, 1305];
 
 /// A failed user statement, with the byte offset of the error when the server says where.
 pub(crate) fn statement_error(error: mysql_async::Error, sql: &str) -> DriverError {
-    let position = match &error {
-        mysql_async::Error::Server(server) => position(&server.message, sql),
-        _ => None,
+    let (position, sqlstate) = match &error {
+        mysql_async::Error::Server(server) => {
+            (position(&server.message, sql), Some(server.state.clone()))
+        }
+        _ => (None, None),
     };
     DriverError::Statement {
         source: Box::new(error),
         position,
+        sqlstate,
     }
 }
 

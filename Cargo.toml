@@ -17,6 +17,7 @@ dbdesk-driver-postgres = { path = "crates/dbdesk-driver-postgres" }
 dbdesk-driver-sqlite = { path = "crates/dbdesk-driver-sqlite" }
 dbdesk-driver-sqlserver = { path = "crates/dbdesk-driver-sqlserver" }
 dbdesk-engine = { path = "crates/dbdesk-engine" }
+dbdesk-mcp = { path = "crates/dbdesk-mcp" }
 dbdesk-sql = { path = "crates/dbdesk-sql" }
 dbdesk-store = { path = "crates/dbdesk-store" }
 
@@ -54,6 +55,9 @@ keyring = "4.2.0"
 # (dbdesk-driver-mysql's tests check it).
 mysql_async = { version = "0.37.1", default-features = false, features = ["minimal-rust", "rustls-tls", "ring", "tls12"] }
 rfd = "0.17.2"
+# The official MCP SDK, for `dbdesk mcp`. Only the server side and the stdio transport; the
+# tests add the client to drive it.
+rmcp = { version = "3.7.0", default-features = false, features = ["macros", "server", "transport-io"] }
 rusqlite = { version = "0.40.2", features = ["bundled", "column_decltype"] }
 # TLS for network connections. rustls rather than OpenSSL leaves nothing to link (see
 # docs/releasing.md), and the ring provider builds with only a C compiler, where aws-lc-rs
@@ -66,7 +70,8 @@ cargo-packager-updater = "0.2.3"
 semver = "1.0.28"
 serde = { version = "1.0.229", features = ["derive"] }
 # The syntax checker's parser, for PostgreSQL and SQLite statements.
-sqlparser = "0.63.0"
+# "visitor" lets the statement classifier walk every nested statement and query.
+sqlparser = { version = "0.63.0", features = ["visitor"] }
 # `preserve_order` so the cell viewer pretty-prints JSON without sorting its keys.
 serde_json = { version = "1.0.150", features = ["preserve_order"] }
 tempfile = "3.27.0"

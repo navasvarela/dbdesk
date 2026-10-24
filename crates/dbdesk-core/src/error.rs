@@ -24,6 +24,9 @@ pub enum DriverError {
         /// Byte offset into the statement's text where the error was found, when the
         /// database reports one.
         position: Option<usize>,
+        /// The SQLSTATE the database reported, such as `42P01`, on engines that have them.
+        /// Lets a caller tell kinds of failure apart without parsing messages.
+        sqlstate: Option<String>,
     },
     /// A catalog path this driver doesn't produce, or one whose object has no definition.
     /// Points at a bug in the caller, or at a node that disappeared from the database.

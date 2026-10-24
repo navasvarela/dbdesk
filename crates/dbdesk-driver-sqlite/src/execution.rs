@@ -246,9 +246,11 @@ fn statement_error(error: rusqlite::Error) -> DriverError {
         rusqlite::Error::SqlInputError { offset, .. } => usize::try_from(*offset).ok(),
         _ => None,
     };
+    // SQLite has result codes but no SQLSTATEs.
     DriverError::Statement {
         source: Box::new(error),
         position,
+        sqlstate: None,
     }
 }
 

@@ -392,6 +392,20 @@ projects with permissions per project. The full plan is in [MCP server](mcp-serv
   - `dbdesk mcp --project <slug>` over stdio, with catalog, describe, query and explain tools;
   - read-only transactions, row and time limits, and every call logged and recorded in the
     history.
+
+  **MCP1 demo note:** built. In `projects.toml`, set `mcp_enabled = true` on a project, then add
+  `dbdesk mcp --project <slug>` to an MCP client (the manual's "Connecting an AI assistant"
+  has the JSON). The assistant gets six read-only tools: `list_data_sources`, `list_objects`,
+  `describe_table`, `get_definition`, `query` and `explain`. Ask it to describe a table and
+  query it: rows come back as text cells, at most 500, with `truncated` when there were more.
+  Ask it to run `WITH gone AS (DELETE FROM t RETURNING *) SELECT * FROM gone` and dbdesk
+  refuses it before sending; `SELECT f()` on a function that inserts is refused by the
+  database's read-only transaction (SQLSTATE 25006). Both refusals are in
+  `dbdesk-mcp.YYYY-MM-DD.log`, and every statement sent is in the query history with `source =
+  'mcp'`. Covered by the classifier's corpus per dialect, the history's two-process WAL test,
+  `dbdesk-mcp`'s stdio test (a real server process against SQLite, PostgreSQL, MySQL and
+  MariaDB), and tests of the `mcp` subcommand on the real binary.
+
 - **MCP2 — Permissions:**
   - an `execute` tool, gated by the project's `write`, `schema` and `admin` permissions, which
     fall back to global defaults that only read;

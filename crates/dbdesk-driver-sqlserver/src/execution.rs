@@ -207,6 +207,7 @@ async fn run_statement(
     let error = DriverError::Statement {
         source: Box::new(source),
         position: None,
+        sqlstate: None,
     };
     // The receivers only disappear if the cursor's caller gave up; nothing to do then.
     match report {
