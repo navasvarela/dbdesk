@@ -11,10 +11,12 @@ use dbdesk_core::{CancelHandle, DriverError, ResultCursor, describe_error};
 use dbdesk_store::{HistoryEntry, HistoryOutcome};
 use jiff::Timestamp;
 
-use dbdesk_sql::controls_transactions;
+use dbdesk_sql::{ExplainSetting, controls_transactions};
 
 use super::{Disconnected, Script, SessionContext, Worker, cancel_running_statement, transaction};
-use crate::{Event, RunId, RunOutcome, StatementFailure, StatementSummary};
+use crate::{
+    Event, RunId, RunOutcome, RunPurpose, StatementFailure, StatementSummary, TransactionMode,
+};
 
 /// Rows per page. Plenty to look at, few enough to arrive at once; other database tools
 /// default to between 200 and 1,000.
@@ -55,6 +57,62 @@ pub(super) async fn run_script(
     worker: &mut Worker<'_>,
     script: &Script,
 ) -> Result<Option<Parked>, Disconnected> {
+    let setting = match script.purpose {
+        RunPurpose::Explain => worker.context.dialect().explain_setting(),
+        RunPurpose::Run => None,
+    };
+    match setting {
+        Some(setting) => explain_with_setting(worker, script, setting).await,
+        None => run_statements(worker, script, script.transactions).await,
+    }
+}
+
+/// Explains the script's statements with the session setting switched on, in a batch of its
+/// own before them, and switches it off afterwards whatever happened, so the console's next
+/// statements run again. No transaction is opened for them: with the setting on, nothing
+/// runs.
+async fn explain_with_setting(
+    worker: &mut Worker<'_>,
+    script: &Script,
+    setting: ExplainSetting,
+) -> Result<Option<Parked>, Disconnected> {
+    let switched_on = StatementRef {
+        run: script.run,
+        index: 0,
+        sql: setting.on.to_owned(),
+        started_at: Timestamp::now(),
+    };
+    if let Err(error) = transaction::run_counting(worker, setting.on, None).await? {
+        report_failure(worker, &switched_on, Duration::ZERO, &error);
+        worker.context.send(Event::RunFinished {
+            run: script.run,
+            outcome: RunOutcome::Failed,
+            elapsed: Duration::ZERO,
+        });
+        return Ok(None);
+    }
+    let parked = run_statements(worker, script, TransactionMode::Auto).await?;
+    // The setting can only be switched off once nothing holds the connection. A plan is one
+    // row, so this only ever drops the plans of a batch's further statements.
+    if let Some(parked) = parked {
+        discard(worker.context, parked, worker.cancel_handle).await;
+    }
+    if let Err(error) = transaction::run_counting(worker, setting.off, None).await? {
+        tracing::warn!(
+            data_source = %worker.context.name(),
+            "could not switch {} off again: {}",
+            setting.on,
+            describe_error(&error)
+        );
+    }
+    Ok(None)
+}
+
+async fn run_statements(
+    worker: &mut Worker<'_>,
+    script: &Script,
+    transactions: TransactionMode,
+) -> Result<Option<Parked>, Disconnected> {
     let run = script.run;
     let started = Instant::now();
     let last = script.statements.len().saturating_sub(1);
@@ -72,9 +130,7 @@ pub(super) async fn run_script(
             sql: sql.clone(),
             started_at: Timestamp::now(),
         };
-        if let Err(error) =
-            transaction::begin_if_needed(worker, script.transactions, run, sql).await?
-        {
+        if let Err(error) = transaction::begin_if_needed(worker, transactions, run, sql).await? {
             report_failure(worker, &statement, Duration::ZERO, &error);
             outcome = RunOutcome::Failed;
             break;

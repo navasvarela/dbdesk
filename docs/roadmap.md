@@ -321,6 +321,28 @@ tests for the catalog, definitions and TLS, an engine test of grid edits in MySQ
 splitter, syntax-check and formatter corpora for the dialect, a UI test that adds a MySQL data
 source, and unit tests for the implicit-commit warning and the tree explain.
 
+**DB2 demo note:** built in #39, #42 and #44, the first milestone delivered as a
+native stack of pull requests. `docker compose up -d --wait` now also starts SQL Server 2022 (port 51433; on an
+Apple-silicon Mac it runs emulated, slowly). **+** → **SQL Server** opens the shared server form
+(`localhost:1433`, database `master`, user `sa`); **Test connection** says "Connected to SQL
+Server 16.0.…", encrypted by default. The explorer lists every database the login may open, then
+schemas, then tables, views, functions, procedures, sequences and synonyms, with columns,
+indexes, constraints and triggers under tables; **Show definition** gives the stored source of
+views, routines and triggers. Run `WAITFOR DELAY '00:01:00'` and ⌘. stops it with TDS's own
+cancel, which needs no permission; the console stays usable. Scripts split on `GO` lines, a
+procedure's body runs to the next `GO`, `[names]` and `N'…'` are single tokens, and `SELECT TOP
+(10)` formats on one line. ⌥⌘E switches `SHOWPLAN_XML` on around the statement and off after it,
+and **View value** shows the plan indented. **Open data** on a table and edit a cell: the `UPDATE`
+uses brackets and an `N'…'` literal, so `Zoë 李` survives. Underneath: `tiberius` is pinned to
+tiberius-rs/tiberius#460's commit, which fixes its cancel (0.13.0 left the client a reply behind
+after one); validation asks `sp_describe_first_result_set`, since `SET NOEXEC ON` lets a
+misspelt table through; and the conformance suite takes a `Spelling` for `#temporary` tables and
+`BEGIN TRANSACTION`. Covered by the whole conformance suite against SQL Server in CI, driver
+tests for the catalog, definitions, TLS modes, value formatting and cancelling a result still
+arriving, engine tests of grid edits and explain, lexer, splitter, syntax-check and formatter
+corpora for the dialect, and a UI test that adds a SQL Server data source. Not tried: connecting
+to Azure SQL, for want of an account.
+
 ## Object helpers track
 
 Dialogs that write, show and run the SQL to create and change tables, views and users, from a
