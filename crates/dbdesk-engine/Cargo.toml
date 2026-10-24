@@ -9,6 +9,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+cargo-packager-updater.workspace = true
 dbdesk-core.workspace = true
 dbdesk-driver-mysql.workspace = true
 dbdesk-driver-postgres.workspace = true

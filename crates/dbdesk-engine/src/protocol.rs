@@ -167,6 +167,10 @@ pub enum Command {
     /// Asks the release feed for the newest published release. Answered by
     /// [`Event::LatestRelease`].
     CheckForUpdates,
+    /// Downloads the newest release and installs it over this copy, to start at the next
+    /// launch. Reports [`Event::UpdateProgress`] while downloading, then
+    /// [`Event::UpdateInstalled`].
+    InstallUpdate,
 }
 
 /// How a console's statements are committed.
@@ -246,6 +250,14 @@ pub enum Event {
     /// The answer to [`Command::CheckForUpdates`]: the newest published release, or why it
     /// couldn't be found out.
     LatestRelease(Result<Release, String>),
+    /// How much of an update has downloaded: bytes so far, and the total when known.
+    UpdateProgress {
+        downloaded: u64,
+        total: Option<u64>,
+    },
+    /// The answer to [`Command::InstallUpdate`]: the version now installed, which starts at
+    /// the next launch, or why it couldn't be installed.
+    UpdateInstalled(Result<String, String>),
     ConsoleSaveFailed {
         key: ConsoleKey,
         error: String,

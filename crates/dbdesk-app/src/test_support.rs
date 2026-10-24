@@ -7,7 +7,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use dbdesk_core::{DataSourceId, Password};
-use dbdesk_engine::{EngineConfig, Release, ReleaseError, ReleaseFeed};
+use dbdesk_engine::{
+    EngineConfig, InstallError, InstallSupport, Release, ReleaseError, ReleaseFeed, UpdateInstaller,
+};
 use dbdesk_store::{
     ConsoleFiles, DataSourceFile, HistoryFile, KeymapFile, ProjectFile, SecretError, SecretStore,
     SettingsFile,
@@ -71,6 +73,30 @@ impl ReleaseFeed for FixedReleases {
     }
 }
 
+/// An installer that never downloads or replaces anything: it can install, reports a
+/// download in two steps, and says it installed `version`.
+pub struct FakeInstaller {
+    pub version: &'static str,
+}
+
+impl Default for FakeInstaller {
+    fn default() -> Self {
+        Self { version: "99.0.0" }
+    }
+}
+
+impl UpdateInstaller for FakeInstaller {
+    fn support(&self) -> InstallSupport {
+        InstallSupport::Supported
+    }
+
+    fn install(&self, progress: &dyn Fn(u64, Option<u64>)) -> Result<String, InstallError> {
+        progress(0, Some(100));
+        progress(100, Some(100));
+        Ok(self.version.to_owned())
+    }
+}
+
 /// Starts the app with its data source file in `dir`.
 pub fn start_app(
     builder: HarnessBuilder<DbDeskApp>,
@@ -87,6 +113,7 @@ pub fn start_app(
         keymap: KeymapFile::new(dir.join("keymap.toml")),
         settings: SettingsFile::new(dir.join("settings.toml")),
         releases: Arc::new(FixedReleases::current()),
+        updater: Arc::new(FakeInstaller::default()),
     };
     builder.build_eframe(|cc| DbDeskApp::new(cc, log_feed, config).unwrap())
 }

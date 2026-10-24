@@ -207,8 +207,30 @@ GitHub.
 and from **Help › Check for updates…**, the engine asks GitHub's API for the newest published
 release (`releases/latest`, which skips drafts and prereleases) and the app compares its tag
 with the running version. A newer one shows as a link in the status bar that leads to the
-release page. The notice needed no signing, so it came before R2; the updater itself waits for
-signed builds, because it must verify what it installs.
+release page. The notice needed no signing, so it came before R2.
+
+The updater is built too. **Install and restart** in the update dialog downloads and installs
+the new release with `cargo-packager-updater`, then **Restart now** quits through the usual
+checks for open transactions and starts the new copy:
+- **The manifest.** The release job writes `latest.json` with one signed package per platform
+  and attaches it to the release. The app reads it from `releases/latest/download/latest.json`,
+  which only ever resolves to a published release.
+- **The packages.** On macOS, the universal `.app.tar.gz` replaces the app bundle, asking for an
+  administrator password if the bundle isn't writable. On Linux, the AppImage replaces itself.
+  The `.deb`, Windows and builds from source are not updated in place; the dialog says why and
+  links to the release page.
+- **Signing.** Update packages are signed with a minisign key of their own, separate from Apple
+  or Windows code signing, so this works before R2:
+  - The private key and its password are the repository secrets
+    `CARGO_PACKAGER_SIGN_PRIVATE_KEY` and `CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD`, and a
+    backup is kept outside GitHub.
+  - The public key is `UPDATE_PUBLIC_KEY` in `crates/dbdesk-app/src/updates.rs`. A package with
+    another signature is refused before anything is replaced.
+  - **Rotating the key** means shipping the new public key in a release signed with the old
+    one. If the old key is lost, every installed copy must be updated by hand once.
+- **Checked before merging** with a scratch copy of `dbdesk.app` on macOS. The updater found a
+  local `latest.json`, verified the package's signature, and replaced the bundle. A package
+  signed with another key was refused, and the old bundle was left as it was.
 
 ## Decisions
 
