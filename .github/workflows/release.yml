@@ -83,12 +83,24 @@ jobs:
             target/aarch64-apple-darwin/release/dbdesk \
             target/x86_64-apple-darwin/release/dbdesk
           lipo -archs target/universal/release/dbdesk
+      # With the signing key set, cargo-packager also writes the update package the app
+      # installs (dbdesk.app.tar.gz) and its signature. Pull requests from forks get no
+      # secrets and skip both; the release job refuses a release without them.
       - name: Package
+        env:
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
         run: |
           mkdir -p target/release
           cp target/universal/release/dbdesk target/release/dbdesk
           cargo packager -p dbdesk-app --release --formats app --out-dir "$GITHUB_WORKSPACE/dist"
           packaging/macos-dmg.sh dist/dbdesk.app "dist/dbdesk-$VERSION-macos-universal.dmg"
+          if [[ -f dist/dbdesk.app.tar.gz ]]; then
+            mv dist/dbdesk.app.tar.gz "dist/dbdesk-$VERSION-macos-universal.app.tar.gz"
+            mv dist/dbdesk.app.tar.gz.sig "dist/dbdesk-$VERSION-macos-universal.app.tar.gz.sig"
+            # The updater unpacks the archive's top folder as the new dbdesk.app.
+            tar -tzf "dist/dbdesk-$VERSION-macos-universal.app.tar.gz" | head -1 | grep -qx 'dbdesk.app/'
+          fi
       - name: Smoke test the disk image
         run: |
           mount=$(hdiutil attach -nobrowse -readonly "dist/dbdesk-$VERSION-macos-universal.dmg" \
@@ -102,7 +114,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: macos
-          path: dist/*.dmg
+          path: |
+            dist/*.dmg
+            dist/*.app.tar.gz
+            dist/*.app.tar.gz.sig
           if-no-files-found: error
 
   linux:
@@ -126,7 +141,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev file
       - run: cargo build --release --locked -p dbdesk-app
+      # With the signing key set, cargo-packager signs the AppImage, which the app installs as
+      # its update as is. The .deb's signature is dropped: the package manager updates it.
       - name: Package
+        env:
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
         run: |
           cargo packager -p dbdesk-app --release --formats appimage,deb \
             --out-dir "$GITHUB_WORKSPACE/dist"
@@ -135,6 +155,10 @@ jobs:
           rename() { [[ "$1" == "$2" ]] || mv "$1" "$2"; }
           rename dist/*.AppImage "dist/dbdesk-$VERSION-x86_64.AppImage"
           rename dist/*.deb "dist/dbdesk_${VERSION}_amd64.deb"
+          if compgen -G "dist/*.AppImage.sig" > /dev/null; then
+            rename dist/*.AppImage.sig "dist/dbdesk-$VERSION-x86_64.AppImage.sig"
+          fi
+          rm -f dist/*.deb.sig
       - name: Smoke test the AppImage and the .deb
         run: |
           "dist/dbdesk-$VERSION-x86_64.AppImage" --appimage-extract-and-run --version | tee appimage.txt
@@ -148,6 +172,7 @@ jobs:
           name: linux
           path: |
             dist/*.AppImage
+            dist/*.AppImage.sig
             dist/*.deb
           if-no-files-found: error
 
@@ -202,6 +227,32 @@ jobs:
       # WINDOWS_RELEASES to "true" (Settings > Secrets and variables > Actions > Variables).
       - if: vars.WINDOWS_RELEASES != 'true'
         run: rm -f dist/*-setup.exe
+      # The manifest installed copies read to update themselves (crates/dbdesk-app/src/
+      # updates.rs reads it through `releases/latest/download/latest.json`). The universal
+      # macOS package serves both Mac architectures. A missing signature fails the release:
+      # a release that can't be installed as an update must not become the latest.
+      - name: Update manifest
+        working-directory: dist
+        run: |
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"
+          mac="dbdesk-$VERSION-macos-universal.app.tar.gz"
+          linux="dbdesk-$VERSION-x86_64.AppImage"
+          jq -n \
+            --arg version "$VERSION" \
+            --arg notes "https://github.com/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME" \
+            --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg mac_url "$base/$mac" --rawfile mac_sig "$mac.sig" \
+            --arg linux_url "$base/$linux" --rawfile linux_sig "$linux.sig" \
+            '{
+              version: $version, notes: $notes, pub_date: $date,
+              platforms: {
+                "macos-aarch64": {url: $mac_url, signature: ($mac_sig | rtrimstr("\n")), format: "app"},
+                "macos-x86_64": {url: $mac_url, signature: ($mac_sig | rtrimstr("\n")), format: "app"},
+                "linux-x86_64": {url: $linux_url, signature: ($linux_sig | rtrimstr("\n")), format: "appimage"}
+              }
+            }' > latest.json
+          rm -- *.sig
+          cat latest.json
       - name: Checksums
         working-directory: dist
         run: sha256sum -- * | tee SHA256SUMS

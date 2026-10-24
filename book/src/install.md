@@ -58,13 +58,23 @@ version** copies them for a bug report. From a terminal, `dbdesk --version` prin
 ## Updates
 
 When dbdesk starts, it asks GitHub whether a newer release is out. If one is, the status bar
-says so, for example **dbdesk 0.2.0 is available**; click it, then **Open release page** to
-download the new version and install it as above. **Help › Check for updates…** asks at any
-time.
+says so, for example **dbdesk 0.5.0 is available**. Click it to open **Updates**; **Help ›
+Check for updates…** asks at any time.
 
-dbdesk doesn't update itself yet, and the check sends nothing about you or your data: it reads
-the public list of releases. To stop the check at start-up, untick **Check for a new release
-when dbdesk starts** in **View → Settings…**.
+- **macOS, and the Linux AppImage:** click **Install and restart**. dbdesk downloads the new
+  version, checks that it was signed by the dbdesk release process, and puts it in place of the
+  one you are running. Click **Restart now** to start it, or carry on and it starts next time.
+  If a console has a transaction open, quitting asks first, as it always does.
+- **The `.deb`, Windows, and builds from source:** these can't replace themselves, and the
+  dialog says why. **Open release page** leads to the download; install it as above.
+
+An update that isn't signed with dbdesk's key is refused before anything is replaced. On macOS,
+until dbdesk's builds are signed by Apple, the first launch after an update asks again for
+access to each saved password; choose **Always Allow**.
+
+The check sends nothing about you or your data: it reads the public list of releases. To stop
+the check at start-up, untick **Check for a new release when dbdesk starts** in **View →
+Settings…**.
 
 ## Build from source
 

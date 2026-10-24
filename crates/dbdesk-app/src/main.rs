@@ -23,6 +23,7 @@ mod keymap_window;
 mod log_console;
 mod mcp;
 mod project_dialog;
+mod relaunch;
 mod rollback_dialog;
 #[cfg(test)]
 mod screenshots;
@@ -43,7 +44,7 @@ mod workspace;
 use std::sync::Arc;
 
 use anyhow::{Context as _, anyhow};
-use dbdesk_engine::{EngineConfig, GithubReleases};
+use dbdesk_engine::{EngineConfig, GithubReleases, PackagerInstaller};
 use dbdesk_store::{
     APP_NAME, AppPaths, ConsoleFiles, DataSourceFile, HistoryFile, Keychain, KeymapFile,
     ProjectFile, SettingsFile,
@@ -86,6 +87,11 @@ fn main() -> anyhow::Result<()> {
             updates::RELEASES_REPOSITORY,
             &format!("dbdesk/{}", version::VERSION),
         )),
+        updater: Arc::new(PackagerInstaller::new(
+            updates::UPDATE_MANIFEST_URL,
+            updates::UPDATE_PUBLIC_KEY,
+            version::VERSION,
+        )),
     };
 
     let mut viewport = egui::ViewportBuilder::default()
@@ -106,5 +112,7 @@ fn main() -> anyhow::Result<()> {
     )
     // eframe's error wraps winit/GL errors that aren't `Sync`, so it can't become an
     // `anyhow::Error` directly.
-    .map_err(|error| anyhow!("dbdesk stopped with an error: {error}"))
+    .map_err(|error| anyhow!("dbdesk stopped with an error: {error}"))?;
+    relaunch::start_if_requested();
+    Ok(())
 }

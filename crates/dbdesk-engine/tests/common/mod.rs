@@ -16,8 +16,8 @@ use dbdesk_core::{
     ServerConfig, SqlServerConfig, SqliteConfig, TlsMode,
 };
 use dbdesk_engine::{
-    Command, EngineConfig, EngineHandle, Event, Release, ReleaseError, ReleaseFeed, Repaint,
-    SessionState,
+    Command, EngineConfig, EngineHandle, Event, InstallError, InstallSupport, Release,
+    ReleaseError, ReleaseFeed, Repaint, SessionState, UpdateInstaller,
 };
 use dbdesk_store::{
     ConsoleFiles, DataSourceFile, HistoryFile, KeymapBindings, KeymapFile, ProjectFile, Projects,
@@ -60,6 +60,29 @@ impl ReleaseFeed for FixedReleases {
     }
 }
 
+/// An installer that pretends: it reports a download in three steps, then installs
+/// `Installs(version)` or fails with `Fails(reason)`, touching nothing.
+pub enum FakeInstaller {
+    Installs(&'static str),
+    Fails(&'static str),
+}
+
+impl UpdateInstaller for FakeInstaller {
+    fn support(&self) -> InstallSupport {
+        InstallSupport::Supported
+    }
+
+    fn install(&self, progress: &dyn Fn(u64, Option<u64>)) -> Result<String, InstallError> {
+        for downloaded in [0, 50, 100] {
+            progress(downloaded, Some(100));
+        }
+        match self {
+            Self::Installs(version) => Ok((*version).to_owned()),
+            Self::Fails(reason) => Err(InstallError::Unsupported((*reason).to_owned())),
+        }
+    }
+}
+
 pub struct SignalRepaint(mpsc::Sender<()>);
 
 impl Repaint for SignalRepaint {
@@ -84,6 +107,29 @@ impl TestEngine {
         secrets: Arc<MemorySecrets>,
         releases: FixedReleases,
     ) -> Self {
+        Self::start_with(
+            data_sources_file,
+            secrets,
+            releases,
+            FakeInstaller::Installs("9.9.9"),
+        )
+    }
+
+    pub fn start_with_installer(data_sources_file: &Path, installer: FakeInstaller) -> Self {
+        Self::start_with(
+            data_sources_file,
+            Arc::default(),
+            FixedReleases(None),
+            installer,
+        )
+    }
+
+    fn start_with(
+        data_sources_file: &Path,
+        secrets: Arc<MemorySecrets>,
+        releases: FixedReleases,
+        installer: FakeInstaller,
+    ) -> Self {
         let (sender, repaints) = mpsc::channel();
         let dir = data_sources_file.parent().unwrap_or(Path::new("."));
         let config = EngineConfig {
@@ -95,6 +141,7 @@ impl TestEngine {
             keymap: KeymapFile::new(dir.join("keymap.toml")),
             settings: SettingsFile::new(dir.join("settings.toml")),
             releases: Arc::new(releases),
+            updater: Arc::new(installer),
         };
         let engine = EngineHandle::start(config, SignalRepaint(sender)).unwrap();
         Self { engine, repaints }

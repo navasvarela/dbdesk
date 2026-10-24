@@ -17,6 +17,7 @@ use crate::registry::{Registry, RegistryError};
 use crate::releases::{self, ReleaseFeed};
 use crate::session::{Script, Services, Session, SessionOwner, SessionRequest};
 use crate::settings;
+use crate::updater::{self, UpdateInstaller};
 use crate::{
     Command, ConsoleId, EditFailure, EngineConfig, Event, PasswordUpdate, RunOutcome,
     StatementCheck,
@@ -58,6 +59,7 @@ pub(crate) async fn run(
         keymap_file: config.keymap,
         settings_file: config.settings,
         releases: config.releases,
+        updater: config.updater,
         events,
         sessions: HashMap::new(),
         consoles: HashMap::new(),
@@ -89,6 +91,7 @@ struct Engine {
     keymap_file: KeymapFile,
     settings_file: SettingsFile,
     releases: Arc<dyn ReleaseFeed>,
+    updater: Arc<dyn UpdateInstaller>,
     events: EventSink,
     /// The explorer's sessions, one per data source.
     sessions: HashMap<DataSourceId, Session>,
@@ -239,6 +242,12 @@ impl Engine {
             Command::CheckForUpdates => {
                 tokio::spawn(releases::check(
                     Arc::clone(&self.releases),
+                    self.events.clone(),
+                ));
+            }
+            Command::InstallUpdate => {
+                tokio::spawn(updater::install(
+                    Arc::clone(&self.updater),
                     self.events.clone(),
                 ));
             }

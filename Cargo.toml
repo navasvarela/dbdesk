@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT OR Apache-2.0"
@@ -24,10 +24,14 @@ dbdesk-store = { path = "crates/dbdesk-store" }
 anyhow = "1.0.104"
 async-trait = "0.1.92"
 directories = "6.0.0"
+# With default features off, every one dbdesk needs is listed. `links` is what lets
+# `ctx.open_url` and hyperlinks open the browser: without it egui-winit only logs
+# "feature \"links\" not enabled", and the manual, release page and repository links did nothing.
 eframe = { version = "0.36.2", default-features = false, features = [
     "accesskit",
     "default_fonts",
     "glow",
+    "links",
     "persistence",
     "wayland",
     "x11",
@@ -59,6 +63,9 @@ rusqlite = { version = "0.40.2", features = ["bundled", "column_decltype"] }
 # docs/releasing.md), and the ring provider builds with only a C compiler, where aws-lc-rs
 # also wants CMake and NASM on Windows.
 rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+# Downloads, verifies and installs updates in the formats cargo-packager signs (R3). Its
+# rustls feature uses reqwest's ring provider and the OS's root certificates.
+cargo-packager-updater = "0.2.3"
 # Compares the running version with the newest release's tag, for the update check.
 semver = "1.0.28"
 serde = { version = "1.0.229", features = ["derive"] }

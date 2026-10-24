@@ -27,10 +27,10 @@ use crate::settings::AppSettings;
 use crate::settings_window::{self, SettingsWindowAction};
 use crate::state::{AppState, EngineStatus};
 use crate::theme::{self, Palette};
-use crate::update_dialog;
-use crate::updates::{UpdateStatus, Updates};
+use crate::update_dialog::{self, UpdateAction};
+use crate::updates::Updates;
 use crate::workspace::{self, Panels, Tab};
-use crate::{fonts, icons, widgets};
+use crate::{fonts, icons, relaunch, widgets};
 
 /// Where the dock layout is saved. Versioned so a change to the default layout reaches people
 /// who already have one saved: layouts under an older key are ignored once, and the default
@@ -83,6 +83,9 @@ impl DbDeskApp {
         // window rather than keep the small default size.
         let maximize_window = saved_layout.is_none();
         let dock = saved_layout.unwrap_or_else(workspace::default_layout);
+        // Asked before the engine takes the config: it only looks at how this copy was
+        // installed, so the update dialog knows at once whether to offer installing.
+        let install_support = engine_config.updater.support();
         let engine = EngineHandle::start(engine_config, EguiRepaint(cc.egui_ctx.clone()))?;
         fonts::install(&cc.egui_ctx);
         theme::install(&cc.egui_ctx);
@@ -108,7 +111,7 @@ impl DbDeskApp {
             keymap_window_open: false,
             about_open: false,
             settings: AppSettings::default(),
-            updates: Updates::default(),
+            updates: Updates::new(install_support),
             consoles: Consoles::default(),
             maximize_window,
         })
@@ -496,8 +499,12 @@ impl DbDeskApp {
         let Some(confirmation) = self.rollback_confirmation.take() else {
             return;
         };
-        if let RollbackChoice::Proceed = choice {
-            self.finish_closing(confirmation.closing, ctx);
+        match choice {
+            RollbackChoice::Proceed => self.finish_closing(confirmation.closing, ctx),
+            RollbackChoice::Cancel if matches!(confirmation.closing, Closing::Quit) => {
+                self.updates.cancel_restart();
+            }
+            RollbackChoice::Cancel => {}
         }
     }
 
@@ -568,8 +575,21 @@ impl DbDeskApp {
     }
 
     fn show_update_dialog(&mut self, ctx: &egui::Context) {
-        if self.updates.dialog_open && update_dialog::show(ctx, self.updates.status()) {
-            self.updates.dialog_open = false;
+        if !self.updates.dialog_open {
+            return;
+        }
+        match update_dialog::show(ctx, &self.updates) {
+            Some(UpdateAction::Close) => self.updates.dialog_open = false,
+            Some(UpdateAction::Install) => {
+                let install = self.updates.install();
+                self.send_if(install);
+            }
+            // Quits the usual way, so open transactions are still confirmed first; `main`
+            // starts the installed copy once this one has stopped.
+            Some(UpdateAction::Restart) if self.updates.request_restart() => {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            Some(UpdateAction::Restart) | None => {}
         }
     }
 
@@ -653,13 +673,9 @@ impl DbDeskApp {
             {
                 self.keymap_window_open = true;
             }
-            if let UpdateStatus::Available { version, .. } = self.updates.status()
+            if let Some(notice) = self.updates.notice()
                 && ui
-                    .link(
-                        RichText::new(format!("dbdesk {version} is available"))
-                            .small()
-                            .color(palette.primary),
-                    )
+                    .link(RichText::new(notice).small().color(palette.primary))
                     .clicked()
             {
                 self.updates.dialog_open = true;
@@ -794,6 +810,9 @@ impl eframe::App for DbDeskApp {
         let unsaved = self.consoles.unsaved();
         self.send_all(unsaved);
         self.shut_down_engine();
+        if self.updates.restart_after_quit() {
+            relaunch::request();
+        }
     }
 }
 
@@ -881,6 +900,7 @@ mod tests {
             keymap: KeymapFile::new(dir.join("keymap.toml")),
             settings: SettingsFile::new(dir.join("settings.toml")),
             releases: Arc::new(releases),
+            updater: Arc::new(crate::test_support::FakeInstaller::default()),
         }
     }
 
@@ -1765,6 +1785,16 @@ mod tests {
         harness.get_by_label("dbdesk 99.0.0 is available").click();
         step_until_visible(&mut harness, "dbdesk 99.0.0 is available (you have");
         harness.get_by_label("Open release page");
+
+        // The fake installer "installs" at once; the dialog and the status bar then ask for a
+        // restart, which this test doesn't take, since it would close the harness's window.
+        // A modal that has just opened is laid out again on its next frame; a click before then
+        // can land outside it, which closes it.
+        harness.run_steps(2);
+        harness.get_by_label("Install and restart").click();
+        step_until_visible(&mut harness, "dbdesk 99.0.0 is installed.");
+        harness.get_by_label("Restart now");
+        harness.get_by_label("Restart to finish updating");
         drop(harness);
 
         let (_layer, feed) = log_console::pipeline();

@@ -20,6 +20,7 @@ mod releases;
 mod repaint;
 mod session;
 mod settings;
+mod updater;
 
 pub use export::Export;
 pub use handle::{EngineConfig, EngineError, EngineHandle};
@@ -31,3 +32,4 @@ pub use protocol::{
 };
 pub use releases::{GithubReleases, Release, ReleaseError, ReleaseFeed};
 pub use repaint::Repaint;
+pub use updater::{InstallError, InstallSupport, PackagerInstaller, UpdateInstaller};
