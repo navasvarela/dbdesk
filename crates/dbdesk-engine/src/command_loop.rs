@@ -12,6 +12,7 @@ use crate::export;
 use crate::history::HistoryLog;
 use crate::keymap;
 use crate::open::{create_database_file, test_connection};
+use crate::passwords::SessionPasswords;
 use crate::projects::{ProjectError, ProjectRegistry};
 use crate::registry::{Registry, RegistryError};
 use crate::releases::{self, ReleaseFeed};
@@ -19,7 +20,7 @@ use crate::session::{Script, Services, Session, SessionOwner, SessionRequest};
 use crate::settings;
 use crate::updater::{self, UpdateInstaller};
 use crate::{
-    Command, ConsoleId, EditFailure, EngineConfig, Event, PasswordUpdate, RunOutcome,
+    Command, ConsoleId, EditFailure, EngineConfig, Event, PasswordKept, PasswordUpdate, RunOutcome,
     StatementCheck,
 };
 
@@ -55,6 +56,7 @@ pub(crate) async fn run(
         registry,
         projects,
         secrets: config.secrets,
+        passwords: SessionPasswords::default(),
         console_files: config.consoles,
         keymap_file: config.keymap,
         settings_file: config.settings,
@@ -87,6 +89,8 @@ struct Engine {
     projects: ProjectRegistry,
     history: HistoryLog,
     secrets: Arc<dyn SecretStore>,
+    /// Passwords given at the prompt, shared with every session.
+    passwords: SessionPasswords,
     console_files: ConsoleFiles,
     keymap_file: KeymapFile,
     settings_file: SettingsFile,
@@ -137,6 +141,11 @@ impl Engine {
                 ));
             }
             Command::Connect(id) => self.connect(id),
+            Command::ProvidePassword {
+                data_source,
+                password,
+                save,
+            } => self.provide_password(data_source, password, save).await,
             Command::Disconnect(id) => self.disconnect(id),
             Command::LoadChildren { id, path } => {
                 self.request(id, SessionRequest::Children(path));
@@ -276,6 +285,7 @@ impl Engine {
     ) -> Result<(), SaveError> {
         self.registry.ensure_available()?;
         if let PasswordUpdate::Set(password) = password {
+            self.passwords.remove(data_source.id);
             let secrets = Arc::clone(&self.secrets);
             let id = data_source.id;
             tokio::task::spawn_blocking(move || secrets.set_password(id, &password))
@@ -291,6 +301,7 @@ impl Engine {
         self.disconnect(id);
         match self.registry.remove(id).await {
             Ok(true) => {
+                self.passwords.remove(id);
                 self.delete_password(id).await;
                 tracing::info!(%id, "deleted data source");
                 self.events.send(Event::DataSourceDeleted(id));
@@ -372,6 +383,40 @@ impl Engine {
         }
     }
 
+    /// Remembers the password for the session first, so the next connection works even if
+    /// the keychain refuses it.
+    async fn provide_password(
+        &self,
+        data_source: DataSourceId,
+        password: dbdesk_core::Password,
+        save: bool,
+    ) {
+        self.passwords.insert(data_source, password.clone());
+        let kept = if save {
+            let secrets = Arc::clone(&self.secrets);
+            let result =
+                tokio::task::spawn_blocking(move || secrets.set_password(data_source, &password))
+                    .await;
+            match result {
+                Ok(Ok(())) => PasswordKept::Saved,
+                Ok(Err(error)) => PasswordKept::SaveFailed(describe_error(&error)),
+                Err(error) => PasswordKept::SaveFailed(describe_error(&error)),
+            }
+        } else {
+            PasswordKept::ForThisSession
+        };
+        match &kept {
+            PasswordKept::SaveFailed(error) => {
+                tracing::warn!(%data_source, "could not save the password, keeping it for this session: {error}");
+            }
+            PasswordKept::Saved | PasswordKept::ForThisSession => {
+                tracing::info!(%data_source, "password given: {kept:?}");
+            }
+        }
+        self.events
+            .send(Event::PasswordProvided { data_source, kept });
+    }
+
     /// A leftover keychain entry is harmless, so failing to remove it is only logged.
     async fn delete_password(&self, id: DataSourceId) {
         let secrets = Arc::clone(&self.secrets);
@@ -443,6 +488,7 @@ impl Engine {
     fn services(&self) -> Services {
         Services {
             secrets: Arc::clone(&self.secrets),
+            passwords: self.passwords.clone(),
             events: self.events.clone(),
             history: self.history.clone(),
         }

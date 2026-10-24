@@ -165,6 +165,8 @@ impl AppState {
             | Event::TransactionEnded { .. }
             | Event::ConsoleSaveFailed { .. }
             | Event::ConnectionTested { .. }
+            | Event::PasswordNeeded { .. }
+            | Event::PasswordProvided { .. }
             | Event::DefinitionLoaded { .. }
             | Event::DatabaseFileCreated { .. }
             | Event::ConsoleSessionChanged { .. }

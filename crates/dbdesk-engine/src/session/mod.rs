@@ -25,7 +25,8 @@ use tokio::task::JoinHandle;
 
 use crate::events::EventSink;
 use crate::history::HistoryLog;
-use crate::open::open;
+use crate::open::{OpenError, open};
+use crate::passwords::{Prompting, SessionPasswords};
 use crate::{
     ConsoleId, Event, PasswordUpdate, RunId, RunPurpose, SessionState, TransactionEnd,
     TransactionMode,
@@ -64,6 +65,7 @@ pub(crate) enum SessionOwner {
 /// What a session needs from the engine.
 pub(crate) struct Services {
     pub(crate) secrets: Arc<dyn SecretStore>,
+    pub(crate) passwords: SessionPasswords,
     pub(crate) events: EventSink,
     pub(crate) history: HistoryLog,
 }
@@ -86,6 +88,7 @@ impl Session {
     pub(crate) fn start(data_source: DataSource, owner: SessionOwner, services: Services) -> Self {
         let Services {
             secrets,
+            passwords,
             events,
             history,
         } = services;
@@ -104,7 +107,12 @@ impl Session {
             disconnect: disconnect_signal,
             cancel: cancel_signal,
         };
-        let task = tokio::spawn(run(context, secrets, signals, request_receiver));
+        let task = tokio::spawn(run(
+            context,
+            Credentials { secrets, passwords },
+            signals,
+            request_receiver,
+        ));
         Self {
             disconnect,
             requests,
@@ -238,13 +246,20 @@ async fn cancel_running_statement(cancel_handle: &dyn CancelHandle) {
     }
 }
 
+/// Where a session finds its password.
+struct Credentials {
+    secrets: Arc<dyn SecretStore>,
+    passwords: SessionPasswords,
+}
+
 async fn run(
     context: SessionContext,
-    secrets: Arc<dyn SecretStore>,
+    credentials: Credentials,
     mut signals: Signals,
     mut requests: UnboundedReceiver<SessionRequest>,
 ) {
-    let Some(mut connection) = connect(&context, &secrets, &mut signals.disconnect).await else {
+    let Some(mut connection) = connect(&context, &credentials, &mut signals.disconnect).await
+    else {
         return;
     };
     let cancel_handle = connection.cancel_handle();
@@ -270,7 +285,7 @@ async fn run(
 /// Opens the connection, reporting progress. `None` if it failed or was cancelled.
 async fn connect(
     context: &SessionContext,
-    secrets: &Arc<dyn SecretStore>,
+    credentials: &Credentials,
     disconnect_signal: &mut oneshot::Receiver<()>,
 ) -> Option<Box<dyn Connection>> {
     let name = context.name();
@@ -278,7 +293,12 @@ async fn connect(
     tracing::info!(data_source = %name, "connecting to {}", context.data_source.config);
     let started = Instant::now();
     let attempt = tokio::select! {
-        attempt = open(&context.data_source, secrets, &PasswordUpdate::Keep) => attempt,
+        attempt = open(
+            &context.data_source,
+            &credentials.secrets,
+            &PasswordUpdate::Keep,
+            Prompting::Ask(&credentials.passwords),
+        ) => attempt,
         _ = disconnect_signal => {
             tracing::info!(data_source = %name, "connection attempt cancelled");
             context.notify(SessionState::Disconnected);
@@ -298,9 +318,15 @@ async fn connect(
             Some(connection)
         }
         Err(error) => {
-            let error = describe_error(&error);
-            tracing::warn!(data_source = %name, "connection failed: {error}");
-            context.notify(SessionState::Failed(error));
+            let description = describe_error(&error);
+            tracing::warn!(data_source = %name, "connection failed: {description}");
+            context.notify(SessionState::Failed(description));
+            if let OpenError::PasswordNeeded(reason) = error {
+                context.send(Event::PasswordNeeded {
+                    data_source: context.data_source.id,
+                    reason,
+                });
+            }
             None
         }
     }

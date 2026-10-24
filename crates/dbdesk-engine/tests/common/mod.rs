@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
@@ -32,26 +33,47 @@ pub const EVENT_TIMEOUT: Duration = Duration::from_secs(10);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Default)]
-pub struct MemorySecrets(Mutex<HashMap<DataSourceId, Password>>);
+pub struct MemorySecrets {
+    passwords: Mutex<HashMap<DataSourceId, Password>>,
+    /// Refuses every read and write, like a keychain that is locked or missing.
+    locked: AtomicBool,
+}
 
 impl MemorySecrets {
+    pub fn locked() -> Self {
+        Self {
+            locked: AtomicBool::new(true),
+            ..Self::default()
+        }
+    }
+
     pub fn get(&self, id: DataSourceId) -> Option<Password> {
-        self.0.lock().unwrap().get(&id).cloned()
+        self.passwords.lock().unwrap().get(&id).cloned()
+    }
+
+    fn check_unlocked(&self) -> Result<(), SecretError> {
+        if self.locked.load(Ordering::Relaxed) {
+            return Err(SecretError::unavailable("the keychain is locked"));
+        }
+        Ok(())
     }
 }
 
 impl SecretStore for MemorySecrets {
     fn password(&self, id: DataSourceId) -> Result<Option<Password>, SecretError> {
+        self.check_unlocked()?;
         Ok(self.get(id))
     }
 
     fn set_password(&self, id: DataSourceId, password: &Password) -> Result<(), SecretError> {
-        self.0.lock().unwrap().insert(id, password.clone());
+        self.check_unlocked()?;
+        self.passwords.lock().unwrap().insert(id, password.clone());
         Ok(())
     }
 
     fn delete_password(&self, id: DataSourceId) -> Result<(), SecretError> {
-        self.0.lock().unwrap().remove(&id);
+        self.check_unlocked()?;
+        self.passwords.lock().unwrap().remove(&id);
         Ok(())
     }
 }

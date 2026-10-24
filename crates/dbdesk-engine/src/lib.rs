@@ -14,6 +14,7 @@ mod handle;
 mod history;
 mod keymap;
 mod open;
+mod passwords;
 mod projects;
 mod protocol;
 mod registry;
@@ -27,10 +28,11 @@ pub use environment::ProcessEnvironment;
 pub use export::Export;
 pub use handle::{EngineConfig, EngineError, EngineHandle};
 pub use open::{OpenError, open_data_source};
+pub use passwords::PasswordNeeded;
 pub use protocol::{
-    Command, ConsoleId, DatabaseFile, EditFailure, Event, PasswordUpdate, RunId, RunOutcome,
-    RunPurpose, SessionState, StatementCheck, StatementFailure, StatementSummary, TransactionEnd,
-    TransactionMode,
+    Command, ConsoleId, DatabaseFile, EditFailure, Event, PasswordKept, PasswordUpdate, RunId,
+    RunOutcome, RunPurpose, SessionState, StatementCheck, StatementFailure, StatementSummary,
+    TransactionEnd, TransactionMode,
 };
 pub use releases::{GithubReleases, Release, ReleaseError, ReleaseFeed};
 pub use repaint::Repaint;

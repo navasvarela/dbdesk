@@ -12,6 +12,7 @@ use tokio::task::JoinError;
 
 use crate::environment::ProcessEnvironment;
 use crate::events::EventSink;
+use crate::passwords::{self, PasswordNeeded, Prompting};
 use crate::{DatabaseFile, Event, PasswordUpdate};
 
 /// Gives up on a connection attempt after this long. Long enough for a slow VPN or a cold
@@ -23,6 +24,8 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 pub enum OpenError {
     #[error("could not read the saved password")]
     Password(#[source] SecretError),
+    #[error("a password is needed: {0}")]
+    PasswordNeeded(PasswordNeeded),
     #[error(transparent)]
     Placeholder(#[from] PlaceholderError),
     #[error(transparent)]
@@ -37,32 +40,14 @@ pub(crate) async fn open(
     data_source: &DataSource,
     secrets: &Arc<dyn SecretStore>,
     password: &PasswordUpdate,
+    prompting: Prompting<'_>,
 ) -> Result<Box<dyn Connection>, OpenError> {
     let config = data_source.config.resolve(&ProcessEnvironment)?;
-    let password = resolve_password(data_source, secrets, password).await?;
+    let password = passwords::resolve(data_source, secrets, password, prompting).await?;
     tokio::time::timeout(CONNECT_TIMEOUT, connect(&config, password.as_ref()))
         .await
         .map_err(|_| OpenError::TimedOut(CONNECT_TIMEOUT))?
         .map_err(OpenError::Driver)
-}
-
-async fn resolve_password(
-    data_source: &DataSource,
-    secrets: &Arc<dyn SecretStore>,
-    password: &PasswordUpdate,
-) -> Result<Option<Password>, OpenError> {
-    match password {
-        PasswordUpdate::Set(password) => Ok(Some(password.clone())),
-        PasswordUpdate::Keep if !data_source.config.driver().uses_password() => Ok(None),
-        PasswordUpdate::Keep => {
-            let secrets = Arc::clone(secrets);
-            let id = data_source.id;
-            tokio::task::spawn_blocking(move || secrets.password(id))
-                .await
-                .map_err(OpenError::Task)?
-                .map_err(OpenError::Password)
-        }
-    }
 }
 
 /// Opens a connection to a saved data source with its saved password, if it needs one.
@@ -78,7 +63,13 @@ pub async fn open_data_source(
     data_source: &DataSource,
     secrets: &Arc<dyn SecretStore>,
 ) -> Result<Box<dyn Connection>, OpenError> {
-    open(data_source, secrets, &PasswordUpdate::Keep).await
+    open(
+        data_source,
+        secrets,
+        &PasswordUpdate::Keep,
+        Prompting::Never,
+    )
+    .await
 }
 
 /// The one place that maps a configuration to its driver.
@@ -135,7 +126,7 @@ async fn open_ping_close(
     secrets: &Arc<dyn SecretStore>,
     password: &PasswordUpdate,
 ) -> Result<ServerInfo, OpenError> {
-    let mut connection = open(data_source, secrets, password).await?;
+    let mut connection = open(data_source, secrets, password, Prompting::Never).await?;
     connection.ping().await?;
     let server = connection.server_info().clone();
     connection.close().await?;
