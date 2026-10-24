@@ -2196,17 +2196,8 @@ mod tests {
         assert!(harness.query_by_label_contains("is available").is_none());
     }
 
-    #[test]
-    fn edits_a_cell_and_submits_it_as_an_update() {
-        let dir = tempfile::tempdir().unwrap();
-        save_shop(
-            dir.path(),
-            "CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT);
-             INSERT INTO orders VALUES (1, 'ada'), (2, 'bob');",
-        );
-        let (_layer, feed) = log_console::pipeline();
-        let mut harness = start_app(dir.path(), feed);
-        open_orders(&mut harness, "2 rows");
+    /// Edits the `ada` cell of the open orders to `Ada Lovelace`, leaving it to be submitted.
+    fn rename_ada(harness: &mut Harness<'_, DbDeskApp>) {
         let cell_editor = |harness: &Harness<'_, DbDeskApp>| {
             harness
                 .query_by(|node| {
@@ -2219,7 +2210,7 @@ mod tests {
         harness.run();
         // F2 edits once the table has been described; until then it does nothing.
         let deadline = std::time::Instant::now() + WAIT_TIMEOUT;
-        while !cell_editor(&harness) {
+        while !cell_editor(harness) {
             assert!(
                 std::time::Instant::now() < deadline,
                 "the cell editor never opened"
@@ -2244,6 +2235,140 @@ mod tests {
                 .is_none(),
             "Enter closes the editor and keeps it closed"
         );
+    }
+
+    /// Saves `shop` over a database of two orders, at `safety`.
+    fn save_orders_at(dir: &Path, safety: dbdesk_core::SafetyLevel) {
+        let shop = save_shop(
+            dir,
+            "CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT);
+             INSERT INTO orders VALUES (1, 'ada'), (2, 'bob');",
+        );
+        DataSourceFile::new(dir.join("data_sources.toml"))
+            .save(&[dbdesk_core::DataSource { safety, ..shop }])
+            .unwrap();
+    }
+
+    fn customer_of_order_1(dir: &Path) -> String {
+        rusqlite::Connection::open(dir.join("shop.db"))
+            .unwrap()
+            .query_row("SELECT customer FROM orders WHERE id = 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn a_careful_data_source_asks_before_a_grid_edit_naming_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        save_orders_at(dir.path(), dbdesk_core::SafetyLevel::Careful);
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        open_orders(&mut harness, "2 rows");
+        harness.get_by_label_contains("Careful");
+        harness.get_by(|node| {
+            node.role() == Role::ComboBox && node.value().as_deref() == Some("Manual commit")
+        });
+
+        rename_ada(&mut harness);
+        harness.get_by_label("Submit").click();
+        step_until_visible(&mut harness, "Apply edits to \u{201c}shop\u{201d}?");
+        harness
+            .get_by_label_contains("\u{201c}shop\u{201d} is careful: this updates 1 edited row.");
+        assert_eq!(
+            customer_of_order_1(dir.path()),
+            "ada",
+            "nothing runs before the answer"
+        );
+        // The dialog settles where it is centred before a pointer can find its buttons.
+        harness.run();
+        harness.get_by_label("Apply").click();
+
+        step_until(&mut harness, "the edit being saved", |harness| {
+            harness.query_by_label("1 changed cell").is_none()
+                && harness.query_by_label("Saving…").is_none()
+        });
+        // Manual commit mode opened a transaction with the first statement, so the edit waits
+        // in it for Commit.
+        harness.get_by_label("● Transaction open");
+        assert_eq!(customer_of_order_1(dir.path()), "ada");
+        harness.get_by_label("Commit").click();
+        step_until_visible(&mut harness, "Committed");
+        assert_eq!(customer_of_order_1(dir.path()), "Ada Lovelace");
+    }
+
+    #[test]
+    fn a_read_only_data_source_says_why_it_refused_a_statement() {
+        let dir = tempfile::tempdir().unwrap();
+        save_orders_at(dir.path(), dbdesk_core::SafetyLevel::ReadOnly);
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        open_console(&mut harness);
+        harness.get_by_label_contains("Read-only");
+
+        harness
+            .get_by_role(Role::MultilineTextInput)
+            .type_text("UPDATE orders SET customer = 'x' WHERE id = 1");
+        harness.run();
+        harness.get_by_label("Run all").click();
+
+        step_until_visible(
+            &mut harness,
+            "Refused: this statement changes data, and \u{201c}shop\u{201d} is read-only.",
+        );
+        assert_eq!(customer_of_order_1(dir.path()), "ada");
+    }
+
+    #[test]
+    fn red_suggests_careful_in_the_data_source_dialog() {
+        let dir = tempfile::tempdir().unwrap();
+        let shop = save_shop(dir.path(), "CREATE TABLE t (id INTEGER)");
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "Expand shop");
+        harness.get_by_label("shop").click_secondary();
+        harness.run();
+        harness.get_by_label("Edit…").click();
+        harness.run();
+
+        harness.get_by_label("Red").click();
+        harness.run();
+        harness.get_by_label("Red usually marks production.");
+        harness.get_by_label("Make it careful").click();
+        harness.run();
+        assert!(
+            harness
+                .query_by_label("Red usually marks production.")
+                .is_none()
+        );
+        harness.get_by_label("Save").click();
+
+        step_until(&mut harness, "the data source being saved", |_| {
+            DataSourceFile::new(dir.path().join("data_sources.toml"))
+                .load()
+                .is_ok_and(|saved| {
+                    saved.first().map(|ds| ds.safety) == Some(dbdesk_core::SafetyLevel::Careful)
+                })
+        });
+        let saved = DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .load()
+            .unwrap();
+        assert_eq!(saved[0].id, shop.id);
+        assert_eq!(saved[0].color, Some(dbdesk_core::SourceColor::Red));
+    }
+
+    #[test]
+    fn edits_a_cell_and_submits_it_as_an_update() {
+        let dir = tempfile::tempdir().unwrap();
+        save_shop(
+            dir.path(),
+            "CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT);
+             INSERT INTO orders VALUES (1, 'ada'), (2, 'bob');",
+        );
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        open_orders(&mut harness, "2 rows");
+        rename_ada(&mut harness);
         harness.get_by_label("Submit").click();
 
         // Submit swaps "1 changed cell" for "Saving…" at once; only when that goes too has the

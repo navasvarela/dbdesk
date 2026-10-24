@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use dbdesk_core::{CatalogPath, DataSource, DataSourceId};
+use dbdesk_core::{CatalogPath, DataSource, DataSourceId, SafetyLevel};
 use dbdesk_engine::{Command, ConsoleId, Event, RunId, RunPurpose, TransactionMode};
 use dbdesk_sql::{Dialect, FormatOptions};
 use dbdesk_store::{ConsoleKey, ConsoleName, ExportFormat};
@@ -13,7 +13,9 @@ use dbdesk_store::{ConsoleKey, ConsoleName, ExportFormat};
 use crate::console::{
     ConsoleAction, FormatScope, QueryConsole, RecentCompletions, RunScope, SubmittedRun,
 };
-use crate::hazard_dialog::{self, HazardChoice, HazardConfirmation, Review, ReviewContext};
+use crate::hazard_dialog::{
+    self, HazardChoice, HazardConfirmation, Pending, Review, ReviewContext,
+};
 use crate::rollback_dialog::Closing;
 
 /// How long a console's text stays unsaved after an edit. Long enough that typing doesn't
@@ -113,7 +115,7 @@ impl Consoles {
         self.next_console += 1;
         let title = title(&data_source.name, &key.name);
         let dialect = Dialect::from(data_source.config.driver());
-        QueryConsole::new(ConsoleId(self.next_console), key, title, dialect, text)
+        QueryConsole::new(ConsoleId(self.next_console), key, title, dialect, text).on(data_source)
     }
 
     /// Opens a console that selects everything from the table or view at `path`, and runs it.
@@ -209,6 +211,15 @@ impl Consoles {
                     .map(|file| (file.key.clone(), file.text.clone())),
             );
         }
+        if let Event::DataSourceSaved(data_source) = event {
+            for console in self
+                .open
+                .values_mut()
+                .filter(|console| console.data_source() == data_source.id)
+            {
+                console.follow(data_source);
+            }
+        }
         for console in self.open.values_mut() {
             console.apply(event);
         }
@@ -227,7 +238,7 @@ impl Consoles {
                 data_source: self.open.get(key)?.data_source(),
                 table,
             }),
-            ConsoleAction::SubmitEdits => self.open.get_mut(key)?.submit_edits(),
+            ConsoleAction::SubmitEdits => self.submit_edits(key),
             ConsoleAction::Validate(statements) => Some(Command::ValidateStatements {
                 console: id,
                 statements,
@@ -253,6 +264,7 @@ impl Consoles {
             dialect: console.dialect(),
             relies_on_rollback: console.transaction_mode() == TransactionMode::Manual
                 || console.has_open_transaction(),
+            careful: (console.safety() == SafetyLevel::Careful).then(|| console.data_source_name()),
         };
         match hazard_dialog::review(key.clone(), run, context) {
             Review::Safe(run) => self.start_run(key, run),
@@ -261,6 +273,21 @@ impl Consoles {
                 None
             }
         }
+    }
+
+    /// Applies the grid's edits, asking first on a careful data source.
+    fn submit_edits(&mut self, key: &ConsoleKey) -> Option<Command> {
+        let console = self.open.get_mut(key)?;
+        let rows = console.pending_edit_rows();
+        if console.safety() != SafetyLevel::Careful || rows == 0 {
+            return console.submit_edits();
+        }
+        self.hazard = Some(hazard_dialog::confirm_edits(
+            key.clone(),
+            console.data_source_name(),
+            rows,
+        ));
+        None
     }
 
     fn start_run(&mut self, key: &ConsoleKey, submitted: SubmittedRun) -> Option<Command> {
@@ -285,9 +312,14 @@ impl Consoles {
     pub fn show_hazard_confirmation(&mut self, ctx: &egui::Context) -> Option<Command> {
         let choice = self.hazard.as_ref()?.show(ctx)?;
         let confirmation = self.hazard.take()?;
-        match choice {
-            HazardChoice::RunAnyway => self.start_run(&confirmation.console, confirmation.run),
-            HazardChoice::Cancel => None,
+        match (choice, confirmation.pending) {
+            (HazardChoice::RunAnyway, Pending::Run(run)) => {
+                self.start_run(&confirmation.console, run)
+            }
+            (HazardChoice::RunAnyway, Pending::Edits) => {
+                self.open.get_mut(&confirmation.console)?.submit_edits()
+            }
+            (HazardChoice::Cancel, _) => None,
         }
     }
 }

@@ -20,7 +20,8 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use dbdesk_core::{
-    Cell, ColumnInfo, DataSourceId, RelationName, Row, TableDescription, TransactionStatus,
+    Cell, ColumnInfo, DataSource, DataSourceId, RelationName, Row, SafetyLevel, TableDescription,
+    TransactionStatus,
 };
 use dbdesk_engine::{
     Command, ConsoleId, EditFailure, Event, Export, RunId, RunOutcome, RunPurpose, SessionState,
@@ -114,6 +115,9 @@ pub struct QueryConsole {
     /// How the last export went: where the rows went, or why they didn't.
     export_status: Option<Result<String, String>>,
     file: FileState,
+    /// The data source's name and safety level, kept up to date as it is edited.
+    data_source_name: String,
+    safety: SafetyLevel,
 }
 
 /// How the console's text relates to its file.
@@ -212,7 +216,42 @@ impl QueryConsole {
             accepted_completion: None,
             export_status: None,
             file: FileState::default(),
+            data_source_name: String::new(),
+            safety: SafetyLevel::Normal,
         }
+    }
+
+    /// This console on `data_source`, as careful as its safety level asks: a careful one
+    /// starts in manual commit mode.
+    pub fn on(mut self, data_source: &DataSource) -> Self {
+        self.follow(data_source);
+        if self.safety == SafetyLevel::Careful {
+            self.transactions = TransactionMode::Manual;
+        }
+        self
+    }
+
+    /// Takes the data source's new name and safety level after it was edited. The commit
+    /// mode stays as the user left it.
+    pub fn follow(&mut self, data_source: &DataSource) {
+        data_source.name.clone_into(&mut self.data_source_name);
+        self.safety = data_source.safety;
+    }
+
+    pub fn safety(&self) -> SafetyLevel {
+        self.safety
+    }
+
+    pub fn data_source_name(&self) -> &str {
+        &self.data_source_name
+    }
+
+    /// How many rows the shown statement's pending edits change.
+    pub fn pending_edit_rows(&self) -> usize {
+        self.run
+            .as_ref()
+            .and_then(|run| run.statements.get(run.selected))
+            .map_or(0, |statement| statement.edits.pending.rows().len())
     }
 
     /// A console reopened from its file, which closing it again must keep.
@@ -249,6 +288,13 @@ impl QueryConsole {
         let mut tables = Vec::new();
         for statement in &mut run.statements {
             if statement.columns.is_empty() || statement.edits.editability != Editability::Unknown {
+                continue;
+            }
+            if self.safety == SafetyLevel::ReadOnly {
+                statement.edits.editability = Editability::ReadOnly(format!(
+                    "\u{201c}{}\u{201d} is read-only",
+                    self.data_source_name
+                ));
                 continue;
             }
             if let Some(reason) = dialect.read_only_results() {
