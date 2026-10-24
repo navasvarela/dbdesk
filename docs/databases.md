@@ -57,6 +57,8 @@ Left out on purpose:
 
 ## What a new engine needs
 
+The step-by-step version, for contributors, is [Adding a database](adding-a-database.md).
+
 From the code as it stands (see [ADR 0002](adr/0002-native-drivers-behind-a-trait.md)), every
 engine is:
 
