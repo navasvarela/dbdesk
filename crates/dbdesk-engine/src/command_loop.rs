@@ -1,8 +1,11 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use dbdesk_core::{DataSource, DataSourceId, ProjectId, describe_error};
-use dbdesk_store::{ConsoleFiles, KeymapFile, Project, SecretError, SecretStore, SettingsFile};
+use dbdesk_store::{
+    ConsoleFiles, ImportPlan, KeymapFile, Project, SecretError, SecretStore, SettingsFile,
+};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::task::{JoinError, JoinSet};
 
@@ -18,6 +21,7 @@ use crate::registry::{Registry, RegistryError};
 use crate::releases::{self, ReleaseFeed};
 use crate::session::{Script, Services, Session, SessionOwner, SessionRequest};
 use crate::settings;
+use crate::transfer;
 use crate::updater::{self, UpdateInstaller};
 use crate::{
     Command, ConsoleId, EditFailure, EngineConfig, Event, PasswordKept, PasswordUpdate, RunOutcome,
@@ -129,6 +133,13 @@ impl Engine {
                 data_source,
                 project,
             } => self.move_to_project(data_source, project).await,
+            Command::ExportDataSources {
+                path,
+                data_sources,
+                projects,
+            } => self.export(path, &data_sources, &projects),
+            Command::PreviewImport(path) => self.preview_import(path),
+            Command::ApplyImport(plan) => self.apply_import(plan).await,
             Command::TestConnection {
                 data_source,
                 password,
@@ -422,6 +433,103 @@ impl Engine {
         }
         self.events
             .send(Event::PasswordProvided { data_source, kept });
+    }
+
+    fn export(&self, path: PathBuf, data_sources: &[DataSourceId], projects: &[ProjectId]) {
+        let gathered = self
+            .registry
+            .data_sources()
+            .map_err(|e| describe_error(&e))
+            .and_then(|all| {
+                let projects_here = self.projects.projects().map_err(|e| describe_error(&e))?;
+                Ok(transfer::DataSourceExport::gather(
+                    path.clone(),
+                    all,
+                    projects_here,
+                    data_sources,
+                    projects,
+                ))
+            });
+        match gathered {
+            Ok(export) => {
+                tokio::spawn(transfer::export(export, self.events.clone()));
+            }
+            Err(error) => self.events.send(Event::DataSourcesExported {
+                path,
+                result: Err(error),
+            }),
+        }
+    }
+
+    fn preview_import(&self, path: PathBuf) {
+        let snapshot = self
+            .registry
+            .data_sources()
+            .map_err(|e| describe_error(&e))
+            .and_then(|data_sources| {
+                let projects = self.projects.projects().map_err(|e| describe_error(&e))?;
+                Ok((data_sources.to_vec(), projects.clone()))
+            });
+        match snapshot {
+            Ok((data_sources, projects)) => {
+                tokio::spawn(transfer::preview(
+                    path,
+                    data_sources,
+                    projects,
+                    self.events.clone(),
+                ));
+            }
+            Err(error) => self.events.send(Event::ImportPreviewed {
+                path,
+                result: Err(error),
+            }),
+        }
+    }
+
+    /// Saves the projects, then the data sources, each file once.
+    async fn apply_import(&mut self, plan: ImportPlan) {
+        let ImportPlan {
+            projects,
+            data_sources,
+        } = plan;
+        let result = self.import_projects(projects).await;
+        let result = match result {
+            Ok(()) => self.import_data_sources(data_sources).await,
+            Err(error) => Err(error),
+        };
+        match &result {
+            Ok(()) => tracing::info!("imported data sources"),
+            Err(error) => tracing::error!("could not import data sources: {error}"),
+        }
+        self.events.send(Event::ImportApplied(result));
+    }
+
+    async fn import_projects(&mut self, projects: Vec<Project>) -> Result<(), String> {
+        if projects.is_empty() {
+            return Ok(());
+        }
+        self.projects
+            .import(projects.clone())
+            .await
+            .map_err(|error| describe_error(&error))?;
+        for project in projects {
+            self.events.send(Event::ProjectSaved(project));
+        }
+        Ok(())
+    }
+
+    async fn import_data_sources(&mut self, data_sources: Vec<DataSource>) -> Result<(), String> {
+        if data_sources.is_empty() {
+            return Ok(());
+        }
+        self.registry
+            .upsert_all(data_sources.clone())
+            .await
+            .map_err(|error| describe_error(&error))?;
+        for data_source in data_sources {
+            self.events.send(Event::DataSourceSaved(data_source));
+        }
+        Ok(())
     }
 
     /// A leftover keychain entry is harmless, so failing to remove it is only logged.

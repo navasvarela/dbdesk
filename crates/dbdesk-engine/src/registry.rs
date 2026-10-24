@@ -59,6 +59,14 @@ impl Registry {
         }
     }
 
+    /// Every data source, or why `data_sources.toml` can't be used.
+    pub(crate) fn data_sources(&self) -> Result<&[DataSource], RegistryError> {
+        match self {
+            Self::Loaded { data_sources, .. } => Ok(data_sources),
+            Self::Unavailable { reason } => Err(RegistryError::Unavailable(reason.clone())),
+        }
+    }
+
     pub(crate) fn ensure_available(&self) -> Result<(), RegistryError> {
         match self {
             Self::Loaded { .. } => Ok(()),
@@ -72,6 +80,22 @@ impl Registry {
             match data_sources.iter_mut().find(|ds| ds.id == data_source.id) {
                 Some(existing) => *existing = data_source,
                 None => data_sources.push(data_source),
+            }
+        })
+        .await
+    }
+
+    /// Adds each data source, or replaces the one with its id, and saves the file once.
+    pub(crate) async fn upsert_all(
+        &mut self,
+        imported: Vec<DataSource>,
+    ) -> Result<(), RegistryError> {
+        self.update(|data_sources| {
+            for data_source in imported {
+                match data_sources.iter_mut().find(|ds| ds.id == data_source.id) {
+                    Some(existing) => *existing = data_source,
+                    None => data_sources.push(data_source),
+                }
             }
         })
         .await

@@ -22,6 +22,7 @@ mod releases;
 mod repaint;
 mod session;
 mod settings;
+mod transfer;
 mod updater;
 
 pub use environment::ProcessEnvironment;
