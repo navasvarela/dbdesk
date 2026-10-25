@@ -61,6 +61,7 @@ fn home_with_a_project() -> tempfile::TempDir {
             color: None,
             safety: dbdesk_core::SafetyLevel::Normal,
             project: Some(project.id),
+            mcp_login: None,
             config: ConnectionConfig::Sqlite(SqliteConfig {
                 path: database,
                 read_only: false,

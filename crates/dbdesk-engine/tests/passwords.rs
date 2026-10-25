@@ -30,6 +30,7 @@ fn postgres(server: ServerConfig) -> DataSource {
         color: None,
         safety: dbdesk_core::SafetyLevel::Normal,
         project: None,
+        mcp_login: None,
         config: ConnectionConfig::Postgres(PostgresConfig { server }),
     }
 }

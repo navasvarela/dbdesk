@@ -1026,6 +1026,18 @@ mod tests {
         fn delete_password(&self, _: DataSourceId) -> Result<(), SecretError> {
             Ok(())
         }
+
+        fn mcp_password(&self, _: DataSourceId) -> Result<Option<Password>, SecretError> {
+            Ok(None)
+        }
+
+        fn set_mcp_password(&self, _: DataSourceId, _: &Password) -> Result<(), SecretError> {
+            Ok(())
+        }
+
+        fn delete_mcp_password(&self, _: DataSourceId) -> Result<(), SecretError> {
+            Ok(())
+        }
     }
 
     fn engine_config(dir: &Path) -> EngineConfig {
@@ -1094,6 +1106,7 @@ mod tests {
             color: None,
             safety: dbdesk_core::SafetyLevel::Normal,
             project: None,
+            mcp_login: None,
             config: dbdesk_core::ConnectionConfig::Sqlite(dbdesk_core::SqliteConfig {
                 path: database,
                 read_only: false,
@@ -1533,6 +1546,7 @@ mod tests {
             color: None,
             safety: dbdesk_core::SafetyLevel::Normal,
             project: None,
+            mcp_login: None,
             config: dbdesk_core::ConnectionConfig::Postgres(dbdesk_core::PostgresConfig {
                 server: dbdesk_core::ServerConfig {
                     host: "127.0.0.1".to_owned(),

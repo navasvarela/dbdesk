@@ -67,9 +67,8 @@ impl Project {
     }
 }
 
-/// What an MCP client may do in a project. MCP1 serves only reading; the other permissions
-/// are kept for MCP2 and grant nothing yet.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// What an MCP client may do in a project.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct McpPermissions {
     /// Browsing the catalog, `SELECT`, `EXPLAIN`, describing tables.
@@ -84,6 +83,8 @@ pub struct McpPermissions {
     pub max_rows: NonZeroU32,
     /// How long one statement may run before it is cancelled.
     pub statement_timeout: StatementTimeout,
+    /// Which schemas the catalog tools show and statements may name.
+    pub schemas: SchemaScope,
 }
 
 /// 500 rows is enough to see what a table holds without flooding a model's context.
@@ -105,12 +106,13 @@ impl Default for McpPermissions {
             admin: false,
             max_rows: DEFAULT_MAX_ROWS,
             statement_timeout: StatementTimeout(DEFAULT_STATEMENT_TIMEOUT),
+            schemas: SchemaScope::All,
         }
     }
 }
 
 /// A project's own settings; each one left out falls back to the defaults.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct McpOverrides {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -125,6 +127,8 @@ pub struct McpOverrides {
     pub max_rows: Option<NonZeroU32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub statement_timeout: Option<StatementTimeout>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schemas: Option<SchemaScope>,
 }
 
 impl McpOverrides {
@@ -141,6 +145,79 @@ impl McpOverrides {
             admin: self.admin.unwrap_or(defaults.admin),
             max_rows: self.max_rows.unwrap_or(defaults.max_rows),
             statement_timeout: self.statement_timeout.unwrap_or(defaults.statement_timeout),
+            schemas: self
+                .schemas
+                .clone()
+                .unwrap_or_else(|| defaults.schemas.clone()),
+        }
+    }
+}
+
+/// The schemas an MCP client may use: `"all"`, or a list such as `["public", "analytics"]`.
+///
+/// Written as `"all"` rather than left out or as an empty list, so a project can say "all"
+/// when the defaults name a few, and an empty list (which would allow nothing) can't be
+/// written by mistake.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "SchemaScopeText", into = "SchemaScopeText")]
+pub enum SchemaScope {
+    #[default]
+    All,
+    /// Schema names as the database stores them; never empty.
+    Only(Vec<String>),
+}
+
+impl SchemaScope {
+    /// Whether `schema`, a name as the database stores it, is in scope.
+    pub fn allows(&self, schema: &str) -> bool {
+        match self {
+            Self::All => true,
+            Self::Only(schemas) => schemas.iter().any(|allowed| allowed == schema),
+        }
+    }
+}
+
+/// How [`SchemaScope`] is spelt in the file.
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum SchemaScopeText {
+    Keyword(String),
+    List(Vec<String>),
+}
+
+const ALL_SCHEMAS: &str = "all";
+
+#[derive(Debug, thiserror::Error)]
+pub enum InvalidSchemaScope {
+    #[error("schemas must be \"{ALL_SCHEMAS}\" or a list of schema names, not {0:?}")]
+    Keyword(String),
+    #[error("schemas must name at least one schema, or be \"{ALL_SCHEMAS}\"")]
+    Empty,
+    #[error("schemas lists an empty name")]
+    EmptyName,
+}
+
+impl TryFrom<SchemaScopeText> for SchemaScope {
+    type Error = InvalidSchemaScope;
+
+    fn try_from(text: SchemaScopeText) -> Result<Self, Self::Error> {
+        match text {
+            SchemaScopeText::Keyword(keyword) if keyword == ALL_SCHEMAS => Ok(Self::All),
+            SchemaScopeText::Keyword(keyword) => Err(InvalidSchemaScope::Keyword(keyword)),
+            SchemaScopeText::List(schemas) if schemas.is_empty() => Err(InvalidSchemaScope::Empty),
+            SchemaScopeText::List(schemas) if schemas.iter().any(String::is_empty) => {
+                Err(InvalidSchemaScope::EmptyName)
+            }
+            SchemaScopeText::List(schemas) => Ok(Self::Only(schemas)),
+        }
+    }
+}
+
+impl From<SchemaScope> for SchemaScopeText {
+    fn from(scope: SchemaScope) -> Self {
+        match scope {
+            SchemaScope::All => Self::Keyword(ALL_SCHEMAS.to_owned()),
+            SchemaScope::Only(schemas) => Self::List(schemas),
         }
     }
 }
@@ -468,6 +545,7 @@ mod tests {
 
             [project.mcp]
             write = true
+            schemas = ["public", "Reporting"]
 
             [[project]]
             id = "6c1d8e2f-3a4b-4c5d-9e7f-8091a2b3c4d5"
@@ -492,6 +570,9 @@ mod tests {
             permissions.statement_timeout.duration(),
             Duration::from_secs(90)
         );
+        assert!(permissions.schemas.allows("Reporting"));
+        assert!(!permissions.schemas.allows("reporting"));
+        assert_eq!(projects.mcp_permissions(shop).schemas, SchemaScope::All);
         assert_eq!(projects.by_slug("shop"), Some(shop));
     }
 
@@ -501,8 +582,12 @@ mod tests {
         let file = ProjectFile::new(dir.path().join("nested/projects.toml"));
         let mut analytics = project("Analytics");
         analytics.mcp.max_rows = NonZeroU32::new(50);
+        analytics.mcp.schemas = Some(SchemaScope::All);
         let projects = Projects {
-            mcp_defaults: McpPermissions::default(),
+            mcp_defaults: McpPermissions {
+                schemas: SchemaScope::Only(vec!["public".to_owned()]),
+                ..McpPermissions::default()
+            },
             projects: vec![analytics, project("Shop")],
         };
 
@@ -515,6 +600,8 @@ mod tests {
         assert!(text.contains("statement_timeout = \"30s\""), "{text}");
         assert_eq!(text.matches("[project.mcp]").count(), 1, "{text}");
         assert!(text.contains("max_rows = 50"), "{text}");
+        assert!(text.contains("schemas = [\"public\"]"), "{text}");
+        assert!(text.contains("schemas = \"all\""), "{text}");
         assert!(!file.path().with_extension("toml.tmp").exists());
     }
 
@@ -524,8 +611,10 @@ mod tests {
         let cases = [
             (
                 "unknown permission",
-                "[mcp_defaults]\nschemas = [\"public\"]\n",
+                "[mcp_defaults]\ndatabases = [\"public\"]\n",
             ),
+            ("no schemas", "[mcp_defaults]\nschemas = []\n"),
+            ("schemas keyword", "[mcp_defaults]\nschemas = \"none\"\n"),
             ("zero rows", "[mcp_defaults]\nmax_rows = 0\n"),
             (
                 "bad timeout",

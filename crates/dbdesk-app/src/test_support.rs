@@ -26,26 +26,50 @@ const WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Passwords in memory, so tests never touch the real keychain.
 #[derive(Default)]
-pub struct MemorySecrets(Mutex<HashMap<DataSourceId, Password>>);
+pub struct MemorySecrets {
+    own: Mutex<HashMap<DataSourceId, Password>>,
+    mcp: Mutex<HashMap<DataSourceId, Password>>,
+}
 
 impl MemorySecrets {
     pub fn with_password(id: DataSourceId, password: Password) -> Self {
-        Self(Mutex::new(HashMap::from([(id, password)])))
+        Self {
+            own: Mutex::new(HashMap::from([(id, password)])),
+            mcp: Mutex::default(),
+        }
+    }
+
+    pub fn mcp(&self, id: DataSourceId) -> Option<Password> {
+        self.mcp.lock().unwrap().get(&id).cloned()
     }
 }
 
 impl SecretStore for MemorySecrets {
     fn password(&self, id: DataSourceId) -> Result<Option<Password>, SecretError> {
-        Ok(self.0.lock().unwrap().get(&id).cloned())
+        Ok(self.own.lock().unwrap().get(&id).cloned())
     }
 
     fn set_password(&self, id: DataSourceId, password: &Password) -> Result<(), SecretError> {
-        self.0.lock().unwrap().insert(id, password.clone());
+        self.own.lock().unwrap().insert(id, password.clone());
         Ok(())
     }
 
     fn delete_password(&self, id: DataSourceId) -> Result<(), SecretError> {
-        self.0.lock().unwrap().remove(&id);
+        self.own.lock().unwrap().remove(&id);
+        Ok(())
+    }
+
+    fn mcp_password(&self, id: DataSourceId) -> Result<Option<Password>, SecretError> {
+        Ok(self.mcp(id))
+    }
+
+    fn set_mcp_password(&self, id: DataSourceId, password: &Password) -> Result<(), SecretError> {
+        self.mcp.lock().unwrap().insert(id, password.clone());
+        Ok(())
+    }
+
+    fn delete_mcp_password(&self, id: DataSourceId) -> Result<(), SecretError> {
+        self.mcp.lock().unwrap().remove(&id);
         Ok(())
     }
 }

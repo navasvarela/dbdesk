@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use dbdesk_core::{
     ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase,
-    MysqlConfig, Port, PostgresConfig, ProjectId, SafetyLevel, ServerConfig, SourceColor,
+    McpLogin, MysqlConfig, Port, PostgresConfig, ProjectId, SafetyLevel, ServerConfig, SourceColor,
     SqlServerConfig, SqliteConfig, TlsMode,
 };
 use serde::{Deserialize, Serialize};
@@ -59,7 +59,7 @@ impl From<&Project> for PortableProject {
             name: name.clone(),
             slug: slug.clone(),
             mcp_enabled: *mcp_enabled,
-            mcp: *mcp,
+            mcp: mcp.clone(),
         }
     }
 }
@@ -94,6 +94,10 @@ pub(crate) struct PortableDataSource {
     safety: SafetyLevel,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     project: Option<ProjectId>,
+    /// The user MCP clients sign in as travels, so a team shares the dedicated login; its
+    /// password stays in each machine's keychain, like the data source's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    mcp_login: Option<McpLogin>,
     #[serde(flatten)]
     config: PortableConfig,
 }
@@ -107,6 +111,7 @@ impl PortableDataSource {
             color,
             safety,
             project,
+            mcp_login,
             config,
         } = data_source;
         Self {
@@ -115,6 +120,7 @@ impl PortableDataSource {
             color: *color,
             safety: *safety,
             project: *project,
+            mcp_login: mcp_login.clone(),
             config: PortableConfig::export(config, &path),
         }
     }
@@ -127,6 +133,7 @@ impl PortableDataSource {
             color,
             safety,
             project,
+            mcp_login,
             config,
         } = self;
         DataSource {
@@ -135,6 +142,7 @@ impl PortableDataSource {
             color,
             safety,
             project,
+            mcp_login,
             config: config.import(&path),
         }
     }

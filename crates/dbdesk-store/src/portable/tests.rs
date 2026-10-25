@@ -48,6 +48,7 @@ fn data_source(name: &str, project: Option<ProjectId>, config: ConnectionConfig)
         color: None,
         safety: dbdesk_core::SafetyLevel::Normal,
         project,
+        mcp_login: None,
         config,
     }
 }
@@ -57,6 +58,9 @@ fn every_kind(home: &Path, beside: &Path, project: ProjectId) -> Vec<DataSource>
     vec![
         DataSource {
             color: Some(SourceColor::Red),
+            mcp_login: Some(dbdesk_core::McpLogin {
+                user: "assistant".to_owned(),
+            }),
             ..data_source(
                 "production",
                 Some(project),

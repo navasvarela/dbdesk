@@ -119,6 +119,7 @@ mod tests {
             color: None,
             safety: dbdesk_core::SafetyLevel::Normal,
             project: None,
+            mcp_login: None,
             config: ConnectionConfig::Sqlite(SqliteConfig {
                 path: format!("/data/{name}.db").into(),
                 read_only: false,

@@ -74,6 +74,7 @@ fn every_kind(shared: &Path) -> Vec<(DataSource, Password)> {
                 color: Some(SourceColor::Teal),
                 safety: dbdesk_core::SafetyLevel::Normal,
                 project: None,
+                mcp_login: None,
                 config,
             };
             let password = Password::new(format!("secret-of-{name}-{}", data_source.id));

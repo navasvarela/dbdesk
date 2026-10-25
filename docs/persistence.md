@@ -33,6 +33,8 @@ dbdesk/
   `normal` (W2). Exports carry it.
 - `host`, `port`, `database`, `user`, `path` and `ca_file` may hold `${NAME}` placeholders,
   resolved when connecting; a port with one is written as a string (W1).
+- `project` and `mcp_login` are optional too. `mcp_login = { user = "…" }` is the database user
+  `dbdesk mcp` signs in as instead of the data source's own (see [MCP server](mcp-server.md)).
 - Comments and unknown fields are **not** preserved when dbdesk rewrites the file (it is written
   with `serde` + `toml`), and the file header says so. Switching to `toml_edit` to edit the
   document in place is a follow-up if hand-editing becomes common.
@@ -81,8 +83,10 @@ read_only = true
   SQLite file never triggers a keychain prompt.
 - Behind the `SecretStore` trait, so tests use an in-memory store. A real-keychain round trip is
   an opt-in test: `cargo test -p dbdesk-store -- --ignored`.
-- Deleting a data source removes its keychain entry. If that fails, the failure is only logged,
-  since a leftover entry is harmless.
+- A data source's MCP login has an entry of its own, account `<data-source-id>/mcp`, which only
+  `dbdesk mcp` reads.
+- Deleting a data source removes its keychain entries. If that fails, the failure is only
+  logged, since a leftover entry is harmless.
 - A data source that signs in with a password and has none saved (or whose keychain entry
   can't be read: locked, declined, unavailable) asks for it when it connects, with **Save to
   keychain** ticked. Whatever is typed is also kept in memory until dbdesk quits, so it still

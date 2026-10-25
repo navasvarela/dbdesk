@@ -71,8 +71,21 @@ pub struct DataSource {
     /// no project, rather than an error, so deleting that file never loses a data source.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<ProjectId>,
+    /// Another login for `dbdesk mcp` to connect as instead of the data source's own, so
+    /// the database's grants limit what an assistant can do. Its password has a keychain
+    /// entry of its own. Only engines that sign in with a password use it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_login: Option<McpLogin>,
     #[serde(flatten)]
     pub config: ConnectionConfig,
+}
+
+/// The database user `dbdesk mcp` signs in as, written in `data_sources.toml` as
+/// `mcp_login = { user = "assistant" }`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpLogin {
+    pub user: String,
 }
 
 /// The colours a data source can be marked with.
@@ -189,6 +202,20 @@ pub enum ConnectionConfig {
 }
 
 impl ConnectionConfig {
+    /// The same configuration signing in as `user`; `None` for engines without a login.
+    pub fn with_user(&self, user: &str) -> Option<Self> {
+        let mut config = self.clone();
+        let server = match &mut config {
+            Self::Postgres(config) => &mut config.server,
+            Self::Mysql(config) => &mut config.server,
+            Self::SqlServer(config) => &mut config.server,
+            Self::ClickHouse(config) => &mut config.server,
+            Self::Sqlite(_) | Self::DuckDb(_) => return None,
+        };
+        user.clone_into(&mut server.user);
+        Some(config)
+    }
+
     pub fn driver(&self) -> DriverKind {
         match self {
             Self::Postgres(_) => DriverKind::Postgres,
@@ -612,6 +639,7 @@ mod tests {
                     color: None,
                     safety: SafetyLevel::Normal,
                     project: None,
+                    mcp_login: None,
                     config: ConnectionConfig::Postgres(PostgresConfig {
                         server: ServerConfig {
                             host: "localhost".to_owned(),
@@ -630,6 +658,7 @@ mod tests {
                     color: None,
                     safety: SafetyLevel::Normal,
                     project: None,
+                    mcp_login: None,
                     config: ConnectionConfig::Sqlite(SqliteConfig {
                         path: "/tmp/chinook.db".into(),
                         read_only: true,
@@ -642,6 +671,64 @@ mod tests {
         assert!(text.contains("driver = \"postgres\""), "{text}");
         assert!(text.contains("driver = \"sqlite\""), "{text}");
         assert_eq!(toml::from_str::<File>(&text).unwrap(), file);
+    }
+
+    #[test]
+    fn writes_an_mcp_login_only_when_there_is_one() {
+        let server = ServerConfig {
+            host: "localhost".to_owned(),
+            port: 5432.into(),
+            database: "app".to_owned(),
+            user: "juan".to_owned(),
+            tls: TlsMode::Prefer,
+        };
+        let mut data_source = DataSource {
+            id: DataSourceId::generate(),
+            name: "local".to_owned(),
+            color: None,
+            safety: SafetyLevel::Normal,
+            project: None,
+            mcp_login: None,
+            config: ConnectionConfig::Postgres(PostgresConfig { server }),
+        };
+        let without = toml::to_string(&File {
+            data_source: vec![data_source.clone()],
+        })
+        .unwrap();
+        assert!(!without.contains("mcp_login"), "{without}");
+
+        data_source.mcp_login = Some(McpLogin {
+            user: "assistant".to_owned(),
+        });
+        let file = File {
+            data_source: vec![data_source],
+        };
+        let text = toml::to_string(&file).unwrap();
+        assert!(text.contains("user = \"assistant\""), "{text}");
+        assert_eq!(toml::from_str::<File>(&text).unwrap(), file);
+    }
+
+    #[test]
+    fn swaps_the_user_of_engines_that_sign_in() {
+        let server = ServerConfig {
+            host: "localhost".to_owned(),
+            port: 3306.into(),
+            database: "shop".to_owned(),
+            user: "owner".to_owned(),
+            tls: TlsMode::Prefer,
+        };
+        let mysql = ConnectionConfig::Mysql(MysqlConfig { server });
+
+        let Some(ConnectionConfig::Mysql(as_assistant)) = mysql.with_user("assistant") else {
+            panic!("expected a MySQL configuration");
+        };
+        assert_eq!(as_assistant.server.user, "assistant");
+        assert_eq!(as_assistant.server.database, "shop");
+        let sqlite = ConnectionConfig::Sqlite(SqliteConfig {
+            path: "/tmp/a.db".into(),
+            read_only: false,
+        });
+        assert_eq!(sqlite.with_user("assistant"), None);
     }
 
     #[test]
@@ -689,6 +776,7 @@ mod tests {
                     color: None,
                     safety: SafetyLevel::Normal,
                     project: None,
+                    mcp_login: None,
                     config: ConnectionConfig::Postgres(PostgresConfig {
                         server: ServerConfig {
                             host: "localhost".to_owned(),
@@ -792,6 +880,7 @@ mod tests {
                     color: None,
                     safety: SafetyLevel::Normal,
                     project: None,
+                    mcp_login: None,
                     config: ConnectionConfig::DuckDb(DuckDbConfig { database }),
                 }],
             };

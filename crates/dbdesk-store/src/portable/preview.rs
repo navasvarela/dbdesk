@@ -10,7 +10,7 @@ use dbdesk_core::{
 };
 
 use super::Incoming;
-use crate::projects::{McpOverrides, Project, Projects};
+use crate::projects::{McpOverrides, Project, Projects, SchemaScope};
 
 /// How an entry in the file compares with what this machine has.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -387,7 +387,8 @@ fn project_settings(project: &Project) -> Settings {
         admin,
         max_rows,
         statement_timeout,
-    } = project.mcp;
+        schemas,
+    } = &project.mcp;
     let or_default = |value: Option<String>| value.unwrap_or_else(|| "default".to_owned());
     vec![
         ("Name", project.name.clone()),
@@ -396,6 +397,13 @@ fn project_settings(project: &Project) -> Settings {
         ("MCP writing", or_default(write.map(yes_no))),
         ("MCP schema changes", or_default(schema.map(yes_no))),
         ("MCP administration", or_default(admin.map(yes_no))),
+        (
+            "MCP schemas",
+            or_default(schemas.as_ref().map(|scope| match scope {
+                SchemaScope::All => "all".to_owned(),
+                SchemaScope::Only(schemas) => schemas.join(", "),
+            })),
+        ),
         (
             "MCP row limit",
             or_default(max_rows.map(|rows| rows.to_string())),
@@ -419,6 +427,13 @@ fn data_source_settings(data_source: &DataSource, names: &ProjectNames) -> Setti
         ),
         ("Safety", data_source.safety.display_name().to_owned()),
         ("Project", names.describe(data_source.project)),
+        (
+            "MCP login",
+            data_source
+                .mcp_login
+                .as_ref()
+                .map_or_else(|| "none".to_owned(), |login| login.user.clone()),
+        ),
         (
             "Driver",
             data_source.config.driver().display_name().to_owned(),

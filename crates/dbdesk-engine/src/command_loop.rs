@@ -532,10 +532,16 @@ impl Engine {
         Ok(())
     }
 
-    /// A leftover keychain entry is harmless, so failing to remove it is only logged.
+    /// Removes both of the data source's keychain entries, its own and its MCP login's. A
+    /// leftover entry is harmless, so failing to remove one is only logged.
     async fn delete_password(&self, id: DataSourceId) {
         let secrets = Arc::clone(&self.secrets);
-        let result = tokio::task::spawn_blocking(move || secrets.delete_password(id)).await;
+        let result = tokio::task::spawn_blocking(move || {
+            let own = secrets.delete_password(id);
+            let mcp = secrets.delete_mcp_password(id);
+            own.and(mcp)
+        })
+        .await;
         let error = match result {
             Ok(Ok(())) => return,
             Ok(Err(error)) => describe_error(&error),

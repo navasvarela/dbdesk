@@ -378,6 +378,7 @@ fn committing_a_failed_postgres_transaction_rolls_it_back() {
         color: None,
         safety: dbdesk_core::SafetyLevel::Normal,
         project: None,
+        mcp_login: None,
         config: ConnectionConfig::Postgres(server.config),
     };
     let id = data_source.id;
@@ -573,6 +574,7 @@ fn applies_and_rolls_back_edits_on_postgres() {
         color: None,
         safety: dbdesk_core::SafetyLevel::Normal,
         project: None,
+        mcp_login: None,
         config: ConnectionConfig::Postgres(server.config),
     };
     let id = data_source.id;
@@ -628,6 +630,7 @@ fn applies_and_rolls_back_edits_on_mysql() {
             color: None,
             safety: dbdesk_core::SafetyLevel::Normal,
             project: None,
+            mcp_login: None,
             config: ConnectionConfig::Mysql(config),
         };
         let id = data_source.id;
@@ -689,6 +692,7 @@ fn applies_and_rolls_back_edits_on_sqlserver() {
         color: None,
         safety: dbdesk_core::SafetyLevel::Normal,
         project: None,
+        mcp_login: None,
         config: ConnectionConfig::SqlServer(config),
     };
     let id = data_source.id;
@@ -761,6 +765,7 @@ fn explains_on_sqlserver_with_showplan_and_switches_it_off() {
         color: None,
         safety: dbdesk_core::SafetyLevel::Normal,
         project: None,
+        mcp_login: None,
         config: ConnectionConfig::SqlServer(config),
     };
     let id = data_source.id;
@@ -820,6 +825,7 @@ fn keeps_a_clickhouse_session_across_runs() {
         color: None,
         safety: dbdesk_core::SafetyLevel::Normal,
         project: None,
+        mcp_login: None,
         config: ConnectionConfig::ClickHouse(config),
     };
     let id = data_source.id;
@@ -877,6 +883,7 @@ fn applies_edits_on_duckdb_and_refuses_them_inside_a_transaction() {
         color: None,
         safety: dbdesk_core::SafetyLevel::Normal,
         project: None,
+        mcp_login: None,
         config: ConnectionConfig::DuckDb(DuckDbConfig {
             database: DuckDbDatabase::InMemory,
         }),
@@ -1021,6 +1028,7 @@ fn never_validates_inside_a_postgres_transaction() {
         color: None,
         safety: dbdesk_core::SafetyLevel::Normal,
         project: None,
+        mcp_login: None,
         config: ConnectionConfig::Postgres(server.config),
     };
     let id = data_source.id;
