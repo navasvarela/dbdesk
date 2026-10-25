@@ -71,6 +71,14 @@ read_only = true
 - `tls` is optional for PostgreSQL, and `mode` defaults to `prefer`: `disable`, `prefer`,
   `require` or `verify-full`. `ca_file` is only read with `verify-full`.
 - `read_only` is optional and defaults to `false`.
+- `host`, `port`, `database`, `user`, `path` and `ca_file` may hold `${NAME}` placeholders,
+  resolved from the environment when connecting (see
+  [Placeholders](data-sources.md#placeholders-variable)). A port with one is a string:
+  `port = "${PGPORT}"`.
+
+An export (**File › Export data sources…**) is the same `[[data_source]]` tables, with a
+`format_version = 1` line and the projects as `[[project]]` tables, as `projects.toml` writes
+them. See [Moving data sources to another machine](sharing.md).
 
 If the file can't be read — say, a typo while editing it — the explorer shows the error and
 dbdesk refuses to save or delete anything, so it never overwrites your file with an empty list.

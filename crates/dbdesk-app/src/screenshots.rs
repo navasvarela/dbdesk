@@ -190,6 +190,30 @@ const SCENES: &[Scene] = &[
         keeps_pointer: false,
     },
     Scene {
+        name: "data-source-placeholders",
+        data_sources: FixtureSources::Shop,
+        play: data_source_placeholders,
+        keeps_pointer: false,
+    },
+    Scene {
+        name: "password-prompt",
+        data_sources: FixtureSources::Shop,
+        play: password_prompt,
+        keeps_pointer: false,
+    },
+    Scene {
+        name: "export-data-sources",
+        data_sources: FixtureSources::Projects,
+        play: export_data_sources,
+        keeps_pointer: false,
+    },
+    Scene {
+        name: "import-preview",
+        data_sources: FixtureSources::Shop,
+        play: import_preview,
+        keeps_pointer: false,
+    },
+    Scene {
         name: "explorer-menu",
         data_sources: FixtureSources::Shop,
         play: explorer_menu,
@@ -532,6 +556,109 @@ fn open_new_data_source_dialog(harness: &mut Harness<'static, DbDeskApp>, driver
     harness.run_ok();
     harness.get_by_label(driver).click();
     harness.run_ok();
+}
+
+/// Replaces the text of the field labelled `label` with `text`.
+fn retype(harness: &mut Harness<'static, DbDeskApp>, label: &str, text: &str) {
+    harness
+        .get_by_role_and_label(Role::TextInput, label)
+        .focus();
+    harness.run_ok();
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    harness.key_press(egui::Key::Backspace);
+    harness
+        .get_by_role_and_label(Role::TextInput, label)
+        .type_text(text);
+    harness.run_ok();
+}
+
+fn data_source_placeholders(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    open_new_data_source_dialog(harness, "PostgreSQL");
+    retype(harness, "Name", "staging");
+    retype(harness, "Host", "db-${DBDESK_ENV}.internal");
+    retype(harness, "Port", "${PGPORT}");
+    retype(harness, "User", "${USER}");
+}
+
+fn password_prompt(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    open_new_data_source_dialog(harness, "PostgreSQL");
+    retype(harness, "Name", "staging");
+    retype(harness, "Host", "staging.internal");
+    harness.get_by_label("Save").click();
+    expand(harness, &["staging"]);
+    step_until_visible(harness, "Connect to staging");
+}
+
+fn open_file_menu_item(harness: &mut Harness<'static, DbDeskApp>, item: &str) {
+    harness.get_by_label("File").click();
+    harness.run_ok();
+    harness.get_by_label(item).click();
+    harness.run_ok();
+}
+
+fn export_data_sources(harness: &mut Harness<'static, DbDeskApp>, fixture: &Fixture) {
+    harness
+        .state_mut()
+        .answer_file_dialogs_with(&fixture.dir.path().join("dbdesk.toml"));
+    open_file_menu_item(harness, "Export data sources…");
+    harness
+        .get_by_role_and_label(Role::CheckBox, "Web shop")
+        .click();
+    harness.run_ok();
+}
+
+/// A file from a teammate: the shop marked differently, a new project with a PostgreSQL data
+/// source whose host is a placeholder, and a SQLite file this machine doesn't have.
+fn import_preview(harness: &mut Harness<'static, DbDeskApp>, fixture: &Fixture) {
+    let local = DataSourceFile::new(fixture.dir.path().join("data_sources.toml"))
+        .load()
+        .unwrap();
+    let shop = local[0].clone();
+    let reporting = Project::new(
+        ProjectId::generate(),
+        "Reporting".to_owned(),
+        ProjectSlug::from_name("Reporting"),
+    );
+    let teams_shop = DataSource {
+        color: Some(SourceColor::Green),
+        ..shop.clone()
+    };
+    let analytics = DataSource {
+        id: DataSourceId::generate(),
+        name: "analytics".to_owned(),
+        color: Some(SourceColor::Red),
+        project: Some(reporting.id),
+        config: ConnectionConfig::Postgres(PostgresConfig {
+            server: ServerConfig {
+                host: "${ANALYTICS_HOST}".to_owned(),
+                port: 5432.into(),
+                database: "analytics".to_owned(),
+                user: "reporting".to_owned(),
+                tls: TlsMode::Require,
+            },
+        }),
+    };
+    let archive = DataSource {
+        id: DataSourceId::generate(),
+        name: "archive".to_owned(),
+        color: None,
+        project: Some(reporting.id),
+        config: ConnectionConfig::Sqlite(SqliteConfig {
+            path: fixture.dir.path().join("archive/2025.db"),
+            read_only: true,
+        }),
+    };
+    let file = fixture.dir.path().join("team.toml");
+    dbdesk_store::write_export(
+        &file,
+        &[teams_shop, analytics, archive],
+        std::slice::from_ref(&reporting),
+        None,
+    )
+    .unwrap();
+    harness.state_mut().answer_file_dialogs_with(&file);
+    open_file_menu_item(harness, "Import data sources…");
+    step_until_visible(harness, "Imports 1 project and 3 data sources.");
 }
 
 fn explorer_menu(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {

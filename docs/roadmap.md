@@ -42,7 +42,7 @@ Follow-ups left out of M1:
 - ~~TLS for Postgres (`sslmode`).~~ Done in DB0: `disable`, `prefer`, `require` and
   `verify-full` with an optional CA file, on rustls.
 - ~~A file picker for SQLite paths.~~ Done: **Browse…** and **New…** (create an empty database).
-- Prompting for a password when none is saved or the keychain is unavailable.
+- ~~Prompting for a password when none is saved or the keychain is unavailable.~~ Done in W1.
 - Noticing when an established connection drops (the session still shows "connected").
 - Duplicate data source; colour and safety level per data source.
 - Preserving comments in `data_sources.toml` (`toml_edit`).
@@ -475,6 +475,24 @@ The gaps that keep dbdesk from being an everyday tool. The full plan is in
     entries by id;
   - paths that travel, and `${VARIABLE}` placeholders;
   - a password prompt on first connect.
+
+  **W1 demo note:** built. **File › Export data sources…**, tick a project (its data sources
+  follow), **Export…**: the TOML file has `format_version = 1`, the projects with their MCP
+  settings, and `[[data_source]]` tables in `data_sources.toml`'s format, with no password,
+  token or command. A SQLite file next to the export is written relative to it, one in the home
+  folder as `~/…`. On another machine, **File › Import data sources…** shows each project and
+  data source as new, unchanged, or what differs (`Host: localhost → db.internal`), flags files
+  that machine doesn't have, and offers Import/Update, Skip, or Import as a copy per entry;
+  projects match by id, then by slug. Import, then expand a data source: it asks for its
+  password once, with **Save to keychain** ticked (a locked keychain asks too, and the password
+  is kept for the session). Import the same file again and everything is unchanged and nothing
+  is written. A data source with host `${PGHOST}` connects wherever that is set; the dialog
+  shows what each placeholder resolves to, and an unset one stops the connection naming the
+  setting. Covered by core tests of placeholders, store tests of the format, paths and preview,
+  engine tests of a round trip between two engines, a re-import that changes no file, a search
+  of an export of every kind of data source for every saved password, the password prompt (a
+  real PostgreSQL connection included), and kittest tests of the prompt, the export and the
+  import preview.
 - **W2 — Safety per data source:** Normal, Careful (confirm every change) and Read-only
   (enforced as for MCP).
 - **W3 — Connections you can rely on:** SSH tunnels with `russh`, and noticing and reconnecting
