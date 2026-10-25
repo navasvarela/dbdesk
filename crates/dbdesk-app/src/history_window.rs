@@ -1,10 +1,11 @@
-//! The query history of one data source, searchable, opened from a console to put a past
-//! statement back into it.
+//! The query history of one data source, searchable and filtered by where statements came
+//! from, opened from a console to put a past statement back into it. Statements an MCP
+//! client ran are marked.
 
 use dbdesk_core::DataSourceId;
 use dbdesk_engine::{Command, Event};
-use dbdesk_store::{ConsoleKey, HistoryEntry, HistoryOutcome};
-use egui::{Label, RichText, ScrollArea, TextEdit, Ui, Window};
+use dbdesk_store::{ConsoleKey, HistoryEntry, HistoryOutcome, HistoryQuery, HistorySource};
+use egui::{ComboBox, Label, RichText, ScrollArea, TextEdit, Ui, Window};
 use jiff::tz::TimeZone;
 
 use crate::theme::Palette;
@@ -17,6 +18,8 @@ pub struct HistoryWindow {
     console: ConsoleKey,
     data_source_name: String,
     search: String,
+    /// Only statements from there; `None` for all.
+    source: Option<HistorySource>,
     /// The answer to the latest search; `None` while it is pending.
     results: Option<Result<Vec<HistoryEntry>, String>>,
 }
@@ -40,6 +43,7 @@ impl HistoryWindow {
             console,
             data_source_name,
             search: String::new(),
+            source: None,
             results: None,
         };
         let search = window.search_command();
@@ -50,22 +54,23 @@ impl HistoryWindow {
         self.console.data_source
     }
 
-    /// The search for the current text, to rerun when new statements may have been recorded.
-    pub fn search_command(&self) -> Command {
-        Command::SearchHistory {
+    fn query(&self) -> HistoryQuery {
+        HistoryQuery {
             data_source: self.data_source(),
             text: self.search.clone(),
+            source: self.source,
         }
     }
 
+    /// The search for the current text and source, to rerun when new statements may have
+    /// been recorded.
+    pub fn search_command(&self) -> Command {
+        Command::SearchHistory(self.query())
+    }
+
     pub fn apply(&mut self, event: &Event) {
-        if let Event::HistoryFound {
-            data_source,
-            text,
-            result,
-        } = event
-            && *data_source == self.data_source()
-            && *text == self.search
+        if let Event::HistoryFound { query, result } = event
+            && *query == self.query()
         {
             self.results = Some(result.clone());
         }
@@ -88,12 +93,18 @@ impl HistoryWindow {
 
     fn contents(&mut self, ui: &mut Ui) -> Option<HistoryAction> {
         let searched = ui
-            .add(
-                TextEdit::singleline(&mut self.search)
-                    .hint_text("Search statements")
-                    .desired_width(f32::INFINITY),
-            )
-            .changed();
+            .horizontal(|ui| {
+                let filtered = source_filter(ui, &mut self.source);
+                let typed = ui
+                    .add(
+                        TextEdit::singleline(&mut self.search)
+                            .hint_text("Search statements")
+                            .desired_width(f32::INFINITY),
+                    )
+                    .changed();
+                filtered || typed
+            })
+            .inner;
         if searched {
             self.results = None;
             return Some(HistoryAction::Search(self.search_command()));
@@ -140,6 +151,32 @@ impl HistoryWindow {
     }
 }
 
+/// The choices of where statements came from, each with its label.
+const SOURCES: [(Option<HistorySource>, &str); 3] = [
+    (None, "All sources"),
+    (Some(HistorySource::App), "dbdesk"),
+    (Some(HistorySource::Mcp), "MCP clients"),
+];
+
+/// Returns whether the choice changed.
+fn source_filter(ui: &mut Ui, source: &mut Option<HistorySource>) -> bool {
+    let selected = SOURCES
+        .iter()
+        .find(|(choice, _)| choice == source)
+        .map_or("All sources", |(_, label)| label);
+    let mut changed = false;
+    ComboBox::from_id_salt("history_source")
+        .selected_text(selected)
+        .show_ui(ui, |ui| {
+            for (choice, label) in SOURCES {
+                changed |= ui.selectable_value(source, choice, label).changed();
+            }
+        })
+        .response
+        .on_hover_text("Where the statements were run from");
+    changed
+}
+
 /// Draws one entry. Returns whether the user chose to insert it.
 fn entry_row(ui: &mut Ui, entry: &HistoryEntry, time_zone: &TimeZone) -> bool {
     ui.horizontal(|ui| {
@@ -147,6 +184,16 @@ fn entry_row(ui: &mut Ui, entry: &HistoryEntry, time_zone: &TimeZone) -> bool {
         let time = entry.executed_at.to_zoned(time_zone.clone());
         ui.weak(time.strftime(TIME_FORMAT).to_string());
         outcome_label(ui, entry);
+        if entry.source == HistorySource::Mcp {
+            let palette = Palette::for_visuals(ui.visuals());
+            ui.label(
+                RichText::new("MCP")
+                    .small()
+                    .strong()
+                    .color(palette.secondary),
+            )
+            .on_hover_text("Run by an MCP client, through dbdesk mcp");
+        }
         let first_line = entry.sql.lines().next().unwrap_or_default();
         let statement = ui
             .add(

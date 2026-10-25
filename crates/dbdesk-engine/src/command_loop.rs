@@ -279,9 +279,7 @@ impl Engine {
             Command::ExportRows { console, export } => {
                 tokio::spawn(export::run(console, export, self.events.clone()));
             }
-            Command::SearchHistory { data_source, text } => {
-                self.history.search(data_source, text);
-            }
+            Command::SearchHistory(query) => self.history.search(query),
             Command::CheckForUpdates => {
                 tokio::spawn(releases::check(
                     Arc::clone(&self.releases),

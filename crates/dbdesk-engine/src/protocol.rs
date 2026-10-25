@@ -6,8 +6,8 @@ use dbdesk_core::{
     ProjectId, Rejection, RelationName, Row, ServerInfo, TableDescription, TransactionStatus,
 };
 use dbdesk_store::{
-    ConsoleKey, HistoryEntry, ImportPlan, ImportPreview, KeymapBindings, McpOverrides,
-    McpPermissions, Project, Projects, SavedConsole, Settings,
+    ConsoleKey, HistoryEntry, HistoryQuery, ImportPlan, ImportPreview, KeymapBindings,
+    McpOverrides, McpPermissions, Project, Projects, SavedConsole, Settings,
 };
 
 use crate::{Export, PasswordNeeded, Release};
@@ -198,12 +198,8 @@ pub enum Command {
         console: ConsoleId,
         export: Export,
     },
-    /// Looks up the data source's past statements containing `text`, newest first.
-    /// Answered by [`Event::HistoryFound`].
-    SearchHistory {
-        data_source: DataSourceId,
-        text: String,
-    },
+    /// Looks up past statements, newest first. Answered by [`Event::HistoryFound`].
+    SearchHistory(HistoryQuery),
     /// Asks the release feed for the newest published release. Answered by
     /// [`Event::LatestRelease`].
     CheckForUpdates,
@@ -343,8 +339,7 @@ pub enum Event {
     /// The answer to [`Command::SearchHistory`], echoing what was searched for so the UI can
     /// drop answers to searches it has moved on from.
     HistoryFound {
-        data_source: DataSourceId,
-        text: String,
+        query: HistoryQuery,
         result: Result<Vec<HistoryEntry>, String>,
     },
     SessionChanged {
