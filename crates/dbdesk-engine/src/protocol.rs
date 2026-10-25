@@ -1,9 +1,9 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use dbdesk_core::{
-    CatalogNode, CatalogPath, ColumnInfo, DataSource, DataSourceId, Password, ProjectId, Rejection,
-    RelationName, Row, ServerInfo, TableDescription, TransactionStatus,
+    CatalogNode, CatalogPath, ColumnInfo, DataSource, DataSourceId, DriverKind, Password,
+    ProjectId, Rejection, RelationName, Row, ServerInfo, TableDescription, TransactionStatus,
 };
 use dbdesk_store::{
     ConsoleKey, HistoryEntry, KeymapBindings, Project, Projects, SavedConsole, Settings,
@@ -78,9 +78,9 @@ pub enum Command {
         id: DataSourceId,
         path: CatalogPath,
     },
-    /// Creates a new, empty SQLite database file, refusing to overwrite an existing one.
-    /// Answered by [`Event::SqliteDatabaseCreated`].
-    CreateSqliteDatabase(PathBuf),
+    /// Creates a new, empty database file, refusing to overwrite an existing one. Answered by
+    /// [`Event::DatabaseFileCreated`].
+    CreateDatabaseFile(DatabaseFile),
     /// Runs statements in order on the console's own connection, connecting it to
     /// `data_source` first if needed, and stops at the first failure. Each statement's first
     /// page of rows is reported; the last statement's remaining rows stay available through
@@ -310,8 +310,8 @@ pub enum Event {
         path: CatalogPath,
         result: Result<String, String>,
     },
-    SqliteDatabaseCreated {
-        path: PathBuf,
+    DatabaseFileCreated {
+        file: DatabaseFile,
         result: Result<(), String>,
     },
     ConsoleSessionChanged {
@@ -392,6 +392,28 @@ pub struct StatementFailure {
     pub message: String,
     /// Byte offset into the statement's text, when the database reports one.
     pub position: Option<usize>,
+}
+
+/// A database file to create, for the engines whose databases are files.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DatabaseFile {
+    Sqlite(PathBuf),
+    DuckDb(PathBuf),
+}
+
+impl DatabaseFile {
+    pub fn path(&self) -> &Path {
+        match self {
+            Self::Sqlite(path) | Self::DuckDb(path) => path,
+        }
+    }
+
+    pub fn driver(&self) -> DriverKind {
+        match self {
+            Self::Sqlite(_) => DriverKind::Sqlite,
+            Self::DuckDb(_) => DriverKind::DuckDb,
+        }
+    }
 }
 
 /// What a run is for.

@@ -1,21 +1,21 @@
 //! The modal dialog for creating or editing a data source, with "Test connection".
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use dbdesk_core::{
     DataSource, DataSourceId, DriverKind, ServerInfo, SourceColor, expand, expand_path,
     has_placeholder,
 };
-use dbdesk_engine::{Event, PasswordUpdate, ProcessEnvironment};
+use dbdesk_engine::{DatabaseFile, Event, PasswordUpdate, ProcessEnvironment};
 use egui::{
     Align, Button, Color32, Grid, Id, Layout, Modal, RichText, Sense, Stroke, TextEdit, Ui,
     WidgetInfo, WidgetType, vec2,
 };
 
 use crate::data_source_form::{
-    DataSourceForm, DriverFields, FormError, ServerFields, SqliteFields, TlsChoice,
+    DataSourceForm, DriverFields, DuckDbFields, DuckDbLocation, FormError, ServerFields, TlsChoice,
 };
-use crate::file_picker;
+use crate::file_picker::{self, FileEngine};
 use crate::icons;
 use crate::theme::Palette;
 use crate::widgets;
@@ -27,8 +27,8 @@ const SWATCH_RADIUS: f32 = 8.0;
 pub enum DialogAction {
     Test(DataSource, PasswordUpdate),
     Save(DataSource, PasswordUpdate),
-    /// Create an empty SQLite database at this path, chosen in the Save dialog.
-    CreateSqliteDatabase(PathBuf),
+    /// Create an empty database file at the path chosen in the Save dialog.
+    CreateDatabaseFile(DatabaseFile),
     Close,
 }
 
@@ -82,7 +82,7 @@ impl DataSourceDialog {
                 false
             }
             Event::DataSourceSaved(data_source) => data_source.id == self.id,
-            Event::SqliteDatabaseCreated { path, result } if self.is_sqlite_path(path) => {
+            Event::DatabaseFileCreated { file, result } if self.is_creating(file) => {
                 self.status = Status::Created(result.clone());
                 false
             }
@@ -90,11 +90,21 @@ impl DataSourceDialog {
         }
     }
 
-    fn is_sqlite_path(&self, path: &Path) -> bool {
-        let DriverFields::Sqlite(fields) = &self.form.fields else {
-            return false;
+    /// Whether `file` is the database this dialog's File field names.
+    fn is_creating(&self, file: &DatabaseFile) -> bool {
+        let path = match (&self.form.fields, file) {
+            (DriverFields::Sqlite(fields), DatabaseFile::Sqlite(_)) => &fields.path,
+            (
+                DriverFields::DuckDb(DuckDbFields {
+                    location: DuckDbLocation::File,
+                    path,
+                    ..
+                }),
+                DatabaseFile::DuckDb(_),
+            ) => path,
+            _ => return false,
         };
-        Path::new(fields.path.trim()) == path
+        Path::new(path.trim()) == file.path()
     }
 
     pub fn show(&mut self, ctx: &egui::Context) -> Option<DialogAction> {
@@ -124,9 +134,9 @@ impl DataSourceDialog {
         ui.separator();
         let action = self.buttons(ui);
         match new_database {
-            Some(path) => {
+            Some(file) => {
                 self.status = Status::Creating;
-                Some(DialogAction::CreateSqliteDatabase(path))
+                Some(DialogAction::CreateDatabaseFile(file))
             }
             None => action,
         }
@@ -141,8 +151,8 @@ impl DataSourceDialog {
         }
     }
 
-    /// Draws the form. Returns a path if the user chose to create a new SQLite database there.
-    fn fields(&mut self, ui: &mut Ui) -> Option<PathBuf> {
+    /// Draws the form. Returns a database file if the user chose to create one.
+    fn fields(&mut self, ui: &mut Ui) -> Option<DatabaseFile> {
         let password_hint = if self.is_new { "none" } else { "unchanged" };
         Grid::new("data_source_fields")
             .num_columns(2)
@@ -164,7 +174,13 @@ impl DataSourceDialog {
                         server_rows(ui, &mut fields.server, password_hint);
                         None
                     }
-                    DriverFields::Sqlite(fields) => sqlite_rows(ui, fields),
+                    DriverFields::Sqlite(fields) => file_rows(
+                        ui,
+                        FileEngine::Sqlite,
+                        &mut fields.path,
+                        &mut fields.read_only,
+                    ),
+                    DriverFields::DuckDb(fields) => duckdb_rows(ui, fields),
                 }
             })
             .inner
@@ -337,15 +353,18 @@ fn tls_rows(ui: &mut Ui, fields: &mut ServerFields) {
 }
 
 /// The file field, then Browse… (open an existing database) and New… (create one). Returns the
-/// path of a database to create, if New… was used; the engine creates it.
-fn sqlite_rows(ui: &mut Ui, fields: &mut SqliteFields) -> Option<PathBuf> {
-    setting_row(
-        ui,
-        "File",
-        &mut fields.path,
-        "/path/to/database.db",
-        Resolve::Path,
-    );
+/// database to create, if New… was used; the engine creates it.
+fn file_rows(
+    ui: &mut Ui,
+    engine: FileEngine,
+    path: &mut String,
+    read_only: &mut bool,
+) -> Option<DatabaseFile> {
+    let hint = match engine {
+        FileEngine::Sqlite => "/path/to/database.db",
+        FileEngine::DuckDb => "/path/to/database.duckdb",
+    };
+    setting_row(ui, "File", path, hint, Resolve::Path);
     ui.label("");
     let new_database = ui
         .horizontal(|ui| {
@@ -353,26 +372,53 @@ fn sqlite_rows(ui: &mut Ui, fields: &mut SqliteFields) -> Option<PathBuf> {
             if file_button(ui, icons::FOLDER_OPEN, palette.warning, "Browse…")
                 .on_hover_text("Open an existing database file")
                 .clicked()
-                && let Some(path) = file_picker::pick_sqlite_file(&fields.path)
+                && let Some(chosen) = file_picker::pick_database_file(engine, path)
             {
-                fields.path = path.display().to_string();
+                *path = chosen.display().to_string();
             }
             let new_path = file_button(ui, icons::FILE_PLUS, palette.success, "New…")
                 .on_hover_text("Create a new, empty database file")
                 .clicked()
-                .then(|| file_picker::pick_new_sqlite_file(&fields.path))
+                .then(|| file_picker::pick_new_database_file(engine, path))
                 .flatten()?;
-            fields.path = new_path.display().to_string();
+            *path = new_path.display().to_string();
             // A database you just created is one you mean to write to.
-            fields.read_only = false;
-            Some(new_path)
+            *read_only = false;
+            Some(engine.file(new_path))
         })
         .inner;
     ui.end_row();
     ui.label("");
-    ui.checkbox(&mut fields.read_only, "Read-only");
+    ui.checkbox(read_only, "Read-only");
     ui.end_row();
     new_database
+}
+
+/// A file, as for SQLite, or a database in memory, for querying CSV, Parquet and JSON files.
+fn duckdb_rows(ui: &mut Ui, fields: &mut DuckDbFields) -> Option<DatabaseFile> {
+    ui.label("Database");
+    ui.horizontal(|ui| {
+        ui.radio_value(&mut fields.location, DuckDbLocation::File, "File");
+        ui.radio_value(&mut fields.location, DuckDbLocation::InMemory, "In memory");
+    });
+    ui.end_row();
+    match fields.location {
+        DuckDbLocation::File => file_rows(
+            ui,
+            FileEngine::DuckDb,
+            &mut fields.path,
+            &mut fields.read_only,
+        ),
+        DuckDbLocation::InMemory => {
+            ui.label("");
+            ui.weak(
+                "Starts empty each time it connects. Query files with read_csv(), \
+                 read_parquet() and read_json(), or by naming them: FROM 'orders.csv'.",
+            );
+            ui.end_row();
+            None
+        }
+    }
 }
 
 /// A button with a coloured icon before its text, named by the text alone.

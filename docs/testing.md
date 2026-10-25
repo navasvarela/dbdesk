@@ -50,6 +50,9 @@ Each driver crate runs the suite against its own backend:
   `DBDESK_TEST_MARIADB_URL` is unset. Both make a self-signed certificate on first start, so
   the TLS tests need no fixture of their own. `check_describe_table` asks the server's
   `lower_case_table_names` whether unquoted names match ignoring case: on Linux they don't.
+- **DuckDB**: in memory or a temporary file, always runs, like SQLite: DuckDB is compiled into
+  the driver. It runs the suite with `Spelling::STANDARD`, and reading a Parquet file from an
+  in-memory database is a test of its own.
 - **SQL Server**: the `sqlserver` container (2022, port 51433), skipped when
   `DBDESK_TEST_SQLSERVER_URL` is unset. Its image is x86-64 only: native on CI's Linux runner,
   emulated (slowly, and it can crash) by Docker on an Apple-silicon Mac. The image can't
