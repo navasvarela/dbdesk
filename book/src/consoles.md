@@ -284,6 +284,8 @@ share, so nothing tells one row from another.
 - In manual commit mode, submitted changes join the open transaction and stay pending until
   you commit. DuckDB has no savepoints to undo a failed edit with, so on DuckDB, changes can't
   be submitted while a transaction is open: commit or roll back first.
+- On a **careful** data source, **Submit** asks first, naming the data source and how many rows
+  change. On a **read-only** one, the grid says **Read-only**.
 
 Values are sent as text and converted by the database, so type them the way the grid shows
 them (`t` for a PostgreSQL boolean, `{1,2}` for an array).
@@ -321,3 +323,20 @@ On MySQL and MariaDB, the same dialog warns before a statement that commits by i
 **Rollback**: in **Manual commit** mode, or with a transaction open. MySQL commits such a
 statement at once, together with whatever the transaction held, so **Rollback** can't undo
 either. Temporary tables are the exception, and don't get the warning.
+
+## Careful and read-only data sources
+
+The toolbar shows a data source's [safety level](data-sources.md#safety-levels) unless it is
+Normal; hover over it for what it means.
+
+On a **careful** data source, every statement that changes data or the schema asks first, naming
+the data source, in the same dialog. Reading, `COMMIT` and `ROLLBACK` don't ask. New consoles on
+it start in **Manual commit** mode.
+
+![Run on "shop"? before an UPDATE on a careful data source](images/careful-confirmation.png)
+
+On a **read-only** data source, a statement that would change anything isn't sent at all, and
+the result says why. A write the check can't see, inside a function, is refused by the
+database, with its own error.
+
+![A DELETE refused on a read-only data source](images/read-only-refusal.png)

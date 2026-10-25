@@ -214,6 +214,24 @@ const SCENES: &[Scene] = &[
         keeps_pointer: false,
     },
     Scene {
+        name: "safety-level",
+        data_sources: FixtureSources::Shop,
+        play: safety_level,
+        keeps_pointer: false,
+    },
+    Scene {
+        name: "careful-confirmation",
+        data_sources: FixtureSources::Shop,
+        play: careful_confirmation,
+        keeps_pointer: false,
+    },
+    Scene {
+        name: "read-only-refusal",
+        data_sources: FixtureSources::Shop,
+        play: read_only_refusal,
+        keeps_pointer: false,
+    },
+    Scene {
         name: "explorer-menu",
         data_sources: FixtureSources::Shop,
         play: explorer_menu,
@@ -663,6 +681,51 @@ fn import_preview(harness: &mut Harness<'static, DbDeskApp>, fixture: &Fixture) 
     harness.state_mut().answer_file_dialogs_with(&file);
     open_file_menu_item(harness, "Import data sources…");
     step_until_visible(harness, "Imports 1 project and 3 data sources.");
+}
+
+fn edit_shop(harness: &mut Harness<'static, DbDeskApp>) {
+    harness.get_by_label("shop").click_secondary();
+    harness.run_ok();
+    harness.get_by_label("Edit…").click();
+    harness.run_ok();
+}
+
+/// Sets `shop`'s safety level through its dialog, as a user would.
+fn set_shop_safety(harness: &mut Harness<'static, DbDeskApp>, level: &str) {
+    edit_shop(harness);
+    harness
+        .get_by_role_and_label(Role::RadioButton, level)
+        .click();
+    harness.run_ok();
+    harness.get_by_label("Save").click();
+    harness.run_ok();
+    step_until_visible(harness, "Expand shop");
+}
+
+fn safety_level(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    edit_shop(harness);
+    harness.get_by_label("Red").click();
+    harness.run_ok();
+}
+
+fn careful_confirmation(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    set_shop_safety(harness, "Careful");
+    open_console(
+        harness,
+        "shop",
+        "UPDATE orders SET status = 'shipped' WHERE id = 4;\n",
+    );
+    run_all(harness, "Run on \u{201c}shop\u{201d}?");
+}
+
+fn read_only_refusal(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    set_shop_safety(harness, "Read-only");
+    open_console(
+        harness,
+        "shop",
+        "DELETE FROM order_items WHERE order_id = 4;\n",
+    );
+    run_all(harness, "Refused:");
 }
 
 fn explorer_menu(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {

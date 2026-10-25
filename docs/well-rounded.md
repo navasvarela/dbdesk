@@ -1,6 +1,7 @@
 # A well-rounded app
 
-Status: **W1 built** (see the [roadmap](roadmap.md#well-rounded-track)); W2 to W6 planned.
+Status: **W1 and W2 built** (see the [roadmap](roadmap.md#well-rounded-track)); W3 to W6
+planned.
 Proposed on 2026-10-24.
 
 dbdesk browses, queries and edits PostgreSQL, SQLite, MySQL and MariaDB, and ships as a

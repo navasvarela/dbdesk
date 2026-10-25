@@ -70,7 +70,10 @@ read_only = true
   that doesn't exist, the data source is in **No project**.
 - `tls` is optional for PostgreSQL, and `mode` defaults to `prefer`: `disable`, `prefer`,
   `require` or `verify-full`. `ca_file` is only read with `verify-full`.
-- `read_only` is optional and defaults to `false`.
+- `read_only` is optional and defaults to `false`. It opens a SQLite file read-only; `safety`
+  is the setting for every engine.
+- `safety` is optional: `normal` (the default, left out), `careful` or `read-only`. See
+  [Safety levels](data-sources.md#safety-levels).
 - `host`, `port`, `database`, `user`, `path` and `ca_file` may hold `${NAME}` placeholders,
   resolved from the environment when connecting (see
   [Placeholders](data-sources.md#placeholders-variable)). A port with one is a string:
