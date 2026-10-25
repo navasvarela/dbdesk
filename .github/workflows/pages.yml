@@ -17,11 +17,13 @@ on:
 permissions:
   contents: read
 
-# One deployment at a time; a newer push supersedes a queued one, but never cancels a
-# deployment already running.
+# Deployments from main run one at a time: a newer push supersedes a queued one, but never
+# cancels a deployment already running. Pull requests only build, so each has its own group and
+# a newer push cancels its older build. They used to share the deployments' group, which marked
+# every other pull request's build as cancelled.
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: pages-${{ github.event_name == 'pull_request' && github.head_ref || 'deploy' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:

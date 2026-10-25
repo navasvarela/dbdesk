@@ -7,6 +7,14 @@ on:
   # The release workflow runs the full suite on the commit it packages.
   workflow_call:
 
+# One run per pull request at a time: a newer push cancels the run it supersedes. GitHub also
+# sends two pull_request events for one commit when a stacked pull request's base moves, and the
+# second cancels the first. Pushes to main and the release workflow's call each get a group of
+# their own (the run id), so they are never cancelled.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.head_ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
