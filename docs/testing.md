@@ -161,6 +161,11 @@ it the way a user would: expanding nodes, opening a console, typing and running 
 `DBDESK_TEST_POSTGRES_URL` set, a PostgreSQL data source joins the fixture. Engine logs reach the log
 console through one global `tracing` subscriber whose layer is swapped per scene.
 
+A scene that needs a test server names its variables (`needs`) and is skipped without them,
+leaving its image as it was: `host-key-prompt` connects through the `ssh` service, and
+`console-reconnect` ends its own PostgreSQL session. Every scene's log console shows the time,
+so regenerating changes every image a little; commit only the images whose scene changed.
+
 ## User manual
 
 The manual in `book/` is an mdBook. `mdbook build book` builds it into `book/book/html` and,

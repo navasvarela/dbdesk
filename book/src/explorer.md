@@ -215,6 +215,12 @@ The eye button next to **+** shows or hides them, for every data source at once.
 
 ## When the connection closes
 
-Disconnecting, or losing the connection, forgets everything the explorer had loaded for that
-data source. It is loaded again, fresh, the next time you expand it. **Refresh** does the same
-for a single node while connected, which is how you see a table you just created.
+Disconnecting forgets everything the explorer had loaded for that data source. It is loaded
+again, fresh, the next time you expand it. **Refresh** does the same for a single node while
+connected, which is how you see a table you just created.
+
+A connection can also be **lost**: the server restarted, an administrator ended the session, or
+the network or SSH tunnel dropped. dbdesk notices when a request fails that way, and, before
+using a connection that has sat unused for a minute, by checking that it still answers. The
+data source's dot turns red and its tooltip says *Disconnected* and why. The tree stays as it
+was, and the next thing you expand or refresh connects again by itself.

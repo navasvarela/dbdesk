@@ -46,7 +46,8 @@ Each recipe is one or two `cargo` commands, which also work without `just`. The 
 shows them.
 
 The tests of server engines need a server and are skipped without one. To run them, start the
-bundled containers (PostgreSQL, again with TLS required, MySQL, MariaDB and SQL Server) and
+bundled containers (PostgreSQL, again with TLS required, MySQL, MariaDB, SQL Server, ClickHouse,
+and an SSH server for the tunnel tests) and
 load their URLs from `test-servers.env`:
 
 ```bash

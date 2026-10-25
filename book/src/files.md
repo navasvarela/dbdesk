@@ -23,6 +23,10 @@ dbdesk keeps everything in one folder per platform:
 Passwords are not in any of these files: they are in your system's keychain, under the service
 name `dbdesk`. See [Data sources](data-sources.md#passwords-and-the-keychain).
 
+SSH tunnels share `~/.ssh/known_hosts` with `ssh`: dbdesk reads it to check SSH servers' host
+keys, and adds a line when you trust a new one. See
+[SSH tunnels](data-sources.md#ssh-tunnels).
+
 ## data_sources.toml
 
 You can edit this file by hand **while dbdesk is closed**. dbdesk reads it at start-up and
