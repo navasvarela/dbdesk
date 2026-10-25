@@ -6,8 +6,8 @@ use dbdesk_core::{
     ProjectId, Rejection, RelationName, Row, ServerInfo, TableDescription, TransactionStatus,
 };
 use dbdesk_store::{
-    ConsoleKey, HistoryEntry, ImportPlan, ImportPreview, KeymapBindings, McpOverrides, Project,
-    Projects, SavedConsole, Settings,
+    ConsoleKey, HistoryEntry, ImportPlan, ImportPreview, KeymapBindings, McpOverrides,
+    McpPermissions, Project, Projects, SavedConsole, Settings,
 };
 
 use crate::{Export, PasswordNeeded, Release};
@@ -55,6 +55,9 @@ pub enum Command {
         mcp_enabled: bool,
         overrides: McpOverrides,
     },
+    /// Replaces what projects allow MCP clients when they don't say otherwise. Answered by
+    /// [`Event::McpDefaultsSaved`] or [`Event::McpDefaultsSaveFailed`].
+    SaveMcpDefaults(McpPermissions),
     /// Saves the password of the data source's MCP login, or removes it with `None`. Only
     /// failures are answered, by [`Event::DataSourceSaveFailed`].
     SaveMcpPassword {
@@ -281,6 +284,10 @@ pub enum Event {
     },
     /// The project is gone; its data sources were moved to no project first.
     ProjectDeleted(ProjectId),
+    McpDefaultsSaved(McpPermissions),
+    McpDefaultsSaveFailed {
+        error: String,
+    },
     /// Every saved console file, read once at start-up, right after the data sources.
     ConsolesLoaded(Vec<SavedConsole>),
     /// The bindings `keymap.toml` sets, read at start-up (before the data sources) and on

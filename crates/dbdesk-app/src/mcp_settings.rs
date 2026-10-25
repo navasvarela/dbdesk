@@ -1,5 +1,6 @@
-//! Editing what MCP clients may do: a project's overrides in Project settings, each starting
-//! at the default it can be reset to.
+//! Editing what MCP clients may do: a project's overrides in Project settings, and the
+//! defaults in View › Settings. Both show the same rows, so a project's settings read like
+//! the defaults they start from.
 
 use std::num::{NonZeroU32, NonZeroU64};
 
@@ -69,6 +70,112 @@ impl SchemasField {
             changed | field.changed()
         })
         .inner
+    }
+}
+
+/// View › Settings › MCP: a draft of the defaults, saved with its own button, since a row
+/// limit typed digit by digit shouldn't rewrite `projects.toml` at every keystroke.
+pub struct McpDefaultsEditor {
+    saved: McpPermissions,
+    draft: McpPermissions,
+    schemas: SchemasField,
+    saving: bool,
+    error: Option<String>,
+}
+
+impl McpDefaultsEditor {
+    pub fn new(saved: &McpPermissions) -> Self {
+        Self {
+            saved: saved.clone(),
+            draft: saved.clone(),
+            schemas: SchemasField::new(&saved.schemas),
+            saving: false,
+            error: None,
+        }
+    }
+
+    /// Follows the defaults as saved: after a save, or when `projects.toml` is read. A draft
+    /// with unsaved changes is kept, unless it is the one just saved.
+    pub fn follow(&mut self, saved: &McpPermissions) {
+        if self.draft == self.saved || self.saving {
+            *self = Self::new(saved);
+        } else {
+            self.saved = saved.clone();
+        }
+    }
+
+    pub fn failed(&mut self, error: &str) {
+        self.saving = false;
+        self.error = Some(error.to_owned());
+    }
+
+    /// Draws the section. Returns the defaults to save when Save is clicked.
+    pub fn show(&mut self, ui: &mut Ui) -> Option<McpPermissions> {
+        ui.weak(
+            "What a project allows MCP clients when it doesn't say otherwise. Servers already \
+             running keep what they started with.",
+        );
+        edit_defaults(ui, &mut self.draft, &mut self.schemas);
+        if let Some(error) = &self.error {
+            ui.colored_label(
+                ui.visuals().error_fg_color,
+                format!("Could not save: {error}"),
+            );
+        }
+        let changed = self.draft != self.saved;
+        let valid = self.schemas.scope().is_some();
+        let save = ui.horizontal(|ui| {
+            let save = ui
+                .add_enabled(
+                    changed && valid && !self.saving,
+                    egui::Button::new("Save MCP defaults"),
+                )
+                .clicked();
+            if ui
+                .add_enabled(changed && !self.saving, egui::Button::new("Discard"))
+                .clicked()
+            {
+                *self = Self::new(&self.saved);
+            }
+            save
+        });
+        if !save.inner {
+            return None;
+        }
+        self.saving = true;
+        self.error = None;
+        Some(self.draft.clone())
+    }
+}
+
+/// The defaults' rows, each value edited directly.
+fn edit_defaults(ui: &mut Ui, defaults: &mut McpPermissions, schemas: &mut SchemasField) {
+    Grid::new("mcp_defaults")
+        .num_columns(2)
+        .spacing([16.0, 6.0])
+        .show(ui, |ui| {
+            for (name, value, meaning) in [
+                ("Read", &mut defaults.read, READ),
+                ("Write", &mut defaults.write, WRITE),
+                ("Schema", &mut defaults.schema, SCHEMA),
+                ("Admin", &mut defaults.admin, ADMIN),
+            ] {
+                ui.checkbox(value, name);
+                ui.weak(meaning);
+                ui.end_row();
+            }
+            ui.label("Row limit");
+            edit_max_rows(ui, &mut defaults.max_rows);
+            ui.end_row();
+            ui.label("Statement timeout");
+            edit_timeout(ui, &mut defaults.statement_timeout);
+            ui.end_row();
+            ui.label("Schemas");
+            schemas.show(ui);
+            ui.end_row();
+        });
+    if let Some(scope) = schemas.scope() {
+        defaults.schemas = scope;
     }
 }
 
