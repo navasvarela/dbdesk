@@ -91,7 +91,9 @@ pub fn show(
     let editor_id = Id::new(("console_editor", console.id.0));
     shortcuts(ui, console, keymap, editor_id, actions);
     toolbar(ui, console, keymap, actions);
-    transaction_bar(ui, console, keymap, actions);
+    if console.dialect.has_transactions() {
+        transaction_bar(ui, console, keymap, actions);
+    }
     ui.separator();
     let (editor_height, results_height) = split_heights(ui, console);
     let width = ui.available_width();

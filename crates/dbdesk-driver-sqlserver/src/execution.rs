@@ -28,15 +28,28 @@ use tokio::task::JoinHandle;
 use crate::errors::{rejection, statement_error};
 use crate::{SQL_SERVER_QUOTING, SqlClient, column, connection_error, values};
 
-/// How long a read already under way may go on after a cancel before the stream is dropped.
+/// How long a read already under way may go on after a cancel, before the statement has
+/// answered, before the read is dropped. Nothing of the reply has been read yet, so dropping
+/// the read loses nothing, and the attention goes out at once. 100 ms was chosen as long
+/// against a network round trip and short against a person waiting.
+const GRACE_BEFORE_ROWS: Duration = Duration::from_millis(100);
+
+/// How long a read already under way may go on after a cancel, once rows are arriving.
 ///
-/// Dropping the result stream while it is halfway through a row (waiting for the packet with
-/// the rest of it) would lose the half already read, and the attention's acknowledgement
-/// could then not be found in what follows. Rows that are arriving complete in far less than
-/// this, so a cancel during a fast result stops between two rows; a read still waiting after
-/// it is almost always waiting for a server that is busy computing, between tokens. 100 ms
-/// was chosen as long against a network round trip and short against a person waiting.
-const CANCEL_GRACE: Duration = Duration::from_millis(100);
+/// Dropping the result stream halfway through a row loses the half already read, and the
+/// attention's acknowledgement can then not be found in what follows: tiberius reads the
+/// rest of the row as tokens ("invalid token type 61") and the connection is written off.
+/// While rows arrive, a read is waiting halfway through one far more often than not: SQL
+/// Server sends a 4 KB packet once it is full, so most packet boundaries split a row, and a
+/// result that comes slowly (a sparse filter, a loaded server) leaves the client holding
+/// half a row until the next packet. With 100 ms here, cancelling such a result lost the
+/// connection 7 runs in 8, and CI's cancel test failed now and then on a busy runner.
+///
+/// So the read is given until the next packet arrives, which completes the row and stops
+/// the stream between two rows. 10 s bounds the wait for a result so sparse that a packet
+/// takes longer to fill; dropping the read then leaves the connection out of step, as
+/// before, rather than leave ⌘. hanging.
+const GRACE_WITHIN_ROWS: Duration = Duration::from_secs(10);
 
 /// Where a cancel reaches the running statement: the sender of a fresh channel per
 /// statement, so a cancel never outlives the statement it was meant for.
@@ -237,15 +250,16 @@ async fn read_statement(
     let channels = PageChannels { demand, pages };
     // `simple_query` sends the batch and then waits for its first result set, or the end of
     // its reply: a statement that takes long before it answers is cancelled here.
-    let mut stream = match until_cancelled(client.simple_query(sql), cancellation).await {
-        Next::Cancelled => return Outcome::Cancelled(Report::Started(started)),
-        Next::Done(Ok(stream)) => stream,
-        Next::Done(Err(error)) => {
-            let _ = started.send(Err(statement_error(error, sql)));
-            return Outcome::Ended(Ok(()));
-        }
-    };
-    let columns = match until_cancelled(stream.columns(), cancellation).await {
+    let mut stream =
+        match until_cancelled(client.simple_query(sql), GRACE_BEFORE_ROWS, cancellation).await {
+            Next::Cancelled => return Outcome::Cancelled(Report::Started(started)),
+            Next::Done(Ok(stream)) => stream,
+            Next::Done(Err(error)) => {
+                let _ = started.send(Err(statement_error(error, sql)));
+                return Outcome::Ended(Ok(()));
+            }
+        };
+    let columns = match until_cancelled(stream.columns(), GRACE_BEFORE_ROWS, cancellation).await {
         Next::Cancelled => return Outcome::Cancelled(Report::Started(started)),
         Next::Done(Err(error)) => {
             let _ = started.send(Err(statement_error(error, sql)));
@@ -313,7 +327,7 @@ async fn serve_pages(
         let mut page = Vec::new();
         let mut exhausted = false;
         while page.len() < max_rows {
-            match until_cancelled(stream.try_next(), cancellation).await {
+            match until_cancelled(stream.try_next(), GRACE_WITHIN_ROWS, cancellation).await {
                 Next::Cancelled => return Some(Outcome::Cancelled(Report::Page(pages))),
                 Next::Done(Ok(Some(QueryItem::Row(row)))) => page.push(values::cells(row)),
                 Next::Done(Ok(Some(QueryItem::Metadata(_)))) if !in_first_result => {
@@ -350,7 +364,7 @@ async fn discard_rest(
     cancellation: &mut Cancellation,
 ) -> Outcome {
     loop {
-        match until_cancelled(stream.try_next(), cancellation).await {
+        match until_cancelled(stream.try_next(), GRACE_WITHIN_ROWS, cancellation).await {
             Next::Cancelled => return Outcome::Cancelled(Report::Finish),
             Next::Done(Ok(Some(_))) => {}
             Next::Done(Ok(None)) => return Outcome::Ended(Ok(())),
@@ -364,9 +378,13 @@ enum Next<T> {
     Cancelled,
 }
 
-/// Waits for `work`, unless a cancel is requested first: then it is given
-/// [`CANCEL_GRACE`] to finish what it is reading, and dropped either way.
-async fn until_cancelled<F: Future>(work: F, cancellation: &mut Cancellation) -> Next<F::Output> {
+/// Waits for `work`, unless a cancel is requested first: then it is given `grace` to finish
+/// what it is reading, and dropped either way.
+async fn until_cancelled<F: Future>(
+    work: F,
+    grace: Duration,
+    cancellation: &mut Cancellation,
+) -> Next<F::Output> {
     tokio::pin!(work);
     // The cancel first: rows already buffered keep `work` ready, which would otherwise win
     // every time.
@@ -377,7 +395,7 @@ async fn until_cancelled<F: Future>(work: F, cancellation: &mut Cancellation) ->
     }
     // Whatever arrives in the grace period is discarded: the point is only to stop between
     // tokens.
-    let _ = tokio::time::timeout(CANCEL_GRACE, work).await;
+    let _ = tokio::time::timeout(grace, work).await;
     Next::Cancelled
 }
 

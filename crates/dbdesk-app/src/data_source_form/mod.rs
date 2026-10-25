@@ -4,18 +4,20 @@
 mod server;
 
 use dbdesk_core::{
-    ConnectionConfig, DataSource, DataSourceId, DriverKind, MysqlConfig, Password, PostgresConfig,
-    ProjectId, SourceColor, SqlServerConfig, SqliteConfig,
+    ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DriverKind, DuckDbConfig,
+    DuckDbDatabase, MysqlConfig, Password, PostgresConfig, ProjectId, SourceColor, SqlServerConfig,
+    SqliteConfig,
 };
 use dbdesk_engine::PasswordUpdate;
 
-pub use server::{ServerDefaults, ServerFields, TlsChoice};
+pub use server::{ServerDefaults, ServerFields, TlsChoice, TlsOffer};
 
 const POSTGRES_DEFAULTS: ServerDefaults = ServerDefaults {
     host: "localhost",
     port: PostgresConfig::DEFAULT_PORT,
     database: "postgres",
     user: "postgres",
+    tls: TlsOffer::Negotiated,
 };
 
 /// `mysql` exists on every server, as `postgres` does on PostgreSQL; `root` is the account
@@ -25,6 +27,7 @@ const MYSQL_DEFAULTS: ServerDefaults = ServerDefaults {
     port: MysqlConfig::DEFAULT_PORT,
     database: "mysql",
     user: "root",
+    tls: TlsOffer::Negotiated,
 };
 
 /// `master` exists on every server and every login may open it; `sa` is the administrator
@@ -34,6 +37,17 @@ const SQL_SERVER_DEFAULTS: ServerDefaults = ServerDefaults {
     port: SqlServerConfig::DEFAULT_PORT,
     database: "master",
     user: "sa",
+    tls: TlsOffer::Negotiated,
+};
+
+/// `default` exists on every server, and is the user every installation (and the official
+/// container) starts with.
+const CLICKHOUSE_DEFAULTS: ServerDefaults = ServerDefaults {
+    host: "localhost",
+    port: ClickHouseConfig::DEFAULT_PORT,
+    database: "default",
+    user: "default",
+    tls: TlsOffer::OwnPort(ClickHouseConfig::DEFAULT_TLS_PORT),
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -70,6 +84,8 @@ pub enum DriverFields {
     Sqlite(SqliteFields),
     Mysql(MysqlFields),
     SqlServer(SqlServerFields),
+    DuckDb(DuckDbFields),
+    ClickHouse(ClickHouseFields),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,6 +101,26 @@ pub struct MysqlFields {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SqlServerFields {
     pub server: ServerFields,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClickHouseFields {
+    pub server: ServerFields,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DuckDbFields {
+    pub location: DuckDbLocation,
+    /// Kept while In memory is chosen, so switching back to File doesn't lose it.
+    pub path: String,
+    pub read_only: bool,
+}
+
+/// Where a DuckDB data source's database is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DuckDbLocation {
+    File,
+    InMemory,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,6 +145,14 @@ impl DriverFields {
             DriverKind::SqlServer => Self::SqlServer(SqlServerFields {
                 server: ServerFields::new(SQL_SERVER_DEFAULTS),
             }),
+            DriverKind::DuckDb => Self::DuckDb(DuckDbFields {
+                location: DuckDbLocation::File,
+                path: String::new(),
+                read_only: false,
+            }),
+            DriverKind::ClickHouse => Self::ClickHouse(ClickHouseFields {
+                server: ServerFields::new(CLICKHOUSE_DEFAULTS),
+            }),
         }
     }
 
@@ -127,6 +171,21 @@ impl DriverFields {
             ConnectionConfig::SqlServer(config) => Self::SqlServer(SqlServerFields {
                 server: ServerFields::from_config(&config.server, SQL_SERVER_DEFAULTS),
             }),
+            ConnectionConfig::DuckDb(config) => Self::DuckDb(match &config.database {
+                DuckDbDatabase::File { path, read_only } => DuckDbFields {
+                    location: DuckDbLocation::File,
+                    path: path.display().to_string(),
+                    read_only: *read_only,
+                },
+                DuckDbDatabase::InMemory => DuckDbFields {
+                    location: DuckDbLocation::InMemory,
+                    path: String::new(),
+                    read_only: false,
+                },
+            }),
+            ConnectionConfig::ClickHouse(config) => Self::ClickHouse(ClickHouseFields {
+                server: ServerFields::from_config(&config.server, CLICKHOUSE_DEFAULTS),
+            }),
         }
     }
 
@@ -136,6 +195,8 @@ impl DriverFields {
             Self::Sqlite(_) => DriverKind::Sqlite,
             Self::Mysql(_) => DriverKind::Mysql,
             Self::SqlServer(_) => DriverKind::SqlServer,
+            Self::DuckDb(_) => DriverKind::DuckDb,
+            Self::ClickHouse(_) => DriverKind::ClickHouse,
         }
     }
 
@@ -145,7 +206,8 @@ impl DriverFields {
             Self::Postgres(fields) => Some(&fields.server),
             Self::Mysql(fields) => Some(&fields.server),
             Self::SqlServer(fields) => Some(&fields.server),
-            Self::Sqlite(_) => None,
+            Self::ClickHouse(fields) => Some(&fields.server),
+            Self::Sqlite(_) | Self::DuckDb(_) => None,
         }
     }
 
@@ -159,6 +221,10 @@ impl DriverFields {
                 server: fields.server.to_config()?,
             }),
             Self::SqlServer(fields) => ConnectionConfig::SqlServer(SqlServerConfig {
+                server: fields.server.to_config()?,
+            }),
+            Self::DuckDb(fields) => ConnectionConfig::DuckDb(fields.to_config()?),
+            Self::ClickHouse(fields) => ConnectionConfig::ClickHouse(ClickHouseConfig {
                 server: fields.server.to_config()?,
             }),
         })
@@ -219,6 +285,19 @@ impl SqliteFields {
             path: required(&self.path, FormError::PathMissing)?.into(),
             read_only: self.read_only,
         })
+    }
+}
+
+impl DuckDbFields {
+    fn to_config(&self) -> Result<DuckDbConfig, FormError> {
+        let database = match self.location {
+            DuckDbLocation::File => DuckDbDatabase::File {
+                path: required(&self.path, FormError::PathMissing)?.into(),
+                read_only: self.read_only,
+            },
+            DuckDbLocation::InMemory => DuckDbDatabase::InMemory,
+        };
+        Ok(DuckDbConfig { database })
     }
 }
 

@@ -11,6 +11,8 @@ publish.workspace = true
 [dependencies]
 cargo-packager-updater.workspace = true
 dbdesk-core.workspace = true
+dbdesk-driver-clickhouse.workspace = true
+dbdesk-driver-duckdb.workspace = true
 dbdesk-driver-mysql.workspace = true
 dbdesk-driver-postgres.workspace = true
 dbdesk-driver-sqlite.workspace = true

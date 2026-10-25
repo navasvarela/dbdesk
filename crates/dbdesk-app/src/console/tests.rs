@@ -280,3 +280,34 @@ fn accepting_a_function_puts_the_cursor_inside_its_parentheses_and_reports_it() 
     assert_eq!(accepted.label, "coalesce");
     assert!(console.take_accepted_completion().is_none());
 }
+
+#[test]
+fn keeps_clickhouse_results_read_only_without_describing_the_table() {
+    let cases = [(Dialect::Postgres, true), (Dialect::ClickHouse, false)];
+    for (dialect, describes) in cases {
+        let mut console = console_with("select n from t", dialect);
+        let statements = console.statements_to_run(RunScope::All);
+        let run = RunId(1);
+        console.begin_run(run, &statements);
+        console.apply(&Event::StatementStarted {
+            run,
+            statement: 0,
+            columns: vec![ColumnInfo {
+                name: "n".to_owned(),
+                type_name: None,
+            }],
+        });
+
+        let tables = console.tables_to_describe();
+
+        assert_eq!(!tables.is_empty(), describes, "{dialect:?}");
+        let editability = &console.run.as_ref().unwrap().statements[0]
+            .edits
+            .editability;
+        assert_eq!(
+            matches!(editability, Editability::ReadOnly(_)),
+            !describes,
+            "{dialect:?}: {editability:?}"
+        );
+    }
+}

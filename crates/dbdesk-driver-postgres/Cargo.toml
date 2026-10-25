@@ -11,14 +11,12 @@ publish.workspace = true
 [dependencies]
 async-trait.workspace = true
 dbdesk-core.workspace = true
+dbdesk-tls.workspace = true
 futures-util.workspace = true
-rustls.workspace = true
-thiserror.workspace = true
 tokio.workspace = true
 tokio-postgres.workspace = true
 tokio-postgres-rustls.workspace = true
 tracing.workspace = true
-webpki-roots.workspace = true
 
 [dev-dependencies]
 dbdesk-core = { workspace = true, features = ["conformance"] }

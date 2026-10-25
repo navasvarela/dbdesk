@@ -9,7 +9,9 @@
 mod functions;
 
 use dbdesk_core::{DriverKind, Quoting, ServerInfo};
-use sqlparser::dialect::{MsSqlDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect};
+use sqlparser::dialect::{
+    ClickHouseDialect, DuckDbDialect, MsSqlDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect,
+};
 
 /// The SQL flavour of a data source.
 ///
@@ -23,6 +25,9 @@ pub enum Dialect {
     Mysql,
     /// Microsoft SQL Server and Azure SQL: Transact-SQL.
     SqlServer,
+    /// DuckDB, whose parser derives from PostgreSQL's.
+    DuckDb,
+    ClickHouse,
 }
 
 /// The lexical rules that differ between dialects. Strings in `'…'`, `--` line comments and
@@ -108,14 +113,32 @@ pub(crate) enum ParserGap {
     /// A keyword used as an infix operator, `a MOD 3`, rather than as the function of the
     /// same name, `MOD(a, 3)`.
     InfixOperator(&'static str),
+    /// An operator of several characters written together, such as DuckDB's `**`; the lexer
+    /// reads each character as a token of its own.
+    Operator(&'static str),
+    /// A tuple's element by position, `t.2` or `tuple(1, 'a').2`: a number starting with a dot,
+    /// written straight after what it indexes.
+    ElementByPosition,
+    /// ClickHouse's `WITH 5 AS n`, which names an expression, rather than the standard
+    /// `WITH n AS (SELECT …)`.
+    WithExpressionAlias,
 }
 
 impl Dialect {
-    pub const ALL: [Self; 4] = [Self::Postgres, Self::Sqlite, Self::Mysql, Self::SqlServer];
+    pub const ALL: [Self; 6] = [
+        Self::Postgres,
+        Self::Sqlite,
+        Self::Mysql,
+        Self::SqlServer,
+        Self::DuckDb,
+        Self::ClickHouse,
+    ];
 
     pub(crate) fn lexical_rules(self) -> LexicalRules {
         match self {
-            Self::Postgres => LexicalRules {
+            // DuckDB reads text with PostgreSQL's lexer: checked against DuckDB 1.5.6 for
+            // dollar quoting, nested comments, `E'…'`, `N'…'` and `$` inside names.
+            Self::Postgres | Self::DuckDb => LexicalRules {
                 escape_strings: true,
                 backslash_escapes: false,
                 double_quoted_strings: false,
@@ -159,6 +182,22 @@ impl Dialect {
             },
             // `"…"` is an identifier while `QUOTED_IDENTIFIER` is on, as every client library
             // sets it and the driver does on connecting.
+            // Checked against ClickHouse 25.8: `#` comments, nested block comments, dollar
+            // quoting, backslash escapes, and `--` starting a comment even in `1--1`.
+            Self::ClickHouse => LexicalRules {
+                escape_strings: false,
+                backslash_escapes: true,
+                double_quoted_strings: false,
+                dollar_quoting: true,
+                dollar_in_identifiers: true,
+                nested_block_comments: true,
+                hash_comments: true,
+                dash_comments_need_space: false,
+                backtick_identifiers: true,
+                bracket_identifiers: false,
+                national_strings: false,
+                sigil_identifiers: false,
+            },
             Self::SqlServer => LexicalRules {
                 escape_strings: false,
                 backslash_escapes: false,
@@ -181,7 +220,7 @@ impl Dialect {
     /// `GO`, as SQL Server Management Studio and `sqlcmd` do.
     pub(crate) fn script_rules(self) -> ScriptRules {
         match self {
-            Self::Postgres | Self::Sqlite => ScriptRules {
+            Self::Postgres | Self::Sqlite | Self::DuckDb | Self::ClickHouse => ScriptRules {
                 delimiter_command: false,
                 go_batches: false,
                 blocks_anywhere: false,
@@ -207,6 +246,8 @@ impl Dialect {
             Self::Sqlite => &SQLiteDialect {},
             Self::Mysql => &MySqlDialect {},
             Self::SqlServer => &MsSqlDialect {},
+            Self::DuckDb => &DuckDbDialect {},
+            Self::ClickHouse => &ClickHouseDialect {},
         }
     }
 
@@ -247,6 +288,22 @@ impl Dialect {
                 ParserGap::Words(&["execute"]),
                 ParserGap::Words(&["delete", "top"]),
             ],
+            Self::ClickHouse => &[
+                ParserGap::ElementByPosition,
+                ParserGap::WithExpressionAlias,
+                ParserGap::Words(&["global", "in"]),
+                ParserGap::Words(&["global", "not", "in"]),
+            ],
+            Self::DuckDb => &[
+                // `JOIN … ON t.ts >= q.ts`, a join on the nearest earlier row
+                ParserGap::Words(&["asof", "join"]),
+                // `FROM t USING SAMPLE 10%`
+                ParserGap::Words(&["using", "sample"]),
+                // `INSERT INTO t BY NAME SELECT …`; with `select` after it, so that `ORDER BY
+                // name` is still checked.
+                ParserGap::Words(&["by", "name", "select"]),
+                ParserGap::Operator("**"),
+            ],
         }
     }
 
@@ -254,7 +311,7 @@ impl Dialect {
     /// `replace` (which deletes a row with the same key first).
     pub(crate) fn insert_verbs(self) -> &'static [&'static str] {
         match self {
-            Self::Postgres | Self::SqlServer => &["insert"],
+            Self::Postgres | Self::SqlServer | Self::DuckDb | Self::ClickHouse => &["insert"],
             Self::Sqlite | Self::Mysql => &["insert", "replace"],
         }
     }
@@ -264,7 +321,9 @@ impl Dialect {
     /// statements. PostgreSQL, SQLite and SQL Server run DDL inside the transaction.
     pub(crate) fn implicit_commit_verbs(self) -> &'static [&'static str] {
         match self {
-            Self::Postgres | Self::Sqlite | Self::SqlServer => &[],
+            Self::Postgres | Self::Sqlite | Self::SqlServer | Self::DuckDb | Self::ClickHouse => {
+                &[]
+            }
             Self::Mysql => &[
                 "alter", "create", "drop", "grant", "rename", "revoke", "truncate",
             ],
@@ -280,7 +339,7 @@ impl Dialect {
     /// [`explain_setting`](Self::explain_setting).
     pub fn explain_prefix(self, server: Option<&ServerInfo>) -> &'static str {
         match self {
-            Self::Postgres => "EXPLAIN ",
+            Self::Postgres | Self::DuckDb | Self::ClickHouse => "EXPLAIN ",
             Self::Sqlite => "EXPLAIN QUERY PLAN ",
             Self::Mysql if server.is_some_and(has_tree_explain) => "EXPLAIN FORMAT=TREE ",
             Self::Mysql => "EXPLAIN ",
@@ -288,19 +347,40 @@ impl Dialect {
         }
     }
 
+    /// Whether the database has transactions a console can open and end. ClickHouse's are
+    /// experimental and off unless the server is configured for them, so a ClickHouse console
+    /// has no manual commit mode.
+    pub fn has_transactions(self) -> bool {
+        !matches!(self, Self::ClickHouse)
+    }
+
     /// Opens a transaction. SQL Server needs the keyword: a bare `BEGIN` opens a block there.
     pub fn begin_transaction(self) -> &'static str {
         match self {
-            Self::Postgres | Self::Sqlite | Self::Mysql => "BEGIN",
-            Self::SqlServer => "BEGIN TRANSACTION",
+            Self::Postgres | Self::Sqlite | Self::Mysql | Self::DuckDb => "BEGIN",
+            Self::SqlServer | Self::ClickHouse => "BEGIN TRANSACTION",
+        }
+    }
+
+    /// Why the grid never edits this database's rows, or `None` where it may. A ClickHouse
+    /// table has no key that tells its rows apart (its `PRIMARY KEY` is its sort order and
+    /// may repeat), and its `UPDATE` rewrites data in the background rather than change a row
+    /// at once.
+    pub fn read_only_results(self) -> Option<&'static str> {
+        match self {
+            Self::ClickHouse => Some(
+                "ClickHouse tables have no key that tells their rows apart, so rows can't be edited here",
+            ),
+            Self::Postgres | Self::Sqlite | Self::Mysql | Self::SqlServer | Self::DuckDb => None,
         }
     }
 
     /// The savepoint grid edits use inside a transaction the console already has open. SQL
     /// Server writes it `SAVE TRANSACTION` and has no way to release one: it lasts until the
-    /// transaction ends.
-    pub fn edits_savepoint(self) -> Savepoint {
-        match self {
+    /// transaction ends. DuckDB has no savepoints at all, so `None`.
+    pub fn edits_savepoint(self) -> Option<Savepoint> {
+        Some(match self {
+            Self::DuckDb | Self::ClickHouse => return None,
             Self::Postgres | Self::Sqlite | Self::Mysql => Savepoint {
                 open: "SAVEPOINT dbdesk_edits",
                 keep: &["RELEASE SAVEPOINT dbdesk_edits"],
@@ -314,7 +394,7 @@ impl Dialect {
                 keep: &[],
                 undo: &["ROLLBACK TRANSACTION dbdesk_edits"],
             },
-        }
+        })
     }
 
     /// The setting to switch on around a statement, after the
@@ -323,7 +403,7 @@ impl Dialect {
     /// set in a batch of its own. `None` where the prefix alone explains.
     pub fn explain_setting(self) -> Option<ExplainSetting> {
         match self {
-            Self::Postgres | Self::Sqlite | Self::Mysql => None,
+            Self::Postgres | Self::Sqlite | Self::Mysql | Self::DuckDb | Self::ClickHouse => None,
             Self::SqlServer => Some(ExplainSetting {
                 on: "SET SHOWPLAN_XML ON",
                 off: "SET SHOWPLAN_XML OFF",
@@ -332,14 +412,26 @@ impl Dialect {
     }
 
     /// The built-in functions completion offers: the common ones, not every function the
-    /// database has (the explorer's catalog adds the database's own). Lowercase and sorted.
+    /// database has (the explorer's catalog adds the database's own). Sorted, and lowercase
+    /// where the database ignores the case of function names (see
+    /// [`names_ignore_case`](Self::names_ignore_case)).
     pub fn builtin_functions(self) -> &'static [&'static str] {
         match self {
             Self::Postgres => functions::POSTGRES,
             Self::Sqlite => functions::SQLITE,
             Self::Mysql => functions::MYSQL,
             Self::SqlServer => functions::SQL_SERVER,
+            Self::DuckDb => functions::DUCKDB,
+            Self::ClickHouse => functions::CLICKHOUSE,
         }
+    }
+
+    /// Whether names match whatever their case, so the formatter may re-case keywords and
+    /// completion may write functions in the case the user is typing in. In ClickHouse,
+    /// functions (`toDate`), types (`Array`) and columns are case-sensitive, and a column named
+    /// like a keyword (`date`, `user`) is common: re-casing it would name another column.
+    pub fn names_ignore_case(self) -> bool {
+        !matches!(self, Self::ClickHouse)
     }
 
     /// How SQL that dbdesk writes (qualified names, completions, grid edits) quotes
@@ -347,8 +439,8 @@ impl Dialect {
     /// the session's `QUOTED_IDENTIFIER`.
     pub fn quoting(self) -> Quoting {
         match self {
-            Self::Postgres | Self::Sqlite => Quoting::STANDARD,
-            Self::Mysql => Quoting {
+            Self::Postgres | Self::Sqlite | Self::DuckDb => Quoting::STANDARD,
+            Self::Mysql | Self::ClickHouse => Quoting {
                 identifier_open: '`',
                 identifier_close: '`',
                 backslash_escapes: true,
@@ -366,7 +458,8 @@ impl Dialect {
     /// Whether a table name belongs to the system catalog, which the explorer doesn't list:
     /// PostgreSQL's `pg_*` tables (always on the search path) and its catalog schemas,
     /// SQLite's `sqlite_*` tables, `pragma_*` functions and `temp` schema, MySQL's own
-    /// databases, SQL Server's catalog schemas. Names are compared case-insensitively.
+    /// databases, SQL Server's and DuckDB's catalog schemas, ClickHouse's `system` database.
+    /// Names are compared case-insensitively.
     pub fn is_system_name(self, schema: Option<&str>, table: &str) -> bool {
         let (table_prefixes, schemas): (&[&str], &[&str]) = match self {
             Self::Postgres => (&["pg_"], &["pg_catalog", "information_schema", "pg_toast"]),
@@ -376,6 +469,8 @@ impl Dialect {
                 &["mysql", "information_schema", "performance_schema", "sys"],
             ),
             Self::SqlServer => (&[], &["sys", "INFORMATION_SCHEMA"]),
+            Self::DuckDb => (&[], &["information_schema", "pg_catalog"]),
+            Self::ClickHouse => (&[], &["system", "information_schema"]),
         };
         let table = table.to_ascii_lowercase();
         table_prefixes
@@ -411,6 +506,8 @@ impl From<DriverKind> for Dialect {
             DriverKind::Sqlite => Self::Sqlite,
             DriverKind::Mysql => Self::Mysql,
             DriverKind::SqlServer => Self::SqlServer,
+            DriverKind::DuckDb => Self::DuckDb,
+            DriverKind::ClickHouse => Self::ClickHouse,
         }
     }
 }
@@ -439,6 +536,10 @@ mod tests {
             (Dialect::Mysql, None, "orders", false),
             (Dialect::SqlServer, Some("sys"), "objects", true),
             (Dialect::SqlServer, Some("dbo"), "orders", false),
+            (Dialect::DuckDb, Some("information_schema"), "tables", true),
+            (Dialect::DuckDb, Some("main"), "orders", false),
+            (Dialect::ClickHouse, Some("system"), "tables", true),
+            (Dialect::ClickHouse, Some("default"), "events", false),
         ];
         for (dialect, schema, table, expected) in cases {
             assert_eq!(
@@ -480,7 +581,9 @@ mod tests {
                 Dialect::Postgres,
                 Dialect::Sqlite,
                 Dialect::Mysql,
-                Dialect::SqlServer
+                Dialect::SqlServer,
+                Dialect::DuckDb,
+                Dialect::ClickHouse
             ]
         );
     }

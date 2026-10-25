@@ -33,6 +33,8 @@
   --sqlite: #5ab0e0;
   --mysql: #7fb2db;
   --sqlserver: #f07c78;
+  --duckdb: #fff000;
+  --clickhouse: #ffcc01;
   --glow-strength: 0.22;
   --radius: 12px;
   --font: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -55,6 +57,8 @@
     --sqlite: #003b57;
     --mysql: #4479a1;
     --sqlserver: #cc2927;
+    --duckdb: #8a7800;
+    --clickhouse: #9a6a00;
     --glow-strength: 0.16;
     color-scheme: light;
   }
@@ -213,6 +217,8 @@ h3 { margin: 0 0 8px; font-size: 1.05rem; font-weight: 600; }
 .engine-logo.sqlite { --logo: url("assets/databases/sqlite.svg"); background: var(--sqlite); }
 .engine-logo.mysql { --logo: url("assets/databases/mysql.svg"); background: var(--mysql); }
 .engine-logo.sqlserver { --logo: url("assets/databases/sqlserver.svg"); background: var(--sqlserver); }
+.engine-logo.duckdb { --logo: url("assets/databases/duckdb.svg"); background: var(--duckdb); }
+.engine-logo.clickhouse { --logo: url("assets/databases/clickhouse.svg"); background: var(--clickhouse); }
 .planned { color: var(--text-weak); margin: 16px 0 0; }
 
 .grid {

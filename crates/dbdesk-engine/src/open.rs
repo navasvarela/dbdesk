@@ -1,6 +1,5 @@
 //! Opening connections: resolving the password, then dispatching to the right driver.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -13,7 +12,7 @@ use tokio::task::JoinError;
 
 use crate::environment::ProcessEnvironment;
 use crate::events::EventSink;
-use crate::{Event, PasswordUpdate};
+use crate::{DatabaseFile, Event, PasswordUpdate};
 
 /// Gives up on a connection attempt after this long. Long enough for a slow VPN or a cold
 /// cloud database to answer, short enough that a wrong host doesn't leave the UI showing
@@ -98,6 +97,10 @@ async fn connect(
         ConnectionConfig::SqlServer(config) => {
             Box::new(dbdesk_driver_sqlserver::connect(config, password).await?)
         }
+        ConnectionConfig::DuckDb(config) => Box::new(dbdesk_driver_duckdb::connect(config).await?),
+        ConnectionConfig::ClickHouse(config) => {
+            Box::new(dbdesk_driver_clickhouse::connect(config, password).await?)
+        }
     })
 }
 
@@ -139,19 +142,23 @@ async fn open_ping_close(
     Ok(server)
 }
 
-/// Creates an empty SQLite database, then reports it as [`Event::SqliteDatabaseCreated`].
-pub(crate) async fn create_sqlite_database(path: PathBuf, events: EventSink) {
-    let result = dbdesk_driver_sqlite::create_database(&path).await;
+/// Creates an empty database file, then reports it as [`Event::DatabaseFileCreated`].
+pub(crate) async fn create_database_file(file: DatabaseFile, events: EventSink) {
+    let result = match &file {
+        DatabaseFile::Sqlite(path) => dbdesk_driver_sqlite::create_database(path).await,
+        DatabaseFile::DuckDb(path) => dbdesk_driver_duckdb::create_database(path).await,
+    };
+    let engine = file.driver().display_name();
+    let path = file.path().display();
     match &result {
-        Ok(()) => tracing::info!("created SQLite database {}", path.display()),
+        Ok(()) => tracing::info!("created {engine} database {path}"),
         Err(error) => tracing::warn!(
-            "could not create SQLite database {}: {}",
-            path.display(),
+            "could not create {engine} database {path}: {}",
             describe_error(error)
         ),
     }
-    events.send(Event::SqliteDatabaseCreated {
-        path,
+    events.send(Event::DatabaseFileCreated {
+        file,
         result: result.map_err(|error| describe_error(&error)),
     });
 }

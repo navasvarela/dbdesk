@@ -1,0 +1,13 @@
+<!-- Serves HTTPS on 8443 as well as HTTP on 8123, with the test certificate the postgres-tls
+     service also serves (docker/postgres-tls, signed by its test authority). -->
+<clickhouse>
+    <https_port>8443</https_port>
+    <openSSL>
+        <server>
+            <certificateFile>/tls/server.crt</certificateFile>
+            <privateKeyFile>/tls/server.key</privateKeyFile>
+            <verificationMode>none</verificationMode>
+            <loadDefaultCAFile>false</loadDefaultCAFile>
+        </server>
+    </openSSL>
+</clickhouse>

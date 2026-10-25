@@ -344,6 +344,44 @@ arriving, engine tests of grid edits and explain, lexer, splitter, syntax-check 
 corpora for the dialect, and a UI test that adds a SQL Server data source. Not tried: connecting
 to Azure SQL, for want of an account.
 
+**DB3 demo note:** built in #49, #52 and #55, as a native stack. **+** → **DuckDB**
+opens a form with **File** (with **Browse…**, **New…** and **Read-only**, as for SQLite) or **In
+memory**; **Test connection** says "Connected to DuckDB 1.5.6", and nothing is installed:
+DuckDB is compiled into dbdesk. In an in-memory data source, `SELECT * FROM
+'/path/orders.parquet'` or `read_csv(…)` queries files directly. The explorer lists the database
+(and attached ones), schemas, tables, views, macros and sequences, and **Show definition** gives
+DuckDB's own `CREATE` statement, tables included. A trillion-row cross join stops at ⌘., `EXPLAIN`
+shows DuckDB's text plan, and editing a cell writes a standard `UPDATE`, refused inside an open
+transaction since DuckDB has no savepoints. The downloads grow by about 13 MB (the stripped
+binary from 27.0 MB to 68.0 MB), inside the 30 MB budget. Underneath: rows arrive as Arrow
+chunks and are formatted by Arrow, statements without rows answer with a status the driver reads
+to the end, and `Command::CreateDatabaseFile` creates SQLite and DuckDB files alike. Covered by
+the whole conformance suite on DuckDB in every CI job, driver tests for the catalog, definitions,
+value formatting, status results and reading a Parquet file from memory, an engine test of grid
+edits, lexer, syntax-check and formatter corpora for the dialect, and a UI test that adds an
+in-memory DuckDB data source.
+
+**DB4 demo note:** built in #56, #60 and #61, as a native stack. `docker
+compose up -d --wait` now also starts ClickHouse 25.8, over HTTP on port 58123 and HTTPS on
+58443. **+** → **ClickHouse** opens the shared server form (`localhost:8123`, database and user
+`default`) with TLS `disable`, `require` or `verify-full`; choosing `require` moves the port to
+8443. **Test connection** says "Connected to ClickHouse 25.8.33.6", over HTTPS with
+`docker/postgres-tls/ca.crt` as the CA file. The explorer lists databases, then tables, views,
+materialized views and dictionaries, with columns and data-skipping indexes, and **Show
+definition** gives ClickHouse's `CREATE` statement. `SELECT number FROM numbers(10000000)`
+pages 500 rows at a time, and running anything else stops the rest at once; `SELECT
+sum(number) FROM numbers(1000000000000)` stops at ⌘.. `USE`, `SET` and temporary tables last
+from run to run, `EXPLAIN` shows the plan a step per row, results are read-only (hover over
+**Read-only** for why), and there is no transaction mode. **Format** keeps `toDate` and
+`countIf` as typed. The downloads grow by about half a megabyte. Underneath: one HTTP session
+per console, `KILL QUERY … SYNC` by `query_id` for ⌘. and for abandoned results, `EXPLAIN AST`
+then `EXPLAIN PLAN` for the linter, and the rustls configuration shared with PostgreSQL in
+`dbdesk-tls`. Covered by the conformance suite without transactions or table descriptions on
+ClickHouse in CI, driver tests for TLS, value formats, the session, paging and abandoning ten
+million rows, and the catalog with definitions, an engine test of a session across runs,
+lexer, syntax-check and formatter corpora for the dialect, and UI tests of the form's TLS port
+and read-only results.
+
 ## Object helpers track
 
 Dialogs that write, show and run the SQL to create and change tables, views and users, from a

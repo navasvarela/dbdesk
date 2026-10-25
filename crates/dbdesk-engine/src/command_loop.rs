@@ -11,7 +11,7 @@ use crate::events::EventSink;
 use crate::export;
 use crate::history::HistoryLog;
 use crate::keymap;
-use crate::open::{create_sqlite_database, test_connection};
+use crate::open::{create_database_file, test_connection};
 use crate::projects::{ProjectError, ProjectRegistry};
 use crate::registry::{Registry, RegistryError};
 use crate::releases::{self, ReleaseFeed};
@@ -144,8 +144,8 @@ impl Engine {
             Command::LoadDefinition { id, path } => {
                 self.request(id, SessionRequest::Definition(path));
             }
-            Command::CreateSqliteDatabase(path) => {
-                tokio::spawn(create_sqlite_database(path, self.events.clone()));
+            Command::CreateDatabaseFile(file) => {
+                tokio::spawn(create_database_file(file, self.events.clone()));
             }
             Command::Execute {
                 console,

@@ -543,7 +543,7 @@ fn function_candidates(input: &CompletionInput<'_>) -> Vec<Candidate> {
             cursor_back: 1,
         })
         .collect();
-    let upper = typed_in_upper_case(prefix);
+    let upper = typed_in_upper_case(prefix) && input.dialect.names_ignore_case();
     for builtin in input.dialect.builtin_functions() {
         if found
             .iter()

@@ -178,6 +178,18 @@ const SCENES: &[Scene] = &[
         keeps_pointer: false,
     },
     Scene {
+        name: "duckdb-data-source-dialog",
+        data_sources: FixtureSources::Shop,
+        play: duckdb_data_source_dialog,
+        keeps_pointer: false,
+    },
+    Scene {
+        name: "clickhouse-data-source-dialog",
+        data_sources: FixtureSources::Shop,
+        play: clickhouse_data_source_dialog,
+        keeps_pointer: false,
+    },
+    Scene {
         name: "explorer-menu",
         data_sources: FixtureSources::Shop,
         play: explorer_menu,
@@ -501,6 +513,14 @@ fn mysql_data_source_dialog(harness: &mut Harness<'static, DbDeskApp>, _: &Fixtu
 
 fn sqlserver_data_source_dialog(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
     open_new_data_source_dialog(harness, "SQL Server");
+}
+
+fn duckdb_data_source_dialog(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    open_new_data_source_dialog(harness, "DuckDB");
+}
+
+fn clickhouse_data_source_dialog(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    open_new_data_source_dialog(harness, "ClickHouse");
 }
 
 fn open_new_data_source_dialog(harness: &mut Harness<'static, DbDeskApp>, driver: &str) {

@@ -19,8 +19,9 @@ pub mod conformance;
 pub use catalog::{CatalogNode, CatalogPath, FolderKind, NodeKind, PathSegment};
 pub use connection::{Connection, Rejection, RejectionKind, ServerInfo};
 pub use data_source::{
-    ConnectionConfig, DataSource, DataSourceId, DriverKind, MysqlConfig, Port, PostgresConfig,
-    ProjectId, ServerConfig, SourceColor, SqlServerConfig, SqliteConfig, TlsMode,
+    ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DriverKind, DuckDbConfig,
+    DuckDbDatabase, MysqlConfig, Port, PostgresConfig, ProjectId, ServerConfig, SourceColor,
+    SqlServerConfig, SqliteConfig, TlsMode,
 };
 pub use error::{BoxError, DriverError, describe_error};
 pub use execution::{CancelHandle, Cell, ColumnInfo, ResultCursor, Row, TransactionStatus};

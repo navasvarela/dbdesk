@@ -166,7 +166,7 @@ impl AppState {
             | Event::ConsoleSaveFailed { .. }
             | Event::ConnectionTested { .. }
             | Event::DefinitionLoaded { .. }
-            | Event::SqliteDatabaseCreated { .. }
+            | Event::DatabaseFileCreated { .. }
             | Event::ConsoleSessionChanged { .. }
             | Event::StatementsValidated { .. }
             | Event::StatementStarted { .. }

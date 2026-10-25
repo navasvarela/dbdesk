@@ -7,7 +7,7 @@ keychain, never in that file.
 ## Adding one
 
 Click **+** at the top of the explorer (or **New data source** on the Welcome tab) and choose
-**PostgreSQL**, **SQLite**, **MySQL / MariaDB** or **SQL Server**.
+**PostgreSQL**, **SQLite**, **MySQL / MariaDB**, **SQL Server**, **DuckDB** or **ClickHouse**.
 
 ![The New PostgreSQL data source dialog](images/data-source-dialog.png)
 
@@ -86,6 +86,26 @@ One data source type serves both: dbdesk tells MySQL and MariaDB apart once it c
 **Test connection** says which server it reached ("Connected to SQL Server 16.0.4305.5"; 16 is
 SQL Server 2022).
 
+**ClickHouse** has the same fields, with these defaults:
+
+![The New ClickHouse data source dialog](images/clickhouse-data-source-dialog.png)
+
+| Field | Default | Notes |
+| --- | --- | --- |
+| Host | `localhost` | Name or IP address of the server. For ClickHouse Cloud, the service's host name. |
+| Port | `8123` | ClickHouse's HTTP port: dbdesk speaks HTTP to ClickHouse, not its native protocol on 9000. |
+| Database | `default` | The database unqualified names refer to, as `USE` would set. The explorer lists every database you may see. |
+| User | `default` | |
+| TLS | `disable` | `disable`, `require` or `verify-full`; see below. |
+| Password | none | Stored in the keychain when you save. |
+
+ClickHouse serves HTTPS on a port of its own (8443) rather than offering encryption on the HTTP
+one, so there is no `prefer`: choosing `require` or `verify-full` moves the port to `8443`, and
+`disable` moves it back, unless you typed a port of your own. ClickHouse Cloud only accepts
+HTTPS, with a publicly signed certificate, so `verify-full` with no CA file works there.
+
+**Test connection** says which server it reached ("Connected to ClickHouse 25.8.33.6").
+
 **SQLite** adds:
 
 ![The New SQLite data source dialog](images/sqlite-data-source-dialog.png)
@@ -104,6 +124,20 @@ SQL Server 2022).
   database. **New…** is the only way dbdesk creates one.
 - **Read-only** — opens the file read-only. Statements that would change it fail with SQLite's
   error.
+
+**DuckDB** has two kinds of database, chosen under **Database**:
+
+![The New DuckDB data source dialog](images/duckdb-data-source-dialog.png)
+
+- **File** — a DuckDB database file (`.duckdb`), with **File**, **Browse…**, **New…** and
+  **Read-only** as for SQLite. Only one program at a time may have a DuckDB file open for
+  writing, so connecting fails while another program (the `duckdb` command, say) has it open.
+- **In memory** — an empty database that lives as long as the connection, for querying files
+  rather than storing data: DuckDB reads CSV, Parquet and JSON files directly. Each console has
+  its own, and everything created in it is gone when it disconnects.
+
+DuckDB is part of dbdesk, so there is nothing to install. **Test connection** says which
+version it is ("Connected to DuckDB 1.5.6").
 
 ## Testing the connection
 

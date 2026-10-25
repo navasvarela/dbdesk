@@ -5,12 +5,12 @@
 **Browse and Query databases.**
 
 dbdesk is a desktop database tool written in Rust. It connects to PostgreSQL, SQLite, MySQL,
-MariaDB and SQL Server today, and support for DuckDB, ClickHouse, Oracle and others is planned. It is a learning project first
+MariaDB, SQL Server, DuckDB and ClickHouse today, and support for Oracle and others is planned. It is a learning project first
 and a personal daily driver second: the goal is a tool small enough to understand end to end
 and easy to bend to my own workflow.
 
-Status: **M5 (personalisation)**. You can add PostgreSQL, SQLite, MySQL, MariaDB and SQL Server
-data sources and browse their catalogs. Query consoles have highlighting, line numbers and completion from the catalog;
+Status: **M5 (personalisation)**. You can add PostgreSQL, SQLite, MySQL, MariaDB, SQL Server,
+DuckDB and ClickHouse data sources and browse their catalogs. Query consoles have highlighting, line numbers and completion from the catalog;
 they run the statement at the cursor or a whole script, explain it, page through results,
 cancel long queries, and point at errors. Consoles are saved as `.sql` files and reopen on
 start, every statement goes to a searchable history, and a console can hold a transaction open
@@ -69,8 +69,8 @@ Passwords are in the macOS Keychain under the service `dbdesk`.
   selection / script, a streaming result grid, and cancellation.
 - **Log console**: one place for connection lifecycle events, query timings, server notices and errors.
 
-Engines: **PostgreSQL**, **SQLite**, **MySQL and MariaDB**, and **SQL Server**, with DuckDB,
-ClickHouse, Oracle and others planned.
+Engines: **PostgreSQL**, **SQLite**, **MySQL and MariaDB**, **SQL Server**, **DuckDB** and
+**ClickHouse**, with Oracle and others planned.
 UI: **egui** (via `eframe`) with **egui_dock** for dockable panels.
 
 ## Documents

@@ -7,10 +7,13 @@ mod common;
 use std::sync::Arc;
 
 use common::{
-    TestEngine, mysql_test_servers, postgres_test_server, sqlite_data_source, sqlite_database,
-    sqlserver_test_server,
+    TestEngine, clickhouse_test_server, mysql_test_servers, postgres_test_server,
+    sqlite_data_source, sqlite_database, sqlserver_test_server,
 };
-use dbdesk_core::{ConnectionConfig, DataSource, DataSourceId, Identifier, RelationName};
+use dbdesk_core::{
+    ConnectionConfig, DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase, Identifier,
+    RelationName,
+};
 use dbdesk_core::{Quoting, RejectionKind, TransactionStatus};
 use dbdesk_engine::{
     Command, ConsoleId, EditFailure, Event, PasswordUpdate, RunId, RunOutcome, RunPurpose,
@@ -790,6 +793,131 @@ fn explains_on_sqlserver_with_showplan_and_switches_it_off() {
     loop {
         if let Event::RowsFetched { rows, .. } = next_run_event(&mut engine) {
             assert_eq!(rows, [[Some("42".to_owned())]]);
+            break;
+        }
+    }
+}
+
+/// A ClickHouse console keeps its session from run to run: a temporary table outlives the run
+/// that made it, and `EXPLAIN` sees it. Needs
+/// `DBDESK_TEST_CLICKHOUSE_URL`; skipped without it.
+#[test]
+fn keeps_a_clickhouse_session_across_runs() {
+    let Some((config, password)) = clickhouse_test_server() else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    engine.expect_started(vec![]);
+    let data_source = DataSource {
+        id: DataSourceId::generate(),
+        name: "test server".to_owned(),
+        color: None,
+        project: None,
+        config: ConnectionConfig::ClickHouse(config),
+    };
+    let id = data_source.id;
+    engine.send(Command::SaveDataSource {
+        data_source,
+        password: PasswordUpdate::Set(password),
+    });
+    assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
+
+    execute(
+        &engine,
+        id,
+        1,
+        &[
+            "CREATE TEMPORARY TABLE people (id UInt64, name String)",
+            "INSERT INTO people VALUES (1, 'ada')",
+        ],
+    );
+    finish_run(&mut engine, 1);
+    execute(&engine, id, 2, &["EXPLAIN SELECT name FROM people"]);
+    let plan = loop {
+        if let Event::RowsFetched { rows, .. } = next_run_event(&mut engine) {
+            break rows;
+        }
+    };
+    assert!(
+        plan.iter()
+            .flatten()
+            .flatten()
+            .any(|line| line.contains("ReadFrom")),
+        "{plan:?}"
+    );
+    finish_run(&mut engine, 2);
+
+    execute(&engine, id, 3, &["SELECT name FROM people"]);
+    loop {
+        if let Event::RowsFetched { rows, .. } = next_run_event(&mut engine) {
+            assert_eq!(rows, [[Some("ada".to_owned())]]);
+            break;
+        }
+    }
+}
+
+/// Grid edits on DuckDB: standard quoting, and, since DuckDB has no savepoints, a refusal
+/// inside a transaction the console opened rather than a failed edit only `ROLLBACK` could
+/// undo.
+#[test]
+fn applies_edits_on_duckdb_and_refuses_them_inside_a_transaction() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    engine.expect_started(vec![]);
+    let data_source = DataSource {
+        id: DataSourceId::generate(),
+        name: "duck".to_owned(),
+        color: None,
+        project: None,
+        config: ConnectionConfig::DuckDb(DuckDbConfig {
+            database: DuckDbDatabase::InMemory,
+        }),
+    };
+    let id = data_source.id;
+    engine.send(Command::SaveDataSource {
+        data_source,
+        password: PasswordUpdate::Keep,
+    });
+    assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
+    execute(
+        &engine,
+        id,
+        1,
+        &[
+            "CREATE TABLE people (id integer PRIMARY KEY, name varchar NOT NULL)",
+            "INSERT INTO people VALUES (1, 'ada')",
+        ],
+    );
+    finish_run(&mut engine, 1);
+
+    edits(
+        &engine,
+        &["UPDATE \"main\".\"people\" SET \"name\" = 'ada''s' WHERE \"id\" = '1'"],
+    );
+    assert_eq!(expect_edits(&mut engine), Ok(()));
+    edits(
+        &engine,
+        &[
+            "UPDATE \"people\" SET \"name\" = 'gone' WHERE \"id\" = '1'",
+            "UPDATE \"people\" SET \"name\" = NULL WHERE \"id\" = '1'",
+        ],
+    );
+    assert_eq!(expect_edits(&mut engine).unwrap_err().statement, Some(1));
+
+    execute(&engine, id, 2, &["BEGIN"]);
+    finish_run(&mut engine, 2);
+    edits(
+        &engine,
+        &["UPDATE \"people\" SET \"name\" = 'x' WHERE \"id\" = '1'"],
+    );
+    let refused = expect_edits(&mut engine).unwrap_err();
+    assert!(refused.message.contains("no savepoints"), "{refused:?}");
+    execute(&engine, id, 3, &["ROLLBACK", "SELECT name FROM people"]);
+
+    loop {
+        if let Event::RowsFetched { rows, .. } = next_run_event(&mut engine) {
+            assert_eq!(rows, [[Some("ada's".to_owned())]]);
             break;
         }
     }

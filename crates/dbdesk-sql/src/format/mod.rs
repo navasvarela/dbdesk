@@ -195,6 +195,13 @@ fn items(text: &str, range: Range<usize>, dialect: Dialect, case: KeywordCase) -
     let fragment = &text[range.clone()];
     let mut items: Vec<Item> = Vec::new();
     let mut gap_text = "";
+    // A dialect whose names are case-sensitive keeps every word as typed: a keyword can't be
+    // told from a column named like one.
+    let case = if dialect.names_ignore_case() {
+        case
+    } else {
+        KeywordCase::Preserve
+    };
     for Token { kind, range: local } in tokenize(fragment, dialect) {
         let written = &fragment[local.clone()];
         if kind == TokenKind::Whitespace {

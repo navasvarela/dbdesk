@@ -385,8 +385,8 @@ impl DbDeskApp {
                 data_source,
                 password,
             }),
-            DialogAction::CreateSqliteDatabase(path) => {
-                self.send(Command::CreateSqliteDatabase(path));
+            DialogAction::CreateDatabaseFile(file) => {
+                self.send(Command::CreateDatabaseFile(file));
             }
             DialogAction::Close => self.data_source_dialog = None,
         }
@@ -1095,6 +1095,91 @@ mod tests {
                 server.user.as_str()
             ),
             ("localhost", 1433.into(), "master", "sa")
+        );
+    }
+
+    #[test]
+    fn adds_an_in_memory_duckdb_data_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "No data sources yet.");
+
+        harness
+            .get_all_by_label("New data source")
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness.get_by_label("DuckDB").click();
+        harness.run();
+        harness.get_by_label_contains("New DuckDB data source");
+        harness.get_by_label("In memory").click();
+        harness.run();
+        harness.get_by_label("Save").click();
+
+        step_until_visible(&mut harness, "Expand memory");
+        let saved = DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .load()
+            .unwrap();
+        let [saved] = saved.as_slice() else {
+            panic!("expected one data source, got {saved:?}");
+        };
+        assert_eq!(
+            saved.config,
+            dbdesk_core::ConnectionConfig::DuckDb(dbdesk_core::DuckDbConfig {
+                database: dbdesk_core::DuckDbDatabase::InMemory,
+            })
+        );
+    }
+
+    #[test]
+    fn adds_a_clickhouse_data_source_whose_port_follows_its_tls_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "No data sources yet.");
+
+        harness
+            .get_all_by_label("New data source")
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness.get_by_label("ClickHouse").click();
+        harness.run();
+        harness.get_by_label_contains("New ClickHouse data source");
+        harness.get_by_label("TLS").click();
+        harness.run();
+        assert!(harness.query_by_label("prefer").is_none());
+        harness.get_by_label("require").click();
+        harness.run();
+        harness.get_by_label("Save").click();
+
+        step_until_visible(&mut harness, "Expand default@localhost");
+        let saved = DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .load()
+            .unwrap();
+        let [saved] = saved.as_slice() else {
+            panic!("expected one data source, got {saved:?}");
+        };
+        let dbdesk_core::ConnectionConfig::ClickHouse(config) = &saved.config else {
+            panic!("expected a ClickHouse data source, got {saved:?}");
+        };
+        let server = &config.server;
+        assert_eq!(
+            (
+                server.port.clone(),
+                server.database.as_str(),
+                server.user.as_str(),
+                &server.tls
+            ),
+            (
+                8443.into(),
+                "default",
+                "default",
+                &dbdesk_core::TlsMode::Require
+            )
         );
     }
 
