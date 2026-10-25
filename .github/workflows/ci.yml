@@ -19,13 +19,8 @@ env:
   # it; see docs/duckdb-prebuilt.md.
   RUSTFLAGS: -D warnings --cfg dbdesk_prebuilt_duckdb
 
-# The first failure stops the whole run: every job ends with a step that cancels the run when
-# the job fails, so the other jobs (a slow macOS or Windows build, say) stop instead of using a
-# runner for a result that no longer matters. `gh run rerun --failed` reruns the cancelled jobs
-# too.
 permissions:
   contents: read
-  actions: write
 
 jobs:
   # Whether the pull request touches anything but documentation. A docs-only pull request (only
@@ -74,11 +69,6 @@ jobs:
           components: rustfmt
       - if: env.CODE != 'false'
         run: cargo fmt --all --check
-      - name: Cancel the rest of the run
-        if: failure()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
 
   # The user manual in book/. A broken link to a page or an image fails the build.
   book:
@@ -89,17 +79,14 @@ jobs:
         with:
           tool: mdbook@0.5.4,mdbook-linkcheck2@0.13.0
       - run: mdbook build book
-      - name: Cancel the rest of the run
-        if: failure()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
 
   check:
     needs: changes
     if: ${{ !cancelled() }}
     strategy:
-      # Also cancels the other systems' jobs straight away when one fails.
+      # The first system to fail cancels the other two, so a failure shows in minutes and stops
+      # using runners. Not a step that cancels the whole run: that also marked the failing job
+      # itself "cancelled", which hid which test failed and let a stack look green (#90).
       fail-fast: true
       matrix:
         # Windows builds and runs the tests, but dbdesk hasn't been tried on a real Windows
@@ -155,8 +142,3 @@ jobs:
         run: cargo clippy --workspace --all-targets
       - if: env.CODE != 'false'
         run: cargo test --workspace
-      - name: Cancel the rest of the run
-        if: failure()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}

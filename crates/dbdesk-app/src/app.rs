@@ -2353,38 +2353,42 @@ mod tests {
         harness
             .get_by_role(Role::MultilineTextInput)
             .type_text(typed);
-        harness.run();
+        // Every wait below is on a condition or a fixed two frames, never `run()`: the console's
+        // connection spinner can keep the app repainting, and `run()` then fails on its frame
+        // limit (it did on a busy CI runner).
+        step_until(&mut harness, "the query to be typed", |harness| {
+            editor_text(harness) == typed
+        });
 
         harness.key_press_modifiers(
             egui::Modifiers::COMMAND | egui::Modifiers::ALT,
             egui::Key::L,
         );
-        harness.run();
-        assert_eq!(
-            editor_text(&harness),
-            "SELECT\n    id,\n    customer\nFROM orders\nWHERE id = 1"
-        );
+        step_until(&mut harness, "the statement to be formatted", |harness| {
+            editor_text(harness) == "SELECT\n    id,\n    customer\nFROM orders\nWHERE id = 1"
+        });
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
-        harness.run();
-        assert_eq!(
-            editor_text(&harness),
-            typed,
-            "one undo restores the typed text"
+        step_until(
+            &mut harness,
+            "one undo to restore the typed text",
+            |harness| editor_text(harness) == typed,
         );
 
         harness.get_by_label("View").click();
-        harness.run();
+        harness.run_steps(2);
         harness.get_by_label("Settings…").click();
-        harness.run();
+        harness.run_steps(2);
         harness.get_by_label("lower").click();
-        harness.run();
+        harness.run_steps(2);
         harness.get_by_label("Code").click();
-        harness.run();
+        harness.run_steps(2);
         harness.get_by_label_contains("Format all").click();
-        harness.run();
-        assert_eq!(
-            editor_text(&harness),
-            "select\n    id,\n    customer\nfrom orders\nwhere id = 1"
+        step_until(
+            &mut harness,
+            "the console to be formatted in lower case",
+            |harness| {
+                editor_text(harness) == "select\n    id,\n    customer\nfrom orders\nwhere id = 1"
+            },
         );
         step_until(&mut harness, "the settings file", |_| {
             std::fs::read_to_string(dir.path().join("settings.toml"))
