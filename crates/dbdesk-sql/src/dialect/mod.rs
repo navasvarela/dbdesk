@@ -9,7 +9,9 @@
 mod functions;
 
 use dbdesk_core::{DriverKind, Quoting, ServerInfo};
-use sqlparser::dialect::{MsSqlDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect};
+use sqlparser::dialect::{
+    DuckDbDialect, MsSqlDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect,
+};
 
 /// The SQL flavour of a data source.
 ///
@@ -23,6 +25,8 @@ pub enum Dialect {
     Mysql,
     /// Microsoft SQL Server and Azure SQL: Transact-SQL.
     SqlServer,
+    /// DuckDB, whose parser derives from PostgreSQL's.
+    DuckDb,
 }
 
 /// The lexical rules that differ between dialects. Strings in `'…'`, `--` line comments and
@@ -108,14 +112,25 @@ pub(crate) enum ParserGap {
     /// A keyword used as an infix operator, `a MOD 3`, rather than as the function of the
     /// same name, `MOD(a, 3)`.
     InfixOperator(&'static str),
+    /// An operator of several characters written together, such as DuckDB's `**`; the lexer
+    /// reads each character as a token of its own.
+    Operator(&'static str),
 }
 
 impl Dialect {
-    pub const ALL: [Self; 4] = [Self::Postgres, Self::Sqlite, Self::Mysql, Self::SqlServer];
+    pub const ALL: [Self; 5] = [
+        Self::Postgres,
+        Self::Sqlite,
+        Self::Mysql,
+        Self::SqlServer,
+        Self::DuckDb,
+    ];
 
     pub(crate) fn lexical_rules(self) -> LexicalRules {
         match self {
-            Self::Postgres => LexicalRules {
+            // DuckDB reads text with PostgreSQL's lexer: checked against DuckDB 1.5.6 for
+            // dollar quoting, nested comments, `E'…'`, `N'…'` and `$` inside names.
+            Self::Postgres | Self::DuckDb => LexicalRules {
                 escape_strings: true,
                 backslash_escapes: false,
                 double_quoted_strings: false,
@@ -181,7 +196,7 @@ impl Dialect {
     /// `GO`, as SQL Server Management Studio and `sqlcmd` do.
     pub(crate) fn script_rules(self) -> ScriptRules {
         match self {
-            Self::Postgres | Self::Sqlite => ScriptRules {
+            Self::Postgres | Self::Sqlite | Self::DuckDb => ScriptRules {
                 delimiter_command: false,
                 go_batches: false,
                 blocks_anywhere: false,
@@ -207,6 +222,7 @@ impl Dialect {
             Self::Sqlite => &SQLiteDialect {},
             Self::Mysql => &MySqlDialect {},
             Self::SqlServer => &MsSqlDialect {},
+            Self::DuckDb => &DuckDbDialect {},
         }
     }
 
@@ -247,6 +263,16 @@ impl Dialect {
                 ParserGap::Words(&["execute"]),
                 ParserGap::Words(&["delete", "top"]),
             ],
+            Self::DuckDb => &[
+                // `JOIN … ON t.ts >= q.ts`, a join on the nearest earlier row
+                ParserGap::Words(&["asof", "join"]),
+                // `FROM t USING SAMPLE 10%`
+                ParserGap::Words(&["using", "sample"]),
+                // `INSERT INTO t BY NAME SELECT …`; with `select` after it, so that `ORDER BY
+                // name` is still checked.
+                ParserGap::Words(&["by", "name", "select"]),
+                ParserGap::Operator("**"),
+            ],
         }
     }
 
@@ -254,7 +280,7 @@ impl Dialect {
     /// `replace` (which deletes a row with the same key first).
     pub(crate) fn insert_verbs(self) -> &'static [&'static str] {
         match self {
-            Self::Postgres | Self::SqlServer => &["insert"],
+            Self::Postgres | Self::SqlServer | Self::DuckDb => &["insert"],
             Self::Sqlite | Self::Mysql => &["insert", "replace"],
         }
     }
@@ -264,7 +290,7 @@ impl Dialect {
     /// statements. PostgreSQL, SQLite and SQL Server run DDL inside the transaction.
     pub(crate) fn implicit_commit_verbs(self) -> &'static [&'static str] {
         match self {
-            Self::Postgres | Self::Sqlite | Self::SqlServer => &[],
+            Self::Postgres | Self::Sqlite | Self::SqlServer | Self::DuckDb => &[],
             Self::Mysql => &[
                 "alter", "create", "drop", "grant", "rename", "revoke", "truncate",
             ],
@@ -280,7 +306,7 @@ impl Dialect {
     /// [`explain_setting`](Self::explain_setting).
     pub fn explain_prefix(self, server: Option<&ServerInfo>) -> &'static str {
         match self {
-            Self::Postgres => "EXPLAIN ",
+            Self::Postgres | Self::DuckDb => "EXPLAIN ",
             Self::Sqlite => "EXPLAIN QUERY PLAN ",
             Self::Mysql if server.is_some_and(has_tree_explain) => "EXPLAIN FORMAT=TREE ",
             Self::Mysql => "EXPLAIN ",
@@ -291,16 +317,17 @@ impl Dialect {
     /// Opens a transaction. SQL Server needs the keyword: a bare `BEGIN` opens a block there.
     pub fn begin_transaction(self) -> &'static str {
         match self {
-            Self::Postgres | Self::Sqlite | Self::Mysql => "BEGIN",
+            Self::Postgres | Self::Sqlite | Self::Mysql | Self::DuckDb => "BEGIN",
             Self::SqlServer => "BEGIN TRANSACTION",
         }
     }
 
     /// The savepoint grid edits use inside a transaction the console already has open. SQL
     /// Server writes it `SAVE TRANSACTION` and has no way to release one: it lasts until the
-    /// transaction ends.
-    pub fn edits_savepoint(self) -> Savepoint {
-        match self {
+    /// transaction ends. DuckDB has no savepoints at all, so `None`.
+    pub fn edits_savepoint(self) -> Option<Savepoint> {
+        Some(match self {
+            Self::DuckDb => return None,
             Self::Postgres | Self::Sqlite | Self::Mysql => Savepoint {
                 open: "SAVEPOINT dbdesk_edits",
                 keep: &["RELEASE SAVEPOINT dbdesk_edits"],
@@ -314,7 +341,7 @@ impl Dialect {
                 keep: &[],
                 undo: &["ROLLBACK TRANSACTION dbdesk_edits"],
             },
-        }
+        })
     }
 
     /// The setting to switch on around a statement, after the
@@ -323,7 +350,7 @@ impl Dialect {
     /// set in a batch of its own. `None` where the prefix alone explains.
     pub fn explain_setting(self) -> Option<ExplainSetting> {
         match self {
-            Self::Postgres | Self::Sqlite | Self::Mysql => None,
+            Self::Postgres | Self::Sqlite | Self::Mysql | Self::DuckDb => None,
             Self::SqlServer => Some(ExplainSetting {
                 on: "SET SHOWPLAN_XML ON",
                 off: "SET SHOWPLAN_XML OFF",
@@ -339,6 +366,7 @@ impl Dialect {
             Self::Sqlite => functions::SQLITE,
             Self::Mysql => functions::MYSQL,
             Self::SqlServer => functions::SQL_SERVER,
+            Self::DuckDb => functions::DUCKDB,
         }
     }
 
@@ -347,7 +375,7 @@ impl Dialect {
     /// the session's `QUOTED_IDENTIFIER`.
     pub fn quoting(self) -> Quoting {
         match self {
-            Self::Postgres | Self::Sqlite => Quoting::STANDARD,
+            Self::Postgres | Self::Sqlite | Self::DuckDb => Quoting::STANDARD,
             Self::Mysql => Quoting {
                 identifier_open: '`',
                 identifier_close: '`',
@@ -366,7 +394,8 @@ impl Dialect {
     /// Whether a table name belongs to the system catalog, which the explorer doesn't list:
     /// PostgreSQL's `pg_*` tables (always on the search path) and its catalog schemas,
     /// SQLite's `sqlite_*` tables, `pragma_*` functions and `temp` schema, MySQL's own
-    /// databases, SQL Server's catalog schemas. Names are compared case-insensitively.
+    /// databases, SQL Server's and DuckDB's catalog schemas. Names are compared
+    /// case-insensitively.
     pub fn is_system_name(self, schema: Option<&str>, table: &str) -> bool {
         let (table_prefixes, schemas): (&[&str], &[&str]) = match self {
             Self::Postgres => (&["pg_"], &["pg_catalog", "information_schema", "pg_toast"]),
@@ -376,6 +405,7 @@ impl Dialect {
                 &["mysql", "information_schema", "performance_schema", "sys"],
             ),
             Self::SqlServer => (&[], &["sys", "INFORMATION_SCHEMA"]),
+            Self::DuckDb => (&[], &["information_schema", "pg_catalog"]),
         };
         let table = table.to_ascii_lowercase();
         table_prefixes
@@ -439,6 +469,8 @@ mod tests {
             (Dialect::Mysql, None, "orders", false),
             (Dialect::SqlServer, Some("sys"), "objects", true),
             (Dialect::SqlServer, Some("dbo"), "orders", false),
+            (Dialect::DuckDb, Some("information_schema"), "tables", true),
+            (Dialect::DuckDb, Some("main"), "orders", false),
         ];
         for (dialect, schema, table, expected) in cases {
             assert_eq!(
