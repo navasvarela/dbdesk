@@ -31,12 +31,14 @@ directories = "6.0.0"
 # and none of its TLS ones: dbdesk hands it a hyper client with dbdesk-tls's rustls
 # configuration, which also covers `require` and a CA file.
 clickhouse = { version = "0.15.3", default-features = false }
-# DuckDB 1.5.6, compiled into dbdesk (`bundled`) with its Parquet and JSON extensions, so there
-# is nothing to install. No default features: they would download a prebuilt libduckdb while
-# building. Measured when added (DB3): the stripped binary grows by about 36 MB, 12 MB with gzip,
-# within the 30 MB budget in docs/databases.md. Pinned with `~`: the next minor version, 1.20000,
-# bundles a development build of DuckDB 2.0.
-duckdb = { version = "~1.10506.1", default-features = false, features = ["bundled", "parquet", "json"] }
+# DuckDB 1.5.6 with its Parquet and JSON extensions, inside dbdesk so there is nothing to
+# install. dbdesk-driver-duckdb's manifest picks how: compiled from source (`bundled`) by
+# default, or linked from DuckDB's own prebuilt library, as CI and releases do
+# (docs/duckdb-prebuilt.md). No default features: they would download a prebuilt libduckdb while
+# building, unchecked. The downloads grow by about 13 MB compiled, 16 MB prebuilt, within the
+# 30 MB budget in docs/databases.md. Pinned with `~`: the next minor version, 1.20000, bundles a
+# development build of DuckDB 2.0.
+duckdb = { version = "~1.10506.1", default-features = false }
 # With default features off, every one dbdesk needs is listed. `links` is what lets
 # `ctx.open_url` and hyperlinks open the browser: without it egui-winit only logs
 # "feature \"links\" not enabled", and the manual, release page and repository links did nothing.

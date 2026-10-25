@@ -215,6 +215,12 @@ release packages stay within the size budget agreed below.
   30 MB budget, and the release build takes 4 min 21 s instead of 1 min 44 s. The crate's next
   release, 1.20000.0, bundles a development build of DuckDB 2.0, so it is pinned with `~`
   until a release of the crate bundles a released 2.0.
+- **Prebuilt in CI and releases** (since 2026-10-25). Compiling DuckDB took 10–14 minutes per
+  OS on CI's runners, twice per macOS release. CI and the release workflow now link DuckDB's own
+  libraries from its GitHub release instead, checksum-pinned: static on macOS and Linux, the
+  DLL beside `dbdesk.exe` on Windows. A plain `cargo build` still compiles it. The downloads
+  grow by 2–6 MB more, mostly ICU and autocomplete, which DuckDB's libraries carry. See
+  [DuckDB's prebuilt libraries](duckdb-prebuilt.md).
 - **Results** are read as DuckDB streams them, in Arrow chunks, and formatted by Arrow, which
   knows every DuckDB type. What DuckDB's Arrow export loses is lost: a `HUGEINT` beyond 38
   digits, a `TIME WITH TIME ZONE`'s offset, and `BIT` arrives as bytes.
