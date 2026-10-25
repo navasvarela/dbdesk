@@ -1169,12 +1169,17 @@ mod tests {
         let server = &config.server;
         assert_eq!(
             (
-                server.port,
+                server.port.clone(),
                 server.database.as_str(),
                 server.user.as_str(),
                 &server.tls
             ),
-            (8443, "default", "default", &dbdesk_core::TlsMode::Require)
+            (
+                8443.into(),
+                "default",
+                "default",
+                &dbdesk_core::TlsMode::Require
+            )
         );
     }
 
