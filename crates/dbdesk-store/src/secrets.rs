@@ -16,6 +16,14 @@ pub trait SecretStore: Send + Sync + 'static {
 #[error("could not access the OS keychain")]
 pub struct SecretError(#[source] keyring::Error);
 
+impl SecretError {
+    /// A store that can't be used, for [`SecretStore`]s other than the OS keychain (such as
+    /// tests standing in for a locked one).
+    pub fn unavailable(reason: impl Into<String>) -> Self {
+        Self(keyring::Error::PlatformFailure(reason.into().into()))
+    }
+}
+
 /// The platform credential store: Keychain on macOS, Credential Manager on Windows,
 /// Secret Service on Linux. Entries are named `dbdesk` / `<data source id>`.
 #[derive(Debug, Default, Clone, Copy)]

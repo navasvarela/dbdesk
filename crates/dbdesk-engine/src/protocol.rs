@@ -9,7 +9,7 @@ use dbdesk_store::{
     ConsoleKey, HistoryEntry, KeymapBindings, Project, Projects, SavedConsole, Settings,
 };
 
-use crate::{Export, Release};
+use crate::{Export, PasswordNeeded, Release};
 
 /// Identifies a query console. Chosen by the UI, unique for the app's lifetime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -64,6 +64,14 @@ pub enum Command {
         password: PasswordUpdate,
     },
     Connect(DataSourceId),
+    /// The password the user typed at the prompt that [`Event::PasswordNeeded`] opened. Kept
+    /// in memory until dbdesk quits, and also saved to the keychain if `save` is set. The UI
+    /// connects again afterwards. Answered by [`Event::PasswordProvided`].
+    ProvidePassword {
+        data_source: DataSourceId,
+        password: Password,
+        save: bool,
+    },
     /// Disconnects the explorer's connection and every console's connection to the data
     /// source, rolling back their open transactions.
     Disconnect(DataSourceId),
@@ -190,6 +198,17 @@ pub enum TransactionEnd {
     Rollback,
 }
 
+/// Where a password given at the prompt was kept.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PasswordKept {
+    /// In the keychain, for this and later sessions.
+    Saved,
+    /// In memory only, as asked.
+    ForThisSession,
+    /// In memory only, because the keychain refused it.
+    SaveFailed(String),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PasswordUpdate {
     /// Use whatever password is saved, if any.
@@ -299,6 +318,19 @@ pub enum Event {
     ConnectionTested {
         id: DataSourceId,
         result: Result<ServerInfo, String>,
+    },
+    /// A connection to the data source was not attempted for want of a password: none is
+    /// saved, or the keychain couldn't be read. The session that wanted it reports
+    /// [`SessionState::Failed`] too; the UI asks for the password and answers with
+    /// [`Command::ProvidePassword`].
+    PasswordNeeded {
+        data_source: DataSourceId,
+        reason: PasswordNeeded,
+    },
+    /// The answer to [`Command::ProvidePassword`].
+    PasswordProvided {
+        data_source: DataSourceId,
+        kept: PasswordKept,
     },
     ChildrenLoaded {
         id: DataSourceId,

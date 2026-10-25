@@ -2,7 +2,9 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use dbdesk_core::{CatalogPath, DataSourceId};
-use dbdesk_engine::{Command, EngineConfig, EngineError, EngineHandle, Event, Repaint};
+use dbdesk_engine::{
+    Command, EngineConfig, EngineError, EngineHandle, Event, PasswordKept, Repaint,
+};
 use dbdesk_store::{ConsoleKey, ExportFormat};
 use egui::{Frame, Margin, RichText, ThemePreference};
 use egui_dock::{DockArea, DockState};
@@ -19,6 +21,7 @@ use crate::history_window::{HistoryAction, HistoryWindow};
 use crate::keymap::{self, Keymap};
 use crate::keymap_window::{self, KeymapWindowAction};
 use crate::log_console::{LogConsole, LogFeed};
+use crate::password_prompt::{PasswordPrompt, PromptAction};
 use crate::project_dialog::{
     DeleteProjectChoice, DeleteProjectConfirmation, ProjectDialogAction, ProjectNameDialog,
 };
@@ -53,6 +56,7 @@ pub struct DbDeskApp {
     definition_window: Option<DefinitionWindow>,
     history_window: Option<HistoryWindow>,
     rollback_confirmation: Option<RollbackConfirmation>,
+    password_prompt: Option<PasswordPrompt>,
     /// Set once quitting may roll back open transactions, so the close isn't asked again.
     quit_confirmed: bool,
     keymap: Keymap,
@@ -104,6 +108,7 @@ impl DbDeskApp {
             definition_window: None,
             history_window: None,
             rollback_confirmation: None,
+            password_prompt: None,
             quit_confirmed: false,
             pick_export_path: Box::new(export_dialog::pick_export_path),
             keymap: Keymap::default(),
@@ -168,6 +173,7 @@ impl DbDeskApp {
         {
             self.send(window.search_command());
         }
+        self.apply_to_password_prompt(event);
         self.consoles.apply(event);
         self.settings.apply(event);
         self.updates.apply(event);
@@ -184,6 +190,53 @@ impl DbDeskApp {
         }
         if matches!(event, Event::ConsolesLoaded(_)) {
             self.restore_console_tabs();
+        }
+    }
+
+    /// Opens the prompt when a connection needs a password, unless one is open already (the
+    /// explorer and a console may both have asked), and connects again once it is given.
+    fn apply_to_password_prompt(&mut self, event: &Event) {
+        if let Event::PasswordNeeded {
+            data_source,
+            reason,
+        } = event
+            && self.password_prompt.is_none()
+            && let Some(entry) = self.state.data_source(*data_source)
+        {
+            self.password_prompt = Some(PasswordPrompt::new(&entry.data_source, reason.clone()));
+        }
+        let Some(prompt) = &self.password_prompt else {
+            return;
+        };
+        let Some(kept) = prompt.apply(event) else {
+            return;
+        };
+        let data_source = prompt.data_source();
+        self.password_prompt = None;
+        if let PasswordKept::SaveFailed(error) = kept {
+            tracing::warn!(
+                "the password was not saved to the keychain, so it is kept until dbdesk quits: \
+                 {error}"
+            );
+        }
+        self.send(Command::Connect(data_source));
+    }
+
+    fn show_password_prompt(&mut self, ctx: &egui::Context) {
+        let Some(prompt) = &mut self.password_prompt else {
+            return;
+        };
+        let data_source = prompt.data_source();
+        let Some(action) = prompt.show(ctx) else {
+            return;
+        };
+        match action {
+            PromptAction::Provide { password, save } => self.send(Command::ProvidePassword {
+                data_source,
+                password,
+                save,
+            }),
+            PromptAction::Cancel => self.password_prompt = None,
         }
     }
 
@@ -781,6 +834,7 @@ impl eframe::App for DbDeskApp {
         self.show_delete_confirmation(&ctx);
         self.show_project_dialog(&ctx);
         self.show_delete_project_confirmation(&ctx);
+        self.show_password_prompt(&ctx);
         if self
             .definition_window
             .as_ref()
@@ -1373,6 +1427,67 @@ mod tests {
         harness.get_by_label("Expand shop");
         step_until(&mut harness, "shop leaving the project", |_| {
             saved_project_of(dir.path(), "shop").is_none()
+        });
+    }
+
+    #[test]
+    fn asks_for_the_password_a_data_source_has_none_saved_for_then_connects() {
+        let dir = tempfile::tempdir().unwrap();
+        // A server that hangs up at once: the second attempt fails as soon as it is made. A
+        // port nothing listens on can hang until the connect timeout on CI runners.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || listener.incoming().for_each(drop));
+        let data_source = dbdesk_core::DataSource {
+            id: DataSourceId::generate(),
+            name: "shared".to_owned(),
+            color: None,
+            project: None,
+            config: dbdesk_core::ConnectionConfig::Postgres(dbdesk_core::PostgresConfig {
+                server: dbdesk_core::ServerConfig {
+                    host: "127.0.0.1".to_owned(),
+                    port: port.into(),
+                    database: "app".to_owned(),
+                    user: "juan".to_owned(),
+                    tls: dbdesk_core::TlsMode::Disable,
+                },
+            }),
+        };
+        DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .save(std::slice::from_ref(&data_source))
+            .unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+
+        step_until_visible(&mut harness, "Expand shared");
+        harness.get_by_label("Expand shared").click();
+        step_until_visible(&mut harness, "Connect to shared");
+        harness.get_by_label_contains("no password is saved");
+        let save = harness.get_by_label("Save to keychain");
+        assert_eq!(
+            egui_kittest::kittest::NodeT::accesskit_node(&save).toggled(),
+            Some(egui::accesskit::Toggled::True)
+        );
+        harness
+            .get_by_role_and_label(Role::PasswordInput, "Password")
+            .type_text("typed once");
+        harness.run();
+        harness.get_by_label("Connect").click();
+
+        step_until(&mut harness, "the prompt closing", |harness| {
+            harness
+                .query_by_label_contains("Connect to shared")
+                .is_none()
+        });
+        step_until(&mut harness, "connecting with the password", |harness| {
+            harness
+                .state()
+                .state
+                .data_source(data_source.id)
+                .is_some_and(|entry| {
+                    matches!(&entry.session, dbdesk_engine::SessionState::Failed(error)
+                        if error.starts_with("could not connect"))
+                })
         });
     }
 

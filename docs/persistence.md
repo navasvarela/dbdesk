@@ -66,8 +66,12 @@ read_only = true
   an opt-in test: `cargo test -p dbdesk-store -- --ignored`.
 - Deleting a data source removes its keychain entry. If that fails, the failure is only logged,
   since a leftover entry is harmless.
-- Not yet: if the keychain is unavailable or the user declines, fall back to asking for the
-  password on connect and keeping it in memory for the session only. Never write secrets to disk.
+- A data source that signs in with a password and has none saved (or whose keychain entry
+  can't be read: locked, declined, unavailable) asks for it when it connects, with **Save to
+  keychain** ticked. Whatever is typed is also kept in memory until dbdesk quits, so it still
+  connects when saving fails or is unticked. Never written to disk. `dbdesk mcp` can't ask, so
+  it connects without one. Saving the data source with a new password forgets the remembered
+  one.
 - Later: support `~/.pgpass` and `PG*` environment variables for Postgres, which is what other
   tools on the machine already use.
 

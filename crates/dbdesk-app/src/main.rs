@@ -22,6 +22,7 @@ mod keymap;
 mod keymap_window;
 mod log_console;
 mod mcp;
+mod password_prompt;
 mod project_dialog;
 mod relaunch;
 mod rollback_dialog;
