@@ -14,14 +14,14 @@ use common::{
 };
 use dbdesk_core::{
     CatalogPath, ConnectionConfig, DataSource, DataSourceId, FolderKind, NodeKind, Password,
-    PostgresConfig, ServerConfig, TlsMode,
+    PostgresConfig, ServerConfig, SshConfig, SshLogin, TlsMode,
 };
 use dbdesk_engine::{
     Command, ConsoleId, DatabaseFile, Event, Export, PasswordUpdate, Release, SessionState,
 };
 use dbdesk_store::{
     ConsoleKey, ConsoleName, DataSourceFile, ExportFormat, FormatSettings, KeymapBindings,
-    KeywordCase, Projects, SavedConsole, SecretStore, Settings,
+    KeywordCase, Projects, SavedConsole, Secret, SecretStore, Settings,
 };
 
 #[test]
@@ -34,12 +34,16 @@ fn saves_connects_disconnects_and_deletes_a_data_source() {
     let data_source = sqlite_data_source(sqlite_database(dir.path()));
     let id = data_source.id;
     secrets
-        .set_mcp_password(id, &Password::new("left over"))
+        .set(id, Secret::McpLogin, &Password::new("left over"))
+        .unwrap();
+    secrets
+        .set(id, Secret::Ssh, &Password::new("left over too"))
         .unwrap();
 
     engine.send(Command::SaveDataSource {
         data_source: data_source.clone(),
         password: PasswordUpdate::Keep,
+        ssh_secret: PasswordUpdate::Keep,
     });
     engine.expect(Event::DataSourceSaved(data_source.clone()));
     assert_eq!(
@@ -61,6 +65,7 @@ fn saves_connects_disconnects_and_deletes_a_data_source() {
     engine.expect(Event::DataSourceDeleted(id));
     assert!(DataSourceFile::new(&file).load().unwrap().is_empty());
     assert_eq!(secrets.mcp(id), None, "the MCP login's password goes too");
+    assert_eq!(secrets.saved(id, Secret::Ssh), None, "and the SSH secret");
     engine.shut_down();
 }
 
@@ -83,6 +88,12 @@ fn reloads_saved_data_sources_and_stores_passwords_in_the_secret_store() {
                 database: "app".to_owned(),
                 user: "juan".to_owned(),
                 tls: TlsMode::Require,
+                ssh: Some(SshConfig {
+                    host: "bastion.internal".to_owned(),
+                    port: 22.into(),
+                    user: "deploy".to_owned(),
+                    login: SshLogin::Password,
+                }),
             },
         }),
     };
@@ -92,12 +103,22 @@ fn reloads_saved_data_sources_and_stores_passwords_in_the_secret_store() {
     engine.send(Command::SaveDataSource {
         data_source: data_source.clone(),
         password: PasswordUpdate::Set(Password::new("s3cret")),
+        ssh_secret: PasswordUpdate::Set(Password::new("over ssh")),
     });
     engine.expect(Event::DataSourceSaved(data_source.clone()));
     engine.shut_down();
 
-    assert_eq!(secrets.get(data_source.id), Some(Password::new("s3cret")));
-    assert!(!std::fs::read_to_string(&file).unwrap().contains("s3cret"));
+    assert_eq!(
+        secrets.database(data_source.id),
+        Some(Password::new("s3cret"))
+    );
+    assert_eq!(
+        secrets.saved(data_source.id, Secret::Ssh),
+        Some(Password::new("over ssh"))
+    );
+    let written = std::fs::read_to_string(&file).unwrap();
+    assert!(!written.contains("s3cret"), "{written}");
+    assert!(!written.contains("over ssh"), "{written}");
     let mut restarted = TestEngine::start(&file, secrets);
     restarted.expect_started(vec![data_source]);
 }
@@ -306,6 +327,7 @@ fn reports_failed_tests_and_connections() {
     engine.send(Command::SaveDataSource {
         data_source: missing,
         password: PasswordUpdate::Keep,
+        ssh_secret: PasswordUpdate::Keep,
     });
     assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
     engine.send(Command::Connect(id));
@@ -326,6 +348,7 @@ fn stops_a_connection_whose_placeholder_is_unset_saying_which_setting_uses_it() 
     engine.send(Command::SaveDataSource {
         data_source: shared,
         password: PasswordUpdate::Keep,
+        ssh_secret: PasswordUpdate::Keep,
     });
     assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
 
@@ -362,6 +385,7 @@ fn never_overwrites_an_unreadable_data_sources_file() {
     engine.send(Command::SaveDataSource {
         data_source: data_source.clone(),
         password: PasswordUpdate::Keep,
+        ssh_secret: PasswordUpdate::Keep,
     });
 
     assert!(matches!(
@@ -386,6 +410,7 @@ fn loading_children_connects_first_and_answers_catalog_requests() {
     engine.send(Command::SaveDataSource {
         data_source,
         password: PasswordUpdate::Keep,
+        ssh_secret: PasswordUpdate::Keep,
     });
     assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
 
@@ -476,6 +501,7 @@ fn connects_to_postgres_with_the_saved_password() {
     engine.send(Command::SaveDataSource {
         data_source,
         password: PasswordUpdate::Set(parsed.password),
+        ssh_secret: PasswordUpdate::Keep,
     });
     assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
     engine.send(Command::Connect(id));

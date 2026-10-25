@@ -21,6 +21,7 @@ fn save(engine: &mut TestEngine, data_source: &DataSource, password: PasswordUpd
     engine.send(Command::SaveDataSource {
         data_source: data_source.clone(),
         password,
+        ssh_secret: PasswordUpdate::Keep,
     });
     engine.expect(Event::DataSourceSaved(data_source.clone()));
 }

@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use dbdesk_core::{
     ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase,
     McpLogin, MysqlConfig, Port, PostgresConfig, ProjectId, SafetyLevel, ServerConfig, SourceColor,
-    SqlServerConfig, SqliteConfig, TlsMode,
+    SqlServerConfig, SqliteConfig, SshConfig, SshLogin, TlsMode,
 };
 use serde::{Deserialize, Serialize};
 
@@ -244,6 +244,8 @@ struct PortableServer {
     user: String,
     #[serde(default)]
     tls: PortableTls,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ssh: Option<PortableSsh>,
 }
 
 impl PortableServer {
@@ -254,6 +256,7 @@ impl PortableServer {
             database,
             user,
             tls,
+            ssh,
         } = server;
         Self {
             host: host.clone(),
@@ -261,6 +264,7 @@ impl PortableServer {
             database: database.clone(),
             user: user.clone(),
             tls: PortableTls::export(tls, path),
+            ssh: ssh.as_ref().map(|ssh| PortableSsh::export(ssh, path)),
         }
     }
 
@@ -271,6 +275,7 @@ impl PortableServer {
             database,
             user,
             tls,
+            ssh,
         } = self;
         ServerConfig {
             host,
@@ -278,6 +283,71 @@ impl PortableServer {
             database,
             user,
             tls: tls.import(path),
+            ssh: ssh.map(|ssh| ssh.import(path)),
+        }
+    }
+}
+
+/// [`SshConfig`], written the same way. Where the SSH server is and whom to sign in as
+/// travel; the password or key passphrase stays in each machine's keychain, and the key file
+/// is a path like any other.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct PortableSsh {
+    host: String,
+    port: Port,
+    user: String,
+    #[serde(flatten)]
+    login: PortableSshLogin,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "login", rename_all = "kebab-case")]
+enum PortableSshLogin {
+    Agent,
+    KeyFile { key_file: PathBuf },
+    Password,
+}
+
+impl PortableSsh {
+    fn export(ssh: &SshConfig, path: &impl Fn(&Path) -> PathBuf) -> Self {
+        let SshConfig {
+            host,
+            port,
+            user,
+            login,
+        } = ssh;
+        Self {
+            host: host.clone(),
+            port: port.clone(),
+            user: user.clone(),
+            login: match login {
+                SshLogin::Agent => PortableSshLogin::Agent,
+                SshLogin::KeyFile { key_file } => PortableSshLogin::KeyFile {
+                    key_file: path(key_file),
+                },
+                SshLogin::Password => PortableSshLogin::Password,
+            },
+        }
+    }
+
+    fn import(self, path: &impl Fn(&Path) -> PathBuf) -> SshConfig {
+        let Self {
+            host,
+            port,
+            user,
+            login,
+        } = self;
+        SshConfig {
+            host,
+            port,
+            user,
+            login: match login {
+                PortableSshLogin::Agent => SshLogin::Agent,
+                PortableSshLogin::KeyFile { key_file } => SshLogin::KeyFile {
+                    key_file: path(&key_file),
+                },
+                PortableSshLogin::Password => SshLogin::Password,
+            },
         }
     }
 }

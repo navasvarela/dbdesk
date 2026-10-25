@@ -364,6 +364,10 @@ pub struct ServerConfig {
     /// Absent from files written before TLS existed, which then get the default.
     #[serde(default)]
     pub tls: TlsMode,
+    /// The SSH server to reach the database through, for databases only a jump host can
+    /// reach. Written only when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh: Option<SshConfig>,
 }
 
 impl ServerConfig {
@@ -391,7 +395,7 @@ impl ServerConfig {
         };
         Ok(Self {
             host: text(&self.host, Setting::Host)?,
-            port: self.port.resolve(variables)?,
+            port: self.port.resolve(Setting::Port, variables)?,
             database: text(&self.database, Setting::Database)?,
             user: text(&self.user, Setting::User)?,
             tls: match &self.tls {
@@ -405,7 +409,92 @@ impl ServerConfig {
                 },
                 tls => tls.clone(),
             },
+            ssh: self
+                .ssh
+                .as_ref()
+                .map(|ssh| ssh.resolve(variables))
+                .transpose()?,
         })
+    }
+}
+
+/// An SSH server that forwards connections to the database server: a jump host, or the
+/// database's own machine when its port is only open to itself. dbdesk opens a tunnel to it
+/// before the driver connects, and the driver connects through the tunnel.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SshConfig {
+    pub host: String,
+    pub port: Port,
+    pub user: String,
+    #[serde(flatten)]
+    pub login: SshLogin,
+}
+
+impl SshConfig {
+    pub const DEFAULT_PORT: u16 = 22;
+
+    /// The port to connect to, once resolved; see [`ServerConfig::port_number`].
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError::Connect`] if the port is still a placeholder.
+    pub fn port_number(&self) -> Result<u16, DriverError> {
+        self.port.number().ok_or_else(|| {
+            DriverError::Connect(
+                format!(
+                    "the SSH port {} has not been resolved to a number",
+                    self.port
+                )
+                .into(),
+            )
+        })
+    }
+
+    fn resolve(&self, variables: &dyn Variables) -> Result<Self, PlaceholderError> {
+        let text = |text: &str, setting| {
+            expand(text, variables).map_err(PlaceholderError::in_setting(setting))
+        };
+        Ok(Self {
+            host: text(&self.host, Setting::SshHost)?,
+            port: self.port.resolve(Setting::SshPort, variables)?,
+            user: text(&self.user, Setting::SshUser)?,
+            login: match &self.login {
+                SshLogin::KeyFile { key_file } => SshLogin::KeyFile {
+                    key_file: expand_path(key_file, variables)
+                        .map_err(PlaceholderError::in_setting(Setting::SshKeyFile))?,
+                },
+                login @ (SshLogin::Agent | SshLogin::Password) => login.clone(),
+            },
+        })
+    }
+}
+
+/// `user@host:port`.
+impl fmt::Display for SshConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}@{}:{}", self.user, self.host, self.port)
+    }
+}
+
+/// How dbdesk signs in to the SSH server. The secret a key file or password needs is kept in
+/// the keychain, never in the file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "login", rename_all = "kebab-case")]
+pub enum SshLogin {
+    /// With the keys the running SSH agent holds (`SSH_AUTH_SOCK`, or Pageant on Windows).
+    Agent,
+    /// With a private key file, in OpenSSH's format. An encrypted key's passphrase is the
+    /// secret.
+    KeyFile { key_file: PathBuf },
+    /// With the SSH user's password, which is the secret.
+    Password,
+}
+
+impl SshLogin {
+    /// Whether signing in may need a secret from the keychain: a password always does, a key
+    /// file only when it is encrypted.
+    pub fn may_need_secret(&self) -> bool {
+        !matches!(self, Self::Agent)
     }
 }
 
@@ -428,21 +517,22 @@ impl Port {
         }
     }
 
-    fn resolve(&self, variables: &dyn Variables) -> Result<Self, PlaceholderError> {
+    fn resolve(
+        &self,
+        setting: Setting,
+        variables: &dyn Variables,
+    ) -> Result<Self, PlaceholderError> {
         let Self::Placeholder(text) = self else {
             return Ok(self.clone());
         };
-        let value = expand(text, variables).map_err(PlaceholderError::in_setting(Setting::Port))?;
+        let value = expand(text, variables).map_err(PlaceholderError::in_setting(setting))?;
         value
             .trim()
             .parse::<u16>()
             .ok()
             .filter(|port| *port != 0)
             .map(Self::Number)
-            .ok_or(PlaceholderError::InvalidPort {
-                setting: Setting::Port,
-                value,
-            })
+            .ok_or(PlaceholderError::InvalidPort { setting, value })
     }
 }
 
@@ -461,14 +551,18 @@ impl fmt::Display for Port {
     }
 }
 
-/// `user@host:port/database`.
+/// `user@host:port/database`, then `via` and the SSH server when there is one.
 impl fmt::Display for ServerConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
             "{}@{}:{}/{}",
             self.user, self.host, self.port, self.database
-        )
+        )?;
+        match &self.ssh {
+            Some(ssh) => write!(f, " via {ssh}"),
+            None => Ok(()),
+        }
     }
 }
 
@@ -649,6 +743,7 @@ mod tests {
                             tls: TlsMode::VerifyFull {
                                 ca_file: Some("/etc/ssl/internal-ca.pem".into()),
                             },
+                            ssh: None,
                         },
                     }),
                 },
@@ -681,6 +776,7 @@ mod tests {
             database: "app".to_owned(),
             user: "juan".to_owned(),
             tls: TlsMode::Prefer,
+            ssh: None,
         };
         let mut data_source = DataSource {
             id: DataSourceId::generate(),
@@ -716,6 +812,7 @@ mod tests {
             database: "shop".to_owned(),
             user: "owner".to_owned(),
             tls: TlsMode::Prefer,
+            ssh: None,
         };
         let mysql = ConnectionConfig::Mysql(MysqlConfig { server });
 
@@ -784,6 +881,7 @@ mod tests {
                             database: "app".to_owned(),
                             user: "juan".to_owned(),
                             tls,
+                            ssh: None,
                         },
                     }),
                 }],
@@ -992,6 +1090,7 @@ mod tests {
                 database: "app".to_owned(),
                 user: "juan".to_owned(),
                 tls: TlsMode::Require,
+                ssh: None,
             },
         });
         let sqlite = ConnectionConfig::Sqlite(SqliteConfig {
@@ -1079,6 +1178,97 @@ mod tests {
     }
 
     #[test]
+    fn writes_ssh_as_a_table_and_resolves_its_placeholders() {
+        let text = r#"
+            [[data_source]]
+            id = "4b5f9a3e-8a52-4a7e-9c6b-1f0f2b0c9d11"
+            name = "behind a bastion"
+            driver = "postgres"
+            host = "10.0.0.5"
+            port = 5432
+            database = "app"
+            user = "juan"
+
+            [data_source.ssh]
+            host = "${BASTION}"
+            port = "${BASTION_PORT}"
+            user = "deploy"
+            login = "key-file"
+            key_file = "~/.ssh/id_ed25519"
+
+            [[data_source]]
+            id = "0d6c2f4e-1b8a-4c3d-9e7f-5a6b7c8d9e0f"
+            name = "through the agent"
+            driver = "mysql"
+            host = "db"
+            port = 3306
+            database = "shop"
+            user = "root"
+            ssh = { host = "jump", port = 22, user = "juan", login = "agent" }
+        "#;
+        let variables = Fixed::new(&[("BASTION", "bastion.example.com"), ("BASTION_PORT", "2222")]);
+
+        let file: File = toml::from_str(text).unwrap();
+        let ConnectionConfig::Postgres(postgres) =
+            file.data_source[0].config.resolve(&variables).unwrap()
+        else {
+            panic!("expected a PostgreSQL data source");
+        };
+        let ConnectionConfig::Mysql(mysql) = &file.data_source[1].config else {
+            panic!("expected a MySQL data source");
+        };
+
+        assert_eq!(
+            postgres.server.ssh,
+            Some(SshConfig {
+                host: "bastion.example.com".to_owned(),
+                port: 2222.into(),
+                user: "deploy".to_owned(),
+                login: SshLogin::KeyFile {
+                    key_file: "/home/juan/.ssh/id_ed25519".into()
+                },
+            })
+        );
+        assert_eq!(
+            postgres.server.to_string(),
+            "juan@10.0.0.5:5432/app via deploy@bastion.example.com:2222"
+        );
+        assert_eq!(
+            mysql.server.ssh.as_ref().map(|ssh| &ssh.login),
+            Some(&SshLogin::Agent)
+        );
+        let written = toml::to_string(&file).unwrap();
+        assert!(written.contains(r#"login = "key-file""#), "{written}");
+        assert_eq!(toml::from_str::<File>(&written).unwrap(), file);
+    }
+
+    #[test]
+    fn names_the_ssh_setting_an_unset_variable_is_in() {
+        let config = ConnectionConfig::Postgres(PostgresConfig {
+            server: ServerConfig {
+                host: "db".to_owned(),
+                port: 5432.into(),
+                database: "app".to_owned(),
+                user: "juan".to_owned(),
+                tls: TlsMode::Prefer,
+                ssh: Some(SshConfig {
+                    host: "jump".to_owned(),
+                    port: Port::Placeholder("${SSH_PORT}".to_owned()),
+                    user: "juan".to_owned(),
+                    login: SshLogin::Password,
+                }),
+            },
+        });
+
+        let error = config.resolve(&Fixed::new(&[])).unwrap_err();
+
+        assert_eq!(
+            crate::describe_error(&error),
+            "could not resolve the SSH port: ${SSH_PORT} is not set"
+        );
+    }
+
+    #[test]
     fn names_the_setting_an_unset_or_wrong_variable_is_in() {
         let config = |host: &str, port: Port| {
             ConnectionConfig::Mysql(MysqlConfig {
@@ -1088,6 +1278,7 @@ mod tests {
                     database: "shop".to_owned(),
                     user: "root".to_owned(),
                     tls: TlsMode::Prefer,
+                    ssh: None,
                 },
             })
         };

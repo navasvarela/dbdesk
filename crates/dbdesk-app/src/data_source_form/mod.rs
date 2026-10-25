@@ -2,15 +2,17 @@
 //! the rules are testable without a UI.
 
 mod server;
+mod ssh;
 
 use dbdesk_core::{
     ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DriverKind, DuckDbConfig,
-    DuckDbDatabase, McpLogin, MysqlConfig, Password, PostgresConfig, ProjectId, SafetyLevel,
-    SourceColor, SqlServerConfig, SqliteConfig,
+    DuckDbDatabase, McpLogin, MysqlConfig, Password, Port, PostgresConfig, ProjectId, SafetyLevel,
+    SourceColor, SqlServerConfig, SqliteConfig, has_placeholder,
 };
 use dbdesk_engine::PasswordUpdate;
 
 pub use server::{ServerDefaults, ServerFields, TlsChoice, TlsOffer};
+pub use ssh::{SshFields, SshLoginChoice};
 
 const POSTGRES_DEFAULTS: ServerDefaults = ServerDefaults {
     host: "localhost",
@@ -62,6 +64,14 @@ pub enum FormError {
     UserMissing,
     #[error("File is required.")]
     PathMissing,
+    #[error("SSH host is required.")]
+    SshHostMissing,
+    #[error("SSH port must be a number from 1 to 65535, or a ${{VARIABLE}}.")]
+    InvalidSshPort,
+    #[error("SSH user is required.")]
+    SshUserMissing,
+    #[error("Key file is required to sign in with a key file.")]
+    SshKeyFileMissing,
 }
 
 /// Text as the user typed it. Converted to a [`DataSource`] only on Test or Save.
@@ -335,6 +345,18 @@ impl DataSourceForm {
             _ => PasswordUpdate::Keep,
         }
     }
+
+    /// The SSH password or key passphrase typed in the form, which replaces the saved one.
+    pub fn ssh_secret_update(&self) -> PasswordUpdate {
+        match self
+            .fields
+            .server()
+            .and_then(|server| server.ssh.typed_secret())
+        {
+            Some(secret) => PasswordUpdate::Set(Password::new(secret)),
+            None => PasswordUpdate::Keep,
+        }
+    }
 }
 
 impl SqliteFields {
@@ -359,6 +381,20 @@ impl DuckDbFields {
     }
 }
 
+/// A port number, or text with a `${NAME}` placeholder that must resolve to one when
+/// connecting.
+fn parse_port(text: &str, invalid: FormError) -> Result<Port, FormError> {
+    let port = text.trim();
+    if has_placeholder(port) {
+        return Ok(Port::Placeholder(port.to_owned()));
+    }
+    port.parse::<u16>()
+        .ok()
+        .filter(|port| *port != 0)
+        .map(Port::Number)
+        .ok_or(invalid)
+}
+
 fn required(value: &str, missing: FormError) -> Result<String, FormError> {
     match value.trim() {
         "" => Err(missing),
@@ -368,7 +404,7 @@ fn required(value: &str, missing: FormError) -> Result<String, FormError> {
 
 #[cfg(test)]
 mod tests {
-    use dbdesk_core::{ServerConfig, TlsMode};
+    use dbdesk_core::{ServerConfig, SshConfig, SshLogin, TlsMode};
 
     use super::*;
 
@@ -410,6 +446,24 @@ mod tests {
                     tls: TlsMode::VerifyFull {
                         ca_file: Some("/etc/ca.pem".into()),
                     },
+                    ssh: None,
+                },
+            }),
+            ConnectionConfig::Mysql(MysqlConfig {
+                server: ServerConfig {
+                    host: "10.0.0.5".to_owned(),
+                    port: 3306.into(),
+                    database: "shop".to_owned(),
+                    user: "root".to_owned(),
+                    tls: TlsMode::Prefer,
+                    ssh: Some(SshConfig {
+                        host: "bastion".to_owned(),
+                        port: 2222.into(),
+                        user: "deploy".to_owned(),
+                        login: SshLogin::KeyFile {
+                            key_file: "/home/juan/.ssh/id_ed25519".into(),
+                        },
+                    }),
                 },
             }),
         ];
@@ -446,6 +500,24 @@ mod tests {
         assert_eq!(
             DataSourceForm::new(DriverKind::Sqlite).password_update(),
             PasswordUpdate::Keep
+        );
+    }
+
+    #[test]
+    fn only_a_typed_ssh_secret_replaces_the_saved_one() {
+        let mut form = postgres_form(|f| {
+            f.ssh.enabled = true;
+            f.ssh.login = SshLoginChoice::Password;
+        });
+        assert_eq!(form.ssh_secret_update(), PasswordUpdate::Keep);
+
+        if let DriverFields::Postgres(fields) = &mut form.fields {
+            fields.server.ssh.secret = "over ssh".to_owned();
+        }
+
+        assert_eq!(
+            form.ssh_secret_update(),
+            PasswordUpdate::Set(Password::new("over ssh"))
         );
     }
 

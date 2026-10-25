@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use dbdesk_core::{DataSource, DataSourceId, Password, ProjectId, describe_error};
 use dbdesk_store::{
-    ConsoleFiles, ImportPlan, KeymapFile, Project, SecretError, SecretStore, SettingsFile,
+    ConsoleFiles, ImportPlan, KeymapFile, Project, Secret, SecretError, SecretStore, SettingsFile,
 };
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::task::{JoinError, JoinSet};
@@ -118,7 +118,8 @@ impl Engine {
             Command::SaveDataSource {
                 data_source,
                 password,
-            } => self.save(data_source, password).await,
+                ssh_secret,
+            } => self.save(data_source, password, ssh_secret).await,
             Command::DeleteDataSource(id) => self.delete(id).await,
             Command::CreateProject { id, name } => {
                 let result = self.projects.create(id, &name).await;
@@ -295,9 +296,17 @@ impl Engine {
         }
     }
 
-    async fn save(&mut self, data_source: DataSource, password: PasswordUpdate) {
+    async fn save(
+        &mut self,
+        data_source: DataSource,
+        password: PasswordUpdate,
+        ssh_secret: PasswordUpdate,
+    ) {
         let id = data_source.id;
-        match self.try_save(data_source.clone(), password).await {
+        match self
+            .try_save(data_source.clone(), password, ssh_secret)
+            .await
+        {
             Ok(()) => {
                 tracing::info!(data_source = %data_source.name, "saved data source");
                 self.events.send(Event::DataSourceSaved(data_source));
@@ -314,19 +323,34 @@ impl Engine {
         &mut self,
         data_source: DataSource,
         password: PasswordUpdate,
+        ssh_secret: PasswordUpdate,
     ) -> Result<(), SaveError> {
         self.registry.ensure_available()?;
-        if let PasswordUpdate::Set(password) = password {
-            self.passwords.remove(data_source.id);
-            let secrets = Arc::clone(&self.secrets);
-            let id = data_source.id;
-            tokio::task::spawn_blocking(move || secrets.set_password(id, &password))
-                .await
-                .map_err(SaveError::Task)?
-                .map_err(SaveError::Password)?;
+        let updates = [(Secret::Database, password), (Secret::Ssh, ssh_secret)];
+        for (secret, update) in updates {
+            if let PasswordUpdate::Set(value) = update {
+                self.save_secret(data_source.id, secret, value).await?;
+            }
         }
         self.registry.upsert(data_source).await?;
         Ok(())
+    }
+
+    /// Saves a secret typed in the dialog, replacing any given at the prompt for this session.
+    async fn save_secret(
+        &mut self,
+        id: DataSourceId,
+        secret: Secret,
+        value: Password,
+    ) -> Result<(), SaveError> {
+        if secret == Secret::Database {
+            self.passwords.remove(id);
+        }
+        let secrets = Arc::clone(&self.secrets);
+        tokio::task::spawn_blocking(move || secrets.set(id, secret, &value))
+            .await
+            .map_err(SaveError::Task)?
+            .map_err(SaveError::Password)
     }
 
     async fn delete(&mut self, id: DataSourceId) {
@@ -334,7 +358,7 @@ impl Engine {
         match self.registry.remove(id).await {
             Ok(true) => {
                 self.passwords.remove(id);
-                self.delete_password(id).await;
+                self.delete_secrets(id).await;
                 tracing::info!(%id, "deleted data source");
                 self.events.send(Event::DataSourceDeleted(id));
             }
@@ -433,9 +457,10 @@ impl Engine {
         }
         let kept = if save {
             let secrets = Arc::clone(&self.secrets);
-            let result =
-                tokio::task::spawn_blocking(move || secrets.set_password(data_source, &password))
-                    .await;
+            let result = tokio::task::spawn_blocking(move || {
+                secrets.set(data_source, Secret::Database, &password)
+            })
+            .await;
             match result {
                 Ok(Ok(())) => PasswordKept::Saved,
                 Ok(Err(error)) => PasswordKept::SaveFailed(describe_error(&error)),
@@ -556,8 +581,8 @@ impl Engine {
     async fn save_mcp_password(&self, id: DataSourceId, password: Option<Password>) {
         let secrets = Arc::clone(&self.secrets);
         let result = tokio::task::spawn_blocking(move || match password {
-            Some(password) => secrets.set_mcp_password(id, &password),
-            None => secrets.delete_mcp_password(id),
+            Some(password) => secrets.set(id, Secret::McpLogin, &password),
+            None => secrets.delete(id, Secret::McpLogin),
         })
         .await;
         let error = match result {
@@ -572,14 +597,15 @@ impl Engine {
         self.events.send(Event::DataSourceSaveFailed { id, error });
     }
 
-    /// Removes both of the data source's keychain entries, its own and its MCP login's. A
-    /// leftover entry is harmless, so failing to remove one is only logged.
-    async fn delete_password(&self, id: DataSourceId) {
+    /// Removes every keychain entry the data source has. A leftover entry is harmless, so
+    /// failing to remove one is only logged.
+    async fn delete_secrets(&self, id: DataSourceId) {
         let secrets = Arc::clone(&self.secrets);
         let result = tokio::task::spawn_blocking(move || {
-            let own = secrets.delete_password(id);
-            let mcp = secrets.delete_mcp_password(id);
-            own.and(mcp)
+            Secret::ALL
+                .into_iter()
+                .map(|secret| secrets.delete(id, secret))
+                .fold(Ok(()), Result::and)
         })
         .await;
         let error = match result {
@@ -587,7 +613,7 @@ impl Engine {
             Ok(Err(error)) => describe_error(&error),
             Err(error) => describe_error(&error),
         };
-        tracing::warn!(%id, "could not remove the saved password: {error}");
+        tracing::warn!(%id, "could not remove the saved secrets: {error}");
     }
 
     fn connect(&mut self, id: DataSourceId) {

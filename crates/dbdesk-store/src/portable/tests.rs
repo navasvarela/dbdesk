@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use dbdesk_core::{
     ClickHouseConfig, ConnectionConfig, DataSourceId, DuckDbConfig, DuckDbDatabase, MysqlConfig,
     Port, PostgresConfig, ProjectId, ServerConfig, SourceColor, SqlServerConfig, SqliteConfig,
-    TlsMode, Variables,
+    SshConfig, SshLogin, TlsMode, Variables,
 };
 
 use super::*;
@@ -38,6 +38,7 @@ fn server(host: &str, port: u16, tls: TlsMode) -> ServerConfig {
         database: "app".to_owned(),
         user: "juan".to_owned(),
         tls,
+        ssh: None,
     }
 }
 
@@ -81,6 +82,12 @@ fn every_kind(home: &Path, beside: &Path, project: ProjectId) -> Vec<DataSource>
             ConnectionConfig::Mysql(MysqlConfig {
                 server: ServerConfig {
                     port: Port::Placeholder("${SHOP_PORT}".to_owned()),
+                    ssh: Some(SshConfig {
+                        host: "jump.internal".to_owned(),
+                        port: 22.into(),
+                        user: "juan".to_owned(),
+                        login: SshLogin::Agent,
+                    }),
                     ..server("${SHOP_HOST}", 0, TlsMode::Require)
                 },
             }),
@@ -89,7 +96,17 @@ fn every_kind(home: &Path, beside: &Path, project: ProjectId) -> Vec<DataSource>
             "sales",
             None,
             ConnectionConfig::SqlServer(SqlServerConfig {
-                server: server("sql.internal", 1433, TlsMode::Disable),
+                server: ServerConfig {
+                    ssh: Some(SshConfig {
+                        host: "bastion.internal".to_owned(),
+                        port: Port::Placeholder("${BASTION_PORT}".to_owned()),
+                        user: "deploy".to_owned(),
+                        login: SshLogin::KeyFile {
+                            key_file: home.join(".ssh/id_ed25519"),
+                        },
+                    }),
+                    ..server("sql.internal", 1433, TlsMode::Disable)
+                },
             }),
         ),
         data_source(
@@ -112,7 +129,15 @@ fn every_kind(home: &Path, beside: &Path, project: ProjectId) -> Vec<DataSource>
             "events",
             None,
             ConnectionConfig::ClickHouse(ClickHouseConfig {
-                server: server("ch.internal", 8443, TlsMode::Require),
+                server: ServerConfig {
+                    ssh: Some(SshConfig {
+                        host: "ch-gateway.internal".to_owned(),
+                        port: 2222.into(),
+                        user: "analyst".to_owned(),
+                        login: SshLogin::Password,
+                    }),
+                    ..server("ch.internal", 8443, TlsMode::Require)
+                },
             }),
         ),
         data_source(
@@ -176,6 +201,9 @@ fn writes_portable_paths_and_reads_them_back_for_another_home_and_folder() {
     assert!(text.contains(r#"database = "in-memory""#), "{text}");
     assert!(text.contains(r#"path = "/srv/scratch.db""#), "{text}");
     assert!(text.contains(r#"host = "${SHOP_HOST}""#), "{text}");
+    assert!(text.contains(r#"key_file = "~/.ssh/id_ed25519""#), "{text}");
+    assert!(text.contains(r#"login = "agent""#), "{text}");
+    assert!(text.contains(r#"login = "password""#), "{text}");
 
     let moved_to = dir.path().join("downloads/dbdesk.toml");
     fs::create_dir_all(moved_to.parent().unwrap()).unwrap();
@@ -486,6 +514,23 @@ fn flags_files_this_machine_does_not_have() {
             ),
         }),
     );
+    let with_key = data_source(
+        "ssh",
+        None,
+        ConnectionConfig::Postgres(PostgresConfig {
+            server: ServerConfig {
+                ssh: Some(SshConfig {
+                    host: "jump".to_owned(),
+                    port: 22.into(),
+                    user: "juan".to_owned(),
+                    login: SshLogin::KeyFile {
+                        key_file: dir.path().join("missing_key"),
+                    },
+                }),
+                ..server("db", 5432, TlsMode::Prefer)
+            },
+        }),
+    );
     let machine = Machine {
         data_sources: Vec::new(),
         projects: Projects::default(),
@@ -498,6 +543,7 @@ fn flags_files_this_machine_does_not_have() {
             sqlite(dir.path().join("missing.db")),
             sqlite("${NOT_SET}/shop.db".into()),
             with_ca,
+            with_key,
         ],
     ));
 
@@ -519,6 +565,7 @@ fn flags_files_this_machine_does_not_have() {
             vec![("File", "not found on this machine")],
             vec![("File", "${NOT_SET} is not set")],
             vec![("CA file", "not found on this machine")],
+            vec![("SSH key file", "not found on this machine")],
         ]
     );
 }

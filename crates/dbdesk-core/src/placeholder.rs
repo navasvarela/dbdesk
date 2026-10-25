@@ -40,6 +40,10 @@ pub enum Setting {
     User,
     File,
     CaFile,
+    SshHost,
+    SshPort,
+    SshUser,
+    SshKeyFile,
 }
 
 impl fmt::Display for Setting {
@@ -51,6 +55,10 @@ impl fmt::Display for Setting {
             Self::User => "the user",
             Self::File => "the file",
             Self::CaFile => "the CA file",
+            Self::SshHost => "the SSH host",
+            Self::SshPort => "the SSH port",
+            Self::SshUser => "the SSH user",
+            Self::SshKeyFile => "the SSH key file",
         })
     }
 }

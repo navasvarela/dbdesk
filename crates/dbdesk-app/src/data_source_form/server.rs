@@ -1,12 +1,12 @@
-//! The server section of the data source form: host, port, database, user, password and TLS,
-//! shared by every network engine. An engine embeds [`ServerFields`] in its own fields and
+//! The server section of the data source form: host, port, database, user, password, TLS and
+//! SSH, shared by every network engine. An engine embeds [`ServerFields`] in its own fields and
 //! adds only what is particular to it.
 
 use std::path::PathBuf;
 
-use dbdesk_core::{Port, ServerConfig, TlsMode, has_placeholder};
+use dbdesk_core::{ServerConfig, TlsMode};
 
-use super::{FormError, required};
+use super::{FormError, SshFields, parse_port, required};
 
 /// What a new data source's server section starts with, and the hints its fields show.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +63,7 @@ pub struct ServerFields {
     /// Only used by [`TlsChoice::VerifyFull`], but kept while another mode is chosen so
     /// switching back doesn't lose it. Empty trusts the public web authorities.
     pub ca_file: String,
+    pub ssh: SshFields,
     pub defaults: ServerDefaults,
 }
 
@@ -76,6 +77,7 @@ impl ServerFields {
             password: String::new(),
             tls: defaults.tls.initial_choice(),
             ca_file: String::new(),
+            ssh: SshFields::default(),
             defaults,
         }
     }
@@ -118,6 +120,7 @@ impl ServerFields {
             password: String::new(),
             tls: TlsChoice::from(&config.tls),
             ca_file,
+            ssh: SshFields::from_config(config.ssh.as_ref()),
             defaults,
         }
     }
@@ -125,25 +128,12 @@ impl ServerFields {
     pub fn to_config(&self) -> Result<ServerConfig, FormError> {
         Ok(ServerConfig {
             host: required(&self.host, FormError::HostMissing)?,
-            port: self.port()?,
+            port: parse_port(&self.port, FormError::InvalidPort)?,
             database: required(&self.database, FormError::DatabaseMissing)?,
             user: required(&self.user, FormError::UserMissing)?,
             tls: self.tls_mode(),
+            ssh: self.ssh.to_config()?,
         })
-    }
-
-    /// A number, or text with a `${NAME}` placeholder that must resolve to one when
-    /// connecting.
-    fn port(&self) -> Result<Port, FormError> {
-        let port = self.port.trim();
-        if has_placeholder(port) {
-            return Ok(Port::Placeholder(port.to_owned()));
-        }
-        port.parse::<u16>()
-            .ok()
-            .filter(|port| *port != 0)
-            .map(Port::Number)
-            .ok_or(FormError::InvalidPort)
     }
 
     fn tls_mode(&self) -> TlsMode {
@@ -212,6 +202,8 @@ impl From<&TlsMode> for TlsChoice {
 
 #[cfg(test)]
 mod tests {
+    use dbdesk_core::Port;
+
     use super::*;
 
     const DEFAULTS: ServerDefaults = ServerDefaults {
@@ -263,6 +255,7 @@ mod tests {
                 database: "postgres".to_owned(),
                 user: "postgres".to_owned(),
                 tls: TlsMode::Prefer,
+                ssh: None,
             }
         );
     }
@@ -332,6 +325,7 @@ mod tests {
                 database: "app".to_owned(),
                 user: "juan".to_owned(),
                 tls,
+                ssh: None,
             };
 
             let fields = ServerFields::from_config(&config, DEFAULTS);

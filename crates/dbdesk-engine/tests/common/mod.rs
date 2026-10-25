@@ -22,7 +22,7 @@ use dbdesk_engine::{
 };
 use dbdesk_store::{
     ConsoleFiles, DataSourceFile, HistoryFile, KeymapBindings, KeymapFile, ProjectFile, Projects,
-    SecretError, SecretStore, Settings, SettingsFile,
+    Secret, SecretError, SecretStore, Settings, SettingsFile,
 };
 
 pub const EVENT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -34,9 +34,8 @@ const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Default)]
 pub struct MemorySecrets {
-    own: Mutex<HashMap<DataSourceId, Password>>,
-    mcp: Mutex<HashMap<DataSourceId, Password>>,
-    /// Refuses every read and write of either kind, like a keychain that is locked or missing.
+    saved: Mutex<HashMap<(DataSourceId, Secret), Password>>,
+    /// Refuses every read and write, like a keychain that is locked or missing.
     locked: AtomicBool,
 }
 
@@ -48,12 +47,17 @@ impl MemorySecrets {
         }
     }
 
-    pub fn get(&self, id: DataSourceId) -> Option<Password> {
-        self.own.lock().unwrap().get(&id).cloned()
+    /// The data source's saved database password.
+    pub fn database(&self, id: DataSourceId) -> Option<Password> {
+        self.saved(id, Secret::Database)
     }
 
     pub fn mcp(&self, id: DataSourceId) -> Option<Password> {
-        self.mcp.lock().unwrap().get(&id).cloned()
+        self.saved(id, Secret::McpLogin)
+    }
+
+    pub fn saved(&self, id: DataSourceId, secret: Secret) -> Option<Password> {
+        self.saved.lock().unwrap().get(&(id, secret)).cloned()
     }
 
     fn check_unlocked(&self) -> Result<(), SecretError> {
@@ -65,37 +69,23 @@ impl MemorySecrets {
 }
 
 impl SecretStore for MemorySecrets {
-    fn password(&self, id: DataSourceId) -> Result<Option<Password>, SecretError> {
+    fn get(&self, id: DataSourceId, secret: Secret) -> Result<Option<Password>, SecretError> {
         self.check_unlocked()?;
-        Ok(self.get(id))
+        Ok(self.saved(id, secret))
     }
 
-    fn set_password(&self, id: DataSourceId, password: &Password) -> Result<(), SecretError> {
+    fn set(&self, id: DataSourceId, secret: Secret, value: &Password) -> Result<(), SecretError> {
         self.check_unlocked()?;
-        self.own.lock().unwrap().insert(id, password.clone());
+        self.saved
+            .lock()
+            .unwrap()
+            .insert((id, secret), value.clone());
         Ok(())
     }
 
-    fn delete_password(&self, id: DataSourceId) -> Result<(), SecretError> {
+    fn delete(&self, id: DataSourceId, secret: Secret) -> Result<(), SecretError> {
         self.check_unlocked()?;
-        self.own.lock().unwrap().remove(&id);
-        Ok(())
-    }
-
-    fn mcp_password(&self, id: DataSourceId) -> Result<Option<Password>, SecretError> {
-        self.check_unlocked()?;
-        Ok(self.mcp(id))
-    }
-
-    fn set_mcp_password(&self, id: DataSourceId, password: &Password) -> Result<(), SecretError> {
-        self.check_unlocked()?;
-        self.mcp.lock().unwrap().insert(id, password.clone());
-        Ok(())
-    }
-
-    fn delete_mcp_password(&self, id: DataSourceId) -> Result<(), SecretError> {
-        self.check_unlocked()?;
-        self.mcp.lock().unwrap().remove(&id);
+        self.saved.lock().unwrap().remove(&(id, secret));
         Ok(())
     }
 }
@@ -384,6 +374,7 @@ fn parse_server(rest: &str, default_port: &str) -> (ServerConfig, Password) {
         database: database.to_owned(),
         user: user.to_owned(),
         tls: TlsMode::default(),
+        ssh: None,
     };
     (server, Password::new(password))
 }

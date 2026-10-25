@@ -6,7 +6,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use dbdesk_core::{DataSource, DataSourceId, Password, describe_error};
-use dbdesk_store::{SecretError, SecretStore};
+use dbdesk_store::{Secret, SecretError, SecretStore};
 
 use crate::PasswordUpdate;
 use crate::open::OpenError;
@@ -105,7 +105,7 @@ async fn read_saved(
     secrets: &Arc<dyn SecretStore>,
 ) -> Result<Result<Option<Password>, SecretError>, OpenError> {
     let secrets = Arc::clone(secrets);
-    tokio::task::spawn_blocking(move || secrets.password(id))
+    tokio::task::spawn_blocking(move || secrets.get(id, Secret::Database))
         .await
         .map_err(OpenError::Task)
 }

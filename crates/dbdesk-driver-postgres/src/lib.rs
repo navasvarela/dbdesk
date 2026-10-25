@@ -324,6 +324,7 @@ mod tests {
                     .to_owned(),
                 user: parsed.get_user().expect("user in test URL").to_owned(),
                 tls: TlsMode::default(),
+                ssh: None,
             },
         };
         let password = parsed
@@ -366,6 +367,7 @@ mod tests {
                 database: "postgres".to_owned(),
                 user: "postgres".to_owned(),
                 tls: TlsMode::default(),
+                ssh: None,
             },
         };
 

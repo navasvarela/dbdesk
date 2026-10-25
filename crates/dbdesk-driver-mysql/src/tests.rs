@@ -54,6 +54,7 @@ fn parse_url(variable: &'static str, url: &str) -> TestServer {
                 database: database.to_owned(),
                 user: user.to_owned(),
                 tls: TlsMode::default(),
+                ssh: None,
             },
         },
         password: Some(Password::new(password)),
@@ -124,6 +125,7 @@ async fn unreachable_server_is_a_connect_error() {
             database: "mysql".to_owned(),
             user: "root".to_owned(),
             tls: TlsMode::Disable,
+            ssh: None,
         },
     };
 

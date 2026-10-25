@@ -14,7 +14,7 @@ use egui::{
 
 use crate::data_source_form::{
     DataSourceForm, DriverFields, DuckDbFields, DuckDbLocation, FormError, McpLoginFields,
-    McpPasswordChange, ServerFields, TlsChoice,
+    McpPasswordChange, ServerFields, SshFields, SshLoginChoice, TlsChoice,
 };
 use crate::file_picker::{self, FileEngine};
 use crate::icons;
@@ -27,7 +27,12 @@ const SWATCH_RADIUS: f32 = 8.0;
 
 pub enum DialogAction {
     Test(DataSource, PasswordUpdate),
-    Save(DataSource, PasswordUpdate, McpPasswordChange),
+    Save {
+        data_source: DataSource,
+        password: PasswordUpdate,
+        ssh_secret: PasswordUpdate,
+        mcp_password: McpPasswordChange,
+    },
     /// Create an empty database file at the path chosen in the Save dialog.
     CreateDatabaseFile(DatabaseFile),
     Close,
@@ -269,9 +274,14 @@ impl DataSourceDialog {
                 .map(|(data_source, password)| DialogAction::Test(data_source, password))
         } else if save {
             let mcp_password = self.form.mcp_password_change();
-            self.submit(Status::Saving).map(|(data_source, password)| {
-                DialogAction::Save(data_source, password, mcp_password)
-            })
+            let ssh_secret = self.form.ssh_secret_update();
+            self.submit(Status::Saving)
+                .map(|(data_source, password)| DialogAction::Save {
+                    data_source,
+                    password,
+                    ssh_secret,
+                    mcp_password,
+                })
         } else {
             None
         }
@@ -317,6 +327,86 @@ fn server_rows(ui: &mut Ui, fields: &mut ServerFields, password_hint: &str) {
     .labelled_by(label.id);
     ui.end_row();
     tls_rows(ui, fields);
+    ssh_rows(ui, &mut fields.ssh, password_hint);
+}
+
+/// Whether to connect through an SSH server and, if so, where it is and how to sign in.
+fn ssh_rows(ui: &mut Ui, fields: &mut SshFields, secret_hint: &str) {
+    let label = ui.label("SSH");
+    ui.checkbox(&mut fields.enabled, "Connect through an SSH server")
+        .labelled_by(label.id)
+        .on_hover_text(
+            "For a database only a jump host can reach: dbdesk opens an SSH tunnel and \
+             connects through it",
+        );
+    ui.end_row();
+    if !fields.enabled {
+        return;
+    }
+    let default_port = dbdesk_core::SshConfig::DEFAULT_PORT.to_string();
+    setting_row(
+        ui,
+        "SSH host",
+        &mut fields.host,
+        "bastion.example.com",
+        Resolve::Text,
+    );
+    setting_row(
+        ui,
+        "SSH port",
+        &mut fields.port,
+        &default_port,
+        Resolve::Text,
+    );
+    setting_row(ui, "SSH user", &mut fields.user, "required", Resolve::Text);
+    let label = ui.label("SSH login");
+    egui::ComboBox::from_id_salt("data_source_ssh_login")
+        .selected_text(fields.login.label())
+        .show_ui(ui, |ui| {
+            for choice in SshLoginChoice::ALL {
+                ui.selectable_value(&mut fields.login, choice, choice.label())
+                    .on_hover_text(choice.description());
+            }
+        })
+        .response
+        .labelled_by(label.id)
+        .on_hover_text(fields.login.description());
+    ui.end_row();
+    if fields.login == SshLoginChoice::KeyFile {
+        setting_row(
+            ui,
+            "Key file",
+            &mut fields.key_file,
+            "~/.ssh/id_ed25519",
+            Resolve::Path,
+        );
+        ui.label("");
+        let palette = Palette::for_visuals(ui.visuals());
+        if file_button(ui, icons::FOLDER_OPEN, palette.warning, "Browse…")
+            .on_hover_text("Choose a private key in OpenSSH's format")
+            .clicked()
+            && let Some(path) = file_picker::pick_ssh_key_file(&fields.key_file)
+        {
+            fields.key_file = path.display().to_string();
+        }
+        ui.end_row();
+    }
+    let Some(secret_label) = fields.login.secret_label() else {
+        return;
+    };
+    let hint = match fields.login {
+        SshLoginChoice::KeyFile => "only for an encrypted key",
+        SshLoginChoice::Agent | SshLoginChoice::Password => secret_hint,
+    };
+    let label = ui.label(secret_label);
+    ui.add(
+        TextEdit::singleline(&mut fields.secret)
+            .password(true)
+            .hint_text(hint)
+            .desired_width(FIELD_WIDTH),
+    )
+    .labelled_by(label.id);
+    ui.end_row();
 }
 
 /// The login `dbdesk mcp` signs in as, so the database's grants limit what an assistant can

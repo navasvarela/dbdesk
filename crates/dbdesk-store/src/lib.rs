@@ -33,7 +33,7 @@ pub use projects::{
     InvalidSchemaScope, InvalidSlug, InvalidTimeout, McpOverrides, McpPermissions, Project,
     ProjectFile, ProjectSlug, ProjectStoreError, Projects, SchemaScope, StatementTimeout,
 };
-pub use secrets::{Keychain, SecretError, SecretStore};
+pub use secrets::{Keychain, Secret, SecretError, SecretStore};
 pub use settings::{
     FormatSettings, KeywordCase, LintSettings, Settings, SettingsError, SettingsFile,
     UpdateSettings,

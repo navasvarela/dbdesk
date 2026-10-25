@@ -19,7 +19,9 @@ use dbdesk_core::{
 };
 use dbdesk_engine::open_data_source;
 use dbdesk_mcp::{McpConfig, serve_stdio};
-use dbdesk_store::{DataSourceFile, HistoryFile, ProjectFile, Projects, SecretError, SecretStore};
+use dbdesk_store::{
+    DataSourceFile, HistoryFile, ProjectFile, Projects, Secret, SecretError, SecretStore,
+};
 use rmcp::ServiceExt as _;
 use rmcp::model::CallToolRequestParams;
 use rmcp::transport::TokioChildProcess;
@@ -57,22 +59,18 @@ pub fn run<F: Future<Output = ()>>(name: &str, test: impl FnOnce() -> F) {
 pub struct FileSecrets(HashMap<String, Password>);
 
 impl SecretStore for FileSecrets {
-    fn password(&self, id: DataSourceId) -> Result<Option<Password>, SecretError> {
-        Ok(self.0.get(&id.to_string()).cloned())
+    fn get(&self, id: DataSourceId, secret: Secret) -> Result<Option<Password>, SecretError> {
+        let account = match secret {
+            Secret::Database => id.to_string(),
+            Secret::McpLogin => format!("{id}/mcp"),
+            Secret::Ssh => format!("{id}/ssh"),
+        };
+        Ok(self.0.get(&account).cloned())
     }
-    fn set_password(&self, _: DataSourceId, _: &Password) -> Result<(), SecretError> {
+    fn set(&self, _: DataSourceId, _: Secret, _: &Password) -> Result<(), SecretError> {
         Ok(())
     }
-    fn delete_password(&self, _: DataSourceId) -> Result<(), SecretError> {
-        Ok(())
-    }
-    fn mcp_password(&self, id: DataSourceId) -> Result<Option<Password>, SecretError> {
-        Ok(self.0.get(&format!("{id}/mcp")).cloned())
-    }
-    fn set_mcp_password(&self, _: DataSourceId, _: &Password) -> Result<(), SecretError> {
-        Ok(())
-    }
-    fn delete_mcp_password(&self, _: DataSourceId) -> Result<(), SecretError> {
+    fn delete(&self, _: DataSourceId, _: Secret) -> Result<(), SecretError> {
         Ok(())
     }
 }
@@ -194,6 +192,7 @@ pub fn server_from_env(variable: &str) -> Option<(ServerConfig, Password)> {
             database: database.to_owned(),
             user: user.to_owned(),
             tls: TlsMode::default(),
+            ssh: None,
         },
         Password::new(password),
     ))
