@@ -20,8 +20,11 @@ on:
       - crates/dbdesk-app/Cargo.toml
       - crates/dbdesk-app/build.rs
 
+# `actions: write` lets a failing packaging job cancel the rest of the run, as in ci.yml: a
+# release with one broken package is no release, so the other builds stop at once.
 permissions:
   contents: read
+  actions: write
 
 # A pull request's packaging dry run is superseded by its next push, so the older one is
 # cancelled. Tag and manual runs each get a group of their own and always finish.
@@ -138,6 +141,11 @@ jobs:
             dist/*.app.tar.gz
             dist/*.app.tar.gz.sig
           if-no-files-found: error
+      - name: Cancel the rest of the run
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
 
   linux:
     needs: [version, on-main]
@@ -194,6 +202,11 @@ jobs:
             dist/*.AppImage.sig
             dist/*.deb
           if-no-files-found: error
+      - name: Cancel the rest of the run
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
 
   windows:
     needs: [version, on-main]
@@ -225,6 +238,11 @@ jobs:
           name: windows
           path: dist/*-setup.exe
           if-no-files-found: error
+      - name: Cancel the rest of the run
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
 
   release:
     if: github.ref_type == 'tag'
