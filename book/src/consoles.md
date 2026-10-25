@@ -296,6 +296,12 @@ Every statement a console runs is recorded with its time, duration, row count an
 **History** in the toolbar lists the data source's statements, newest first; type to search
 them, and click **Insert** (or double-click) to put one into the console on a line of its own.
 
+Statements an AI assistant ran through [`dbdesk mcp`](mcp.md) are in the same history, marked
+**MCP**. The menu next to the search shows all of them, only your own (**dbdesk**), or only
+the assistants' (**MCP clients**).
+
+![The history, with statements an assistant ran](images/history-mcp.png)
+
 ## Errors
 
 When a statement fails, its error appears in red in the summary line and in the log console.

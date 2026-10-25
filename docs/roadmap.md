@@ -450,8 +450,34 @@ projects with permissions per project. The full plan is in [MCP server](mcp-serv
     fall back to global defaults that only read;
   - statements classified by the parser;
   - an optional separate MCP login per data source.
+
+  **MCP2 demo note:** built. In `projects.toml`, give a project `[project.mcp] write = true` and
+  restart its server. The assistant now also has `execute`, marked destructive. An `INSERT`
+  goes through and is committed. A `CREATE TABLE` is refused, and `dbdesk-mcp.YYYY-MM-DD.log`
+  says `missing_permission="schema"`. Add `schema = true`, restart, and it goes through. Give
+  the data source `mcp_login = { user = "…" }` for a role that may only `SELECT`, with its
+  password in the keychain entry `<id>/mcp`. The same `INSERT` is then refused by the database
+  (SQLSTATE 42501), though the project allows it. `schemas = ["public"]` hides and refuses
+  other schemas. A batch whose second statement fails rolls back the first. Covered by the
+  classifier's corpus per dialect (now with `CALL`, `COPY`, grants, settings and session
+  killing), unit tests of the allow-list and of `execute`'s planning, and `dbdesk-mcp`'s
+  `permissions` test: a real server process against SQLite, PostgreSQL, MySQL and MariaDB,
+  checking the exit criterion end to end.
 - **MCP3 — In the app:** project settings, Copy MCP configuration, MCP statements marked in the
   history, and a manual chapter.
+
+  **MCP3 demo note:** built. From a fresh install, add a data source, then right-click it →
+  **Move to project › New project…**. Right-click the project → **Project settings…**, tick
+  **Allow MCP clients to use this project**, and save. Turning on **Write** without an MCP
+  login on a server data source shows the warning that only a dedicated login's grants are
+  airtight. Set the login in the data source's dialog (**MCP login**, **MCP password**).
+  **Copy MCP configuration** on the project copies the `mcpServers` entry with this machine's
+  path to dbdesk; paste it into the client, as the manual's "Connecting an AI assistant"
+  chapter shows. **View › Settings… › MCP** edits the defaults every project starts from. The
+  assistant's statements appear in the console's **History**, marked **MCP**, and the menu
+  beside the search shows only them. Covered by kittest UI tests (project settings with the
+  warning and Reset, the MCP defaults, the copied configuration, the history's marks and
+  filter), engine tests of the new commands, and store tests of the history's source filter.
 
 ## Hackability track
 

@@ -30,6 +30,8 @@ Every kind has:
 | User | `postgres` | |
 | TLS | `prefer` | Whether to encrypt the connection; see below. |
 | Password | none | Stored in the keychain when you save. See below. |
+| MCP login | none | Another user, only for AI assistants; see [The MCP login](mcp.md#the-mcp-login). |
+| MCP password | none | Shown once there is an MCP login. Stored in the keychain apart from the password. |
 
 ### TLS
 
@@ -67,11 +69,14 @@ install. Client certificates aren't supported yet.
 | User | `root` | |
 | TLS | `prefer` | As for PostgreSQL. MySQL 8 and MariaDB 11.4 encrypt by default, with a self-signed certificate unless the server is given one, so `verify-full` needs that server's CA file. |
 | Password | none | Stored in the keychain when you save. |
+| MCP login | none | Another user, only for AI assistants; see [The MCP login](mcp.md#the-mcp-login). |
+| MCP password | none | Shown once there is an MCP login. Stored in the keychain apart from the password. |
 
 One data source type serves both: dbdesk tells MySQL and MariaDB apart once it connects, and
 **Test connection** says which it found ("Connected to MariaDB 11.4.4").
 
-**SQL Server** has the same fields too, for SQL Server and Azure SQL, with these defaults:
+**SQL Server** has the same fields too, for SQL Server and Azure SQL, with these defaults. It has
+no MCP login, since [MCP clients](mcp.md) can't use SQL Server yet.
 
 ![The New SQL Server data source dialog](images/sqlserver-data-source-dialog.png)
 
@@ -220,6 +225,8 @@ string that never changes even if you rename the data source.
   connects if the keychain refuses it or you untick the box. A server that needs no password
   (local *trust* login, say) works with the field left empty.
 - **When you delete** a data source, its keychain entry is removed too.
+- **An MCP login's password** has an entry of its own, with the data source's ID followed by
+  `/mcp` as its account. Only `dbdesk mcp` reads it.
 
 ![Connecting asks for the password a data source has none saved for](images/password-prompt.png)
 

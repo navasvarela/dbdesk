@@ -19,7 +19,10 @@ use dbdesk_core::{
     ConnectionConfig, DataSource, DataSourceId, Password, PostgresConfig, ProjectId, ServerConfig,
     SourceColor, SqliteConfig, TlsMode,
 };
-use dbdesk_store::{DataSourceFile, Project, ProjectFile, ProjectSlug, Projects};
+use dbdesk_store::{
+    DataSourceFile, HistoryEntry, HistoryFile, HistoryOutcome, HistorySource, Project, ProjectFile,
+    ProjectSlug, Projects,
+};
 use egui::accesskit::Role;
 use egui::{Theme, Vec2};
 use egui_kittest::kittest::{By, Queryable};
@@ -243,6 +246,30 @@ const SCENES: &[Scene] = &[
         play: explorer_projects,
         // The Move to project submenu stays open only while the pointer is over it.
         keeps_pointer: true,
+    },
+    Scene {
+        name: "project-menu",
+        data_sources: FixtureSources::Projects,
+        play: project_menu,
+        keeps_pointer: false,
+    },
+    Scene {
+        name: "project-settings",
+        data_sources: FixtureSources::Projects,
+        play: project_settings,
+        keeps_pointer: false,
+    },
+    Scene {
+        name: "settings-mcp",
+        data_sources: FixtureSources::Shop,
+        play: settings_mcp,
+        keeps_pointer: false,
+    },
+    Scene {
+        name: "history-mcp",
+        data_sources: FixtureSources::Shop,
+        play: history_mcp,
+        keeps_pointer: false,
     },
     Scene {
         name: "explorer-filter",
@@ -744,6 +771,81 @@ fn explorer_projects(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
     harness.run_ok();
     harness.get_by_label("Move to project").hover();
     harness.run_ok();
+}
+
+fn project_menu(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    harness.get_by_label("Web shop").click_secondary();
+    harness.run_ok();
+}
+
+/// The project with `warehouse` when there is one, so the missing MCP login is warned about;
+/// otherwise the SQLite one.
+fn project_settings(harness: &mut Harness<'static, DbDeskApp>, fixture: &Fixture) {
+    let project = if fixture.postgres.is_some() {
+        "Reporting"
+    } else {
+        "Web shop"
+    };
+    harness.get_by_label(project).click_secondary();
+    harness.run_ok();
+    harness.get_by_label("Project settings…").click();
+    harness.run_ok();
+    harness
+        .get_by_label("Allow MCP clients to use this project")
+        .click();
+    harness.run_ok();
+    harness.get_by_label("Write").click();
+    harness.run_ok();
+}
+
+fn settings_mcp(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    harness.get_by_label("View").click();
+    harness.run_ok();
+    harness.get_by_label("Settings…").click();
+    harness.run_ok();
+    harness.get_by_label("Save MCP defaults").scroll_to_me();
+    harness.run_ok();
+}
+
+/// A few statements an assistant ran, recorded as `dbdesk mcp` records them, beside the one
+/// the console runs.
+fn history_mcp(harness: &mut Harness<'static, DbDeskApp>, fixture: &Fixture) {
+    let data_sources = DataSourceFile::new(fixture.dir.path().join("data_sources.toml"))
+        .load()
+        .unwrap();
+    let shop = data_sources
+        .iter()
+        .find(|data_source| data_source.name == "shop")
+        .unwrap();
+    let history = HistoryFile::new(fixture.dir.path().join("history.sqlite"))
+        .open()
+        .unwrap();
+    let now = jiff::Timestamp::now();
+    for (minutes_ago, sql, rows) in [
+        (12, "SELECT status, count(*) FROM orders GROUP BY status", 3),
+        (9, "SELECT * FROM customers WHERE country = 'ES'", 2),
+        (
+            4,
+            "INSERT INTO customers (name, country) VALUES ('Lucía', 'ES')",
+            1,
+        ),
+    ] {
+        history
+            .record(&HistoryEntry {
+                data_source: shop.id,
+                executed_at: now - jiff::SignedDuration::from_mins(minutes_ago),
+                sql: sql.to_owned(),
+                duration: Some(std::time::Duration::from_millis(3)),
+                rows: Some(rows),
+                outcome: HistoryOutcome::Ok,
+                source: HistorySource::Mcp,
+            })
+            .unwrap();
+    }
+    open_console(harness, "shop", BEST_CUSTOMERS);
+    run_all(harness, "8 rows");
+    harness.get_by_label("History").click();
+    step_until_visible(harness, "MCP");
 }
 
 fn explorer_filter(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {

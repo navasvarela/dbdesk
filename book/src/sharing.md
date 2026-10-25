@@ -12,7 +12,8 @@ exported: each data source asks for its own the first time it connects (see
 
 Tick the data sources to export. Ticking a project ticks all of its data sources; a project is
 also exported whenever one of its data sources is, so each lands in its project on the other
-machine. Projects carry their MCP settings (see [Connecting an AI assistant](mcp.md)).
+machine. Projects carry their MCP settings, and data sources their [MCP login](mcp.md#the-mcp-login)'s
+user, but not its password (see [Connecting an AI assistant](mcp.md)).
 **Export…** asks where to write the file.
 
 The file is TOML, in the same format as your own `data_sources.toml` (see
