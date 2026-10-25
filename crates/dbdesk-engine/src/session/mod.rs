@@ -345,9 +345,16 @@ async fn connect(
             let description = describe_error(&error);
             tracing::warn!(data_source = %name, "connection failed: {description}");
             context.notify(SessionState::Failed(description));
+            let data_source = context.data_source.id;
+            if let Some(key) = error.unknown_host_key() {
+                context.send(Event::HostKeyUnknown {
+                    data_source,
+                    key: key.clone(),
+                });
+            }
             if let OpenError::PasswordNeeded { secret, reason } = error {
                 context.send(Event::PasswordNeeded {
-                    data_source: context.data_source.id,
+                    data_source,
                     secret,
                     reason,
                 });

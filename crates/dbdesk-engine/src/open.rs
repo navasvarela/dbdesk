@@ -8,10 +8,10 @@ use dbdesk_core::{
     Connection, ConnectionConfig, DataSource, DataSourceId, DriverError, Password,
     PlaceholderError, Route, ServerConfig, ServerInfo, SshConfig, SshLogin, describe_error,
 };
-use dbdesk_ssh::{SshError, Tunnel, TunnelRequest};
+use dbdesk_ssh::{HostKey, SshError, Tunnel, TunnelRequest};
 use dbdesk_store::{Secret, SecretError, SecretStore};
 use tokio::task::JoinError;
-use tokio::time::{Instant, timeout_at};
+use tokio::time::timeout;
 
 use crate::environment::ProcessEnvironment;
 use crate::events::EventSink;
@@ -58,6 +58,16 @@ pub enum OpenError {
     Task(#[source] JoinError),
 }
 
+impl OpenError {
+    /// The SSH server's host key, if connecting stopped because nobody has trusted it yet.
+    pub(crate) fn unknown_host_key(&self) -> Option<&HostKey> {
+        match self {
+            Self::Ssh(SshError::UnknownHostKey(key)) => Some(key),
+            _ => None,
+        }
+    }
+}
+
 /// Secrets typed in the data source dialog, which the connection test uses instead of the
 /// saved ones.
 #[derive(Debug, Clone, Default)]
@@ -74,12 +84,30 @@ pub(crate) struct Connector<'a> {
     pub(crate) prompting: Prompting<'a>,
 }
 
+/// Opens the SSH tunnel first, if there is one, then finds the database password and
+/// connects: the SSH server is asked about (its host key, its login) before anything is sent
+/// to the database or asked for it. Each network step has [`CONNECT_TIMEOUT`] of its own;
+/// looking secrets up isn't timed, since the keychain may be waiting on the user.
 pub(crate) async fn open(
     data_source: &DataSource,
     typed: &TypedSecrets,
     connector: Connector<'_>,
 ) -> Result<Box<dyn Connection>, OpenError> {
     let config = data_source.config.resolve(&ProcessEnvironment)?;
+    let ssh = config
+        .server()
+        .and_then(|server| Some((server, server.ssh.as_ref()?)));
+    let tunnel = match ssh {
+        Some((server, ssh)) => Some(
+            timeout(
+                CONNECT_TIMEOUT,
+                open_tunnel(data_source.id, server, ssh, typed, connector),
+            )
+            .await
+            .map_err(|_| OpenError::TimedOut(CONNECT_TIMEOUT))??,
+        ),
+        None => None,
+    };
     let password = match data_source.config.driver().uses_password() {
         true => {
             passwords::resolve(
@@ -93,32 +121,19 @@ pub(crate) async fn open(
         }
         false => None,
     };
-    let deadline = Instant::now() + CONNECT_TIMEOUT;
-    let timed_out = |_| OpenError::TimedOut(CONNECT_TIMEOUT);
-    let ssh = config
-        .server()
-        .and_then(|server| Some((server, server.ssh.as_ref()?)));
-    let Some((server, ssh)) = ssh else {
-        return Ok(
-            timeout_at(deadline, connect(&config, password.as_ref(), Route::Direct))
-                .await
-                .map_err(timed_out)??,
-        );
-    };
-    let tunnel = timeout_at(
-        deadline,
-        open_tunnel(data_source.id, server, ssh, typed, connector),
-    )
-    .await
-    .map_err(timed_out)??;
-    let route = Route::Tunnel(tunnel.local_addr());
-    let connection = timeout_at(deadline, connect(&config, password.as_ref(), route))
+    let route = tunnel
+        .as_ref()
+        .map_or(Route::Direct, |tunnel| Route::Tunnel(tunnel.local_addr()));
+    let connected = timeout(CONNECT_TIMEOUT, connect(&config, password.as_ref(), route))
         .await
-        .map_err(timed_out)?
-        .map_err(|error| match tunnel.forward_error() {
-            Some(reason) => OpenError::NotForwarded { reason, error },
-            None => OpenError::Driver(error),
-        })?;
+        .map_err(|_| OpenError::TimedOut(CONNECT_TIMEOUT))?;
+    let Some(tunnel) = tunnel else {
+        return Ok(connected?);
+    };
+    let connection = connected.map_err(|error| match tunnel.forward_error() {
+        Some(reason) => OpenError::NotForwarded { reason, error },
+        None => OpenError::Driver(error),
+    })?;
     Ok(Box::new(Tunnelled { connection, tunnel }))
 }
 
@@ -292,6 +307,14 @@ pub(crate) async fn test_connection(
             "test connection failed: {}",
             describe_error(error)
         ),
+    }
+    if let Err(error) = &result
+        && let Some(key) = error.unknown_host_key()
+    {
+        events.send(Event::HostKeyUnknown {
+            data_source: data_source.id,
+            key: key.clone(),
+        });
     }
     events.send(Event::ConnectionTested {
         id: data_source.id,

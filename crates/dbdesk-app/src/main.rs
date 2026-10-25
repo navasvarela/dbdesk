@@ -18,6 +18,7 @@ mod file_picker;
 mod fonts;
 mod hazard_dialog;
 mod history_window;
+mod host_key_prompt;
 mod icons;
 mod import_dialog;
 mod keymap;

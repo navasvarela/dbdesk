@@ -25,8 +25,8 @@ use crate::transfer;
 use crate::tunnels::Tunnels;
 use crate::updater::{self, UpdateInstaller};
 use crate::{
-    Command, ConsoleId, EditFailure, EngineConfig, Event, PasswordKept, PasswordUpdate, RunOutcome,
-    StatementCheck,
+    Command, ConsoleId, EditFailure, EngineConfig, Event, HostKey, PasswordKept, PasswordUpdate,
+    RunOutcome, StatementCheck,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -193,6 +193,9 @@ impl Engine {
             } => {
                 self.provide_password(data_source, secret, password, save)
                     .await
+            }
+            Command::TrustHostKey { data_source, key } => {
+                self.trust_host_key(data_source, key).await;
             }
             Command::Disconnect(id) => self.disconnect(id),
             Command::LoadChildren { id, path } => {
@@ -460,13 +463,7 @@ impl Engine {
         save: bool,
     ) {
         self.passwords.insert(data_source, secret, password.clone());
-        // The explorer's session that asked for the password has reported its failure, but
-        // its task may not have ended yet; `connect` would then take it for one still
-        // connecting and ignore the Connect the UI sends next. A prompt only follows a failed
-        // attempt, so the session is let go here.
-        if let Some(session) = self.sessions.remove(&data_source) {
-            self.closing.spawn(session.stop());
-        }
+        self.let_go_of_failed_session(data_source);
         let kept = if save {
             let secrets = Arc::clone(&self.secrets);
             let result =
@@ -492,6 +489,40 @@ impl Engine {
             data_source,
             secret,
             kept,
+        });
+    }
+
+    /// The explorer's session that asked the UI something has reported its failure, but its
+    /// task may not have ended yet; `connect` would then take it for one still connecting and
+    /// ignore the Connect the UI sends once answered. A question only follows a failed
+    /// attempt, so the session is let go here.
+    fn let_go_of_failed_session(&mut self, id: DataSourceId) {
+        if let Some(session) = self.sessions.remove(&id) {
+            self.closing.spawn(session.stop());
+        }
+    }
+
+    /// Adds the key to `known_hosts`, so the next tunnel to its server trusts it.
+    async fn trust_host_key(&mut self, data_source: DataSourceId, key: HostKey) {
+        self.let_go_of_failed_session(data_source);
+        let known_hosts = self.tunnels.known_hosts().to_owned();
+        let server = key.server();
+        let fingerprint = key.fingerprint();
+        let result = tokio::task::spawn_blocking(move || dbdesk_ssh::trust(&known_hosts, &key))
+            .await
+            .map_err(|error| describe_error(&error))
+            .and_then(|written| written.map_err(|error| describe_error(&error)));
+        match &result {
+            Ok(()) => {
+                tracing::info!(%data_source, "trusted the host key of {server}: {fingerprint}")
+            }
+            Err(error) => {
+                tracing::error!(%data_source, "could not trust the host key of {server}: {error}");
+            }
+        }
+        self.events.send(Event::HostKeyTrusted {
+            data_source,
+            result,
         });
     }
 

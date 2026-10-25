@@ -10,7 +10,7 @@ use dbdesk_store::{
     McpOverrides, McpPermissions, Project, Projects, SavedConsole, Secret, Settings,
 };
 
-use crate::{Export, PasswordNeeded, Release};
+use crate::{Export, HostKey, PasswordNeeded, Release};
 
 /// Identifies a query console. Chosen by the UI, unique for the app's lifetime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -108,6 +108,13 @@ pub enum Command {
         secret: Secret,
         password: Password,
         save: bool,
+    },
+    /// Trusts the SSH server's host key that [`Event::HostKeyUnknown`] showed, by adding it
+    /// to `known_hosts`. The UI connects again afterwards. Answered by
+    /// [`Event::HostKeyTrusted`].
+    TrustHostKey {
+        data_source: DataSourceId,
+        key: HostKey,
     },
     /// Disconnects the explorer's connection and every console's connection to the data
     /// source, rolling back their open transactions.
@@ -364,6 +371,18 @@ pub enum Event {
         data_source: DataSourceId,
         secret: Secret,
         reason: PasswordNeeded,
+    },
+    /// A connection to the data source stopped at its SSH server, whose host key isn't in
+    /// `known_hosts` yet. The session reports [`SessionState::Failed`] too; the UI shows the
+    /// key's fingerprint and, if the user trusts it, answers with [`Command::TrustHostKey`].
+    HostKeyUnknown {
+        data_source: DataSourceId,
+        key: HostKey,
+    },
+    /// The answer to [`Command::TrustHostKey`]: whether `known_hosts` now holds the key.
+    HostKeyTrusted {
+        data_source: DataSourceId,
+        result: Result<(), String>,
     },
     /// The answer to [`Command::ExportDataSources`]: how many data sources were written.
     DataSourcesExported {
