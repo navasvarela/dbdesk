@@ -103,6 +103,9 @@ if command -v cygpath > /dev/null; then
     lib_dir=$(cygpath -w "$lib_dir")
 fi
 echo "DUCKDB_LIB_DIR=$lib_dir"
+# libduckdb-sys asks pkg-config first, which would find a DuckDB installed on the machine (by
+# Homebrew or a distribution) and link that one instead.
+echo "DUCKDB_NO_PKG_CONFIG=1"
 if [[ "$kind" == static ]]; then
     echo "DUCKDB_STATIC=1"
 fi

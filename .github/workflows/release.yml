@@ -132,6 +132,16 @@ jobs:
         run: |
           ls -l target/aarch64-apple-darwin/release/dbdesk target/x86_64-apple-darwin/release/dbdesk \
             target/universal/release/dbdesk dist/
+      # Spike: the runner is arm64, so nothing above runs the x86_64 slice. Rosetta runs it, and
+      # the DuckDB driver's tests against DuckDB's x86_64 static library.
+      - name: Test the x86_64 build under Rosetta
+        run: |
+          sudo softwareupdate --install-rosetta --agree-to-license
+          arch -x86_64 target/x86_64-apple-darwin/release/dbdesk --version
+          set -a
+          eval "$(packaging/duckdb/fetch.sh x86_64-apple-darwin "$RUNNER_TEMP/duckdb")"
+          set +a
+          cargo test --locked -p dbdesk-driver-duckdb --target x86_64-apple-darwin
       - uses: actions/upload-artifact@v4
         with:
           name: macos
