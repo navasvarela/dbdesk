@@ -21,6 +21,7 @@ use crate::export_dialog;
 use crate::export_sources_dialog::{ExportAction, ExportSourcesDialog};
 use crate::file_picker;
 use crate::history_window::{HistoryAction, HistoryWindow};
+use crate::host_key_prompt::{HostKeyAction, HostKeyPrompt};
 use crate::import_dialog::{ImportAction, ImportDialog};
 use crate::keymap::{self, Keymap};
 use crate::keymap_window::{self, KeymapWindowAction};
@@ -66,6 +67,7 @@ pub struct DbDeskApp {
     history_window: Option<HistoryWindow>,
     rollback_confirmation: Option<RollbackConfirmation>,
     password_prompt: Option<PasswordPrompt>,
+    host_key_prompt: Option<HostKeyPrompt>,
     export_sources_dialog: Option<ExportSourcesDialog>,
     import_dialog: Option<ImportDialog>,
     /// Ask where to export data sources to and which file to import. The platform's file
@@ -126,6 +128,7 @@ impl DbDeskApp {
             history_window: None,
             rollback_confirmation: None,
             password_prompt: None,
+            host_key_prompt: None,
             export_sources_dialog: None,
             import_dialog: None,
             pick_data_sources_export: Box::new(file_picker::pick_data_sources_export),
@@ -217,6 +220,7 @@ impl DbDeskApp {
             self.send(window.search_command());
         }
         self.apply_to_password_prompt(event);
+        self.apply_to_host_key_prompt(event);
         if let Some(dialog) = &mut self.export_sources_dialog {
             dialog.apply(event);
         }
@@ -274,6 +278,40 @@ impl DbDeskApp {
             );
         }
         self.send(Command::Connect(data_source));
+    }
+
+    /// Opens the prompt when a connection meets an SSH server whose host key isn't trusted
+    /// yet, and connects again once the user has trusted it.
+    fn apply_to_host_key_prompt(&mut self, event: &Event) {
+        if let Event::HostKeyUnknown { data_source, key } = event
+            && self.host_key_prompt.is_none()
+            && let Some(entry) = self.state.data_source(*data_source)
+        {
+            self.host_key_prompt = Some(HostKeyPrompt::new(&entry.data_source, key.clone()));
+        }
+        let Some(prompt) = &mut self.host_key_prompt else {
+            return;
+        };
+        if !prompt.apply(event) {
+            return;
+        }
+        let data_source = prompt.data_source();
+        self.host_key_prompt = None;
+        self.send(Command::Connect(data_source));
+    }
+
+    fn show_host_key_prompt(&mut self, ctx: &egui::Context) {
+        let Some(prompt) = &mut self.host_key_prompt else {
+            return;
+        };
+        let data_source = prompt.data_source();
+        match prompt.show(ctx) {
+            Some(HostKeyAction::Trust(key)) => {
+                self.send(Command::TrustHostKey { data_source, key });
+            }
+            Some(HostKeyAction::Cancel) => self.host_key_prompt = None,
+            None => {}
+        }
     }
 
     fn show_password_prompt(&mut self, ctx: &egui::Context) {
@@ -1010,6 +1048,7 @@ impl eframe::App for DbDeskApp {
         self.show_project_settings(&ctx);
         self.show_delete_project_confirmation(&ctx);
         self.show_password_prompt(&ctx);
+        self.show_host_key_prompt(&ctx);
         self.show_export_sources_dialog(&ctx);
         self.show_import_dialog(&ctx);
         if self
@@ -1872,6 +1911,97 @@ mod tests {
         step_until(&mut harness, "shop leaving the project", |_| {
             saved_project_of(dir.path(), "shop").is_none()
         });
+    }
+
+    /// A PostgreSQL data source behind the `ssh` compose service, signing in with the test
+    /// key, and the database password; `None` unless the SSH test servers are set.
+    fn postgres_behind_ssh() -> Option<(dbdesk_core::DataSource, String)> {
+        let ssh = std::env::var("DBDESK_TEST_SSH_URL").ok()?;
+        let postgres = std::env::var("DBDESK_TEST_SSH_POSTGRES_URL").ok()?;
+        let (ssh_host, ssh_port) = ssh.rsplit_once('@')?.1.split_once(':')?;
+        let (login, rest) = postgres.strip_prefix("postgres://")?.split_once('@')?;
+        let (user, password) = login.split_once(':')?;
+        let (address, database) = rest.split_once('/')?;
+        let (host, port) = address.split_once(':')?;
+        let key_file =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docker/ssh/client_ed25519");
+        let data_source = dbdesk_core::DataSource {
+            id: DataSourceId::generate(),
+            name: "behind the bastion".to_owned(),
+            color: None,
+            safety: dbdesk_core::SafetyLevel::Normal,
+            project: None,
+            mcp_login: None,
+            config: dbdesk_core::ConnectionConfig::Postgres(dbdesk_core::PostgresConfig {
+                server: dbdesk_core::ServerConfig {
+                    host: host.to_owned(),
+                    port: port.parse::<u16>().ok()?.into(),
+                    database: database.to_owned(),
+                    user: user.to_owned(),
+                    tls: dbdesk_core::TlsMode::Prefer,
+                    ssh: Some(dbdesk_core::SshConfig {
+                        host: ssh_host.to_owned(),
+                        port: ssh_port.parse::<u16>().ok()?.into(),
+                        user: "dbdesk".to_owned(),
+                        login: dbdesk_core::SshLogin::KeyFile { key_file },
+                    }),
+                },
+            }),
+        };
+        Some((data_source, password.to_owned()))
+    }
+
+    #[test]
+    fn asks_to_trust_an_unknown_ssh_server_then_connects_through_it() {
+        let Some((data_source, password)) = postgres_behind_ssh() else {
+            eprintln!("skipped: set DBDESK_TEST_SSH_URL and DBDESK_TEST_SSH_POSTGRES_URL");
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .save(std::slice::from_ref(&data_source))
+            .unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+
+        step_until_visible(&mut harness, "Expand behind the bastion");
+        harness.get_by_label("Expand behind the bastion").click();
+        step_until_visible(&mut harness, "Trust the SSH server");
+        harness.get_by_label_contains("ssh-ed25519 host key");
+        assert!(
+            harness
+                .query_all_by(|node| node
+                    .value()
+                    .is_some_and(|value| value.starts_with("SHA256:")))
+                .next()
+                .is_some(),
+            "the fingerprint is shown"
+        );
+        // The modal is measured on its first frame and placed on the next, so a click aimed
+        // at the first frame's button misses. Two frames rather than `run()`, which a spinner
+        // turning elsewhere can keep from settling.
+        harness.run_steps(2);
+        harness.get_by_label("Trust and connect").click();
+        harness.run();
+
+        // Trusted, it connects again, and then asks for the database's password.
+        step_until_visible(&mut harness, "Connect to behind the bastion");
+        harness
+            .get_by_role_and_label(Role::PasswordInput, "Password")
+            .type_text(&password);
+        harness.run();
+        harness.get_by_label("Connect").click();
+        step_until(&mut harness, "connecting through the tunnel", |harness| {
+            harness
+                .state()
+                .state
+                .data_source(data_source.id)
+                .is_some_and(|entry| {
+                    matches!(&entry.session, dbdesk_engine::SessionState::Connected(_))
+                })
+        });
+        let known_hosts = std::fs::read_to_string(dir.path().join("known_hosts")).unwrap();
+        assert!(known_hosts.contains("ssh-ed25519"), "{known_hosts}");
     }
 
     #[test]

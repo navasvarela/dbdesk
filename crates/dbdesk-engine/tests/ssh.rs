@@ -218,3 +218,35 @@ fn refuses_an_unknown_or_changed_host_key() {
     assert!(changed.contains("has changed"), "{changed}");
     assert!(changed.contains("refusing to connect"), "{changed}");
 }
+
+#[test]
+fn trusts_an_unknown_host_key_when_asked_then_connects() {
+    let Some(server) = ssh_test_server() else {
+        return;
+    };
+    let data_source = server.postgres_data_source(server.key_login());
+    let id = data_source.id;
+    let mut machine = machine("", &data_source);
+
+    let state = machine.connect(id);
+    assert!(matches!(state, SessionState::Failed(_)), "{state:?}");
+    let key = match machine.engine.next_event() {
+        Event::HostKeyUnknown { data_source, key } if data_source == id => key,
+        other => panic!("expected the unknown host key, got {other:?}"),
+    };
+    assert!(key.fingerprint().starts_with("SHA256:"), "{key:?}");
+    machine.engine.send(Command::TrustHostKey {
+        data_source: id,
+        key,
+    });
+    machine.engine.expect(Event::HostKeyTrusted {
+        data_source: id,
+        result: Ok(()),
+    });
+
+    let state = machine.connect(id);
+    assert!(connected(&state), "{state:?}");
+    let known_hosts = std::fs::read_to_string(machine._dir.path().join("known_hosts")).unwrap();
+    assert_eq!(known_hosts, server.trusted_line());
+    machine.engine.shut_down();
+}

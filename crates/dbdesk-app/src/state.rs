@@ -173,6 +173,8 @@ impl AppState {
             | Event::ConsoleSaveFailed { .. }
             | Event::ConnectionTested { .. }
             | Event::PasswordNeeded { .. }
+            | Event::HostKeyUnknown { .. }
+            | Event::HostKeyTrusted { .. }
             | Event::DataSourcesExported { .. }
             | Event::ImportPreviewed { .. }
             | Event::ImportApplied(_)

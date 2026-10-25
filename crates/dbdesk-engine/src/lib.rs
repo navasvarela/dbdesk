@@ -28,6 +28,7 @@ mod transfer;
 mod tunnels;
 mod updater;
 
+pub use dbdesk_ssh::HostKey;
 pub use environment::ProcessEnvironment;
 pub use export::Export;
 pub use handle::{EngineConfig, EngineError, EngineHandle};
