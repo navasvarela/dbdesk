@@ -2630,20 +2630,22 @@ mod tests {
             crate::test_support::MemorySecrets::with_password(scratch.id, Password::new(password)),
         );
         step_until_visible(&mut harness, "Expand scratch");
+        // Opening a console loads the catalog for completion, so a connection's spinner may
+        // be turning: frames, not `run()`, which gives up while the UI keeps repainting.
         harness.get_by_label("scratch").click_secondary();
-        harness.run();
+        harness.run_steps(2);
         harness
             .get_all_by_label("New query console")
             .next()
             .unwrap()
             .click();
-        harness.run();
+        harness.run_steps(2);
         harness.get_by_role(Role::MultilineTextInput).focus();
-        harness.run();
+        harness.run_steps(2);
         harness
             .get_by_role(Role::MultilineTextInput)
             .type_text("SELECT 1");
-        harness.run();
+        harness.run_steps(2);
         harness.get_by_label("Run").click();
         step_until_visible(&mut harness, "Done in");
 
