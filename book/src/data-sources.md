@@ -155,10 +155,10 @@ gone through; if it fails, the reason is shown in the dialog.
 
 ## Placeholders: `${VARIABLE}`
 
-Host, port, database, user, a SQLite file and a CA file may hold `${NAME}` placeholders, which
-dbdesk replaces with the environment variable `NAME` each time it connects. One shared list of
-data sources then works on machines whose settings differ: each machine sets `PGHOST`, say, and
-the data source's host is `${PGHOST}`. A placeholder can be part of a value
+Host, port, database, user, a SQLite or DuckDB file and a CA file may hold `${NAME}`
+placeholders, which dbdesk replaces with the environment variable `NAME` each time it connects.
+One shared list of data sources then works on machines whose settings differ: each machine sets
+`PGHOST`, say, and the data source's host is `${PGHOST}`. A placeholder can be part of a value
 (`db-${ENV}.internal`), and a path starting with `~` is in your home folder.
 
 ![Placeholders in the host, port and user, with what each resolves to](images/data-source-placeholders.png)

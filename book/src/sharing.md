@@ -19,9 +19,9 @@ The file is TOML, in the same format as your own `data_sources.toml` (see
 [Where dbdesk keeps its files](files.md)), plus a `format_version` and the projects. It is
 readable and diffable, so a team can keep it in a repository.
 
-Paths travel with it: a SQLite file or CA file **next to the exported file** (or in a folder
-under it) is written relative to it, and one **in your home folder** as `~/…`. Both are turned
-back into full paths on import, so a repository holding the export and its databases works
+Paths travel with it: a SQLite or DuckDB file, or a CA file, **next to the exported file** (or
+in a folder under it) is written relative to it, and one **in your home folder** as `~/…`. Both
+are turned back into full paths on import, so a repository holding the export and its databases works
 wherever it is checked out. Paths with a [placeholder](data-sources.md#placeholders-variable)
 are kept as they are.
 
@@ -36,7 +36,7 @@ anything is saved:
   differs shown as *this machine's value → the file's*.
 - Entries are matched by their id, which every export keeps, so importing a file twice never
   duplicates anything. Projects are matched by id, and then by their slug.
-- A SQLite or CA file this machine doesn't have is shown in amber. Import it anyway, and change
+- A database or CA file this machine doesn't have is shown in amber. Import it anyway, and change
   the path afterwards with **Edit…**.
 - Choose, for each entry:
 
