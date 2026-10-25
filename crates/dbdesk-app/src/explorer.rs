@@ -51,6 +51,8 @@ pub enum ExplorerAction {
         then_move: Option<DataSourceId>,
     },
     RenameProject(ProjectId),
+    /// Opens Project settings…, where MCP access is set.
+    ProjectSettings(ProjectId),
     DeleteProject(ProjectId),
     /// Puts the data source in the project, or in no project.
     MoveToProject(DataSourceId, Option<ProjectId>),
@@ -287,6 +289,9 @@ fn group_menu(ui: &mut Ui, header: GroupHeader<'_>, actions: &mut Vec<ExplorerAc
     if let GroupHeader::Project(project) = header {
         if widgets::menu_item(ui, icons::PENCIL_SIMPLE, "Rename…").clicked() {
             actions.push(ExplorerAction::RenameProject(project.id));
+        }
+        if widgets::menu_item(ui, icons::GEAR, "Project settings…").clicked() {
+            actions.push(ExplorerAction::ProjectSettings(project.id));
         }
         if widgets::menu_item(ui, icons::TRASH, "Delete…").clicked() {
             actions.push(ExplorerAction::DeleteProject(project.id));

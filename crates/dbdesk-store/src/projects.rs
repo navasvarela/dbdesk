@@ -228,6 +228,10 @@ impl From<SchemaScope> for SchemaScopeText {
 pub struct StatementTimeout(Duration);
 
 impl StatementTimeout {
+    pub fn from_secs(seconds: std::num::NonZeroU64) -> Self {
+        Self(Duration::from_secs(seconds.get()))
+    }
+
     pub fn duration(self) -> Duration {
         self.0
     }

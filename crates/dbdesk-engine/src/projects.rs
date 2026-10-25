@@ -1,5 +1,5 @@
 use dbdesk_core::{ProjectId, describe_error};
-use dbdesk_store::{Project, ProjectFile, ProjectStoreError, Projects};
+use dbdesk_store::{McpOverrides, Project, ProjectFile, ProjectStoreError, Projects};
 use tokio::task::JoinError;
 
 use crate::Event;
@@ -117,6 +117,26 @@ impl ProjectRegistry {
                 }
             }
             projects.check_unique().map_err(ProjectError::Conflict)
+        })
+        .await
+    }
+
+    /// Replaces the project's MCP settings and saves the file.
+    pub(crate) async fn save_mcp(
+        &mut self,
+        id: ProjectId,
+        mcp_enabled: bool,
+        overrides: McpOverrides,
+    ) -> Result<Project, ProjectError> {
+        self.update(|projects| {
+            let project = projects
+                .projects
+                .iter_mut()
+                .find(|project| project.id == id)
+                .ok_or(ProjectError::Unknown)?;
+            project.mcp_enabled = mcp_enabled;
+            project.mcp = overrides;
+            Ok(project.clone())
         })
         .await
     }

@@ -6,8 +6,8 @@ use dbdesk_core::{
     ProjectId, Rejection, RelationName, Row, ServerInfo, TableDescription, TransactionStatus,
 };
 use dbdesk_store::{
-    ConsoleKey, HistoryEntry, ImportPlan, ImportPreview, KeymapBindings, Project, Projects,
-    SavedConsole, Settings,
+    ConsoleKey, HistoryEntry, ImportPlan, ImportPreview, KeymapBindings, McpOverrides, Project,
+    Projects, SavedConsole, Settings,
 };
 
 use crate::{Export, PasswordNeeded, Release};
@@ -47,6 +47,19 @@ pub enum Command {
     RenameProject {
         id: ProjectId,
         name: String,
+    },
+    /// Sets whether MCP clients may use the project, and what it sets differently from the
+    /// MCP defaults. Answered by [`Event::ProjectSaved`] or [`Event::ProjectSaveFailed`].
+    SaveProjectMcp {
+        id: ProjectId,
+        mcp_enabled: bool,
+        overrides: McpOverrides,
+    },
+    /// Saves the password of the data source's MCP login, or removes it with `None`. Only
+    /// failures are answered, by [`Event::DataSourceSaveFailed`].
+    SaveMcpPassword {
+        id: DataSourceId,
+        password: Option<Password>,
     },
     /// Moves the project's data sources to no project, then forgets the project. Never
     /// deletes a data source. Answered by an [`Event::DataSourceSaved`] per data source moved,
