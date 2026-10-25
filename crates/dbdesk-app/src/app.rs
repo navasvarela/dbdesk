@@ -2262,7 +2262,11 @@ mod tests {
         harness
             .get_by_role(Role::MultilineTextInput)
             .type_text("SELECT 42 AS answer");
-        harness.step();
+        // F5 runs what the console holds, so wait until the typed text has reached it: one frame
+        // wasn't always enough on a busy CI runner, and F5 then ran an empty console.
+        step_until(&mut harness, "the query to be typed", |harness| {
+            editor_text(harness) == "SELECT 42 AS answer"
+        });
 
         harness.key_press(egui::Key::F5);
 
