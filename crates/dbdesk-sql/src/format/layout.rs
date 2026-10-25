@@ -28,8 +28,24 @@ const INSERT_WORDS: &[&str] = &[
     "or", "replace", "ignore", "abort", "fail", "rollback", "into",
 ];
 /// Words that may come before `JOIN` in a join's phrase.
+/// The last line are DuckDB's and ClickHouse's: `ASOF JOIN`, `POSITIONAL JOIN`, `ARRAY JOIN`,
+/// `GLOBAL ANY LEFT JOIN`, `SEMI` and `ANTI` joins.
 const JOIN_MODIFIERS: &[&str] = &[
-    "left", "right", "full", "inner", "cross", "natural", "outer",
+    "left",
+    "right",
+    "full",
+    "inner",
+    "cross",
+    "natural",
+    "outer",
+    "asof",
+    "positional",
+    "array",
+    "global",
+    "any",
+    "all",
+    "semi",
+    "anti",
 ];
 /// Words after `FOR` in a locking clause (`FOR UPDATE`, `FOR NO KEY UPDATE`, `FOR SHARE`).
 const LOCKING_WORDS: &[&str] = &["update", "share", "no", "key"];

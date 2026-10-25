@@ -148,6 +148,29 @@ select date_trunc('month', ts), epoch_ms(ts) from events;
 select string_agg(name, ', ' order by name) from people;
 "#;
 
+const VALID_CLICKHOUSE: &str = r#"
+select toDate(ts) as day, count() from events where ts >= now() - interval 7 day group by day order by day limit 10;
+select `user id`, "event" from events final prewhere event = 'click' where user_id > 0;
+select * from events sample 0.1 settings max_threads = 4;
+select arrayJoin([1, 2, 3]) as x, [1, 2][1], tuple(1, 'a').2, map('k', 1)['k'];
+select x, y from t array join arr as x left array join arr2 as y;
+select uniq(user_id), quantile(0.9)(duration), countIf(ok), sumIf(amount, ok) from events;
+select * from events order by ts with fill step 1;
+select * from events limit 2 by user_id;
+select multiIf(a > 1, 'big', a = 1, 'one', 'small') from t;
+select 'it\'s', 'a''b', $$dollar$$ from t;
+with 5 as n select n * 2;
+select toStartOfHour(ts), argMax(value, ts) from metrics group by 1;
+insert into events (ts, event) values (now(), 'click');
+select * from file('data.csv', 'CSVWithNames');
+select * from events where has(tags, 'x') and match(url, '^/a');
+select * from t where a global in (select a from u);
+select cast(1 as UInt8), 1::UInt8, toTypeName(1);
+select * from t any left join u on t.id = u.id;
+select a from t final;
+select count() from system.tables format JSON;
+"#;
+
 fn syntax_errors(corpus: &str, dialect: Dialect) -> Vec<(String, Problem)> {
     split_statements(corpus, dialect)
         .into_iter()
@@ -168,6 +191,7 @@ fn valid_statements_get_no_syntax_error() {
     assert_eq!(syntax_errors(VALID_MYSQL, Dialect::Mysql), []);
     assert_eq!(syntax_errors(VALID_SQL_SERVER, Dialect::SqlServer), []);
     assert_eq!(syntax_errors(VALID_DUCKDB, Dialect::DuckDb), []);
+    assert_eq!(syntax_errors(VALID_CLICKHOUSE, Dialect::ClickHouse), []);
 }
 
 #[test]
@@ -323,6 +347,7 @@ fn still_reports_syntax_errors_around_the_dialects_gaps() {
             (sql, Dialect::Mysql),
             (sql, Dialect::SqlServer),
             (sql, Dialect::DuckDb),
+            (sql, Dialect::ClickHouse),
         ]
     });
     // DuckDB accepts a trailing comma in a select list, `select a, from t`. `**` is its power
@@ -332,7 +357,10 @@ fn still_reports_syntax_errors_around_the_dialects_gaps() {
         ("select a,, b from t", Dialect::DuckDb),
     ];
     for (sql, dialect) in everywhere
-        .filter(|&(sql, dialect)| !(dialect == Dialect::DuckDb && sql == "select a, from t"))
+        .filter(|&(sql, dialect)| {
+            // DuckDB and ClickHouse accept a trailing comma in a select list.
+            !(matches!(dialect, Dialect::DuckDb | Dialect::ClickHouse) && sql == "select a, from t")
+        })
         .chain(duckdb)
     {
         let problems = check_statement(sql, dialect);

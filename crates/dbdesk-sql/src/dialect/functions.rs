@@ -611,12 +611,88 @@ pub(super) const DUCKDB: &[&str] = &[
     "var_samp",
 ];
 
+/// ClickHouse 25.8's, in the case ClickHouse requires: its own functions are case-sensitive
+/// (`toDate`, not `todate`). `countIf` and `sumIf` are aggregate functions with the `-If`
+/// combinator, which `system.functions` doesn't list. Sorted by byte, so capitals first.
+pub(super) const CLICKHOUSE: &[&str] = &[
+    "JSONExtract",
+    "JSONExtractString",
+    "abs",
+    "any",
+    "anyLast",
+    "argMax",
+    "argMin",
+    "arrayFilter",
+    "arrayJoin",
+    "arrayMap",
+    "arraySort",
+    "avg",
+    "coalesce",
+    "concat",
+    "count",
+    "countIf",
+    "dateDiff",
+    "empty",
+    "formatDateTime",
+    "generateUUIDv4",
+    "greatest",
+    "groupArray",
+    "groupUniqArray",
+    "has",
+    "if",
+    "ifNull",
+    "isNotNull",
+    "isNull",
+    "least",
+    "length",
+    "lower",
+    "match",
+    "max",
+    "median",
+    "min",
+    "multiIf",
+    "now",
+    "now64",
+    "parseDateTimeBestEffort",
+    "position",
+    "quantile",
+    "quantiles",
+    "replaceAll",
+    "round",
+    "splitByChar",
+    "startsWith",
+    "substring",
+    "sum",
+    "sumIf",
+    "toDate",
+    "toDateTime",
+    "toDateTime64",
+    "toDecimal64",
+    "toFloat64",
+    "toInt32",
+    "toInt64",
+    "toStartOfDay",
+    "toStartOfHour",
+    "toStartOfMonth",
+    "toStartOfWeek",
+    "toString",
+    "toUInt64",
+    "toYYYYMM",
+    "today",
+    "trim",
+    "uniq",
+    "uniqExact",
+    "upper",
+    "yesterday",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn lists_are_sorted_unique_and_lowercase() {
+        assert!(CLICKHOUSE.windows(2).all(|pair| pair[0] < pair[1]));
         for list in [POSTGRES, SQLITE, MYSQL, SQL_SERVER, DUCKDB] {
             assert!(list.windows(2).all(|pair| pair[0] < pair[1]), "{list:?}");
             assert!(list.iter().all(|name| {
