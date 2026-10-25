@@ -26,6 +26,11 @@ use dbdesk_store::{
 
 pub const EVENT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// How long a test lets the engine take to stop. Far longer than the app's own two seconds:
+/// what matters here is that it stops and saves, not how fast, and a busy Windows runner has
+/// taken over two seconds to close the history database.
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
+
 #[derive(Default)]
 pub struct MemorySecrets(Mutex<HashMap<DataSourceId, Password>>);
 
@@ -145,6 +150,11 @@ impl TestEngine {
         };
         let engine = EngineHandle::start(config, SignalRepaint(sender)).unwrap();
         Self { engine, repaints }
+    }
+
+    /// Stops the engine, waiting for it to save everything first.
+    pub fn shut_down(self) {
+        self.engine.shutdown_within(SHUTDOWN_TIMEOUT).unwrap();
     }
 
     pub fn send(&self, command: Command) {

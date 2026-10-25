@@ -54,7 +54,7 @@ fn saves_connects_disconnects_and_deletes_a_data_source() {
     engine.send(Command::DeleteDataSource(id));
     engine.expect(Event::DataSourceDeleted(id));
     assert!(DataSourceFile::new(&file).load().unwrap().is_empty());
-    engine.engine.shutdown().unwrap();
+    engine.shut_down();
 }
 
 #[test]
@@ -85,7 +85,7 @@ fn reloads_saved_data_sources_and_stores_passwords_in_the_secret_store() {
         password: PasswordUpdate::Set(Password::new("s3cret")),
     });
     engine.expect(Event::DataSourceSaved(data_source.clone()));
-    engine.engine.shutdown().unwrap();
+    engine.shut_down();
 
     assert_eq!(secrets.get(data_source.id), Some(Password::new("s3cret")));
     assert!(!std::fs::read_to_string(&file).unwrap().contains("s3cret"));
@@ -116,7 +116,7 @@ fn saves_console_files_in_order_and_reloads_them_after_a_restart() {
         text: "gone".to_owned(),
     });
     engine.send(Command::DeleteConsoleFile(key("console_2")));
-    engine.engine.shutdown().unwrap();
+    engine.shut_down();
 
     let mut restarted = TestEngine::start(&file, Arc::default());
     restarted.expect(Event::Started);
