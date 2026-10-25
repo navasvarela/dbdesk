@@ -21,7 +21,7 @@ pub struct WriteMode {
 }
 
 /// The engine's read-write transaction, or `None` for engines dbdesk doesn't run changes on
-/// for MCP clients (those without a read-only mode, which aren't served at all).
+/// for MCP clients: those without a read-only mode, which aren't served at all.
 pub fn mode(driver: DriverKind) -> Option<WriteMode> {
     match driver {
         DriverKind::Postgres => Some(WriteMode {
@@ -38,7 +38,8 @@ pub fn mode(driver: DriverKind) -> Option<WriteMode> {
             begin: &["PRAGMA query_only = OFF", "BEGIN"],
             sets_timeout: false,
         }),
-        DriverKind::SqlServer => None,
+        // Not served to MCP clients at all; see `read_only::mode`.
+        DriverKind::SqlServer | DriverKind::DuckDb | DriverKind::ClickHouse => None,
     }
 }
 
