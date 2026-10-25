@@ -99,6 +99,23 @@ data source
       └─ synonyms           with the object each one names
 ```
 
+**DuckDB**, where the database opened (named after its file, or `memory`) is listed with any
+attached with `ATTACH`:
+
+```text
+data source
+└─ database                 the one opened, and attached ones
+   └─ schema                main, and any you create
+      ├─ tables
+      │  └─ table
+      │     ├─ columns      with their type and "not null"
+      │     ├─ indexes
+      │     └─ constraints  primary key, unique, foreign key and check
+      ├─ views
+      ├─ functions          macros made with CREATE MACRO
+      └─ sequences
+```
+
 Each kind of object has its own icon and colour, and folders that have been loaded show how many
 objects they hold (`tables 5`).
 
@@ -139,6 +156,8 @@ Which objects have one depends on the database:
 - **SQL Server**: views, functions, procedures and triggers, as SQL Server stores their source
   (what `OBJECT_DEFINITION` returns), and synonyms. One created `WITH ENCRYPTION`, or that your
   login may run but not read, shows a message instead.
+- **DuckDB**: tables, views, macros, indexes and sequences, as DuckDB keeps them. A macro's
+  definition is rebuilt from its parameters and body, one `CREATE MACRO` per parameter list.
 
 ## Filtering
 
@@ -161,7 +180,9 @@ The explorer hides each database's own objects:
 - SQLite's internal `sqlite_` tables;
 - MySQL's `mysql`, `information_schema`, `performance_schema` and `sys` databases;
 - SQL Server's `master`, `model`, `msdb` and `tempdb` databases, and in every database the
-  `sys`, `INFORMATION_SCHEMA` and `guest` schemas and those of the fixed database roles.
+  `sys`, `INFORMATION_SCHEMA` and `guest` schemas and those of the fixed database roles;
+- DuckDB's `system` and `temp` databases, and its `information_schema` and `pg_catalog`
+  schemas.
 
 The eye button next to **+** shows or hides them, for every data source at once.
 

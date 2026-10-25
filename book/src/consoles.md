@@ -127,7 +127,7 @@ The toolbar's buttons, and their shortcuts while the editor has focus:
 | --- | --- | --- |
 | **Run** (▷) | ⌘↵ | Runs the selected text if there is a selection, otherwise the statement at the cursor. |
 | **Run all** (▷▷) | ⇧⌘↵ | Runs every statement in the console, in order, stopping at the first one that fails. |
-| **Explain** | ⌥⌘E | Shows how the database would run the statement at the cursor: `EXPLAIN` on PostgreSQL and MariaDB, `EXPLAIN QUERY PLAN` on SQLite, `EXPLAIN FORMAT=TREE` on MySQL 8 once the console has connected, and on SQL Server the estimated plan as XML (`SET SHOWPLAN_XML`), which **View value** shows indented. |
+| **Explain** | ⌥⌘E | Shows how the database would run the statement at the cursor: `EXPLAIN` on PostgreSQL and MariaDB, `EXPLAIN QUERY PLAN` on SQLite, `EXPLAIN FORMAT=TREE` on MySQL 8 once the console has connected, on SQL Server the estimated plan as XML (`SET SHOWPLAN_XML`), which **View value** shows indented, and `EXPLAIN` on DuckDB, whose plan is drawn as a tree in text. |
 | **Cancel** (□) | ⌘. | Stops the running statement, or discards rows not yet loaded. |
 | **History** | — | Opens the data source's query history. |
 | **Format** | ⌥⌘L | Formats the selected text, or the statement at the cursor (see [The editor](#the-editor)). |
@@ -177,6 +177,19 @@ is two batches, and the second doesn't know `@n`. Leave out the semicolon
 one. Names are quoted with brackets (`[order]`), and the values dbdesk writes, such as a
 grid edit's, are `N'…'` strings so that any character survives. A statement that returns
 several result sets shows the first.
+
+On DuckDB, a console can query files without loading them first, by name or through DuckDB's
+table functions:
+
+```sql
+SELECT customer, sum(total) FROM 'orders/*.parquet' GROUP BY ALL;
+SELECT * FROM read_csv('people.csv', header = true) WHERE age > 30;
+```
+
+A relative path is resolved from the folder dbdesk was started in, which for an app started from
+the Dock or the Start menu is not your home folder, so give files their full path. Statements
+that only report how they went show no result grid: `CREATE TABLE`, `SET` and `ATTACH` just
+finish, and an `INSERT`, `UPDATE`, `DELETE` or `COPY` says how many rows it wrote.
 
 The toolbar shows how the last run went: **Done in 12 ms**, **Failed** or **Cancelled**. While a
 statement runs, Run, Run all and Explain are disabled.
@@ -258,7 +271,8 @@ columns. Otherwise the grid says **Read-only**; hover over it to see why.
 - If a row changed or disappeared since it was loaded, or a value doesn't fit its column,
   nothing is written, your changes stay, and the error names the row.
 - In manual commit mode, submitted changes join the open transaction and stay pending until
-  you commit.
+  you commit. DuckDB has no savepoints to undo a failed edit with, so on DuckDB, changes can't
+  be submitted while a transaction is open: commit or roll back first.
 
 Values are sent as text and converted by the database, so type them the way the grid shows
 them (`t` for a PostgreSQL boolean, `{1,2}` for an array).
