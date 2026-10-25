@@ -52,10 +52,17 @@ flowchart LR
    - **Linux** on `ubuntu-22.04`, the oldest supported runner: binaries link against the glibc
      they're built with, so building old keeps the AppImage running on older distributions.
    - **Windows** on `windows-2022`.
+
+   Each job links DuckDB's prebuilt library rather than compiling it: the static library for
+   each macOS architecture and for Linux, and the DLL on Windows, which the installer puts
+   beside `dbdesk.exe`. `packaging/duckdb/fetch.sh` downloads it from DuckDB's GitHub release
+   and checks it against `packaging/duckdb/SHA256SUMS`. See
+   [DuckDB's prebuilt libraries](duckdb-prebuilt.md).
 3. **Package** with `cargo-packager`, configured under `[package.metadata.packager]` in
    `crates/dbdesk-app/Cargo.toml`: the `.app` bundle, the AppImage and `.deb`, and an NSIS
    installer. The bundle uses the existing `assets/brand/dbdesk.icns` and icon PNGs, and carries
-   the licences of dbdesk and its fonts in `Resources/licenses/`. The `.dmg` comes from
+   the licences of dbdesk, its fonts and DuckDB (with DuckDB's third-party notices) in
+   `Resources/licenses/`. The `.dmg` comes from
    `packaging/macos-dmg.sh` instead of `cargo-packager`'s `dmg` format: that one runs
    `create-dmg`, whose `hdiutil convert` step failed on macOS 26 even outside any sandbox, and
    which is a known source of flaky runs on GitHub's macOS runners. A plain `hdiutil create`
@@ -66,7 +73,9 @@ flowchart LR
    Windows: Authenticode.
 5. **Smoke test** every packaged artifact on its own runner by starting the binary inside it
    with `--version`, a new flag that prints the version and exits before opening a window. It
-   catches broken bundles, missing libraries and a binary that won't start, cheaply.
+   catches broken bundles, missing libraries and a binary that won't start, cheaply. The Windows
+   job also installs silently and starts the installed copy with no DuckDB on `PATH`, so a
+   missing `duckdb.dll` fails it.
 6. **Draft a GitHub release** with the artifacts, `SHA256SUMS` and the notes. A person looks at
    the draft and publishes it, so a release never goes out unseen.
 7. **After publishing,** a second job updates the Homebrew cask (version and checksum) in the
@@ -98,6 +107,29 @@ strip = "symbols"
 Measured before and after in the PR that adds it: binary size and start-up time. Symbols are
 stripped from what ships; crash reports can come later with separately uploaded debug info if
 they are ever needed.
+
+## DuckDB
+
+Releases and CI link DuckDB's own prebuilt library instead of compiling its C++ engine, which
+took 10–14 minutes per build on the runners. `packaging/duckdb/fetch.sh <rust-target> <dir>`
+downloads it from DuckDB's GitHub release, refuses it unless its SHA-256 matches
+`packaging/duckdb/SHA256SUMS`, and prints the variables that make `libduckdb-sys` link it; the
+build also passes `--cfg dbdesk_prebuilt_duckdb` in `RUSTFLAGS`. macOS and Linux link the
+static library into `dbdesk`. Windows links the DLL, which the installer puts beside
+`dbdesk.exe`. A plain `cargo build` still compiles DuckDB; `CONTRIBUTING.md` shows how to use
+the prebuilt library locally. The packages carry DuckDB's licence and its third-party notices
+as `licenses/DuckDB-LICENSE` and `licenses/DuckDB-THIRD-PARTY.txt`. Why, and what was
+measured: [DuckDB's prebuilt libraries](duckdb-prebuilt.md).
+
+To upgrade DuckDB:
+
+1. Bump `duckdb` in the workspace `Cargo.toml`. The crate's version encodes DuckDB's:
+   1.10506.x is DuckDB 1.5.6.
+2. Add the new release's archives to `packaging/duckdb/SHA256SUMS`, one line per archive. Take
+   each checksum from the downloaded file, and compare it with the digest GitHub records
+   (`gh release view vX.Y.Z -R duckdb/duckdb --json assets`).
+3. Run `packaging/duckdb/update-licenses.sh X.Y.Z` and commit what changes.
+4. Update the version `links_duckdb_1_5_6_with_parquet_and_json` expects, and its name.
 
 ## Platform details
 

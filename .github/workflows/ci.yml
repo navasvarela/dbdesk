@@ -15,7 +15,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: -D warnings
+  # dbdesk_prebuilt_duckdb links DuckDB's prebuilt library, fetched below, rather than compiling
+  # it; see docs/duckdb-prebuilt.md.
+  RUSTFLAGS: -D warnings --cfg dbdesk_prebuilt_duckdb
 
 # The first failure stops the whole run: every job ends with a step that cancels the run when
 # the job fails, so the other jobs (a slow macOS or Windows build, say) stop instead of using a
@@ -64,24 +66,27 @@ jobs:
         # machine yet; see docs/releasing.md.
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    # sccache caches compiler output in GitHub's cache. `RUSTC_WRAPPER` puts it in front of rustc,
-    # and the cc crate also uses it for C and C++ when it is sccache, which covers DuckDB's bundled
-    # C++ engine: compiling that took 10–14 minutes per OS on every cold build.
-    env:
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: sccache
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - uses: mozilla-actions/sccache-action@v0.0.11
       # Pull requests restore main's cache but never save their own. Each save took 30–50 s,
       # and GitHub keeps 10 GB of cache per repository, so pull request caches pushed main's
       # out and later runs started cold.
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      # DuckDB's own library for this runner, checked against packaging/duckdb/SHA256SUMS; the
+      # tests on Windows load its DLL from PATH.
+      - name: Fetch DuckDB's prebuilt library
+        shell: bash
+        run: |
+          packaging/duckdb/fetch.sh "$(rustc -vV | sed -n 's/^host: //p')" "$RUNNER_TEMP/duckdb" \
+            | tee -a "$GITHUB_ENV"
+      - if: runner.os == 'Windows'
+        shell: bash
+        run: echo "$DUCKDB_LIB_DIR" >> "$GITHUB_PATH"
       # Headers eframe's windowing backends link against on Linux (same list egui's own CI uses).
       - if: runner.os == 'Linux'
         run: |
