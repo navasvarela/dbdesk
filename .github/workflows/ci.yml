@@ -52,7 +52,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      # Spike: a cache of its own, so the first run is cold and the second warm.
       - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v0-duckdb-spike-baseline
       # Headers eframe's windowing backends link against on Linux (same list egui's own CI uses).
       - if: runner.os == 'Linux'
         run: |

@@ -74,7 +74,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
+      # Spike: a cache of its own, so the first run is cold and the second warm.
       - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v0-duckdb-spike-baseline
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-packager@${{ env.CARGO_PACKAGER_VERSION }}
@@ -117,6 +120,10 @@ jobs:
           "$binary" --version | tee version.txt
           grep -q "dbdesk $VERSION" version.txt
           hdiutil detach -quiet "$mount"
+      - name: Sizes
+        run: |
+          ls -l target/aarch64-apple-darwin/release/dbdesk target/x86_64-apple-darwin/release/dbdesk \
+            target/universal/release/dbdesk dist/
       - uses: actions/upload-artifact@v4
         with:
           name: macos
@@ -139,7 +146,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      # Spike: a cache of its own, so the first run is cold and the second warm.
       - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v0-duckdb-spike-baseline
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-packager@${{ env.CARGO_PACKAGER_VERSION }}
@@ -173,6 +183,8 @@ jobs:
           dpkg-deb -x "dist/dbdesk_${VERSION}_amd64.deb" deb-root
           deb-root/usr/bin/dbdesk --version | tee deb.txt
           grep -q "dbdesk $VERSION" deb.txt
+      - name: Sizes
+        run: ls -l target/release/dbdesk dist/
       - uses: actions/upload-artifact@v4
         with:
           name: linux
@@ -194,7 +206,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      # Spike: a cache of its own, so the first run is cold and the second warm.
       - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v0-duckdb-spike-baseline
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-packager@${{ env.CARGO_PACKAGER_VERSION }}
@@ -207,6 +222,8 @@ jobs:
         run: |
           target/release/dbdesk.exe --version | tee version.txt
           grep -q "dbdesk $VERSION" version.txt
+      - name: Sizes
+        run: ls -l target/release/dbdesk.exe dist/
       - uses: actions/upload-artifact@v4
         with:
           name: windows
