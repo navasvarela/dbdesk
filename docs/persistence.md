@@ -85,6 +85,12 @@ read_only = true
   an opt-in test: `cargo test -p dbdesk-store -- --ignored`.
 - A data source's MCP login has an entry of its own, account `<data-source-id>/mcp`, which only
   `dbdesk mcp` reads.
+- A data source's SSH login has an entry of its own too, account `<data-source-id>/ssh`: the SSH
+  password, or an encrypted key's passphrase. A key file's entry is only read once the key turns
+  out to be encrypted, so an unencrypted key never triggers a keychain prompt; the agent login
+  has none. `SecretStore` takes the kind of secret (`Secret::Database`, `McpLogin`, `Ssh`).
+- SSH host keys are trusted through OpenSSH's own `~/.ssh/known_hosts`, read and appended to,
+  never rewritten; `EngineConfig::known_hosts` points elsewhere in tests.
 - Deleting a data source removes its keychain entries. If that fails, the failure is only
   logged, since a leftover entry is harmless.
 - A data source that signs in with a password and has none saved (or whose keychain entry

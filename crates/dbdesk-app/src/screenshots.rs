@@ -129,7 +129,14 @@ struct Scene {
     /// Leaves the pointer where the scene put it, for a tooltip; otherwise it is taken away,
     /// so no cursor or hover highlight ends up in the image.
     keeps_pointer: bool,
+    /// The test server variables the scene needs; without them it is skipped and its image
+    /// left as it is.
+    needs: &'static [&'static str],
 }
+
+const POSTGRES_URL: &str = "DBDESK_TEST_POSTGRES_URL";
+const SSH_URL: &str = "DBDESK_TEST_SSH_URL";
+const SSH_POSTGRES_URL: &str = "DBDESK_TEST_SSH_POSTGRES_URL";
 
 /// Which data sources a scene's app starts with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,96 +156,126 @@ const SCENES: &[Scene] = &[
         data_sources: FixtureSources::None,
         play: settle,
         keeps_pointer: false,
+        needs: &[],
     },
     Scene {
         name: "welcome",
         data_sources: FixtureSources::Shop,
         play: settle,
         keeps_pointer: false,
+        needs: &[],
     },
     Scene {
         name: "data-source-dialog",
         data_sources: FixtureSources::Shop,
         play: data_source_dialog,
         keeps_pointer: false,
+        needs: &[],
     },
     Scene {
         name: "sqlite-data-source-dialog",
         data_sources: FixtureSources::Shop,
         play: sqlite_data_source_dialog,
         keeps_pointer: false,
+        needs: &[],
     },
     Scene {
         name: "mysql-data-source-dialog",
         data_sources: FixtureSources::Shop,
         play: mysql_data_source_dialog,
         keeps_pointer: false,
+        needs: &[],
     },
     Scene {
         name: "sqlserver-data-source-dialog",
         data_sources: FixtureSources::Shop,
         play: sqlserver_data_source_dialog,
         keeps_pointer: false,
+        needs: &[],
     },
     Scene {
         name: "duckdb-data-source-dialog",
         data_sources: FixtureSources::Shop,
         play: duckdb_data_source_dialog,
         keeps_pointer: false,
+        needs: &[],
     },
     Scene {
         name: "clickhouse-data-source-dialog",
         data_sources: FixtureSources::Shop,
         play: clickhouse_data_source_dialog,
         keeps_pointer: false,
+        needs: &[],
     },
     Scene {
         name: "data-source-placeholders",
         data_sources: FixtureSources::Shop,
         play: data_source_placeholders,
         keeps_pointer: false,
+        needs: &[],
+    },
+    Scene {
+        name: "ssh-data-source-dialog",
+        data_sources: FixtureSources::Shop,
+        play: ssh_data_source_dialog,
+        keeps_pointer: false,
+        needs: &[],
+    },
+    Scene {
+        name: "host-key-prompt",
+        data_sources: FixtureSources::Shop,
+        play: host_key_prompt,
+        keeps_pointer: false,
+        needs: &[SSH_URL, SSH_POSTGRES_URL],
     },
     Scene {
         name: "password-prompt",
         data_sources: FixtureSources::Shop,
         play: password_prompt,
         keeps_pointer: false,
+        needs: &[],
     },
     Scene {
         name: "export-data-sources",
         data_sources: FixtureSources::Projects,
         play: export_data_sources,
         keeps_pointer: false,
+        needs: &[],
     },
     Scene {
         name: "import-preview",
         data_sources: FixtureSources::Shop,
         play: import_preview,
         keeps_pointer: false,
+        needs: &[],
     },
     Scene {
         name: "safety-level",
         data_sources: FixtureSources::Shop,
         play: safety_level,
         keeps_pointer: false,
+        needs: &[],
     },
     Scene {
         name: "careful-confirmation",
         data_sources: FixtureSources::Shop,
         play: careful_confirmation,
         keeps_pointer: false,
+        needs: &[],
     },
     Scene {
         name: "read-only-refusal",
         data_sources: FixtureSources::Shop,
         play: read_only_refusal,
         keeps_pointer: false,
+        needs: &[],
     },
     Scene {
         name: "explorer-menu",
         data_sources: FixtureSources::Shop,
         play: explorer_menu,
         keeps_pointer: false,
+        needs: &[],
     },
     Scene {
         name: "explorer-projects",
@@ -246,84 +283,105 @@ const SCENES: &[Scene] = &[
         play: explorer_projects,
         // The Move to project submenu stays open only while the pointer is over it.
         keeps_pointer: true,
+        needs: &[],
     },
     Scene {
         name: "project-menu",
         data_sources: FixtureSources::Projects,
         play: project_menu,
         keeps_pointer: false,
+        needs: &[],
     },
     Scene {
         name: "project-settings",
         data_sources: FixtureSources::Projects,
         play: project_settings,
         keeps_pointer: false,
+        needs: &[],
     },
     Scene {
         name: "settings-mcp",
         data_sources: FixtureSources::Shop,
         play: settings_mcp,
         keeps_pointer: false,
+        needs: &[],
     },
     Scene {
         name: "history-mcp",
         data_sources: FixtureSources::Shop,
         play: history_mcp,
         keeps_pointer: false,
+        needs: &[],
     },
     Scene {
         name: "explorer-filter",
         data_sources: FixtureSources::Shop,
         play: explorer_filter,
         keeps_pointer: false,
+        needs: &[],
     },
     Scene {
         name: "definition",
         data_sources: FixtureSources::Shop,
         play: definition,
         keeps_pointer: false,
+        needs: &[],
     },
     Scene {
         name: "workspace",
         data_sources: FixtureSources::Shop,
         play: workspace,
         keeps_pointer: false,
+        needs: &[],
     },
     Scene {
         name: "results-paging",
         data_sources: FixtureSources::Shop,
         play: results_paging,
         keeps_pointer: false,
+        needs: &[],
     },
     Scene {
         name: "multiple-statements",
         data_sources: FixtureSources::Shop,
         play: multiple_statements,
         keeps_pointer: false,
+        needs: &[],
     },
     Scene {
         name: "console-error",
         data_sources: FixtureSources::Shop,
         play: console_error,
         keeps_pointer: false,
+        needs: &[],
     },
     Scene {
         name: "run-anyway",
         data_sources: FixtureSources::Shop,
         play: run_anyway,
         keeps_pointer: false,
+        needs: &[],
     },
     Scene {
         name: "completion",
         data_sources: FixtureSources::Shop,
         play: completion,
         keeps_pointer: false,
+        needs: &[],
     },
     Scene {
         name: "problems",
         data_sources: FixtureSources::Shop,
         play: problems,
         keeps_pointer: true,
+        needs: &[],
+    },
+    Scene {
+        name: "console-reconnect",
+        data_sources: FixtureSources::Shop,
+        play: console_reconnect,
+        keeps_pointer: false,
+        needs: &[POSTGRES_URL],
     },
 ];
 
@@ -334,6 +392,14 @@ fn regenerate_screenshots() {
     std::fs::create_dir_all(&out_dir).unwrap();
     let themes = themes();
     for scene in SCENES {
+        if let Some(missing) = scene
+            .needs
+            .iter()
+            .find(|variable| std::env::var_os(variable).is_none())
+        {
+            println!("skipped {}: {missing} is not set", scene.name);
+            continue;
+        }
         for &theme in &themes {
             let fixture = Fixture::new(scene.data_sources);
             let mut harness = fixture.start(theme);
@@ -404,7 +470,7 @@ impl Fixture {
             .unwrap()
             .execute_batch(SHOP_SCHEMA)
             .unwrap();
-        let postgres = std::env::var("DBDESK_TEST_POSTGRES_URL")
+        let postgres = std::env::var(POSTGRES_URL)
             .ok()
             .map(|url| postgres_data_source(&url));
         let mut data_sources = vec![DataSource {
@@ -628,6 +694,89 @@ fn data_source_placeholders(harness: &mut Harness<'static, DbDeskApp>, _: &Fixtu
     retype(harness, "Host", "db-${DBDESK_ENV}.internal");
     retype(harness, "Port", "${PGPORT}");
     retype(harness, "User", "${USER}");
+}
+
+fn ssh_data_source_dialog(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    open_new_data_source_dialog(harness, "PostgreSQL");
+    retype(harness, "Name", "orders (production)");
+    retype(harness, "Host", "10.0.4.12");
+    retype(harness, "Database", "orders");
+    retype(harness, "User", "reporting");
+    harness
+        .get_by_label("Connect through an SSH server")
+        .click();
+    harness.run_ok();
+    retype(harness, "SSH host", "bastion.example.com");
+    retype(harness, "SSH user", "deploy");
+    choose(harness, "SSH agent", "Key file");
+    retype(harness, "Key file", "~/.ssh/id_ed25519");
+}
+
+/// Picks `choice` in the combo box showing `current`.
+fn choose(harness: &mut Harness<'static, DbDeskApp>, current: &str, choice: &str) {
+    harness
+        .get_by(|node| node.role() == Role::ComboBox && node.value().as_deref() == Some(current))
+        .click();
+    harness.run_ok();
+    harness.get_by_label(choice).click();
+    harness.run_ok();
+}
+
+/// A PostgreSQL data source behind the `ssh` compose service, saved through the dialog, then
+/// connected to for the first time, with a `known_hosts` that doesn't know the server yet.
+fn host_key_prompt(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    let ssh = std::env::var(SSH_URL).unwrap();
+    let (ssh_host, ssh_port) = ssh.rsplit_once('@').unwrap().1.split_once(':').unwrap();
+    let postgres = std::env::var(SSH_POSTGRES_URL).unwrap();
+    let (login, rest) = postgres
+        .strip_prefix("postgres://")
+        .unwrap()
+        .split_once('@')
+        .unwrap();
+    let user = login.split_once(':').unwrap().0;
+    let (address, database) = rest.split_once('/').unwrap();
+    let (host, port) = address.split_once(':').unwrap();
+    let key_file = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docker/ssh/client_ed25519");
+    open_new_data_source_dialog(harness, "PostgreSQL");
+    retype(harness, "Name", "orders (production)");
+    retype(harness, "Host", host);
+    retype(harness, "Port", port);
+    retype(harness, "Database", database);
+    retype(harness, "User", user);
+    harness
+        .get_by_label("Connect through an SSH server")
+        .click();
+    harness.run_ok();
+    retype(harness, "SSH host", ssh_host);
+    retype(harness, "SSH port", ssh_port);
+    retype(harness, "SSH user", "dbdesk");
+    choose(harness, "SSH agent", "Key file");
+    retype(harness, "Key file", &key_file.display().to_string());
+    harness.get_by_label("Save").click();
+    expand(harness, &["orders (production)"]);
+    step_until_visible(harness, "Trust the SSH server");
+}
+
+/// A console whose session ended under it, here by its own hand so no other session on the
+/// test server is touched, then asked to run something.
+fn console_reconnect(harness: &mut Harness<'static, DbDeskApp>, fixture: &Fixture) {
+    let Some((postgres, _)) = &fixture.postgres else {
+        return;
+    };
+    open_console(
+        harness,
+        &postgres.name,
+        "SELECT pg_terminate_backend(pg_backend_pid());",
+    );
+    run_all(harness, "session settings are gone");
+    harness.get_by_role(Role::MultilineTextInput).focus();
+    harness.run_ok();
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    harness
+        .get_by_role(Role::MultilineTextInput)
+        .type_text("SELECT status, count(*) FROM orders GROUP BY status;\n");
+    harness.run_ok();
+    run_all(harness, "reconnect to go on");
 }
 
 fn password_prompt(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {

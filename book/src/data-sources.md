@@ -29,6 +29,7 @@ Every kind has:
 | Database | `postgres` | The database to connect to. The explorer lists the server's other databases too. |
 | User | `postgres` | |
 | TLS | `prefer` | Whether to encrypt the connection; see below. |
+| SSH | off | Connect through an SSH server; see [SSH tunnels](#ssh-tunnels). |
 | Password | none | Stored in the keychain when you save. See below. |
 | MCP login | none | Another user, only for AI assistants; see [The MCP login](mcp.md#the-mcp-login). |
 | MCP password | none | Shown once there is an MCP login. Stored in the keychain apart from the password. |
@@ -145,6 +146,54 @@ HTTPS, with a publicly signed certificate, so `verify-full` with no CA file work
 DuckDB is part of dbdesk, so there is nothing to install. **Test connection** says which
 version it is ("Connected to DuckDB 1.5.6").
 
+### SSH tunnels
+
+Many databases only accept connections from inside their own network, through a *jump host*
+(or *bastion*) you reach with SSH. Tick **Connect through an SSH server** and dbdesk opens an
+SSH tunnel for you before connecting: no `ssh -L` to run first, and nothing to install. Every
+server engine has it: PostgreSQL, MySQL and MariaDB, SQL Server and ClickHouse.
+
+![A PostgreSQL data source behind a bastion, signing in with a key file](images/ssh-data-source-dialog.png)
+
+| Field | Default | Notes |
+| --- | --- | --- |
+| SSH host | none | The SSH server's name or IP address. |
+| SSH port | `22` | |
+| SSH user | none | Whom to sign in to the SSH server as. |
+| SSH login | SSH agent | How to sign in; see below. |
+| Key file | none | For **Key file**: your private key, in OpenSSH's format. **Browse…** opens `~/.ssh`. |
+| Passphrase | none | For an encrypted key. Stored in the keychain when you save. |
+| SSH password | none | For **Password**. Stored in the keychain when you save. |
+
+**Host**, **Port** and **Database** above stay the database's own, as the SSH server sees it:
+often a private address such as `10.0.4.12`, or `localhost` when the database runs on the SSH
+server itself. TLS still checks the database's certificate against that host, so `verify-full`
+works through a tunnel too.
+
+The ways to sign in:
+
+- **SSH agent** uses the keys your running agent holds, as `ssh` does: the agent `SSH_AUTH_SOCK`
+  names on macOS and Linux, and Windows' OpenSSH agent or Pageant on Windows. Nothing is stored.
+- **Key file** signs in with a private key. An encrypted key's passphrase is asked for the first
+  time it is needed, like a password, and kept in the keychain; an unencrypted key never touches
+  the keychain.
+- **Password** signs in with the SSH user's password, kept in the keychain.
+
+The SSH settings take [placeholders](#placeholders-variable) like the server's, and they travel
+in an [export](sharing.md); the passphrase and password stay in each machine's keychain.
+
+**The SSH server's host key** is checked against `~/.ssh/known_hosts`, the file `ssh` itself
+keeps, so a server you already reach with `ssh` is trusted by dbdesk too. The first time dbdesk
+meets one it doesn't know, it shows the key's SHA-256 fingerprint and asks. Compare it with the
+fingerprint the server's administrator gives you (`ssh-keygen -lf` on the server's host key):
+**Trust and connect** adds it to `known_hosts` and connects. A server whose key has changed
+since is refused, with the line of `known_hosts` to remove if the change was expected; see
+[Troubleshooting](troubleshooting.md#ssh-tunnels).
+
+![Connecting to an SSH server for the first time shows its fingerprint](images/host-key-prompt.png)
+
+A data source's consoles and its explorer share one tunnel, which closes with the last of them.
+
 ## Testing the connection
 
 **Test connection** connects with what is in the form right now, checks the connection works,
@@ -227,6 +276,8 @@ string that never changes even if you rename the data source.
 - **When you delete** a data source, its keychain entry is removed too.
 - **An MCP login's password** has an entry of its own, with the data source's ID followed by
   `/mcp` as its account. Only `dbdesk mcp` reads it.
+- **An SSH password or key passphrase** has one too, with `/ssh` after the ID. It is asked for,
+  and saved, the same way as the database password.
 
 ![Connecting asks for the password a data source has none saved for](images/password-prompt.png)
 

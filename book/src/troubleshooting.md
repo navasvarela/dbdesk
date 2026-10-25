@@ -58,6 +58,25 @@ dbdesk gives up on a connection attempt after 15 seconds and reports *could not 
 15s*. Check the host and port, and that nothing (a VPN, a firewall) is in the way. Test
 connection in the data source dialog is the quickest way to try again.
 
+## SSH tunnels
+
+- **"the SSH server … host key has changed … refusing to connect"**: the key the server presents
+  isn't the one `~/.ssh/known_hosts` holds for it. That is what someone impersonating the server
+  would look like, so dbdesk never connects. If the server's key really changed (it was
+  reinstalled, say), ask its administrator for the new fingerprint, remove the line the message
+  names from `~/.ssh/known_hosts` (or run `ssh-keygen -R '[host]:port'`), and connect again to be
+  asked about the new key.
+- **"the SSH server refused to sign in … with the keys in the SSH agent"**: the agent holds no
+  key the server accepts. `ssh-add -l` lists the agent's keys; `ssh-add` adds yours. On Windows,
+  start the *OpenSSH Authentication Agent* service, or Pageant.
+- **"could not use the SSH agent"**: no agent is running where dbdesk can find it. An app started
+  from the Dock or the Start menu may not see the `SSH_AUTH_SOCK` your terminal has; choose
+  **Key file** instead.
+- **"the SSH server could not forward to host:port"**: you signed in, but the SSH server can't
+  reach the database at that address, or isn't allowed to forward there (`AllowTcpForwarding`
+  and `PermitOpen` in its `sshd_config`). **Host** and **Port** are the database as the SSH
+  server sees it.
+
 ## "unable to open database file" for SQLite
 
 The file in the data source's **File** field doesn't exist, or dbdesk can't read it. Connecting

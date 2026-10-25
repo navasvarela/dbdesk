@@ -219,6 +219,22 @@ can't switch modes. On PostgreSQL, a statement that fails inside a transaction l
 Closing a console, disconnecting its data source or quitting dbdesk with a transaction open
 asks whether to roll it back first. Closing the connection is what rolls it back.
 
+## When the connection is lost
+
+When a console's connection is lost (the server restarted, an administrator ended the session,
+the network or the SSH tunnel dropped), the console says so in its toolbar: **Disconnected: its
+transaction, temporary tables and session settings are gone**, with the reason on hover. The
+statement that found out fails with the server's error. dbdesk also checks a connection that has
+sat unused for a minute before running anything on it, so a statement isn't sent down one that
+is gone.
+
+A lost console doesn't reconnect by itself: a script that relies on its open transaction, a
+temporary table or a `SET` would otherwise run on a new session without them. Until you click
+**Reconnect**, running, committing or applying grid edits says the connection was lost.
+**Reconnect** starts a new session on the same data source.
+
+![A console whose connection was lost, with Reconnect](images/console-reconnect.png)
+
 ## Results
 
 Under the editor, a summary line describes the result, followed by the rows:

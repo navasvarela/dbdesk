@@ -73,7 +73,7 @@ Follow-ups left out of M2:
 - Counts on folders, and row estimates on tables.
 - Keyboard navigation and selection in the tree.
 - A per-data-source "show system objects" setting (it is global now).
-- Detecting dropped connections (still from M1).
+- Detecting dropped connections (still from M1; built in W3).
 
 ## M3 — SQL runner
 
@@ -200,7 +200,7 @@ The original candidates:
 - `keymap.toml`, themes, fonts.
 - Custom catalog actions (`actions.toml`) and snippets.
 - Autocompletion from the cached catalog.
-- SSH tunnels (`russh`).
+- SSH tunnels (`russh`; built in W3).
 - Editing data in the grid.
 - MySQL driver; a driver for the `db-data-structures` engine.
 
@@ -539,6 +539,28 @@ The gaps that keep dbdesk from being an everyday tool. The full plan is in
   of a careful grid edit, a read-only refusal and red suggesting Careful.
 - **W3 — Connections you can rely on:** SSH tunnels with `russh`, and noticing and reconnecting
   dropped connections.
+
+  **W3 demo note:** built. Edit a PostgreSQL data source, tick **Connect through an SSH
+  server**, and give the bastion's host, user and **Key file** (or the agent, or a password):
+  the first connection shows the server's SHA-256 fingerprint and asks; **Trust and connect**
+  adds it to `~/.ssh/known_hosts` and the explorer lists the databases behind the bastion. An
+  encrypted key asks for its passphrase once, **Save to keychain** ticked, under `<id>/ssh`. Put
+  another key on that host's line of `known_hosts` and connecting is refused, naming the line to
+  remove. MySQL and MariaDB, SQL Server and ClickHouse connect the same way, and TLS through
+  the tunnel still checks the server's own name. A data source's explorer and consoles share
+  one tunnel, closed with the last of them; `dbdesk mcp` uses its own. Then run
+  `SELECT pg_terminate_backend(pid)` on a console's session from elsewhere, and run again in
+  that console: the statement fails, the toolbar says **Disconnected: its transaction,
+  temporary tables and session settings are gone** with **Reconnect**, and nothing runs until
+  you click it. A connection idle for a minute is pinged first, so a lost explorer reconnects
+  as you expand the next node. The SSH client is `russh` 0.64 on `ring` (no OpenSSL or
+  aws-lc), in a new `dbdesk-ssh` crate with its own `known_hosts` reader (patterns, hashed
+  names, `@revoked`). Covered by `dbdesk-ssh` tests against an OpenSSH container in
+  `docker-compose.yml` (key, encrypted key, password, unknown, changed and revoked host keys, a
+  refused forward), engine tests through it (sharing, the prompts, the host-key trust), driver
+  tests of each engine through a forwarded port and of a session the server ended, engine
+  tests of lost explorers and consoles in a scratch database, and kittest tests of the SSH
+  fields, the host-key prompt and Reconnect.
 - **W4 — History as an audit trail:**
   - where each statement came from, and grid edits with the values they replaced;
   - retention, a search across data sources, and export.

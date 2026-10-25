@@ -1,6 +1,6 @@
 # A well-rounded app
 
-Status: **W1 and W2 built** (see the [roadmap](roadmap.md#well-rounded-track)); W3 to W6
+Status: **W1 to W3 built** (see the [roadmap](roadmap.md#well-rounded-track)); W4 to W6
 planned.
 Proposed on 2026-10-24.
 
