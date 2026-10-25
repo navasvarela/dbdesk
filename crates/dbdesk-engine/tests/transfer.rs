@@ -264,7 +264,7 @@ fn round_trips_through_an_export_and_reimporting_changes_nothing() {
         files_after_import
     );
 
-    importer.engine.engine.shutdown().unwrap();
+    importer.engine.shut_down();
     let mut restarted = TestEngine::start(
         &importer.dir.path().join("data_sources.toml"),
         Arc::default(),
