@@ -28,14 +28,52 @@ permissions:
   actions: write
 
 jobs:
-  fmt:
+  # Whether the pull request touches anything but documentation. A docs-only pull request (only
+  # docs/, book/, site/, Markdown or licence files) skips the Rust steps of `fmt` and `check`. The
+  # jobs still run and report success, because branch protection requires them, but they finish in
+  # seconds. `book` still builds the manual. Pushes to main always run everything.
+  changes:
     runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+        with:
+          fetch-depth: 0
+      - id: diff
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" != pull_request ]]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          code=$(git diff --name-only "origin/$GITHUB_BASE_REF...HEAD" \
+            | grep -vE '^(docs|book|site)/|\.md$|^LICENSE' || true)
+          if [[ -n "$code" ]]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "Changes beyond documentation:"
+            echo "$code"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+            echo "Documentation only: the build and tests are skipped."
+          fi
+
+  fmt:
+    needs: changes
+    # Runs even if `changes` failed: GitHub counts a skipped required check as passed, so a broken
+    # `changes` must never skip the checks. CODE is then empty and every step runs.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    env:
+      CODE: ${{ needs.changes.outputs.code }}
+    steps:
+      - if: env.CODE != 'false'
+        uses: actions/checkout@v5
+      - if: env.CODE != 'false'
+        uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - run: cargo fmt --all --check
+      - if: env.CODE != 'false'
+        run: cargo fmt --all --check
       - name: Cancel the rest of the run
         if: failure()
         env:
@@ -58,6 +96,8 @@ jobs:
         run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
 
   check:
+    needs: changes
+    if: ${{ !cancelled() }}
     strategy:
       # Also cancels the other systems' jobs straight away when one fails.
       fail-fast: true
@@ -66,29 +106,36 @@ jobs:
         # machine yet; see docs/releasing.md.
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      CODE: ${{ needs.changes.outputs.code }}
+    # Every step but the last runs unless `changes` said documentation only.
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - if: env.CODE != 'false'
+        uses: actions/checkout@v5
+      - if: env.CODE != 'false'
+        uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
       # Pull requests restore main's cache but never save their own. Each save took 30–50 s,
       # and GitHub keeps 10 GB of cache per repository, so pull request caches pushed main's
       # out and later runs started cold.
-      - uses: Swatinem/rust-cache@v2
+      - if: env.CODE != 'false'
+        uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # DuckDB's own library for this runner, checked against packaging/duckdb/SHA256SUMS; the
       # tests on Windows load its DLL from PATH.
-      - name: Fetch DuckDB's prebuilt library
+      - if: env.CODE != 'false'
+        name: Fetch DuckDB's prebuilt library
         shell: bash
         run: |
           packaging/duckdb/fetch.sh "$(rustc -vV | sed -n 's/^host: //p')" "$RUNNER_TEMP/duckdb" \
             | tee -a "$GITHUB_ENV"
-      - if: runner.os == 'Windows'
+      - if: env.CODE != 'false' && runner.os == 'Windows'
         shell: bash
         run: echo "$DUCKDB_LIB_DIR" >> "$GITHUB_PATH"
       # Headers eframe's windowing backends link against on Linux (same list egui's own CI uses).
-      - if: runner.os == 'Linux'
+      - if: env.CODE != 'false' && runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
@@ -96,7 +143,7 @@ jobs:
       # test-servers.env; a new engine adds to those two files, not to this one. GitHub only
       # runs containers on Linux runners, so on macOS and Windows the URLs stay unset and the
       # server tests skip; the SQLite ones still run.
-      - if: runner.os == 'Linux'
+      - if: env.CODE != 'false' && runner.os == 'Linux'
         name: Start the database servers
         run: |
           docker compose up -d --wait
@@ -104,9 +151,10 @@ jobs:
       # Clippy on macOS found nothing Linux didn't, so it's skipped there to save a build.
       # Windows keeps it: some lints depend on type sizes, and `result_large_err` once failed
       # only there.
-      - if: runner.os != 'macOS'
+      - if: env.CODE != 'false' && runner.os != 'macOS'
         run: cargo clippy --workspace --all-targets
-      - run: cargo test --workspace
+      - if: env.CODE != 'false'
+        run: cargo test --workspace
       - name: Cancel the rest of the run
         if: failure()
         env:
