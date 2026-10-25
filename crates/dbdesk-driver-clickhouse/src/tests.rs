@@ -63,7 +63,7 @@ fn parse_url(url: &str) -> TestServer {
 
 impl TestServer {
     async fn connect(&self) -> ClickHouseConnection {
-        connect(&self.config, self.password.as_ref())
+        connect(&self.config, self.password.as_ref(), Route::Direct)
             .await
             .unwrap_or_else(|error| panic!("{TEST_URL_VAR}: {error:?}"))
     }
@@ -71,7 +71,7 @@ impl TestServer {
     async fn connect_with(&self, tls: TlsMode) -> Result<ClickHouseConnection, DriverError> {
         let mut config = self.config.clone();
         config.server.tls = tls;
-        connect(&config, self.password.as_ref()).await
+        connect(&config, self.password.as_ref(), Route::Direct).await
     }
 }
 
@@ -109,7 +109,12 @@ async fn conforms_to_the_connection_lifecycle() {
 #[tokio::test]
 async fn wrong_password_is_a_connect_error() {
     let Some(server) = test_server() else { return };
-    let result = connect(&server.config, Some(&Password::new("definitely wrong"))).await;
+    let result = connect(
+        &server.config,
+        Some(&Password::new("definitely wrong")),
+        Route::Direct,
+    )
+    .await;
 
     conformance::check_connect_failure(result);
 }
@@ -129,7 +134,7 @@ async fn unreachable_server_is_a_connect_error() {
         },
     };
 
-    conformance::check_connect_failure(connect(&config, None).await);
+    conformance::check_connect_failure(connect(&config, None, Route::Direct).await);
 }
 
 /// HTTPS is a port of its own, which answers only the modes that encrypt: connecting there
@@ -154,6 +159,33 @@ async fn encrypts_as_the_tls_mode_says() {
     for tls in [TlsMode::VerifyFull { ca_file: None }, TlsMode::Disable] {
         conformance::check_connect_failure(server.connect_with(tls).await);
     }
+}
+
+/// Through a tunnel the URL names a local port, while the certificate is still checked
+/// against the server's name, so the same server under a name the certificate lacks fails.
+#[tokio::test]
+async fn connects_through_a_tunnel_checking_tls_against_the_servers_name() {
+    let Some(server) = server_from(TLS_TEST_URL_VAR) else {
+        return;
+    };
+    let mut config = server.config.clone();
+    config.server.tls = TlsMode::VerifyFull {
+        ca_file: Some(test_ca_file()),
+    };
+    let address = format!(
+        "{}:{}",
+        config.server.host,
+        config.server.port_number().unwrap()
+    );
+    let route = Route::Tunnel(conformance::forwarder(&address).await);
+
+    let mut connection = connect(&config, server.password.as_ref(), route)
+        .await
+        .unwrap();
+    connection.ping().await.expect("ping through the tunnel");
+
+    config.server.host = "db.invalid".to_owned();
+    conformance::check_connect_failure(connect(&config, server.password.as_ref(), route).await);
 }
 
 /// ClickHouse has no transactions to check, and no key that tells a table's rows apart to

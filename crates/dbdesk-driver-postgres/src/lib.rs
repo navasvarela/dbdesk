@@ -15,7 +15,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use dbdesk_core::{
     BoxError, CancelHandle, CatalogNode, CatalogPath, Connection, DriverError, NodeKind, Password,
-    PostgresConfig, Rejection, RelationName, ResultCursor, ServerInfo, TableDescription,
+    PostgresConfig, Rejection, RelationName, ResultCursor, Route, ServerInfo, TableDescription,
     TransactionStatus,
 };
 use tokio::task::{JoinError, JoinHandle};
@@ -36,21 +36,28 @@ const PRODUCT: &str = "PostgreSQL";
 /// [`DriverError::Connect`] if the TLS settings can't be used (a missing CA file, say), the
 /// server is unreachable, the TLS handshake or certificate check fails, the server rejects
 /// the credentials, or the database doesn't exist.
+///
+/// `route` says whether to connect to the server itself or through an SSH tunnel.
 pub async fn connect(
     config: &PostgresConfig,
     password: Option<&Password>,
+    route: Route,
 ) -> Result<PostgresConnection, DriverError> {
     let tls = tls::connector(&config.server.tls)
         .map_err(|error| DriverError::Connect(Box::new(error)))?;
-    let primary = DatabaseClient::open(config, &config.server.database, password, &tls).await?;
+    let server = Server {
+        config: config.clone(),
+        password: password.cloned(),
+        tls,
+        route,
+    };
+    let primary = server.open(&config.server.database).await?;
     let version = server_version(&primary.client)
         .await
         .map_err(connect_error)?;
 
     Ok(PostgresConnection {
-        config: config.clone(),
-        password: password.cloned(),
-        tls,
+        server,
         primary,
         others: HashMap::new(),
         server_info: ServerInfo {
@@ -82,36 +89,49 @@ struct DatabaseClient {
     connection_task: JoinHandle<()>,
 }
 
-impl DatabaseClient {
-    async fn open(
-        config: &PostgresConfig,
-        database: &str,
-        password: Option<&Password>,
-        tls: &MakeRustlsConnect,
-    ) -> Result<Self, DriverError> {
+/// What opening a client needs, kept for the connection's lifetime to open one for each
+/// other database the explorer browses.
+struct Server {
+    config: PostgresConfig,
+    /// Kept in memory, for the session's lifetime only.
+    password: Option<Password>,
+    tls: MakeRustlsConnect,
+    route: Route,
+}
+
+impl Server {
+    async fn open(&self, database: &str) -> Result<DatabaseClient, DriverError> {
+        let server = &self.config.server;
         let mut pg_config = tokio_postgres::Config::new();
+        // Through a tunnel, `hostaddr` is where the socket goes while `host` stays the name
+        // TLS checks the certificate against, as libpq does with both set.
+        pg_config.host(&server.host);
+        match self.route {
+            Route::Direct => pg_config.port(server.port_number()?),
+            Route::Tunnel(local) => pg_config.hostaddr(local.ip()).port(local.port()),
+        };
         pg_config
-            .host(&config.server.host)
-            .port(config.server.port_number()?)
             .dbname(database)
-            .user(&config.server.user)
+            .user(&server.user)
             .application_name(APPLICATION_NAME)
-            .ssl_mode(tls::ssl_mode(&config.server.tls));
-        if let Some(password) = password {
+            .ssl_mode(tls::ssl_mode(&server.tls));
+        if let Some(password) = &self.password {
             pg_config.password(password.expose());
         }
 
         let (client, connection) = pg_config
-            .connect(tls.clone())
+            .connect(self.tls.clone())
             .await
             .map_err(connect_error)?;
         let connection_task = tokio::spawn(drive_connection(connection, database.to_owned()));
-        Ok(Self {
+        Ok(DatabaseClient {
             client,
             connection_task,
         })
     }
+}
 
+impl DatabaseClient {
     async fn close(self) -> Result<(), JoinError> {
         drop(self.client);
         self.connection_task.await
@@ -151,10 +171,7 @@ type TlsStream = <MakeRustlsConnect as MakeTlsConnect<Socket>>::Stream;
 /// on the server. Browsing a database other than the configured one opens an extra
 /// connection to it on first use, kept until the session closes.
 pub struct PostgresConnection {
-    config: PostgresConfig,
-    /// Kept in memory, for the session's lifetime only, to open those extra connections.
-    password: Option<Password>,
-    tls: MakeRustlsConnect,
+    server: Server,
     primary: DatabaseClient,
     others: HashMap<String, DatabaseClient>,
     server_info: ServerInfo,
@@ -168,7 +185,7 @@ impl PostgresConnection {
         let database = match path.segments().first() {
             Some(segment)
                 if segment.kind == NodeKind::Database
-                    && segment.name != self.config.server.database =>
+                    && segment.name != self.server.config.server.database =>
             {
                 segment.name.as_str()
             }
@@ -177,9 +194,7 @@ impl PostgresConnection {
         match self.others.entry(database.to_owned()) {
             Entry::Occupied(entry) => Ok(&entry.into_mut().client),
             Entry::Vacant(entry) => {
-                let client =
-                    DatabaseClient::open(&self.config, database, self.password.as_ref(), &self.tls)
-                        .await?;
+                let client = self.server.open(database).await?;
                 tracing::info!(
                     database,
                     "opened a connection for browsing another database"
@@ -240,7 +255,7 @@ impl Connection for PostgresConnection {
     fn cancel_handle(&self) -> Arc<dyn CancelHandle> {
         Arc::new(execution::PostgresCancel {
             token: self.primary.client.cancel_token(),
-            tls: self.tls.clone(),
+            tls: self.server.tls.clone(),
         })
     }
 
@@ -339,7 +354,9 @@ mod tests {
             return;
         };
 
-        let connection = connect(&config, password.as_ref()).await.unwrap();
+        let connection = connect(&config, password.as_ref(), Route::Direct)
+            .await
+            .unwrap();
 
         assert_eq!(connection.server_info().product, PRODUCT);
         conformance::check_lifecycle(Box::new(connection)).await;
@@ -351,7 +368,12 @@ mod tests {
             return;
         };
 
-        let result = connect(&config, Some(&Password::new("definitely wrong"))).await;
+        let result = connect(
+            &config,
+            Some(&Password::new("definitely wrong")),
+            Route::Direct,
+        )
+        .await;
 
         conformance::check_connect_failure(result);
     }
@@ -371,7 +393,7 @@ mod tests {
             },
         };
 
-        conformance::check_connect_failure(connect(&config, None).await);
+        conformance::check_connect_failure(connect(&config, None, Route::Direct).await);
     }
 
     /// Whether the session's own connection is encrypted, as the server sees it.
@@ -388,6 +410,40 @@ mod tests {
             .get(0)
     }
 
+    /// Through a tunnel the socket goes to a local port while TLS still checks the name the
+    /// server was given: the test certificate names `localhost` and `127.0.0.1`, so the same
+    /// server under another name is refused even though the tunnel's end is `127.0.0.1`.
+    #[tokio::test]
+    async fn connects_through_a_tunnel_checking_tls_against_the_servers_name() {
+        let verified = TlsMode::VerifyFull {
+            ca_file: Some(test_ca_file()),
+        };
+        let Some((config, password)) = tls_test_server(verified) else {
+            return;
+        };
+        let server = format!(
+            "{}:{}",
+            config.server.host,
+            config.server.port_number().unwrap()
+        );
+        let route = Route::Tunnel(conformance::forwarder(&server).await);
+
+        let mut connection = connect(&config, password.as_ref(), route).await.unwrap();
+        assert!(is_encrypted(&connection).await);
+        // Browsing another database opens a connection of its own, through the tunnel too.
+        let databases = connection.children(&CatalogPath::root()).await.unwrap();
+        let other = databases
+            .iter()
+            .find(|node| node.label == "postgres")
+            .expect("the postgres database");
+        connection.children(&other.path).await.unwrap();
+        Box::new(connection).close().await.unwrap();
+
+        let mut renamed = config.clone();
+        renamed.server.host = "db.invalid".to_owned();
+        conformance::check_connect_failure(connect(&renamed, password.as_ref(), route).await);
+    }
+
     #[tokio::test]
     async fn encrypts_when_the_server_requires_it() {
         let modes = [
@@ -402,7 +458,7 @@ mod tests {
                 return;
             };
 
-            let connection = connect(&config, password.as_ref())
+            let connection = connect(&config, password.as_ref(), Route::Direct)
                 .await
                 .unwrap_or_else(|error| panic!("{tls:?}: {error:?}"));
 
@@ -416,7 +472,9 @@ mod tests {
         let Some((config, password)) = tls_test_server(TlsMode::Require) else {
             return;
         };
-        let mut connection = connect(&config, password.as_ref()).await.unwrap();
+        let mut connection = connect(&config, password.as_ref(), Route::Direct)
+            .await
+            .unwrap();
 
         conformance::check_execution(&mut connection, conformance::Spelling::STANDARD).await;
         // Another database's connection and the cancel request are connections of their own,
@@ -444,7 +502,9 @@ mod tests {
             };
             let config = with_tls(config, tls);
 
-            conformance::check_connect_failure(connect(&config, password.as_ref()).await);
+            conformance::check_connect_failure(
+                connect(&config, password.as_ref(), Route::Direct).await,
+            );
         }
     }
 
@@ -455,7 +515,9 @@ mod tests {
         };
         assert_eq!(config.server.tls, TlsMode::Prefer);
 
-        let connection = connect(&config, password.as_ref()).await.unwrap();
+        let connection = connect(&config, password.as_ref(), Route::Direct)
+            .await
+            .unwrap();
 
         assert!(!is_encrypted(&connection).await);
         Box::new(connection).close().await.unwrap();
@@ -501,7 +563,9 @@ mod tests {
         let Some((config, password)) = test_server() else {
             return;
         };
-        let mut connection = connect(&config, password.as_ref()).await.unwrap();
+        let mut connection = connect(&config, password.as_ref(), Route::Direct)
+            .await
+            .unwrap();
         connection
             .primary
             .client
@@ -579,7 +643,9 @@ mod tests {
         let Some((config, password)) = test_server() else {
             return;
         };
-        let mut connection = connect(&config, password.as_ref()).await.unwrap();
+        let mut connection = connect(&config, password.as_ref(), Route::Direct)
+            .await
+            .unwrap();
 
         conformance::check_execution(&mut connection, conformance::Spelling::STANDARD).await;
         conformance::check_transactions(&mut connection, conformance::Spelling::STANDARD).await;

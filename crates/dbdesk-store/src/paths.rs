@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use directories::ProjectDirs;
+use directories::{BaseDirs, ProjectDirs};
 
 /// The application name used for platform directories. Also the eframe app id, so the
 /// window/layout state eframe persists lands in the same folder.
@@ -10,12 +10,22 @@ pub const APP_NAME: &str = "dbdesk";
 #[derive(Debug, Clone)]
 pub struct AppPaths {
     dirs: ProjectDirs,
+    home: PathBuf,
 }
 
 impl AppPaths {
     /// Resolves the platform directories, or `None` if the OS reports no home directory.
     pub fn discover() -> Option<Self> {
-        ProjectDirs::from("", "", APP_NAME).map(|dirs| Self { dirs })
+        Some(Self {
+            dirs: ProjectDirs::from("", "", APP_NAME)?,
+            home: BaseDirs::new()?.home_dir().to_owned(),
+        })
+    }
+
+    /// OpenSSH's file of trusted host keys, which SSH tunnels share with `ssh`. Not
+    /// guaranteed to exist.
+    pub fn ssh_known_hosts_file(&self) -> PathBuf {
+        self.home.join(".ssh").join("known_hosts")
     }
 
     /// Rolling log files. Not guaranteed to exist yet.

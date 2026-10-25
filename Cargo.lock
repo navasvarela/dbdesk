@@ -1636,6 +1636,7 @@ dependencies = [
  "dbdesk-tls",
  "hyper-rustls",
  "hyper-util",
+ "rustls",
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
@@ -1718,6 +1719,7 @@ dependencies = [
 name = "dbdesk-engine"
 version = "0.6.0"
 dependencies = [
+ "async-trait",
  "cargo-packager-updater",
  "dbdesk-core",
  "dbdesk-driver-clickhouse",
@@ -1727,6 +1729,7 @@ dependencies = [
  "dbdesk-driver-sqlite",
  "dbdesk-driver-sqlserver",
  "dbdesk-sql",
+ "dbdesk-ssh",
  "dbdesk-store",
  "jiff",
  "rusqlite",

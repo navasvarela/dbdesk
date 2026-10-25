@@ -71,7 +71,7 @@ impl TestServer {
     async fn connect_with(&self, tls: TlsMode) -> Result<MysqlConnection, DriverError> {
         let mut config = self.config.clone();
         config.server.tls = tls;
-        connect(&config, self.password.as_ref()).await
+        connect(&config, self.password.as_ref(), Route::Direct).await
     }
 }
 
@@ -87,6 +87,27 @@ async fn first_value(connection: &MysqlConnection, sql: &str) -> Option<String> 
         .and_then(|row| row.get_opt::<Option<String>, _>(row.len() - 1))
         .and_then(Result::ok)
         .flatten()
+}
+
+/// The test servers' self-signed certificates can't be verified, so this checks the route
+/// alone; TLS against the server's name is the PostgreSQL and ClickHouse drivers' test.
+#[tokio::test]
+async fn connects_through_a_tunnel() {
+    let _shared = SHARED_DATABASE.lock().await;
+    for server in test_servers() {
+        let address = format!(
+            "{}:{}",
+            server.config.server.host,
+            server.config.server.port_number().unwrap()
+        );
+        let route = Route::Tunnel(conformance::forwarder(&address).await);
+
+        let connection = connect(&server.config, server.password.as_ref(), route)
+            .await
+            .unwrap_or_else(|error| panic!("{}: {error:?}", server.variable));
+
+        conformance::check_lifecycle(Box::new(connection)).await;
+    }
 }
 
 #[tokio::test]
@@ -108,7 +129,12 @@ async fn conforms_to_the_connection_lifecycle() {
 async fn wrong_password_is_a_connect_error() {
     let _shared = SHARED_DATABASE.lock().await;
     for server in test_servers() {
-        let result = connect(&server.config, Some(&Password::new("definitely wrong"))).await;
+        let result = connect(
+            &server.config,
+            Some(&Password::new("definitely wrong")),
+            Route::Direct,
+        )
+        .await;
 
         conformance::check_connect_failure(result);
     }
@@ -129,7 +155,7 @@ async fn unreachable_server_is_a_connect_error() {
         },
     };
 
-    conformance::check_connect_failure(connect(&config, None).await);
+    conformance::check_connect_failure(connect(&config, None, Route::Direct).await);
 }
 
 #[tokio::test]

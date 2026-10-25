@@ -19,6 +19,7 @@ pub fn run(project: &str) -> anyhow::Result<()> {
         projects: ProjectFile::new(paths.projects_file()),
         history: HistoryFile::new(paths.history_file()),
         secrets: Arc::new(Keychain),
+        known_hosts: paths.ssh_known_hosts_file(),
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .thread_name("dbdesk-mcp")

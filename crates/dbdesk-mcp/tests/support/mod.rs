@@ -17,7 +17,7 @@ use dbdesk_core::{
     ConnectionConfig, DataSource, DataSourceId, MysqlConfig, Password, PostgresConfig, ProjectId,
     ServerConfig, SqliteConfig, TlsMode,
 };
-use dbdesk_engine::open_data_source;
+use dbdesk_engine::{Tunnels, open_data_source};
 use dbdesk_mcp::{McpConfig, serve_stdio};
 use dbdesk_store::{
     DataSourceFile, HistoryFile, ProjectFile, Projects, Secret, SecretError, SecretStore,
@@ -95,6 +95,7 @@ fn serve_as_child(dir: &Path) {
         projects: ProjectFile::new(dir.join("projects.toml")),
         history: HistoryFile::new(dir.join("history.sqlite")),
         secrets: Arc::new(secrets),
+        known_hosts: dir.join("known_hosts"),
     };
     tokio::runtime::Runtime::new()
         .unwrap()
@@ -211,7 +212,11 @@ pub async fn run_directly(engine: &Engine, statements: &[String]) -> Vec<Vec<Opt
     if let ConnectionConfig::Sqlite(config) = &mut writable.config {
         config.read_only = false;
     }
-    let mut connection = open_data_source(&writable, &secrets).await.unwrap();
+    // The fixtures' data sources have no SSH server, so no `known_hosts` is ever read.
+    let tunnels = Tunnels::new(std::path::PathBuf::from("known_hosts"));
+    let mut connection = open_data_source(&writable, &secrets, &tunnels)
+        .await
+        .unwrap();
     let mut last = Vec::new();
     for statement in statements {
         let mut cursor = connection

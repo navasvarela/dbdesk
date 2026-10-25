@@ -1,4 +1,5 @@
 use std::fmt;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -205,15 +206,30 @@ impl ConnectionConfig {
     /// The same configuration signing in as `user`; `None` for engines without a login.
     pub fn with_user(&self, user: &str) -> Option<Self> {
         let mut config = self.clone();
-        let server = match &mut config {
-            Self::Postgres(config) => &mut config.server,
-            Self::Mysql(config) => &mut config.server,
-            Self::SqlServer(config) => &mut config.server,
-            Self::ClickHouse(config) => &mut config.server,
-            Self::Sqlite(_) | Self::DuckDb(_) => return None,
-        };
+        let server = config.server_mut()?;
         user.clone_into(&mut server.user);
         Some(config)
+    }
+
+    /// Where the server is, for engines that connect over the network.
+    pub fn server(&self) -> Option<&ServerConfig> {
+        match self {
+            Self::Postgres(config) => Some(&config.server),
+            Self::Mysql(config) => Some(&config.server),
+            Self::SqlServer(config) => Some(&config.server),
+            Self::ClickHouse(config) => Some(&config.server),
+            Self::Sqlite(_) | Self::DuckDb(_) => None,
+        }
+    }
+
+    fn server_mut(&mut self) -> Option<&mut ServerConfig> {
+        match self {
+            Self::Postgres(config) => Some(&mut config.server),
+            Self::Mysql(config) => Some(&mut config.server),
+            Self::SqlServer(config) => Some(&mut config.server),
+            Self::ClickHouse(config) => Some(&mut config.server),
+            Self::Sqlite(_) | Self::DuckDb(_) => None,
+        }
     }
 
     pub fn driver(&self) -> DriverKind {
@@ -496,6 +512,16 @@ impl SshLogin {
     pub fn may_need_secret(&self) -> bool {
         !matches!(self, Self::Agent)
     }
+}
+
+/// Where a network driver opens its TCP connections: to the server in its settings, or to
+/// the local end of an SSH tunnel that forwards to it. Either way, TLS checks the server's
+/// certificate against [`ServerConfig::host`], the name the user gave it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Route {
+    #[default]
+    Direct,
+    Tunnel(SocketAddr),
 }
 
 /// A server's port: a number, or text with a `${NAME}` placeholder that resolves to one when

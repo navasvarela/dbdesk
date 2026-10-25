@@ -315,6 +315,7 @@ fn reports_failed_tests_and_connections() {
     engine.send(Command::TestConnection {
         data_source: missing.clone(),
         password: PasswordUpdate::Keep,
+        ssh_secret: PasswordUpdate::Keep,
     });
     match engine.next_event() {
         Event::ConnectionTested {

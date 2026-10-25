@@ -247,12 +247,17 @@ impl DbDeskApp {
     fn apply_to_password_prompt(&mut self, event: &Event) {
         if let Event::PasswordNeeded {
             data_source,
+            secret,
             reason,
         } = event
             && self.password_prompt.is_none()
             && let Some(entry) = self.state.data_source(*data_source)
         {
-            self.password_prompt = Some(PasswordPrompt::new(&entry.data_source, reason.clone()));
+            self.password_prompt = Some(PasswordPrompt::new(
+                &entry.data_source,
+                *secret,
+                reason.clone(),
+            ));
         }
         let Some(prompt) = &self.password_prompt else {
             return;
@@ -276,12 +281,14 @@ impl DbDeskApp {
             return;
         };
         let data_source = prompt.data_source();
+        let secret = prompt.secret();
         let Some(action) = prompt.show(ctx) else {
             return;
         };
         match action {
             PromptAction::Provide { password, save } => self.send(Command::ProvidePassword {
                 data_source,
+                secret,
                 password,
                 save,
             }),
@@ -487,9 +494,14 @@ impl DbDeskApp {
             return;
         };
         match action {
-            DialogAction::Test(data_source, password) => self.send(Command::TestConnection {
+            DialogAction::Test {
                 data_source,
                 password,
+                ssh_secret,
+            } => self.send(Command::TestConnection {
+                data_source,
+                password,
+                ssh_secret,
             }),
             DialogAction::Save {
                 data_source,
@@ -1120,6 +1132,7 @@ mod tests {
             settings: SettingsFile::new(dir.join("settings.toml")),
             releases: Arc::new(releases),
             updater: Arc::new(crate::test_support::FakeInstaller::default()),
+            known_hosts: dir.join("known_hosts"),
         }
     }
 
@@ -1896,7 +1909,7 @@ mod tests {
         step_until_visible(&mut harness, "Expand shared");
         harness.get_by_label("Expand shared").click();
         step_until_visible(&mut harness, "Connect to shared");
-        harness.get_by_label_contains("no password is saved");
+        harness.get_by_label_contains("Enter the password: none is saved.");
         let save = harness.get_by_label("Save to keychain");
         assert_eq!(
             egui_kittest::kittest::NodeT::accesskit_node(&save).toggled(),

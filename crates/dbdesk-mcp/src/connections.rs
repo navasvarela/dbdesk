@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dbdesk_core::{Connection, DataSource, DataSourceId, ServerInfo, describe_error};
-use dbdesk_engine::{OpenError, open_data_source_for_mcp};
+use dbdesk_engine::{OpenError, Tunnels, open_data_source_for_mcp};
 use dbdesk_store::SecretStore;
 use tokio::sync::{MappedMutexGuard, Mutex, MutexGuard};
 
@@ -19,6 +19,7 @@ const SWEEP_EVERY: Duration = Duration::from_secs(30);
 
 pub(crate) struct Connections {
     secrets: Arc<dyn SecretStore>,
+    tunnels: Tunnels,
     slots: HashMap<DataSourceId, Slot>,
 }
 
@@ -71,7 +72,11 @@ impl Drop for Checkout<'_> {
 }
 
 impl Connections {
-    pub(crate) fn new(secrets: Arc<dyn SecretStore>, data_sources: &[DataSource]) -> Arc<Self> {
+    pub(crate) fn new(
+        secrets: Arc<dyn SecretStore>,
+        tunnels: Tunnels,
+        data_sources: &[DataSource],
+    ) -> Arc<Self> {
         let slots = data_sources
             .iter()
             .map(|data_source| {
@@ -83,7 +88,11 @@ impl Connections {
                 (data_source.id, slot)
             })
             .collect();
-        Arc::new(Self { secrets, slots })
+        Arc::new(Self {
+            secrets,
+            tunnels,
+            slots,
+        })
     }
 
     /// Closes connections unused for [`IDLE_AFTER`], until the last other handle is dropped.
@@ -163,7 +172,8 @@ impl Connections {
             ),
             None => tracing::info!(data_source = %slot.data_source.name, "connecting"),
         }
-        let connection = open_data_source_for_mcp(&slot.data_source, &self.secrets).await?;
+        let connection =
+            open_data_source_for_mcp(&slot.data_source, &self.secrets, &self.tunnels).await?;
         tracing::info!(
             data_source = %slot.data_source.name,
             "connected to {}",

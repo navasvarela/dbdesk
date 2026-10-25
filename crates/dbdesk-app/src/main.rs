@@ -98,6 +98,7 @@ fn main() -> anyhow::Result<()> {
             updates::UPDATE_PUBLIC_KEY,
             version::VERSION,
         )),
+        known_hosts: paths.ssh_known_hosts_file(),
     };
 
     let mut viewport = egui::ViewportBuilder::default()

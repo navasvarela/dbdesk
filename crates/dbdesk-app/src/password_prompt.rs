@@ -1,8 +1,10 @@
-//! Asks for a data source's password when connecting finds none: nothing is saved, or the
-//! keychain can't be read. Opened by [`Event::PasswordNeeded`].
+//! Asks for a data source's password, or its SSH login's password or key passphrase, when
+//! connecting finds none: nothing is saved, or the keychain can't be read. Opened by
+//! [`Event::PasswordNeeded`].
 
-use dbdesk_core::{DataSource, DataSourceId, Password};
+use dbdesk_core::{DataSource, DataSourceId, Password, SshLogin};
 use dbdesk_engine::{Event, PasswordKept, PasswordNeeded};
+use dbdesk_store::Secret;
 use egui::{Align, Button, Id, Layout, Modal, RichText, TextEdit};
 
 use crate::theme::Palette;
@@ -20,9 +22,13 @@ pub enum PromptAction {
 
 pub struct PasswordPrompt {
     data_source: DataSourceId,
+    secret: Secret,
     name: String,
     /// Where the connection goes, so the user knows which password is meant.
     target: String,
+    /// What is asked for, as the field's label and in the sentence above it.
+    label: &'static str,
+    wanted: String,
     reason: PasswordNeeded,
     password: String,
     /// Ticked to start with: a password typed once should not be asked for again.
@@ -32,11 +38,29 @@ pub struct PasswordPrompt {
 }
 
 impl PasswordPrompt {
-    pub fn new(data_source: &DataSource, reason: PasswordNeeded) -> Self {
+    pub fn new(data_source: &DataSource, secret: Secret, reason: PasswordNeeded) -> Self {
+        let ssh = data_source
+            .config
+            .server()
+            .and_then(|server| server.ssh.as_ref());
+        let (label, wanted) = match (secret, ssh.map(|ssh| (ssh, &ssh.login))) {
+            (Secret::Ssh, Some((ssh, SshLogin::KeyFile { key_file }))) => (
+                "Passphrase",
+                format!(
+                    "the passphrase of the SSH key {} for {ssh}",
+                    key_file.display()
+                ),
+            ),
+            (Secret::Ssh, Some((ssh, _))) => ("SSH password", format!("the SSH password of {ssh}")),
+            _ => ("Password", "the password".to_owned()),
+        };
         Self {
             data_source: data_source.id,
+            secret,
             name: data_source.name.clone(),
             target: data_source.config.to_string(),
+            label,
+            wanted,
             reason,
             password: String::new(),
             save: true,
@@ -49,13 +73,19 @@ impl PasswordPrompt {
         self.data_source
     }
 
+    pub fn secret(&self) -> Secret {
+        self.secret
+    }
+
     /// Whether `event` answers this prompt's password, meaning the prompt is done. A password
     /// the keychain refused is still kept for the session, so that isn't a reason to stay.
     pub fn apply(&self, event: &Event) -> Option<PasswordKept> {
         match event {
-            Event::PasswordProvided { data_source, kept } if *data_source == self.data_source => {
-                Some(kept.clone())
-            }
+            Event::PasswordProvided {
+                data_source,
+                secret,
+                kept,
+            } if *data_source == self.data_source && *secret == self.secret => Some(kept.clone()),
             _ => None,
         }
     }
@@ -72,11 +102,11 @@ impl PasswordPrompt {
         let palette = Palette::for_visuals(ui.visuals());
         ui.heading(format!("Connect to {}", self.name));
         ui.label(RichText::new(&self.target).color(palette.text_weak));
-        ui.label(format!("Enter the password: {}.", self.reason));
+        ui.label(format!("Enter {}: {}.", self.wanted, self.reason));
         ui.add_space(ui.spacing().item_spacing.y);
         let entered = ui
             .horizontal(|ui| {
-                let label = ui.label("Password");
+                let label = ui.label(self.label);
                 let field = ui
                     .add(
                         TextEdit::singleline(&mut self.password)
@@ -112,5 +142,72 @@ impl PasswordPrompt {
             });
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use dbdesk_core::{
+        ConnectionConfig, DataSourceId, PostgresConfig, SafetyLevel, ServerConfig, SshConfig,
+        TlsMode,
+    };
+
+    use super::*;
+
+    fn behind_ssh(login: SshLogin) -> DataSource {
+        DataSource {
+            id: DataSourceId::generate(),
+            name: "staging".to_owned(),
+            color: None,
+            safety: SafetyLevel::Normal,
+            project: None,
+            mcp_login: None,
+            config: ConnectionConfig::Postgres(PostgresConfig {
+                server: ServerConfig {
+                    host: "db".to_owned(),
+                    port: 5432.into(),
+                    database: "app".to_owned(),
+                    user: "juan".to_owned(),
+                    tls: TlsMode::Prefer,
+                    ssh: Some(SshConfig {
+                        host: "bastion".to_owned(),
+                        port: 22.into(),
+                        user: "deploy".to_owned(),
+                        login,
+                    }),
+                },
+            }),
+        }
+    }
+
+    #[test]
+    fn names_the_secret_it_asks_for() {
+        let key = SshLogin::KeyFile {
+            key_file: "/home/juan/.ssh/id_ed25519".into(),
+        };
+        let cases = [
+            (
+                Secret::Database,
+                SshLogin::Password,
+                "Password",
+                "the password",
+            ),
+            (
+                Secret::Ssh,
+                SshLogin::Password,
+                "SSH password",
+                "the SSH password of deploy@bastion:22",
+            ),
+            (
+                Secret::Ssh,
+                key,
+                "Passphrase",
+                "the passphrase of the SSH key /home/juan/.ssh/id_ed25519 for deploy@bastion:22",
+            ),
+        ];
+        for (secret, login, label, wanted) in cases {
+            let prompt = PasswordPrompt::new(&behind_ssh(login), secret, PasswordNeeded::NoneSaved);
+            assert_eq!((prompt.label, prompt.wanted.as_str()), (label, wanted));
+        }
     }
 }

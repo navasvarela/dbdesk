@@ -25,6 +25,7 @@ mod repaint;
 mod session;
 mod settings;
 mod transfer;
+mod tunnels;
 mod updater;
 
 pub use environment::ProcessEnvironment;
@@ -39,4 +40,5 @@ pub use protocol::{
 };
 pub use releases::{GithubReleases, Release, ReleaseError, ReleaseFeed};
 pub use repaint::Repaint;
+pub use tunnels::Tunnels;
 pub use updater::{InstallError, InstallSupport, PackagerInstaller, UpdateInstaller};

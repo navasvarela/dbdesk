@@ -15,6 +15,7 @@ dbdesk-core.workspace = true
 dbdesk-tls.workspace = true
 hyper-rustls.workspace = true
 hyper-util.workspace = true
+rustls.workspace = true
 # Each value of a row is read as raw JSON text, so numbers keep every digit.
 serde_json = { workspace = true, features = ["raw_value"] }
 thiserror.workspace = true
