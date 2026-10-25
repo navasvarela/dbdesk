@@ -50,6 +50,20 @@ pub(crate) struct Rows {
     pub(crate) row_count: Option<u64>,
 }
 
+/// Limits unqualified names to the project's allowed schemas for the rest of the call's
+/// transaction (`Scope::search_path`), right after the transaction begins.
+pub(crate) async fn set_search_path(
+    connection: &mut dyn Connection,
+    statement: &str,
+) -> Result<(), DriverError> {
+    connection
+        .execute(statement)
+        .await?
+        .finish()
+        .await
+        .map(drop)
+}
+
 /// Rolls back what [`begin`](dbdesk_engine::read_only::begin) started, and hands back the
 /// work's outcome. A failed rollback leaves the connection in an unknown state, so it counts
 /// as a broken connection.

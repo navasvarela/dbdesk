@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dbdesk_core::{Connection, DataSource, DataSourceId, ServerInfo, describe_error};
-use dbdesk_engine::{OpenError, open_data_source};
+use dbdesk_engine::{OpenError, open_data_source_for_mcp};
 use dbdesk_store::SecretStore;
 use tokio::sync::{MappedMutexGuard, Mutex, MutexGuard};
 
@@ -155,8 +155,15 @@ impl Connections {
     }
 
     async fn connect(&self, slot: &Slot) -> Result<Box<dyn Connection>, OpenError> {
-        tracing::info!(data_source = %slot.data_source.name, "connecting");
-        let connection = open_data_source(&slot.data_source, &self.secrets).await?;
+        match &slot.data_source.mcp_login {
+            Some(login) => tracing::info!(
+                data_source = %slot.data_source.name,
+                "connecting as the MCP login {}",
+                login.user
+            ),
+            None => tracing::info!(data_source = %slot.data_source.name, "connecting"),
+        }
+        let connection = open_data_source_for_mcp(&slot.data_source, &self.secrets).await?;
         tracing::info!(
             data_source = %slot.data_source.name,
             "connected to {}",

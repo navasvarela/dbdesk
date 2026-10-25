@@ -10,8 +10,8 @@ use dbdesk_core::{
     RelationName, describe_error,
 };
 use dbdesk_engine::read_only::{self as guard, Refusal};
-use dbdesk_sql::{Dialect, StatementKind};
-use dbdesk_store::HistoryOutcome;
+use dbdesk_sql::{Dialect, StatementKind, analyze};
+use dbdesk_store::{HistoryOutcome, SchemaScope};
 use jiff::Timestamp;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -25,6 +25,7 @@ use crate::catalog::{self, NodeJson, PathStep};
 use crate::connections::Connections;
 use crate::project::ServedProject;
 use crate::read_only::{self, Rows, RunError};
+use crate::scope::Scope;
 
 /// Work to run on a connection inside the read-only transaction. Boxed because it borrows
 /// the connection for as long as it runs.
@@ -202,6 +203,10 @@ impl DbdeskMcp {
                 "max_rows": project.limits.max_rows,
                 "statement_timeout_ms": project.limits.statement_timeout.as_millis(),
                 "read_only": true,
+                "schemas": match &project.schemas {
+                    SchemaScope::All => json!("all"),
+                    SchemaScope::Only(schemas) => json!(schemas),
+                },
             },
         })))
     }
@@ -244,6 +249,29 @@ impl DbdeskMcp {
 }
 
 impl DbdeskMcp {
+    /// The project's allow-list as `data_source` applies it; `None` when all are allowed.
+    fn scope(&self, data_source: &DataSource) -> Option<Scope> {
+        Scope::new(&self.inner.project.schemas, &data_source.config)
+    }
+
+    /// Refuses a call before it reaches the database, and logs why.
+    fn refuse(&self, tool: &str, data_source: &DataSource, reason: String) -> ToolError {
+        self.inner.audit.refused(tool, &data_source.name, &reason);
+        ToolError::refused(reason)
+    }
+
+    fn check_path(
+        &self,
+        tool: &str,
+        data_source: &DataSource,
+        path: &CatalogPath,
+    ) -> Result<(), ToolError> {
+        match self.scope(data_source).map(|scope| scope.check_path(path)) {
+            Some(Err(reason)) => Err(self.refuse(tool, data_source, reason)),
+            _ => Ok(()),
+        }
+    }
+
     fn data_source(&self, tool: &str, name: &str) -> Result<&DataSource, ToolError> {
         self.inner.project.data_source(name).ok_or_else(|| {
             let known: Vec<&str> = self
@@ -268,14 +296,20 @@ impl DbdeskMcp {
         self.inner.audit.call(tool, Some(&data_source.name), None);
         let path =
             catalog::path(&args.path).map_err(|error| ToolError::invalid(error.to_string()))?;
+        self.check_path(tool, data_source, &path)?;
         let nodes = self
             .on_connection(tool, data_source, move |connection| {
                 Box::pin(async move { connection.children(&path).await })
             })
             .await?;
+        let scope = self.scope(data_source);
         let objects: Vec<NodeJson> = nodes
             .iter()
             .filter(|node| args.include_system || !node.system)
+            .filter(|node| match (&scope, node.kind()) {
+                (Some(scope), Some(NodeKind::Schema)) => scope.allows(&node.label),
+                _ => true,
+            })
             .map(NodeJson::from)
             .collect();
         Ok(json!({ "objects": objects }))
@@ -285,6 +319,13 @@ impl DbdeskMcp {
         let tool = "describe_table";
         let data_source = self.data_source(tool, &args.data_source)?;
         self.inner.audit.call(tool, Some(&data_source.name), None);
+        let scope = self.scope(data_source);
+        if let (Some(scope), Some(schema)) = (&scope, &args.schema)
+            && !scope.allows(schema)
+        {
+            let reason = format!("this project doesn't allow the schema {schema:?}");
+            return Err(self.refuse(tool, data_source, reason));
+        }
         let database = data_source.config.database().map(str::to_owned);
         let described = self
             .on_connection(tool, data_source, move |connection| {
@@ -299,6 +340,12 @@ impl DbdeskMcp {
                 })
             })
             .await?;
+        // Without a schema, the table is looked up where the connection resolves names,
+        // which can be outside the list on engines that don't pin it.
+        let described = described.filter(|described| match (&scope, &described["schema"]) {
+            (Some(scope), Value::String(schema)) => scope.allows(schema),
+            _ => true,
+        });
         described.ok_or_else(|| {
             ToolError::invalid(
                 "there is no such table (views have no description; try get_definition)",
@@ -312,6 +359,7 @@ impl DbdeskMcp {
         self.inner.audit.call(tool, Some(&data_source.name), None);
         let path =
             catalog::path(&args.path).map_err(|error| ToolError::invalid(error.to_string()))?;
+        self.check_path(tool, data_source, &path)?;
         let definition = self
             .on_connection(tool, data_source, move |connection| {
                 Box::pin(async move { connection.definition(&path).await })
@@ -346,8 +394,18 @@ impl DbdeskMcp {
                 }
                 Refusal::Unknown(_) => refusal.reason(),
             };
-            self.inner.audit.refused(tool, &data_source.name, &reason);
-            return Err(ToolError::refused(reason));
+            return Err(self.refuse(tool, data_source, reason));
+        }
+        // The statement parsed above, so only a parser bug could fail here; it is refused
+        // like any statement whose names can't be read.
+        if let Some(scope) = self.scope(data_source) {
+            let schemas = analyze(sql, dialect)
+                .map_or(dbdesk_sql::NamedSchemas::Unknown, |analysis| {
+                    analysis.schemas
+                });
+            if let Err(reason) = scope.check(&schemas) {
+                return Err(self.refuse(tool, data_source, reason));
+            }
         }
 
         let prefix = if explain {
@@ -427,6 +485,8 @@ impl DbdeskMcp {
             unreachable!("a served data source without a read-only mode");
         };
         let timeout = self.inner.project.limits.statement_timeout;
+        let scope = self.scope(data_source);
+        let search_path = scope.as_ref().and_then(Scope::search_path);
         let mut retried = false;
         let mut connection = loop {
             let mut connection = self
@@ -435,7 +495,16 @@ impl DbdeskMcp {
                 .checkout(data_source.id)
                 .await
                 .map_err(|error| RunError::Driver(DriverError::Connect(Box::new(error))))?;
-            match guard::begin(&mut *connection, mode, Some(timeout)).await {
+            let begun = match guard::begin(&mut *connection, mode, Some(timeout)).await {
+                Ok(()) => match search_path {
+                    Some(statement) => {
+                        read_only::set_search_path(&mut *connection, statement).await
+                    }
+                    None => Ok(()),
+                },
+                Err(error) => Err(error),
+            };
+            match begun {
                 Ok(()) => break connection,
                 Err(DriverError::Connection(_)) if !retried => {
                     tracing::info!(data_source = %data_source.name, "reconnecting");
@@ -547,16 +616,23 @@ fn named_details(nodes: &[CatalogNode]) -> Vec<Value> {
 impl ServerHandler for DbdeskMcp {
     fn get_info(&self) -> ServerConfig {
         let project = &self.inner.project;
+        let mut instructions = format!(
+            "Databases of the dbdesk project \"{}\". Start with list_data_sources; the other \
+             tools take a data source's name. Everything is read-only: query and explain run \
+             one statement that only reads, in a read-only transaction, return at most {} \
+             rows, and are cancelled after {} s. Statements that change anything are refused.",
+            project.project.name,
+            project.limits.max_rows,
+            project.limits.statement_timeout.as_secs()
+        );
+        if let SchemaScope::Only(schemas) = &project.schemas {
+            instructions.push_str(&format!(
+                " Only these schemas can be listed or named: {}.",
+                schemas.join(", ")
+            ));
+        }
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("dbdesk", env!("CARGO_PKG_VERSION")))
-            .with_instructions(format!(
-                "Databases of the dbdesk project \"{}\". Start with list_data_sources; the other \
-                 tools take a data source's name. Everything is read-only: query and explain run \
-                 one statement that only reads, in a read-only transaction, return at most {} \
-                 rows, and are cancelled after {} s. Statements that change anything are refused.",
-                project.project.name,
-                project.limits.max_rows,
-                project.limits.statement_timeout.as_secs()
-            ))
+            .with_instructions(instructions)
     }
 }
