@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use common::{MemorySecrets, sqlite_data_source, sqlite_database};
 use dbdesk_core::{Connection, DriverKind};
-use dbdesk_engine::{open_data_source, read_only, read_write};
+use dbdesk_engine::{Tunnels, open_data_source, read_only, read_write};
 use dbdesk_store::SecretStore;
 
 async fn run(connection: &mut dyn Connection, sql: &str) -> Result<Option<String>, String> {
@@ -30,7 +30,13 @@ async fn reads_refuse_writes_and_changes_commit_or_roll_back() {
     let dir = tempfile::tempdir().unwrap();
     let data_source = sqlite_data_source(sqlite_database(dir.path()));
     let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecrets::default());
-    let mut connection = open_data_source(&data_source, &secrets).await.unwrap();
+    let mut connection = open_data_source(
+        &data_source,
+        &secrets,
+        &Tunnels::new(dir.path().join("known_hosts")),
+    )
+    .await
+    .unwrap();
     let connection = connection.as_mut();
     let read = read_only::mode_on_writable_connection(DriverKind::Sqlite).unwrap();
     let write = read_write::mode(DriverKind::Sqlite).unwrap();

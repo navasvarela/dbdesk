@@ -17,7 +17,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use dbdesk_core::{
     BoxError, CancelHandle, CatalogNode, CatalogPath, Connection, DriverError, Password, Quoting,
-    Rejection, RelationName, ResultCursor, ServerInfo, SqlServerConfig, TableDescription,
+    Rejection, RelationName, ResultCursor, Route, ServerInfo, SqlServerConfig, TableDescription,
     TransactionStatus,
 };
 use tiberius::{AuthMethod, Client, Config};
@@ -59,11 +59,12 @@ pub(crate) type SqlClient = Client<Compat<TcpStream>>;
 pub async fn connect(
     config: &SqlServerConfig,
     password: Option<&Password>,
+    route: Route,
 ) -> Result<SqlServerConnection, DriverError> {
     tls::install_crypto_provider();
     let mut tiberius_config = base_config(config, config.server.port_number()?, password);
     tls::configure(&mut tiberius_config, &config.server.tls).map_err(connect_error)?;
-    let mut client = open_client(tiberius_config).await?;
+    let mut client = open_client(tiberius_config, route).await?;
     client
         .simple_query(SESSION_OPTIONS)
         .await
@@ -99,26 +100,38 @@ fn base_config(config: &SqlServerConfig, port: u16, password: Option<&Password>)
 
 /// Connects and signs in, following one redirect: Azure SQL's gateway may answer the login
 /// by naming the server that holds the database, which the client must then connect to.
-async fn open_client(mut config: Config) -> Result<SqlClient, DriverError> {
-    let tcp = tcp_connect(&config).await?;
+///
+/// The socket goes where `route` says, while `config` keeps the server's name for TLS.
+async fn open_client(mut config: Config, route: Route) -> Result<SqlClient, DriverError> {
+    let address = match route {
+        Route::Direct => config.get_addr(),
+        Route::Tunnel(local) => local.to_string(),
+    };
+    let tcp = tcp_connect(&address).await?;
     match Client::connect(config.clone(), tcp.compat_write()).await {
         Ok(client) => Ok(client),
-        Err(tiberius::error::Error::Routing { host, port }) => {
+        Err(tiberius::error::Error::Routing { host, port }) if route == Route::Direct => {
             config.host(&host);
             config.port(port);
-            let tcp = tcp_connect(&config).await?;
+            let tcp = tcp_connect(&config.get_addr()).await?;
             Client::connect(config, tcp.compat_write())
                 .await
                 .map_err(connect_error)
         }
+        // The tunnel only reaches the server it was opened to.
+        Err(tiberius::error::Error::Routing { host, port }) => Err(DriverError::Connect(
+            format!(
+                "the server redirected the login to {host}:{port}, which the SSH tunnel \
+                 doesn't reach"
+            )
+            .into(),
+        )),
         Err(error) => Err(connect_error(error)),
     }
 }
 
-async fn tcp_connect(config: &Config) -> Result<TcpStream, DriverError> {
-    let tcp = TcpStream::connect(config.get_addr())
-        .await
-        .map_err(connect_error)?;
+async fn tcp_connect(address: &str) -> Result<TcpStream, DriverError> {
+    let tcp = TcpStream::connect(address).await.map_err(connect_error)?;
     // Statements and their replies are small messages; waiting to batch them only adds
     // latency.
     tcp.set_nodelay(true).map_err(connect_error)?;

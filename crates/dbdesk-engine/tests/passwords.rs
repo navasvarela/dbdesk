@@ -11,6 +11,7 @@ use dbdesk_core::{
     ConnectionConfig, DataSource, DataSourceId, Password, PostgresConfig, ServerConfig, TlsMode,
 };
 use dbdesk_engine::{Command, Event, PasswordKept, PasswordNeeded, PasswordUpdate, SessionState};
+use dbdesk_store::Secret;
 
 /// A server that hangs up at once, so connecting fails as soon as the password is found.
 fn unreachable_postgres() -> DataSource {
@@ -62,6 +63,7 @@ fn expect_password_needed(engine: &mut TestEngine, id: DataSourceId, reason: &Pa
     engine.expect(Event::PasswordNeeded {
         data_source: id,
         reason: reason.clone(),
+        secret: Secret::Database,
     });
 }
 
@@ -87,10 +89,12 @@ fn asks_for_a_missing_password_and_saves_it_to_the_keychain() {
         data_source: id,
         password: Password::new("typed once"),
         save: true,
+        secret: Secret::Database,
     });
     engine.expect(Event::PasswordProvided {
         data_source: id,
         kept: PasswordKept::Saved,
+        secret: Secret::Database,
     });
 
     assert_eq!(secrets.database(id), Some(Password::new("typed once")));
@@ -109,10 +113,12 @@ fn keeps_an_unsaved_password_for_the_session_only() {
         data_source: id,
         password: Password::new("not saved"),
         save: false,
+        secret: Secret::Database,
     });
     engine.expect(Event::PasswordProvided {
         data_source: id,
         kept: PasswordKept::ForThisSession,
+        secret: Secret::Database,
     });
 
     assert_eq!(secrets.database(id), None);
@@ -131,6 +137,7 @@ fn asks_when_the_keychain_is_locked_and_keeps_the_password_it_refuses() {
     match engine.next_event() {
         Event::PasswordNeeded {
             data_source,
+            secret: Secret::Database,
             reason: PasswordNeeded::KeychainUnavailable(error),
         } if data_source == id => assert!(error.contains("the keychain is locked"), "{error}"),
         other => panic!("expected a password to be needed, got {other:?}"),
@@ -139,10 +146,12 @@ fn asks_when_the_keychain_is_locked_and_keeps_the_password_it_refuses() {
         data_source: id,
         password: Password::new("typed once"),
         save: true,
+        secret: Secret::Database,
     });
     match engine.next_event() {
         Event::PasswordProvided {
             data_source,
+            secret: Secret::Database,
             kept: PasswordKept::SaveFailed(_),
         } if data_source == id => {}
         other => panic!("expected the keychain to refuse the password, got {other:?}"),
@@ -159,6 +168,7 @@ fn the_dialogs_connection_test_never_asks() {
     engine.send(Command::TestConnection {
         data_source: data_source.clone(),
         password: PasswordUpdate::Keep,
+        ssh_secret: PasswordUpdate::Keep,
     });
 
     match engine.next_event() {
@@ -186,10 +196,12 @@ fn connects_to_postgres_with_the_password_given_at_the_prompt() {
         data_source: id,
         password: server.password.clone(),
         save: true,
+        secret: Secret::Database,
     });
     engine.expect(Event::PasswordProvided {
         data_source: id,
         kept: PasswordKept::Saved,
+        secret: Secret::Database,
     });
     engine.send(Command::Connect(id));
 

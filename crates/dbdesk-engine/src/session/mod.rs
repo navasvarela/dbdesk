@@ -26,13 +26,11 @@ use tokio::task::JoinHandle;
 
 use crate::events::EventSink;
 use crate::history::HistoryLog;
-use crate::open::{OpenError, open};
+use crate::open::{Connector, OpenError, TypedSecrets, open};
 use crate::passwords::{Prompting, SessionPasswords};
 use crate::read_only;
-use crate::{
-    ConsoleId, Event, PasswordUpdate, RunId, RunPurpose, SessionState, TransactionEnd,
-    TransactionMode,
-};
+use crate::tunnels::Tunnels;
+use crate::{ConsoleId, Event, RunId, RunPurpose, SessionState, TransactionEnd, TransactionMode};
 use guard::ReadOnly;
 
 /// Work for a session's connection. Answered with events, in the order received.
@@ -69,6 +67,7 @@ pub(crate) enum SessionOwner {
 pub(crate) struct Services {
     pub(crate) secrets: Arc<dyn SecretStore>,
     pub(crate) passwords: SessionPasswords,
+    pub(crate) tunnels: Tunnels,
     pub(crate) events: EventSink,
     pub(crate) history: HistoryLog,
 }
@@ -92,6 +91,7 @@ impl Session {
         let Services {
             secrets,
             passwords,
+            tunnels,
             events,
             history,
         } = services;
@@ -120,7 +120,11 @@ impl Session {
         };
         let task = tokio::spawn(run(
             context,
-            Credentials { secrets, passwords },
+            Credentials {
+                secrets,
+                passwords,
+                tunnels,
+            },
             signals,
             request_receiver,
         ));
@@ -260,10 +264,11 @@ async fn cancel_running_statement(cancel_handle: &dyn CancelHandle) {
     }
 }
 
-/// Where a session finds its password.
+/// Where a session finds its secrets and tunnel.
 struct Credentials {
     secrets: Arc<dyn SecretStore>,
     passwords: SessionPasswords,
+    tunnels: Tunnels,
 }
 
 async fn run(
@@ -307,12 +312,16 @@ async fn connect(
     context.notify(SessionState::Connecting);
     tracing::info!(data_source = %name, "connecting to {}", context.data_source.config);
     let started = Instant::now();
+    let typed = TypedSecrets::default();
     let attempt = tokio::select! {
         attempt = open(
             &context.data_source,
-            &credentials.secrets,
-            &PasswordUpdate::Keep,
-            Prompting::Ask(&credentials.passwords),
+            &typed,
+            Connector {
+                secrets: &credentials.secrets,
+                tunnels: &credentials.tunnels,
+                prompting: Prompting::Ask(&credentials.passwords),
+            },
         ) => attempt,
         _ = disconnect_signal => {
             tracing::info!(data_source = %name, "connection attempt cancelled");
@@ -336,9 +345,10 @@ async fn connect(
             let description = describe_error(&error);
             tracing::warn!(data_source = %name, "connection failed: {description}");
             context.notify(SessionState::Failed(description));
-            if let OpenError::PasswordNeeded(reason) = error {
+            if let OpenError::PasswordNeeded { secret, reason } = error {
                 context.send(Event::PasswordNeeded {
                     data_source: context.data_source.id,
+                    secret,
                     reason,
                 });
             }

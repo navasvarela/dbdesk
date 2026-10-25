@@ -21,6 +21,29 @@ pub async fn check_lifecycle(mut connection: Box<dyn Connection>) {
     connection.close().await.expect("close");
 }
 
+/// A port on this machine that forwards every connection to `server` (`host:port`), standing
+/// in for an SSH tunnel's local end: a driver connected to it with [`crate::Route::Tunnel`]
+/// must reach the server, and still check TLS against the server's own name. Forwards until
+/// the test's runtime ends.
+pub async fn forwarder(server: &str) -> std::net::SocketAddr {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind the forwarding port");
+    let local = listener.local_addr().expect("forwarding port's address");
+    let server = server.to_owned();
+    tokio::spawn(async move {
+        while let Ok((mut inbound, _)) = listener.accept().await {
+            let server = server.clone();
+            tokio::spawn(async move {
+                if let Ok(mut outbound) = tokio::net::TcpStream::connect(&server).await {
+                    let _ = tokio::io::copy_bidirectional(&mut inbound, &mut outbound).await;
+                }
+            });
+        }
+    });
+    local
+}
+
 /// A connection attempt that can't succeed is reported as [`DriverError::Connect`].
 pub fn check_connect_failure<C>(result: Result<C, DriverError>) {
     match result {

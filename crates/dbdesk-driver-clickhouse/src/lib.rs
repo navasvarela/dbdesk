@@ -19,13 +19,15 @@ use async_trait::async_trait;
 use clickhouse::Client;
 use dbdesk_core::{
     BoxError, CancelHandle, CatalogNode, CatalogPath, ClickHouseConfig, Connection, DriverError,
-    Password, Quoting, Rejection, RelationName, ResultCursor, ServerInfo, TableDescription,
+    Password, Quoting, Rejection, RelationName, ResultCursor, Route, ServerInfo, TableDescription,
     TlsMode, TransactionStatus,
 };
 pub use dbdesk_tls::TlsSetupError;
+use hyper_rustls::FixedServerNameResolver;
 use hyper_util::client::legacy::Client as HyperClient;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
+use rustls::pki_types::ServerName;
 use uuid::Uuid;
 
 /// How long the server keeps an idle session, in seconds: an hour, the most a server allows by
@@ -61,9 +63,13 @@ const REQUEST_SETTINGS: &[(&str, &str)] = &[
 pub async fn connect(
     config: &ClickHouseConfig,
     password: Option<&Password>,
+    route: Route,
 ) -> Result<ClickHouseConnection, DriverError> {
-    let port = config.server.port_number()?;
-    let base = client(config, port, password).map_err(connect_error)?;
+    let address = match route {
+        Route::Direct => format!("{}:{}", config.server.host, config.server.port_number()?),
+        Route::Tunnel(local) => local.to_string(),
+    };
+    let base = client(config, &address, password).map_err(connect_error)?;
     // The session's database is set once with `USE`, not sent with every request: a
     // request's `database` would undo the user's own `USE`.
     let session = base
@@ -88,15 +94,16 @@ pub async fn connect(
     })
 }
 
-/// A client for the server in `config`, with no session and no database.
+/// A client for the server in `config`, reached at `address` (`host:port`, the server's own
+/// or an SSH tunnel's), with no session and no database.
 ///
 /// HTTPS is a port of its own (8443), not an upgrade of the HTTP one, so `prefer` can't try
 /// TLS and fall back on the same port: it means plain HTTP, as `disable` does.
 fn client(
     config: &ClickHouseConfig,
-    port: u16,
+    address: &str,
     password: Option<&Password>,
-) -> Result<Client, TlsSetupError> {
+) -> Result<Client, BoxError> {
     let server = &config.server;
     let mut http = HttpConnector::new();
     http.enforce_http(false);
@@ -106,9 +113,12 @@ fn client(
             Client::with_http_client(HyperClient::builder(TokioExecutor::new()).build(http)),
         ),
         tls @ (TlsMode::Require | TlsMode::VerifyFull { .. }) => {
+            // The URL may name a tunnel's local end; the certificate must name the server.
+            let server_name = ServerName::try_from(server.host.clone())?;
             let connector = hyper_rustls::HttpsConnectorBuilder::new()
                 .with_tls_config(dbdesk_tls::client_config(tls)?)
                 .https_only()
+                .with_server_name_resolver(FixedServerNameResolver::new(server_name))
                 .enable_http1()
                 .wrap_connector(http);
             (
@@ -120,7 +130,7 @@ fn client(
         }
     };
     let client = client
-        .with_url(format!("{scheme}://{}:{port}", server.host))
+        .with_url(format!("{scheme}://{address}"))
         .with_user(&server.user)
         .with_password(password.map_or("", Password::expose));
     Ok(REQUEST_SETTINGS

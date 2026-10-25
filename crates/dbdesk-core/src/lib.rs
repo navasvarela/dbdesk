@@ -20,7 +20,7 @@ pub use catalog::{CatalogNode, CatalogPath, FolderKind, NodeKind, PathSegment};
 pub use connection::{Connection, Rejection, RejectionKind, ServerInfo};
 pub use data_source::{
     ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DriverKind, DuckDbConfig,
-    DuckDbDatabase, McpLogin, MysqlConfig, Port, PostgresConfig, ProjectId, SafetyLevel,
+    DuckDbDatabase, McpLogin, MysqlConfig, Port, PostgresConfig, ProjectId, Route, SafetyLevel,
     ServerConfig, SourceColor, SqlServerConfig, SqliteConfig, SshConfig, SshLogin, TlsMode,
 };
 pub use error::{BoxError, DriverError, describe_error};

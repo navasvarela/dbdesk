@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -41,6 +42,8 @@ pub struct EngineConfig {
     pub settings: SettingsFile,
     pub releases: Arc<dyn ReleaseFeed>,
     pub updater: Arc<dyn UpdateInstaller>,
+    /// OpenSSH's `known_hosts`, which SSH tunnels check host keys against.
+    pub known_hosts: PathBuf,
 }
 
 /// The UI's connection to a running engine.

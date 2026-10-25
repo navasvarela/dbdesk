@@ -14,7 +14,8 @@ use std::str::FromStr;
 
 use dbdesk_core::{
     ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, MysqlConfig, Password,
-    PostgresConfig, ServerConfig, SqlServerConfig, SqliteConfig, TlsMode,
+    PostgresConfig, SafetyLevel, ServerConfig, SqlServerConfig, SqliteConfig, SshConfig, SshLogin,
+    TlsMode,
 };
 use dbdesk_engine::{
     Command, EngineConfig, EngineHandle, Event, InstallError, InstallSupport, Release,
@@ -181,6 +182,7 @@ impl TestEngine {
             settings: SettingsFile::new(dir.join("settings.toml")),
             releases: Arc::new(releases),
             updater: Arc::new(installer),
+            known_hosts: dir.join("known_hosts"),
         };
         let engine = EngineHandle::start(config, SignalRepaint(sender)).unwrap();
         Self { engine, repaints }
@@ -339,6 +341,89 @@ pub fn clickhouse_test_server() -> Option<(ClickHouseConfig, Password)> {
         .expect("clickhouse:// URL");
     let (server, password) = parse_server(rest, "8123");
     Some((ClickHouseConfig { server }, password))
+}
+
+/// The `ssh` compose service and the PostgreSQL service as it reaches it, from
+/// `DBDESK_TEST_SSH_URL` (`ssh://user:password@host:port`) and `DBDESK_TEST_SSH_POSTGRES_URL`.
+pub struct SshTestServer {
+    pub host: String,
+    pub port: u16,
+    pub user: String,
+    pub password: Password,
+    pub postgres: ParsedUrl,
+}
+
+impl SshTestServer {
+    /// Signing in as the test user, with `login`.
+    pub fn ssh(&self, login: SshLogin) -> SshConfig {
+        SshConfig {
+            host: self.host.clone(),
+            port: self.port.into(),
+            user: self.user.clone(),
+            login,
+        }
+    }
+
+    /// The test client key, in docker/ssh, that the server accepts.
+    pub fn key_login(&self) -> SshLogin {
+        SshLogin::KeyFile {
+            key_file: docker_ssh("client_ed25519"),
+        }
+    }
+
+    /// A `known_hosts` line trusting the test server's host key.
+    pub fn trusted_line(&self) -> String {
+        let key = std::fs::read_to_string(docker_ssh("ssh_host_ed25519_key.pub")).unwrap();
+        let mut fields = key.split_whitespace();
+        let (key_type, key_data) = (fields.next().unwrap(), fields.next().unwrap());
+        format!("[{}]:{} {key_type} {key_data}\n", self.host, self.port)
+    }
+
+    /// A PostgreSQL data source reached through the SSH server with `login`.
+    pub fn postgres_data_source(&self, login: SshLogin) -> DataSource {
+        DataSource {
+            id: DataSourceId::generate(),
+            name: "through ssh".to_owned(),
+            color: None,
+            safety: SafetyLevel::Normal,
+            project: None,
+            mcp_login: None,
+            config: ConnectionConfig::Postgres(PostgresConfig {
+                server: ServerConfig {
+                    ssh: Some(self.ssh(login)),
+                    ..self.postgres.config.server.clone()
+                },
+            }),
+        }
+    }
+}
+
+pub fn ssh_test_server() -> Option<SshTestServer> {
+    let (Ok(ssh), Ok(postgres)) = (
+        std::env::var("DBDESK_TEST_SSH_URL"),
+        std::env::var("DBDESK_TEST_SSH_POSTGRES_URL"),
+    ) else {
+        eprintln!("skipped: set DBDESK_TEST_SSH_URL and DBDESK_TEST_SSH_POSTGRES_URL");
+        return None;
+    };
+    let rest = ssh.strip_prefix("ssh://").expect("ssh:// URL");
+    let (credentials, address) = rest.split_once('@').expect("user:password@ in URL");
+    let (user, password) = credentials.split_once(':').expect("password in URL");
+    let (host, port) = address.split_once(':').expect("host:port in URL");
+    Some(SshTestServer {
+        host: host.to_owned(),
+        port: port.parse().expect("numeric port"),
+        user: user.to_owned(),
+        password: Password::new(password),
+        postgres: parse_test_url(&postgres),
+    })
+}
+
+/// A file of the `ssh` compose service's, in docker/ssh.
+pub fn docker_ssh(file: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docker/ssh")
+        .join(file)
 }
 
 pub struct ParsedUrl {

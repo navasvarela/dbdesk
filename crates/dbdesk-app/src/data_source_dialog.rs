@@ -26,7 +26,11 @@ const FIELD_WIDTH: f32 = 280.0;
 const SWATCH_RADIUS: f32 = 8.0;
 
 pub enum DialogAction {
-    Test(DataSource, PasswordUpdate),
+    Test {
+        data_source: DataSource,
+        password: PasswordUpdate,
+        ssh_secret: PasswordUpdate,
+    },
     Save {
         data_source: DataSource,
         password: PasswordUpdate,
@@ -270,8 +274,13 @@ impl DataSourceDialog {
         if cancel {
             Some(DialogAction::Close)
         } else if test {
+            let ssh_secret = self.form.ssh_secret_update();
             self.submit(Status::Testing)
-                .map(|(data_source, password)| DialogAction::Test(data_source, password))
+                .map(|(data_source, password)| DialogAction::Test {
+                    data_source,
+                    password,
+                    ssh_secret,
+                })
         } else if save {
             let mcp_password = self.form.mcp_password_change();
             let ssh_secret = self.form.ssh_secret_update();

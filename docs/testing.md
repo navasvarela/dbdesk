@@ -77,6 +77,12 @@ logins and abandon handshakes on purpose, so the server turns off OpenSSH's pena
 address that does that (`PerSourcePenalties`), which would otherwise refuse the next test's
 connection.
 
+Each network driver also connects through `conformance::forwarder`, a local port standing in
+for a tunnel's end, with `Route::Tunnel`. The PostgreSQL and ClickHouse tests also check that
+TLS is still verified against the server's own name: their certificate names `localhost`, so
+the same server under another name is refused. The engine's `tests/ssh.rs` connects through the
+`ssh` service itself, signing in with the test key or a prompted password.
+
 Every server engine follows the same pattern: a service in `docker-compose.yml` and its URL in
 `test-servers.env`, which CI reads too. To run everything locally:
 

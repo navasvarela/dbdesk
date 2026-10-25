@@ -14,7 +14,7 @@ use crate::events::EventSink;
 use crate::export;
 use crate::history::HistoryLog;
 use crate::keymap;
-use crate::open::{create_database_file, test_connection};
+use crate::open::{TypedSecrets, create_database_file, test_connection};
 use crate::passwords::SessionPasswords;
 use crate::projects::{ProjectError, ProjectRegistry};
 use crate::registry::{Registry, RegistryError};
@@ -22,6 +22,7 @@ use crate::releases::{self, ReleaseFeed};
 use crate::session::{Script, Services, Session, SessionOwner, SessionRequest};
 use crate::settings;
 use crate::transfer;
+use crate::tunnels::Tunnels;
 use crate::updater::{self, UpdateInstaller};
 use crate::{
     Command, ConsoleId, EditFailure, EngineConfig, Event, PasswordKept, PasswordUpdate, RunOutcome,
@@ -61,6 +62,7 @@ pub(crate) async fn run(
         projects,
         secrets: config.secrets,
         passwords: SessionPasswords::default(),
+        tunnels: Tunnels::new(config.known_hosts),
         console_files: config.consoles,
         keymap_file: config.keymap,
         settings_file: config.settings,
@@ -95,6 +97,8 @@ struct Engine {
     secrets: Arc<dyn SecretStore>,
     /// Passwords given at the prompt, shared with every session.
     passwords: SessionPasswords,
+    /// SSH tunnels, shared with every session so a data source's sessions share one.
+    tunnels: Tunnels,
     console_files: ConsoleFiles,
     keymap_file: KeymapFile,
     settings_file: SettingsFile,
@@ -167,20 +171,29 @@ impl Engine {
             Command::TestConnection {
                 data_source,
                 password,
+                ssh_secret,
             } => {
                 tokio::spawn(test_connection(
                     data_source,
-                    password,
+                    TypedSecrets {
+                        password,
+                        ssh: ssh_secret,
+                    },
                     Arc::clone(&self.secrets),
+                    self.tunnels.clone(),
                     self.events.clone(),
                 ));
             }
             Command::Connect(id) => self.connect(id),
             Command::ProvidePassword {
                 data_source,
+                secret,
                 password,
                 save,
-            } => self.provide_password(data_source, password, save).await,
+            } => {
+                self.provide_password(data_source, secret, password, save)
+                    .await
+            }
             Command::Disconnect(id) => self.disconnect(id),
             Command::LoadChildren { id, path } => {
                 self.request(id, SessionRequest::Children(path));
@@ -343,9 +356,7 @@ impl Engine {
         secret: Secret,
         value: Password,
     ) -> Result<(), SaveError> {
-        if secret == Secret::Database {
-            self.passwords.remove(id);
-        }
+        self.passwords.remove(id, secret);
         let secrets = Arc::clone(&self.secrets);
         tokio::task::spawn_blocking(move || secrets.set(id, secret, &value))
             .await
@@ -357,7 +368,7 @@ impl Engine {
         self.disconnect(id);
         match self.registry.remove(id).await {
             Ok(true) => {
-                self.passwords.remove(id);
+                self.passwords.remove_all(id);
                 self.delete_secrets(id).await;
                 tracing::info!(%id, "deleted data source");
                 self.events.send(Event::DataSourceDeleted(id));
@@ -444,10 +455,11 @@ impl Engine {
     async fn provide_password(
         &mut self,
         data_source: DataSourceId,
-        password: dbdesk_core::Password,
+        secret: Secret,
+        password: Password,
         save: bool,
     ) {
-        self.passwords.insert(data_source, password.clone());
+        self.passwords.insert(data_source, secret, password.clone());
         // The explorer's session that asked for the password has reported its failure, but
         // its task may not have ended yet; `connect` would then take it for one still
         // connecting and ignore the Connect the UI sends next. A prompt only follows a failed
@@ -457,10 +469,9 @@ impl Engine {
         }
         let kept = if save {
             let secrets = Arc::clone(&self.secrets);
-            let result = tokio::task::spawn_blocking(move || {
-                secrets.set(data_source, Secret::Database, &password)
-            })
-            .await;
+            let result =
+                tokio::task::spawn_blocking(move || secrets.set(data_source, secret, &password))
+                    .await;
             match result {
                 Ok(Ok(())) => PasswordKept::Saved,
                 Ok(Err(error)) => PasswordKept::SaveFailed(describe_error(&error)),
@@ -477,8 +488,11 @@ impl Engine {
                 tracing::info!(%data_source, "password given: {kept:?}");
             }
         }
-        self.events
-            .send(Event::PasswordProvided { data_source, kept });
+        self.events.send(Event::PasswordProvided {
+            data_source,
+            secret,
+            kept,
+        });
     }
 
     fn export(&self, path: PathBuf, data_sources: &[DataSourceId], projects: &[ProjectId]) {
@@ -676,6 +690,7 @@ impl Engine {
         Services {
             secrets: Arc::clone(&self.secrets),
             passwords: self.passwords.clone(),
+            tunnels: self.tunnels.clone(),
             events: self.events.clone(),
             history: self.history.clone(),
         }

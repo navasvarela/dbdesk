@@ -14,7 +14,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use dbdesk_core::{
     BoxError, CancelHandle, CatalogNode, CatalogPath, Connection, DriverError, MysqlConfig,
-    Password, Quoting, Rejection, RelationName, ResultCursor, ServerInfo, TableDescription,
+    Password, Quoting, Rejection, RelationName, ResultCursor, Route, ServerInfo, TableDescription,
     TransactionStatus,
 };
 use mysql_async::consts::StatusFlags;
@@ -48,15 +48,26 @@ pub(crate) const MYSQL_QUOTING: Quoting = Quoting {
 pub async fn connect(
     config: &MysqlConfig,
     password: Option<&Password>,
+    route: Route,
 ) -> Result<MysqlConnection, DriverError> {
     install_crypto_provider();
-    let port = config.server.port_number()?;
-    let ssl_opts = tls::ssl_opts(&config.server.tls).map_err(connect_error)?;
-    let encrypted = base_opts(config, port, password).ssl_opts(ssl_opts);
+    let address = match route {
+        Route::Direct => (config.server.host.clone(), config.server.port_number()?),
+        Route::Tunnel(local) => (local.ip().to_string(), local.port()),
+    };
+    let mut ssl_opts = tls::ssl_opts(&config.server.tls).map_err(connect_error)?;
+    if let (Route::Tunnel(_), Some(opts)) = (route, ssl_opts.as_mut()) {
+        // The socket goes to the tunnel's local end; the certificate must still name the
+        // server.
+        *opts = opts
+            .clone()
+            .with_danger_tls_hostname_override(Some(config.server.host.clone()));
+    }
+    let encrypted = base_opts(config, &address, password).ssl_opts(ssl_opts);
     let (mut conn, opts) = match Conn::new(encrypted.clone()).await {
         Ok(conn) => (conn, Opts::from(encrypted)),
         Err(error) if tls::falls_back_to_plain_text(&config.server.tls, &error) => {
-            let plain = base_opts(config, port, password);
+            let plain = base_opts(config, &address, password);
             let conn = Conn::new(plain.clone()).await.map_err(connect_error)?;
             (conn, Opts::from(plain))
         }
@@ -89,11 +100,16 @@ fn install_crypto_provider() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
-fn base_opts(config: &MysqlConfig, port: u16, password: Option<&Password>) -> OptsBuilder {
+/// The options for connecting to `address`: the server's host and port, or a tunnel's.
+fn base_opts(
+    config: &MysqlConfig,
+    (host, port): &(String, u16),
+    password: Option<&Password>,
+) -> OptsBuilder {
     let server = &config.server;
     OptsBuilder::default()
-        .ip_or_hostname(server.host.clone())
-        .tcp_port(port)
+        .ip_or_hostname(host.clone())
+        .tcp_port(*port)
         .user(Some(server.user.clone()))
         .pass(password.map(|password| password.expose().to_owned()))
         .db_name(Some(server.database.clone()))

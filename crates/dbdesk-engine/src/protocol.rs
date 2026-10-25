@@ -7,7 +7,7 @@ use dbdesk_core::{
 };
 use dbdesk_store::{
     ConsoleKey, HistoryEntry, HistoryQuery, ImportPlan, ImportPreview, KeymapBindings,
-    McpOverrides, McpPermissions, Project, Projects, SavedConsole, Settings,
+    McpOverrides, McpPermissions, Project, Projects, SavedConsole, Secret, Settings,
 };
 
 use crate::{Export, PasswordNeeded, Release};
@@ -91,18 +91,21 @@ pub enum Command {
     /// added or replacing the one with its id. Answered by an [`Event::ProjectSaved`] and
     /// [`Event::DataSourceSaved`] for each, then [`Event::ImportApplied`].
     ApplyImport(ImportPlan),
-    /// Connects with these settings without saving them, then disconnects.
-    /// Answered by [`Event::ConnectionTested`].
+    /// Connects with these settings, and the secrets typed with them, without saving them,
+    /// then disconnects. Answered by [`Event::ConnectionTested`].
     TestConnection {
         data_source: DataSource,
         password: PasswordUpdate,
+        ssh_secret: PasswordUpdate,
     },
     Connect(DataSourceId),
-    /// The password the user typed at the prompt that [`Event::PasswordNeeded`] opened. Kept
-    /// in memory until dbdesk quits, and also saved to the keychain if `save` is set. The UI
-    /// connects again afterwards. Answered by [`Event::PasswordProvided`].
+    /// The password the user typed at the prompt that [`Event::PasswordNeeded`] opened, for
+    /// the secret it asked for. Kept in memory until dbdesk quits, and also saved to the
+    /// keychain if `save` is set. The UI connects again afterwards. Answered by
+    /// [`Event::PasswordProvided`].
     ProvidePassword {
         data_source: DataSourceId,
+        secret: Secret,
         password: Password,
         save: bool,
     },
@@ -239,9 +242,10 @@ pub enum PasswordKept {
     SaveFailed(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum PasswordUpdate {
     /// Use whatever password is saved, if any.
+    #[default]
     Keep,
     Set(Password),
 }
@@ -352,12 +356,13 @@ pub enum Event {
         id: DataSourceId,
         result: Result<ServerInfo, String>,
     },
-    /// A connection to the data source was not attempted for want of a password: none is
-    /// saved, or the keychain couldn't be read. The session that wanted it reports
-    /// [`SessionState::Failed`] too; the UI asks for the password and answers with
-    /// [`Command::ProvidePassword`].
+    /// A connection to the data source was not attempted for want of a secret, its database
+    /// password or what its SSH login needs: none is saved, or the keychain couldn't be read.
+    /// The session that wanted it reports [`SessionState::Failed`] too; the UI asks for it
+    /// and answers with [`Command::ProvidePassword`].
     PasswordNeeded {
         data_source: DataSourceId,
+        secret: Secret,
         reason: PasswordNeeded,
     },
     /// The answer to [`Command::ExportDataSources`]: how many data sources were written.
@@ -377,6 +382,7 @@ pub enum Event {
     /// The answer to [`Command::ProvidePassword`].
     PasswordProvided {
         data_source: DataSourceId,
+        secret: Secret,
         kept: PasswordKept,
     },
     ChildrenLoaded {

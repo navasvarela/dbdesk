@@ -121,6 +121,7 @@ pub fn start_app(
         settings: SettingsFile::new(dir.join("settings.toml")),
         releases: Arc::new(FixedReleases::current()),
         updater: Arc::new(FakeInstaller::default()),
+        known_hosts: dir.join("known_hosts"),
     };
     builder.build_eframe(|cc| DbDeskApp::new(cc, log_feed, config).unwrap())
 }
