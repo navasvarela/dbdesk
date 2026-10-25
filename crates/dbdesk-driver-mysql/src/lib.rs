@@ -50,12 +50,13 @@ pub async fn connect(
     password: Option<&Password>,
 ) -> Result<MysqlConnection, DriverError> {
     install_crypto_provider();
+    let port = config.server.port_number()?;
     let ssl_opts = tls::ssl_opts(&config.server.tls).map_err(connect_error)?;
-    let encrypted = base_opts(config, password).ssl_opts(ssl_opts);
+    let encrypted = base_opts(config, port, password).ssl_opts(ssl_opts);
     let (mut conn, opts) = match Conn::new(encrypted.clone()).await {
         Ok(conn) => (conn, Opts::from(encrypted)),
         Err(error) if tls::falls_back_to_plain_text(&config.server.tls, &error) => {
-            let plain = base_opts(config, password);
+            let plain = base_opts(config, port, password);
             let conn = Conn::new(plain.clone()).await.map_err(connect_error)?;
             (conn, Opts::from(plain))
         }
@@ -88,11 +89,11 @@ fn install_crypto_provider() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
-fn base_opts(config: &MysqlConfig, password: Option<&Password>) -> OptsBuilder {
+fn base_opts(config: &MysqlConfig, port: u16, password: Option<&Password>) -> OptsBuilder {
     let server = &config.server;
     OptsBuilder::default()
         .ip_or_hostname(server.host.clone())
-        .tcp_port(server.port)
+        .tcp_port(port)
         .user(Some(server.user.clone()))
         .pass(password.map(|password| password.expose().to_owned()))
         .db_name(Some(server.database.clone()))

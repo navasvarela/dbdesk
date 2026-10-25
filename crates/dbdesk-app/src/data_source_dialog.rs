@@ -2,8 +2,11 @@
 
 use std::path::{Path, PathBuf};
 
-use dbdesk_core::{DataSource, DataSourceId, DriverKind, ServerInfo, SourceColor};
-use dbdesk_engine::{Event, PasswordUpdate};
+use dbdesk_core::{
+    DataSource, DataSourceId, DriverKind, ServerInfo, SourceColor, expand, expand_path,
+    has_placeholder,
+};
+use dbdesk_engine::{Event, PasswordUpdate, ProcessEnvironment};
 use egui::{
     Align, Button, Color32, Grid, Id, Layout, Modal, RichText, Sense, Stroke, TextEdit, Ui,
     WidgetInfo, WidgetType, vec2,
@@ -274,10 +277,16 @@ impl DataSourceDialog {
 fn server_rows(ui: &mut Ui, fields: &mut ServerFields, password_hint: &str) {
     let defaults = fields.defaults;
     let default_port = defaults.port.to_string();
-    text_row(ui, "Host", &mut fields.host, defaults.host);
-    text_row(ui, "Port", &mut fields.port, &default_port);
-    text_row(ui, "Database", &mut fields.database, defaults.database);
-    text_row(ui, "User", &mut fields.user, defaults.user);
+    setting_row(ui, "Host", &mut fields.host, defaults.host, Resolve::Text);
+    setting_row(ui, "Port", &mut fields.port, &default_port, Resolve::Text);
+    setting_row(
+        ui,
+        "Database",
+        &mut fields.database,
+        defaults.database,
+        Resolve::Text,
+    );
+    setting_row(ui, "User", &mut fields.user, defaults.user, Resolve::Text);
     let label = ui.label("Password");
     ui.add(
         TextEdit::singleline(&mut fields.password)
@@ -308,7 +317,13 @@ fn tls_rows(ui: &mut Ui, fields: &mut ServerFields) {
     if fields.tls != TlsChoice::VerifyFull {
         return;
     }
-    text_row(ui, "CA file", &mut fields.ca_file, "public authorities");
+    setting_row(
+        ui,
+        "CA file",
+        &mut fields.ca_file,
+        "public authorities",
+        Resolve::Path,
+    );
     ui.label("");
     let palette = Palette::for_visuals(ui.visuals());
     if file_button(ui, icons::FOLDER_OPEN, palette.warning, "Browse…")
@@ -324,7 +339,13 @@ fn tls_rows(ui: &mut Ui, fields: &mut ServerFields) {
 /// The file field, then Browse… (open an existing database) and New… (create one). Returns the
 /// path of a database to create, if New… was used; the engine creates it.
 fn sqlite_rows(ui: &mut Ui, fields: &mut SqliteFields) -> Option<PathBuf> {
-    text_row(ui, "File", &mut fields.path, "/path/to/database.db");
+    setting_row(
+        ui,
+        "File",
+        &mut fields.path,
+        "/path/to/database.db",
+        Resolve::Path,
+    );
     ui.label("");
     let new_database = ui
         .horizontal(|ui| {
@@ -414,6 +435,46 @@ fn swatch(
     };
     painter.circle_stroke(center, SWATCH_RADIUS + 2.5, ring);
     response.on_hover_text(name)
+}
+
+/// How a setting's placeholders are resolved when connecting.
+#[derive(Clone, Copy)]
+enum Resolve {
+    Text,
+    /// Also turns a leading `~` into the home folder.
+    Path,
+}
+
+/// A setting's row, then, when it holds a `${NAME}` placeholder, a row saying what that
+/// currently resolves to, or why it doesn't: the same rules connecting uses.
+fn setting_row(ui: &mut Ui, label: &str, value: &mut String, hint: &str, resolve: Resolve) {
+    text_row(ui, label, value, hint);
+    let text = value.trim();
+    if !has_placeholder(text) {
+        return;
+    }
+    let resolved = match resolve {
+        Resolve::Text => expand(text, &ProcessEnvironment),
+        Resolve::Path => {
+            expand_path(Path::new(text), &ProcessEnvironment).map(|path| path.display().to_string())
+        }
+    };
+    let palette = Palette::for_visuals(ui.visuals());
+    ui.label("");
+    match resolved {
+        Ok(resolved) => ui.label(
+            RichText::new(format!("= {resolved}"))
+                .small()
+                .color(palette.text_weak),
+        ),
+        Err(error) => ui.label(
+            RichText::new(error.to_string())
+                .small()
+                .color(palette.warning),
+        ),
+    }
+    .on_hover_text("Placeholders are resolved from the environment dbdesk was started in");
+    ui.end_row();
 }
 
 /// A label and a text field, linked so screen readers (and UI tests) find the field by label.

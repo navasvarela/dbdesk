@@ -1050,11 +1050,11 @@ mod tests {
         assert_eq!(
             (
                 server.host.as_str(),
-                server.port,
+                server.port.clone(),
                 server.database.as_str(),
                 server.user.as_str()
             ),
-            ("localhost", 3306, "mysql", "root")
+            ("localhost", 3306.into(), "mysql", "root")
         );
     }
 
@@ -1090,11 +1090,11 @@ mod tests {
         assert_eq!(
             (
                 server.host.as_str(),
-                server.port,
+                server.port.clone(),
                 server.database.as_str(),
                 server.user.as_str()
             ),
-            ("localhost", 1433, "master", "sa")
+            ("localhost", 1433.into(), "master", "sa")
         );
     }
 

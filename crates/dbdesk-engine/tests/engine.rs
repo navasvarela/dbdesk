@@ -70,7 +70,7 @@ fn reloads_saved_data_sources_and_stores_passwords_in_the_secret_store() {
         config: ConnectionConfig::Postgres(PostgresConfig {
             server: ServerConfig {
                 host: "db.internal".to_owned(),
-                port: 5432,
+                port: 5432.into(),
                 database: "app".to_owned(),
                 user: "juan".to_owned(),
                 tls: TlsMode::Require,
@@ -302,6 +302,34 @@ fn reports_failed_tests_and_connections() {
     engine.send(Command::Connect(id));
     assert_eq!(engine.expect_session(id), SessionState::Connecting);
     assert!(matches!(engine.expect_session(id), SessionState::Failed(_)));
+}
+
+/// Never set anywhere, so the placeholder that names it can't resolve.
+const UNSET_VARIABLE: &str = "DBDESK_TEST_NEVER_SET";
+
+#[test]
+fn stops_a_connection_whose_placeholder_is_unset_saying_which_setting_uses_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    engine.expect_started(vec![]);
+    let shared = sqlite_data_source(format!("${{{UNSET_VARIABLE}}}/shop.db").into());
+    let id = shared.id;
+    engine.send(Command::SaveDataSource {
+        data_source: shared,
+        password: PasswordUpdate::Keep,
+    });
+    assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
+
+    engine.send(Command::Connect(id));
+
+    assert_eq!(engine.expect_session(id), SessionState::Connecting);
+    assert_eq!(
+        engine.expect_session(id),
+        SessionState::Failed(format!(
+            "could not resolve the file: ${{{UNSET_VARIABLE}}} is not set"
+        ))
+    );
+    assert!(!dir.path().join(format!("${{{UNSET_VARIABLE}}}")).exists());
 }
 
 #[test]
