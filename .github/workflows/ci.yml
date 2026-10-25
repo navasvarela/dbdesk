@@ -4,13 +4,11 @@ on:
   push:
     branches: [main]
   pull_request:
-  # The release workflow runs the full suite on the commit it packages.
-  workflow_call:
 
 # One run per pull request at a time: a newer push cancels the run it supersedes. GitHub also
 # sends two pull_request events for one commit when a stacked pull request's base moves, and the
-# second cancels the first. Pushes to main and the release workflow's call each get a group of
-# their own (the run id), so they are never cancelled.
+# second cancels the first. Pushes to main each get a group of their own (the run id), so they are
+# never cancelled.
 concurrency:
   group: ci-${{ github.event_name == 'pull_request' && github.head_ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -47,11 +45,18 @@ jobs:
         # machine yet; see docs/releasing.md.
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    # sccache caches compiler output in GitHub's cache. `RUSTC_WRAPPER` puts it in front of rustc,
+    # and the cc crate also uses it for C and C++ when it is sccache, which covers DuckDB's bundled
+    # C++ engine: compiling that took 10–14 minutes per OS on every cold build.
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - uses: mozilla-actions/sccache-action@v0.0.11
       # Pull requests restore main's cache but never save their own. Each save took 30–50 s,
       # and GitHub keeps 10 GB of cache per repository, so pull request caches pushed main's
       # out and later runs started cold.
