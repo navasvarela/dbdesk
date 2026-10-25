@@ -33,7 +33,6 @@ use crate::read_only;
 use crate::tunnels::Tunnels;
 use crate::{ConsoleId, Event, RunId, RunPurpose, SessionState, TransactionEnd, TransactionMode};
 use guard::ReadOnly;
-pub(crate) use loss::refusal;
 use loss::{Loss, Watched};
 
 /// Work for a session's connection. Answered with events, in the order received.
@@ -87,9 +86,6 @@ pub(crate) struct Session {
     /// The run most recently asked to stop. A watch rather than a request, because it must
     /// reach the task while it is busy with that very run.
     cancel: watch::Sender<Option<RunId>>,
-    /// Why a console's session ended with its connection lost, if it did: until the console
-    /// reconnects, its work is refused rather than run on a new connection unawares.
-    lost: Loss,
     task: JoinHandle<()>,
 }
 
@@ -113,10 +109,8 @@ impl Session {
             Some(_) => read_only::connection_config(data_source),
             None => data_source,
         };
-        let lost = Loss::default();
         let context = SessionContext {
             data_source,
-            lost: lost.clone(),
             idle_ping_after,
             read_only,
             owner,
@@ -143,7 +137,6 @@ impl Session {
             disconnect,
             requests,
             cancel,
-            lost,
             task,
         }
     }
@@ -151,11 +144,6 @@ impl Session {
     /// Whether the session has ended, by disconnecting or by failing to connect.
     pub(crate) fn is_finished(&self) -> bool {
         self.task.is_finished()
-    }
-
-    /// Why a console's session ended with its connection lost, if it did.
-    pub(crate) fn lost(&self) -> Option<String> {
-        self.lost.reason()
     }
 
     pub(crate) fn request(&self, request: SessionRequest) {
@@ -186,8 +174,6 @@ struct SessionContext {
     data_source: DataSource,
     /// How long the connection may sit unused before it is pinged ahead of its next request.
     idle_ping_after: Duration,
-    /// Where a console's session notes that it ended with its connection lost.
-    lost: Loss,
     /// Set for a read-only data source: every statement is checked, and runs read-only.
     read_only: Option<ReadOnly>,
     owner: SessionOwner,
@@ -336,9 +322,16 @@ async fn run(
         match context.owner {
             // A console's transaction, temporary tables and settings went with the
             // connection; it reconnects only when asked, knowing that.
+            //
+            // The session stays, refusing every request, until Reconnect or closing the
+            // console replaces it. Ending here instead would leave a request sent meanwhile in
+            // a channel nobody reads, unanswered.
             SessionOwner::Console(_) => {
-                context.lost.record(&reason);
                 if let Some(request) = unserved {
+                    loss::refuse(&context, request, &reason);
+                }
+                while let Some(request) = next_request_while_lost(&mut signals, &mut requests).await
+                {
                     loss::refuse(&context, request, &reason);
                 }
                 return;

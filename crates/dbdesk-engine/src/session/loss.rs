@@ -23,11 +23,6 @@ impl Loss {
         self.lock().clone()
     }
 
-    /// Notes `reason`, unless a loss is noted already.
-    pub(super) fn record(&self, reason: &str) {
-        self.lock().get_or_insert_with(|| reason.to_owned());
-    }
-
     /// Passes `result` on, noting the first loss it reports. The reason is the driver's own
     /// error, without `DriverError::Lost`'s "the connection was lost", which whoever shows
     /// the reason says in their own words.
@@ -132,14 +127,9 @@ impl ResultCursor for WatchedCursor {
     }
 }
 
-/// What a console says when asked to do something on a connection that was lost.
-pub(crate) fn refusal(reason: &str) -> String {
-    format!("the connection was lost ({reason}); reconnect to go on")
-}
-
 /// Answers a request the lost connection can't serve, so the UI isn't left waiting.
 pub(super) fn refuse(context: &SessionContext, request: SessionRequest, reason: &str) {
-    let message = refusal(reason);
+    let message = format!("the connection was lost ({reason}); reconnect to go on");
     let console = match context.owner {
         SessionOwner::Console(console) => Some(console),
         SessionOwner::Explorer(_) => None,
