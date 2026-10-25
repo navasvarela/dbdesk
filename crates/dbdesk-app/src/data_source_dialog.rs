@@ -179,7 +179,10 @@ impl DataSourceDialog {
                     DriverFields::DuckDb(fields) => return duckdb_rows(ui, fields),
                 };
                 server_rows(ui, server, password_hint);
-                mcp_login_rows(ui, &mut self.form.mcp_login);
+                // Only where `dbdesk mcp` serves the engine; elsewhere it would never be used.
+                if dbdesk_engine::read_only::mode(self.form.driver()).is_some() {
+                    mcp_login_rows(ui, &mut self.form.mcp_login);
+                }
                 None
             })
             .inner

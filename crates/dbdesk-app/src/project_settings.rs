@@ -1,7 +1,8 @@
 //! Project settings…: whether MCP clients may use a project, and what they may do there.
 
-use dbdesk_core::{DataSource, DriverKind, ProjectId};
+use dbdesk_core::{DataSource, ProjectId};
 use dbdesk_engine::Event;
+use dbdesk_engine::read_only;
 use dbdesk_store::{McpOverrides, McpPermissions, Project, ProjectSlug};
 use egui::{Align, Button, Id, Label, Layout, Modal, RichText, Ui};
 
@@ -149,8 +150,11 @@ impl ProjectSettingsDialog {
 fn warnings(ui: &mut Ui, permissions: &McpPermissions, members: &[&DataSource]) {
     let palette = Palette::for_visuals(ui.visuals());
     let changes = permissions.write || permissions.schema || permissions.admin;
+    let served =
+        |data_source: &&&DataSource| read_only::mode(data_source.config.driver()).is_some();
     let without_login: Vec<&str> = members
         .iter()
+        .filter(served)
         .filter(|data_source| {
             data_source.config.driver().uses_password() && data_source.mcp_login.is_none()
         })
@@ -169,20 +173,21 @@ fn warnings(ui: &mut Ui, permissions: &McpPermissions, members: &[&DataSource]) 
             ui.add(Label::new(RichText::new(text).color(palette.warning)).wrap());
         });
     }
-    let has_sqlite = members
+    let without_logins = members
         .iter()
-        .any(|data_source| data_source.config.driver() == DriverKind::Sqlite);
-    if changes && has_sqlite {
+        .filter(served)
+        .any(|data_source| !data_source.config.driver().uses_password());
+    if changes && without_logins {
         ui.weak("SQLite files have no logins: for them, dbdesk's own checks are all there is.");
     }
     let unserved: Vec<&str> = members
         .iter()
-        .filter(|data_source| data_source.config.driver() == DriverKind::SqlServer)
+        .filter(|data_source| !served(data_source))
         .map(|data_source| data_source.name.as_str())
         .collect();
     if !unserved.is_empty() {
         ui.weak(format!(
-            "Not served to MCP clients yet: {} (SQL Server has no read-only mode).",
+            "Not served to MCP clients yet, since dbdesk can't make their engine read-only: {}.",
             unserved.join(", ")
         ));
     }
