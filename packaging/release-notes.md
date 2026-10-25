@@ -19,4 +19,4 @@ as GNOME Keyring or KWallet, which desktop environments run already.
 **Checking a download:** compare it with `SHA256SUMS`, for example
 `shasum -a 256 -c SHA256SUMS --ignore-missing`.
 
-The full guide is in the [user manual](https://github.com/navasvarela/dbdesk/blob/main/book/src/install.md).
+The full guide is in the [user manual](https://dbdesk.org/manual/install.html).

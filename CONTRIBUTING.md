@@ -130,6 +130,20 @@ title and a description with `gh pr edit`.
   layers above it are retargeted to `main` automatically. The merge is all or nothing: if one
   layer conflicts with `main`, nothing merges until it is brought up to date.
 
+## DuckDB's prebuilt library
+
+`cargo build` compiles DuckDB's C++ engine, which takes several minutes the first time and
+after `cargo clean`. CI and releases link DuckDB's own prebuilt library instead (see
+[duckdb-prebuilt.md](docs/duckdb-prebuilt.md)); to do the same locally, in a shell:
+
+```bash
+set -a; eval "$(packaging/duckdb/fetch.sh "$(rustc -vV | sed -n 's/^host: //p')" target/duckdb)"; set +a
+export RUSTFLAGS="--cfg dbdesk_prebuilt_duckdb"
+```
+
+Changing `RUSTFLAGS` rebuilds every crate once. On Windows, also add `DUCKDB_LIB_DIR` to
+`PATH` so the tests find `duckdb.dll`.
+
 ## Adding a database
 
 Support for a new database engine follows the steps in
