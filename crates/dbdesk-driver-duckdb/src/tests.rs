@@ -124,7 +124,11 @@ async fn a_cancel_while_idle_is_forgotten() {
 async fn links_duckdb_1_5_6_with_parquet_and_json() {
     let mut connection = connect(&in_memory()).await.unwrap();
 
-    let version = rows(&mut connection, "SELECT library_version FROM pragma_version()").await;
+    let version = rows(
+        &mut connection,
+        "SELECT library_version FROM pragma_version()",
+    )
+    .await;
     let linked = rows(
         &mut connection,
         "SELECT extension_name FROM duckdb_extensions() \
