@@ -147,6 +147,60 @@ async fn runs_pages_cancels_and_reports_error_positions() {
     Box::new(connection).close().await.unwrap();
 }
 
+/// Cancelling a result whose rows trickle in, a packet at a time with pauses between, still
+/// stops between two rows. The client is then most often waiting halfway through a row for
+/// the next packet, and dropping that read used to lose the half already read, leaving the
+/// connection out of step with the server (7 runs in 8 against a container).
+#[tokio::test]
+async fn cancels_a_result_that_trickles_in() {
+    let _shared = SHARED_DATABASE.lock().await;
+    let Some(server) = test_server() else { return };
+    let mut connection = server.connect().await;
+    let handle = connection.cancel_handle();
+
+    // Billions of combinations, of which one in 49,999 is a row: a few rows a millisecond.
+    let mut cursor = connection
+        .execute(
+            "SELECT a.object_id, b.name FROM sys.all_objects a \
+             CROSS JOIN sys.all_objects b CROSS JOIN sys.all_objects c \
+             WHERE (CAST(a.object_id AS bigint) + b.object_id + c.object_id) % 49999 = 0",
+        )
+        .await
+        .unwrap();
+    let first = cursor.next_page(100).await.unwrap();
+    assert_eq!(first.len(), 100, "rows are arriving");
+    // Cancelled while a page is being read, so a read is under way when the cancel arrives.
+    let canceller = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        handle.cancel().await
+    });
+    let started = std::time::Instant::now();
+    // The cancel ends the result: the page being read fails, or `finish` reports it.
+    let outcome = async {
+        while !cursor.is_exhausted() {
+            cursor.next_page(100_000_000).await?;
+        }
+        cursor.finish().await
+    }
+    .await;
+    canceller.await.unwrap().unwrap();
+    assert!(
+        matches!(outcome, Err(DriverError::Statement { .. })),
+        "{outcome:?}"
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(10),
+        "the result took {:?} to end",
+        started.elapsed()
+    );
+
+    connection.ping().await.unwrap();
+    assert_eq!(
+        first_row(&mut connection, "SELECT 42").await,
+        [Some("42".to_owned())]
+    );
+}
+
 /// Cancelling while a page of rows is arriving stops between two rows and leaves the
 /// connection usable, as cancelling a statement that hasn't answered yet does.
 #[tokio::test]
