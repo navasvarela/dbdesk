@@ -33,6 +33,7 @@ fn engine_with_sqlite(dir: &std::path::Path) -> (TestEngine, DataSourceId) {
     engine.send(Command::SaveDataSource {
         data_source,
         password: PasswordUpdate::Keep,
+        ssh_secret: PasswordUpdate::Keep,
     });
     assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
     (engine, id)
@@ -385,6 +386,7 @@ fn committing_a_failed_postgres_transaction_rolls_it_back() {
     engine.send(Command::SaveDataSource {
         data_source,
         password: PasswordUpdate::Set(server.password),
+        ssh_secret: PasswordUpdate::Keep,
     });
     assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
 
@@ -581,6 +583,7 @@ fn applies_and_rolls_back_edits_on_postgres() {
     engine.send(Command::SaveDataSource {
         data_source,
         password: PasswordUpdate::Set(server.password),
+        ssh_secret: PasswordUpdate::Keep,
     });
     assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
     // A temporary table lives on the console's own connection, where edits run.
@@ -637,6 +640,7 @@ fn applies_and_rolls_back_edits_on_mysql() {
         engine.send(Command::SaveDataSource {
             data_source,
             password: PasswordUpdate::Set(password),
+            ssh_secret: PasswordUpdate::Keep,
         });
         assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
         execute(
@@ -699,6 +703,7 @@ fn applies_and_rolls_back_edits_on_sqlserver() {
     engine.send(Command::SaveDataSource {
         data_source,
         password: PasswordUpdate::Set(password),
+        ssh_secret: PasswordUpdate::Keep,
     });
     assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
     execute(
@@ -772,6 +777,7 @@ fn explains_on_sqlserver_with_showplan_and_switches_it_off() {
     engine.send(Command::SaveDataSource {
         data_source,
         password: PasswordUpdate::Set(password),
+        ssh_secret: PasswordUpdate::Keep,
     });
     assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
     let explain = |run: u64, sql: &str| Command::Execute {
@@ -832,6 +838,7 @@ fn keeps_a_clickhouse_session_across_runs() {
     engine.send(Command::SaveDataSource {
         data_source,
         password: PasswordUpdate::Set(password),
+        ssh_secret: PasswordUpdate::Keep,
     });
     assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
 
@@ -892,6 +899,7 @@ fn applies_edits_on_duckdb_and_refuses_them_inside_a_transaction() {
     engine.send(Command::SaveDataSource {
         data_source,
         password: PasswordUpdate::Keep,
+        ssh_secret: PasswordUpdate::Keep,
     });
     assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
     execute(
@@ -1035,6 +1043,7 @@ fn never_validates_inside_a_postgres_transaction() {
     engine.send(Command::SaveDataSource {
         data_source,
         password: PasswordUpdate::Set(server.password),
+        ssh_secret: PasswordUpdate::Keep,
     });
     assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
     execute(&engine, id, 1, &["SELECT 1"]);

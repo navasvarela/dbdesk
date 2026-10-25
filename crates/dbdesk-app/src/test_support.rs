@@ -11,8 +11,8 @@ use dbdesk_engine::{
     EngineConfig, InstallError, InstallSupport, Release, ReleaseError, ReleaseFeed, UpdateInstaller,
 };
 use dbdesk_store::{
-    ConsoleFiles, DataSourceFile, HistoryFile, KeymapFile, ProjectFile, SecretError, SecretStore,
-    SettingsFile,
+    ConsoleFiles, DataSourceFile, HistoryFile, KeymapFile, ProjectFile, Secret, SecretError,
+    SecretStore, SettingsFile,
 };
 use egui_kittest::kittest::Queryable;
 use egui_kittest::{Harness, HarnessBuilder};
@@ -26,50 +26,33 @@ const WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Passwords in memory, so tests never touch the real keychain.
 #[derive(Default)]
-pub struct MemorySecrets {
-    own: Mutex<HashMap<DataSourceId, Password>>,
-    mcp: Mutex<HashMap<DataSourceId, Password>>,
-}
+pub struct MemorySecrets(Mutex<HashMap<(DataSourceId, Secret), Password>>);
 
 impl MemorySecrets {
     pub fn with_password(id: DataSourceId, password: Password) -> Self {
-        Self {
-            own: Mutex::new(HashMap::from([(id, password)])),
-            mcp: Mutex::default(),
-        }
+        Self(Mutex::new(HashMap::from([(
+            (id, Secret::Database),
+            password,
+        )])))
     }
 
-    pub fn mcp(&self, id: DataSourceId) -> Option<Password> {
-        self.mcp.lock().unwrap().get(&id).cloned()
+    pub fn saved(&self, id: DataSourceId, secret: Secret) -> Option<Password> {
+        self.0.lock().unwrap().get(&(id, secret)).cloned()
     }
 }
 
 impl SecretStore for MemorySecrets {
-    fn password(&self, id: DataSourceId) -> Result<Option<Password>, SecretError> {
-        Ok(self.own.lock().unwrap().get(&id).cloned())
+    fn get(&self, id: DataSourceId, secret: Secret) -> Result<Option<Password>, SecretError> {
+        Ok(self.saved(id, secret))
     }
 
-    fn set_password(&self, id: DataSourceId, password: &Password) -> Result<(), SecretError> {
-        self.own.lock().unwrap().insert(id, password.clone());
+    fn set(&self, id: DataSourceId, secret: Secret, value: &Password) -> Result<(), SecretError> {
+        self.0.lock().unwrap().insert((id, secret), value.clone());
         Ok(())
     }
 
-    fn delete_password(&self, id: DataSourceId) -> Result<(), SecretError> {
-        self.own.lock().unwrap().remove(&id);
-        Ok(())
-    }
-
-    fn mcp_password(&self, id: DataSourceId) -> Result<Option<Password>, SecretError> {
-        Ok(self.mcp(id))
-    }
-
-    fn set_mcp_password(&self, id: DataSourceId, password: &Password) -> Result<(), SecretError> {
-        self.mcp.lock().unwrap().insert(id, password.clone());
-        Ok(())
-    }
-
-    fn delete_mcp_password(&self, id: DataSourceId) -> Result<(), SecretError> {
-        self.mcp.lock().unwrap().remove(&id);
+    fn delete(&self, id: DataSourceId, secret: Secret) -> Result<(), SecretError> {
+        self.0.lock().unwrap().remove(&(id, secret));
         Ok(())
     }
 }

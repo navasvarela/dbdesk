@@ -27,11 +27,13 @@ pub struct RunId(pub u64);
 /// how the UI asks the engine to stop.
 #[derive(Debug)]
 pub enum Command {
-    /// Creates or updates (matched by id) a data source, storing its password if one is set.
-    /// Answered by [`Event::DataSourceSaved`] or [`Event::DataSourceSaveFailed`].
+    /// Creates or updates (matched by id) a data source, storing its password and its SSH
+    /// login's secret if they are set. Answered by [`Event::DataSourceSaved`] or
+    /// [`Event::DataSourceSaveFailed`].
     SaveDataSource {
         data_source: DataSource,
         password: PasswordUpdate,
+        ssh_secret: PasswordUpdate,
     },
     /// Disconnects, forgets the data source and removes its saved password.
     DeleteDataSource(DataSourceId),

@@ -491,11 +491,17 @@ impl DbDeskApp {
                 data_source,
                 password,
             }),
-            DialogAction::Save(data_source, password, mcp_password) => {
+            DialogAction::Save {
+                data_source,
+                password,
+                ssh_secret,
+                mcp_password,
+            } => {
                 let id = data_source.id;
                 self.send(Command::SaveDataSource {
                     data_source,
                     password,
+                    ssh_secret,
                 });
                 let password = match mcp_password {
                     McpPasswordChange::Keep => return,
@@ -1068,7 +1074,7 @@ mod tests {
 
     use dbdesk_core::{DataSourceId, Password};
     use dbdesk_store::{
-        ConsoleFiles, ConsoleName, DataSourceFile, HistoryFile, KeymapFile, ProjectFile,
+        ConsoleFiles, ConsoleName, DataSourceFile, HistoryFile, KeymapFile, ProjectFile, Secret,
         SecretError, SecretStore, SettingsFile,
     };
     use egui::accesskit::Role;
@@ -1086,27 +1092,15 @@ mod tests {
     struct NoSecrets;
 
     impl SecretStore for NoSecrets {
-        fn password(&self, _: DataSourceId) -> Result<Option<Password>, SecretError> {
+        fn get(&self, _: DataSourceId, _: Secret) -> Result<Option<Password>, SecretError> {
             Ok(None)
         }
 
-        fn set_password(&self, _: DataSourceId, _: &Password) -> Result<(), SecretError> {
+        fn set(&self, _: DataSourceId, _: Secret, _: &Password) -> Result<(), SecretError> {
             Ok(())
         }
 
-        fn delete_password(&self, _: DataSourceId) -> Result<(), SecretError> {
-            Ok(())
-        }
-
-        fn mcp_password(&self, _: DataSourceId) -> Result<Option<Password>, SecretError> {
-            Ok(None)
-        }
-
-        fn set_mcp_password(&self, _: DataSourceId, _: &Password) -> Result<(), SecretError> {
-            Ok(())
-        }
-
-        fn delete_mcp_password(&self, _: DataSourceId) -> Result<(), SecretError> {
+        fn delete(&self, _: DataSourceId, _: Secret) -> Result<(), SecretError> {
             Ok(())
         }
     }
@@ -1462,6 +1456,90 @@ mod tests {
             dbdesk_core::TlsMode::VerifyFull {
                 ca_file: Some(ca_file)
             }
+        );
+    }
+
+    /// Types `text` into the empty field labelled `label`, whose role is `role`: a text or a
+    /// password input.
+    fn type_into(harness: &mut Harness<'_, DbDeskApp>, role: Role, label: &str, text: &str) {
+        harness.get_by_role_and_label(role, label).focus();
+        harness.run();
+        harness.get_by_role_and_label(role, label).type_text(text);
+        harness.run();
+    }
+
+    #[test]
+    fn sets_an_ssh_server_with_a_key_file_for_a_postgres_data_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "No data sources yet.");
+
+        harness
+            .get_all_by_label("New data source")
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness.get_by_label("PostgreSQL").click();
+        harness.run();
+        assert!(harness.query_by_label("SSH host").is_none());
+        harness
+            .get_by_label("Connect through an SSH server")
+            .click();
+        harness.run();
+        type_into(
+            &mut harness,
+            Role::TextInput,
+            "SSH host",
+            "bastion.example.com",
+        );
+        type_into(&mut harness, Role::TextInput, "SSH user", "deploy");
+        // The agent is the default login, and it needs no secret.
+        assert!(harness.query_by_label("Passphrase").is_none());
+        harness
+            .get_by(|node| {
+                node.role() == Role::ComboBox && node.value().as_deref() == Some("SSH agent")
+            })
+            .click();
+        harness.run();
+        harness.get_by_label("Key file").click();
+        harness.run();
+        harness.get_by_label("Browse…");
+        type_into(
+            &mut harness,
+            Role::TextInput,
+            "Key file",
+            "~/.ssh/id_ed25519",
+        );
+        type_into(
+            &mut harness,
+            Role::PasswordInput,
+            "Passphrase",
+            "unlocks the key",
+        );
+        harness.get_by_label("Save").click();
+
+        step_until_visible(&mut harness, "Expand postgres@localhost");
+        let saved = DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .load()
+            .unwrap();
+        let [saved] = saved.as_slice() else {
+            panic!("expected one data source, got {saved:?}");
+        };
+        let dbdesk_core::ConnectionConfig::Postgres(config) = &saved.config else {
+            panic!("expected a PostgreSQL data source, got {saved:?}");
+        };
+        assert_eq!(
+            config.server.ssh,
+            Some(dbdesk_core::SshConfig {
+                host: "bastion.example.com".to_owned(),
+                port: 22.into(),
+                user: "deploy".to_owned(),
+                login: dbdesk_core::SshLogin::KeyFile {
+                    key_file: "~/.ssh/id_ed25519".into()
+                },
+            })
         );
     }
 

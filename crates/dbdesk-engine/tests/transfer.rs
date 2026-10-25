@@ -105,6 +105,7 @@ impl Machine {
         self.engine.send(Command::SaveDataSource {
             data_source: data_source.clone(),
             password: PasswordUpdate::Set(password.clone()),
+            ssh_secret: PasswordUpdate::Keep,
         });
         self.engine
             .expect(Event::DataSourceSaved(data_source.clone()));
@@ -170,7 +171,7 @@ fn exporting_machine(shared: &Path) -> (Machine, Vec<(DataSource, Password)>, Pr
         machine.move_to(data_source, &project);
     }
     for (data_source, password) in &saved {
-        assert_eq!(secrets.get(data_source.id).as_ref(), Some(password));
+        assert_eq!(secrets.database(data_source.id).as_ref(), Some(password));
     }
     (machine, saved, project)
 }

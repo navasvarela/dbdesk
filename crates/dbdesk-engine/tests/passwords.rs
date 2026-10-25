@@ -43,6 +43,7 @@ fn start_with(secrets: Arc<MemorySecrets>, data_source: &DataSource) -> TestEngi
     engine.send(Command::SaveDataSource {
         data_source: data_source.clone(),
         password: PasswordUpdate::Keep,
+        ssh_secret: PasswordUpdate::Keep,
     });
     engine.expect(Event::DataSourceSaved(data_source.clone()));
     // The engine wrote its files before answering; the directory may go.
@@ -92,7 +93,7 @@ fn asks_for_a_missing_password_and_saves_it_to_the_keychain() {
         kept: PasswordKept::Saved,
     });
 
-    assert_eq!(secrets.get(id), Some(Password::new("typed once")));
+    assert_eq!(secrets.database(id), Some(Password::new("typed once")));
     expect_connection_refused(&mut engine, id);
 }
 
@@ -114,7 +115,7 @@ fn keeps_an_unsaved_password_for_the_session_only() {
         kept: PasswordKept::ForThisSession,
     });
 
-    assert_eq!(secrets.get(id), None);
+    assert_eq!(secrets.database(id), None);
     expect_connection_refused(&mut engine, id);
 }
 
@@ -197,5 +198,5 @@ fn connects_to_postgres_with_the_password_given_at_the_prompt() {
         engine.expect_session(id),
         SessionState::Connected(_)
     ));
-    assert_eq!(secrets.get(id), Some(server.password));
+    assert_eq!(secrets.database(id), Some(server.password));
 }

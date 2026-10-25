@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use dbdesk_engine::DatabaseFile;
 
 const CA_TITLE: &str = "Choose a CA certificate (PEM)";
+const SSH_KEY_TITLE: &str = "Choose an SSH private key";
 const EXPORT_TITLE: &str = "Export data sources";
 const IMPORT_TITLE: &str = "Import data sources";
 const EXPORT_FILE_NAME: &str = "dbdesk-data-sources.toml";
@@ -78,6 +79,21 @@ pub fn pick_new_database_file(engine: FileEngine, current: &str) -> Option<PathB
 /// the same reason as [`pick_database_file`]: they come as `.pem`, `.crt` and `.cer`.
 pub fn pick_ca_file(current: &str) -> Option<PathBuf> {
     dialog(CA_TITLE, current).pick_file()
+}
+
+/// Shows the open-file dialog for an SSH private key, in `~/.ssh` unless the field names a
+/// file elsewhere. No extension filter: OpenSSH's keys have none (`id_ed25519`).
+pub fn pick_ssh_key_file(current: &str) -> Option<PathBuf> {
+    let ssh_folder = std::env::home_dir()
+        .map(|home| home.join(".ssh"))
+        .filter(|folder| folder.is_dir());
+    match (starting_directory(current), ssh_folder) {
+        (None, Some(folder)) => rfd::FileDialog::new()
+            .set_title(SSH_KEY_TITLE)
+            .set_directory(folder)
+            .pick_file(),
+        _ => dialog(SSH_KEY_TITLE, current).pick_file(),
+    }
 }
 
 /// Shows the save dialog for an export of data sources.

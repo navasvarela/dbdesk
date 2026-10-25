@@ -20,6 +20,7 @@ fn save(engine: &mut TestEngine, data_source: &DataSource) {
     engine.send(Command::SaveDataSource {
         data_source: data_source.clone(),
         password: PasswordUpdate::Keep,
+        ssh_secret: PasswordUpdate::Keep,
     });
     engine.expect(Event::DataSourceSaved(data_source.clone()));
 }
@@ -254,7 +255,7 @@ fn saves_mcp_settings_defaults_and_an_mcp_logins_password() {
     engine.engine.shutdown().unwrap();
     assert_eq!(secrets.mcp(id), Some(Password::new("again")));
     assert_eq!(
-        secrets.get(id),
+        secrets.database(id),
         None,
         "the data source's own entry is untouched"
     );

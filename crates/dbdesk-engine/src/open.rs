@@ -7,7 +7,7 @@ use dbdesk_core::{
     Connection, ConnectionConfig, DataSource, DriverError, Password, PlaceholderError, ServerInfo,
     describe_error,
 };
-use dbdesk_store::{SecretError, SecretStore};
+use dbdesk_store::{Secret, SecretError, SecretStore};
 use tokio::task::JoinError;
 
 use crate::environment::ProcessEnvironment;
@@ -98,7 +98,7 @@ pub async fn open_data_source_for_mcp(
     };
     let id = data_source.id;
     let store = Arc::clone(secrets);
-    let password = tokio::task::spawn_blocking(move || store.mcp_password(id))
+    let password = tokio::task::spawn_blocking(move || store.get(id, Secret::McpLogin))
         .await
         .map_err(OpenError::Task)?
         .map_err(OpenError::Password)?
