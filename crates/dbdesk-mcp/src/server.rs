@@ -131,9 +131,11 @@ impl ToolError {
                 sqlstate,
                 position: position.and_then(|position| position.checked_sub(prefix_len)),
             },
-            RunError::Driver(error @ (DriverError::Connect(_) | DriverError::Connection(_))) => {
-                Self::plain("connection", describe_error(&error))
-            }
+            RunError::Driver(
+                error @ (DriverError::Connect(_)
+                | DriverError::Connection(_)
+                | DriverError::Lost(_)),
+            ) => Self::plain("connection", describe_error(&error)),
             RunError::Driver(error @ DriverError::InvalidPath(_)) => {
                 Self::invalid(describe_error(&error))
             }
@@ -540,7 +542,9 @@ impl DbdeskMcp {
                 .map_err(|error| RunError::Driver(DriverError::Connect(Box::new(error))))?;
             match transaction::begin(&mut *connection, mode, &settings).await {
                 Ok(()) => break connection,
-                Err(DriverError::Connection(_)) if !retried => {
+                // A connection idle long enough for the server to drop it fails its first
+                // statement; a new one is the answer.
+                Err(DriverError::Connection(_) | DriverError::Lost(_)) if !retried => {
                     tracing::info!(data_source = %data_source.name, "reconnecting");
                     connection.discard();
                     retried = true;

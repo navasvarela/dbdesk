@@ -39,7 +39,7 @@ impl RunError {
     pub(crate) fn breaks_connection(&self) -> bool {
         matches!(
             self,
-            Self::TimedOut(_) | Self::Driver(DriverError::Connection(_))
+            Self::TimedOut(_) | Self::Driver(DriverError::Connection(_) | DriverError::Lost(_))
         )
     }
 }

@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use dbdesk_core::{
-    BoxError, CancelHandle, CatalogNode, CatalogPath, Connection, DriverError, NodeKind, Password,
+    CancelHandle, CatalogNode, CatalogPath, Connection, DriverError, NodeKind, Password,
     PostgresConfig, Rejection, RelationName, ResultCursor, Route, ServerInfo, TableDescription,
     TransactionStatus,
 };
@@ -78,8 +78,38 @@ fn connect_error(error: tokio_postgres::Error) -> DriverError {
     DriverError::Connect(Box::new(error))
 }
 
-fn connection_error(error: impl Into<BoxError>) -> DriverError {
-    DriverError::Connection(error.into())
+/// A client error, as [`DriverError::Lost`] when it means the session is over.
+fn connection_error(error: tokio_postgres::Error) -> DriverError {
+    if is_lost(&error) {
+        DriverError::Lost(Box::new(error))
+    } else {
+        DriverError::Connection(Box::new(error))
+    }
+}
+
+/// Whether `error` means the session is over: the socket closed or failed, the server ended
+/// the session (an administrator's `pg_terminate_backend`, a shutdown or a crash), or it
+/// reported a connection exception (SQLSTATE class 08).
+fn is_lost(error: &tokio_postgres::Error) -> bool {
+    use tokio_postgres::error::SqlState;
+
+    if error.is_closed() {
+        return true;
+    }
+    match error.code() {
+        Some(code) => {
+            code.code().starts_with("08")
+                || [
+                    SqlState::ADMIN_SHUTDOWN,
+                    SqlState::CRASH_SHUTDOWN,
+                    SqlState::CANNOT_CONNECT_NOW,
+                ]
+                .contains(code)
+        }
+        None => {
+            std::error::Error::source(error).is_some_and(|source| source.is::<std::io::Error>())
+        }
+    }
 }
 
 /// A client bound to one database, and the task that drives its socket.
@@ -269,7 +299,9 @@ impl Connection for PostgresConnection {
                 first_error.get_or_insert(error);
             }
         }
-        first_error.map_or(Ok(()), |error| Err(connection_error(error)))
+        first_error.map_or(Ok(()), |error| {
+            Err(DriverError::Connection(Box::new(error)))
+        })
     }
 }
 
@@ -346,6 +378,51 @@ mod tests {
             .get_password()
             .map(|bytes| Password::new(String::from_utf8_lossy(bytes)));
         Some((config, password))
+    }
+
+    /// What an administrator's `pg_terminate_backend`, or a server restart, looks like to
+    /// the client.
+    #[tokio::test]
+    async fn reports_a_session_the_server_ended_as_lost() {
+        let Some((config, password)) = test_server() else {
+            return;
+        };
+        let connection = connect(&config, password.as_ref(), Route::Direct)
+            .await
+            .unwrap();
+        let killer = connect(&config, password.as_ref(), Route::Direct)
+            .await
+            .unwrap();
+        let pid: i32 = connection
+            .primary
+            .client
+            .query_one("SELECT pg_backend_pid()", &[])
+            .await
+            .unwrap()
+            .get(0);
+
+        killer
+            .primary
+            .client
+            .execute("SELECT pg_terminate_backend($1)", &[&pid])
+            .await
+            .unwrap();
+        conformance::wait_until("the session ending", || async {
+            let sessions: i64 = killer
+                .primary
+                .client
+                .query_one(
+                    "SELECT count(*) FROM pg_stat_activity WHERE pid = $1",
+                    &[&pid],
+                )
+                .await
+                .unwrap()
+                .get(0);
+            sessions == 0
+        })
+        .await;
+
+        conformance::check_lost(Box::new(connection)).await;
     }
 
     #[tokio::test]

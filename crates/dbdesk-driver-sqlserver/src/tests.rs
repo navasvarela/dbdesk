@@ -104,6 +104,32 @@ async fn connects_through_a_tunnel() {
     conformance::check_lifecycle(Box::new(connection)).await;
 }
 
+/// What `KILL`, or a server restart, looks like to the client.
+#[tokio::test]
+async fn reports_a_session_the_server_ended_as_lost() {
+    let Some(server) = test_server() else { return };
+    let mut connection = server.connect().await;
+    let killer = server.connect().await;
+    let spid = first_row(&mut connection, "SELECT CAST(@@SPID AS varchar(10))").await;
+    let spid = spid.into_iter().next().flatten().unwrap();
+
+    let killer = &tokio::sync::Mutex::new(killer);
+    first_row(
+        &mut *killer.lock().await,
+        &format!("KILL {spid}; SELECT 'killed'"),
+    )
+    .await;
+    let sql = &format!(
+        "SELECT CAST(COUNT(*) AS varchar(10)) FROM sys.dm_exec_sessions WHERE session_id = {spid}"
+    );
+    conformance::wait_until("the session ending", || async move {
+        first_row(&mut *killer.lock().await, sql).await == vec![Some("0".to_owned())]
+    })
+    .await;
+
+    conformance::check_lost(Box::new(connection)).await;
+}
+
 #[tokio::test]
 async fn conforms_to_the_connection_lifecycle() {
     let _shared = SHARED_DATABASE.lock().await;

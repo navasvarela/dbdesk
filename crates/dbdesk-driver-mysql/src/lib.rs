@@ -141,8 +141,17 @@ fn connect_error(error: impl Into<BoxError>) -> DriverError {
     DriverError::Connect(error.into())
 }
 
+/// A failure of the connection, as [`DriverError::Lost`] when it means the session is over.
 fn connection_error(error: impl Into<BoxError>) -> DriverError {
-    DriverError::Connection(error.into())
+    let error = error.into();
+    if error
+        .downcast_ref::<mysql_async::Error>()
+        .is_some_and(errors::is_lost)
+    {
+        DriverError::Lost(error)
+    } else {
+        DriverError::Connection(error)
+    }
 }
 
 /// A session with a MySQL or MariaDB server.

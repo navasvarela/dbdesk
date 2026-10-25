@@ -15,6 +15,11 @@ pub enum DriverError {
     /// An established connection failed to do what was asked.
     #[error("the connection failed")]
     Connection(#[source] BoxError),
+    /// The connection is gone: the server closed it, ended the session, restarted, or stopped
+    /// answering. Nothing more can be done with it; its transaction, temporary tables and
+    /// session settings went with it. Each driver decides which of its errors mean this.
+    #[error("the connection was lost")]
+    Lost(#[source] BoxError),
     /// A statement the user ran failed: a syntax error, a constraint violation, a
     /// cancellation, and so on.
     #[error("the statement failed")]
