@@ -144,8 +144,17 @@ fn connect_error(error: impl Into<BoxError>) -> DriverError {
     DriverError::Connect(error.into())
 }
 
+/// A failed request, as [`DriverError::Lost`] when it means the session is over.
 fn connection_error(error: impl Into<BoxError>) -> DriverError {
-    DriverError::Connection(error.into())
+    let error = error.into();
+    if error
+        .downcast_ref::<execution::Failure>()
+        .is_some_and(execution::Failure::is_lost)
+    {
+        DriverError::Lost(error)
+    } else {
+        DriverError::Connection(error)
+    }
 }
 
 /// A session with a ClickHouse server.

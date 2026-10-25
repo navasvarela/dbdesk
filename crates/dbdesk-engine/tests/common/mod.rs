@@ -164,15 +164,52 @@ impl TestEngine {
         )
     }
 
+    /// An engine that pings a connection before every request, as if each had sat idle
+    /// past [`dbdesk_engine::IDLE_PING_AFTER`].
+    pub fn start_pinging_before_every_request(
+        data_sources_file: &Path,
+        secrets: Arc<MemorySecrets>,
+    ) -> Self {
+        let config = EngineConfig {
+            idle_ping_after: Duration::ZERO,
+            ..Self::config(
+                data_sources_file,
+                secrets,
+                FixedReleases(None),
+                FakeInstaller::Installs("9.9.9"),
+            )
+        };
+        Self::start_configured(config)
+    }
+
     fn start_with(
         data_sources_file: &Path,
         secrets: Arc<MemorySecrets>,
         releases: FixedReleases,
         installer: FakeInstaller,
     ) -> Self {
+        Self::start_configured(Self::config(
+            data_sources_file,
+            secrets,
+            releases,
+            installer,
+        ))
+    }
+
+    fn start_configured(config: EngineConfig) -> Self {
         let (sender, repaints) = mpsc::channel();
+        let engine = EngineHandle::start(config, SignalRepaint(sender)).unwrap();
+        Self { engine, repaints }
+    }
+
+    fn config(
+        data_sources_file: &Path,
+        secrets: Arc<MemorySecrets>,
+        releases: FixedReleases,
+        installer: FakeInstaller,
+    ) -> EngineConfig {
         let dir = data_sources_file.parent().unwrap_or(Path::new("."));
-        let config = EngineConfig {
+        EngineConfig {
             data_sources: DataSourceFile::new(data_sources_file),
             projects: ProjectFile::new(dir.join("projects.toml")),
             secrets,
@@ -183,9 +220,8 @@ impl TestEngine {
             releases: Arc::new(releases),
             updater: Arc::new(installer),
             known_hosts: dir.join("known_hosts"),
-        };
-        let engine = EngineHandle::start(config, SignalRepaint(sender)).unwrap();
-        Self { engine, repaints }
+            idle_ping_after: dbdesk_engine::IDLE_PING_AFTER,
+        }
     }
 
     /// Stops the engine, waiting for it to save everything first.

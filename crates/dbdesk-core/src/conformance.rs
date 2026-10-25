@@ -44,6 +44,37 @@ pub async fn forwarder(server: &str) -> std::net::SocketAddr {
     local
 }
 
+/// A connection whose session the server has ended (killed, or the server restarted) reports
+/// [`DriverError::Lost`], so the engine stops calling it connected: a ping, a statement and
+/// closing it all go through without hanging.
+pub async fn check_lost(mut connection: Box<dyn Connection>) {
+    match connection.ping().await {
+        Err(DriverError::Lost(_)) => {}
+        other => panic!("expected the ping to find the connection lost, got {other:?}"),
+    }
+    match connection.execute("SELECT 1").await {
+        Err(DriverError::Lost(_)) => {}
+        Err(other) => panic!("expected the statement to find the connection lost, got {other:?}"),
+        Ok(_) => panic!("expected the statement to find the connection lost, but it ran"),
+    }
+    // Closing a lost connection may fail; it only has to come back.
+    let _ = connection.close().await;
+}
+
+/// Waits until `condition` holds, polling, rather than for a fixed time: how long a server
+/// takes to end a session varies, and a fixed sleep is either slow or flaky.
+pub async fn wait_until<F, Fut>(what: &str, mut condition: F)
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !condition().await {
+        assert!(Instant::now() < deadline, "{what} never happened");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
 /// A connection attempt that can't succeed is reported as [`DriverError::Connect`].
 pub fn check_connect_failure<C>(result: Result<C, DriverError>) {
     match result {

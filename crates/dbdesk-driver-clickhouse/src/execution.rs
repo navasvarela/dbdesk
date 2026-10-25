@@ -24,7 +24,7 @@ use tokio::io::{AsyncBufReadExt, Lines};
 use uuid::Uuid;
 
 use crate::connection_error;
-use crate::errors::{cancelled, rejection, statement_error};
+use crate::errors::{cancelled, ends_the_session, rejection, statement_error};
 
 /// The output format of user statements: names, then types, then one JSON array per row.
 const FORMAT: &str = "JSONCompactEachRowWithNamesAndTypes";
@@ -65,9 +65,25 @@ impl Failure {
     }
 
     fn statement_error(self, sql: &str) -> DriverError {
+        if self.is_lost() {
+            return DriverError::Lost(Box::new(self));
+        }
         match self {
             Self::Server(message) => statement_error(&message, sql, 0),
             Self::Connection(error) => DriverError::Connection(error),
+        }
+    }
+
+    /// Whether the session is over: the server can't be reached, or no longer knows the
+    /// session, as after it restarts. A connection is a server session (`session_id`) over
+    /// requests that each have their own HTTP connection, so a request failing at the
+    /// network level means the server is gone, not only one socket.
+    pub(crate) fn is_lost(&self) -> bool {
+        match self {
+            Self::Server(message) => ends_the_session(message),
+            Self::Connection(error) => error
+                .downcast_ref::<clickhouse::error::Error>()
+                .is_some_and(|error| matches!(error, clickhouse::error::Error::Network(_))),
         }
     }
 }

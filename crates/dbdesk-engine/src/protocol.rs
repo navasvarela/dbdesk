@@ -548,4 +548,9 @@ pub enum SessionState {
     Connecting,
     Connected(ServerInfo),
     Failed(String),
+    /// The connection was lost after it was made, for this reason: the server closed or ended
+    /// the session, restarted, or stopped answering. The explorer reconnects on its next
+    /// request; a console only when asked, since its transaction, temporary tables and
+    /// session settings went with the connection.
+    Lost(String),
 }

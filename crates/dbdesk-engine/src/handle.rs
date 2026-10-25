@@ -44,7 +44,16 @@ pub struct EngineConfig {
     pub updater: Arc<dyn UpdateInstaller>,
     /// OpenSSH's `known_hosts`, which SSH tunnels check host keys against.
     pub known_hosts: PathBuf,
+    /// How long a connection may sit unused before it is pinged ahead of its next request,
+    /// normally [`IDLE_PING_AFTER`].
+    pub idle_ping_after: Duration,
 }
+
+/// A connection unused for this long is pinged before its next request, so a statement isn't
+/// sent down one the server has dropped and the session says it is gone instead. A minute:
+/// long enough that working steadily never pays for a ping, short enough to catch a server
+/// restarted during a coffee break. A ping is one round trip.
+pub const IDLE_PING_AFTER: Duration = Duration::from_secs(60);
 
 /// The UI's connection to a running engine.
 ///

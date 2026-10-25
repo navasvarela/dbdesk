@@ -76,7 +76,7 @@ pub(crate) async fn validate(client: &Client, sql: &str) -> Result<Option<Reject
         Err(error) => error,
     };
     let Some(db_error) = error.as_db_error() else {
-        return Err(DriverError::Connection(Box::new(error)));
+        return Err(connection_error(error));
     };
     let code = db_error.code();
     let kind = if *code == SqlState::SYNTAX_ERROR {
@@ -101,8 +101,12 @@ pub(crate) async fn validate(client: &Client, sql: &str) -> Result<Option<Reject
     }))
 }
 
-/// Maps a server error to [`DriverError::Statement`], with its position.
+/// Maps a server error to [`DriverError::Statement`], with its position, unless it means
+/// the connection is gone.
 fn statement_error(sql: &str, error: tokio_postgres::Error) -> DriverError {
+    if crate::is_lost(&error) {
+        return DriverError::Lost(Box::new(error));
+    }
     let position = error_position(sql, &error);
     let sqlstate = error.code().map(|code| code.code().to_owned());
     DriverError::Statement {

@@ -122,6 +122,7 @@ pub fn start_app(
         releases: Arc::new(FixedReleases::current()),
         updater: Arc::new(FakeInstaller::default()),
         known_hosts: dir.join("known_hosts"),
+        idle_ping_after: dbdesk_engine::IDLE_PING_AFTER,
     };
     builder.build_eframe(|cc| DbDeskApp::new(cc, log_feed, config).unwrap())
 }

@@ -125,6 +125,32 @@ async fn conforms_to_the_connection_lifecycle() {
     }
 }
 
+/// What `KILL`, or a server restart, looks like to the client.
+#[tokio::test]
+async fn reports_a_session_the_server_ended_as_lost() {
+    let _shared = SHARED_DATABASE.lock().await;
+    for server in test_servers() {
+        let connection = server.connect().await;
+        let killer = server.connect().await;
+        let id = connection.cancel.connection_id;
+
+        killer
+            .conn
+            .lock()
+            .await
+            .query_drop(format!("KILL {id}"))
+            .await
+            .unwrap();
+        let sql = format!("SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE ID = {id}");
+        conformance::wait_until("the session ending", || async {
+            first_value(&killer, &sql).await.as_deref() == Some("0")
+        })
+        .await;
+
+        conformance::check_lost(Box::new(connection)).await;
+    }
+}
+
 #[tokio::test]
 async fn wrong_password_is_a_connect_error() {
     let _shared = SHARED_DATABASE.lock().await;

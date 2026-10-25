@@ -100,6 +100,7 @@ fn main() -> anyhow::Result<()> {
             version::VERSION,
         )),
         known_hosts: paths.ssh_known_hosts_file(),
+        idle_ping_after: dbdesk_engine::IDLE_PING_AFTER,
     };
 
     let mut viewport = egui::ViewportBuilder::default()

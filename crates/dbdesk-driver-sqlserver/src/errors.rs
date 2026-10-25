@@ -32,9 +32,26 @@ pub(crate) struct ServerError {
     code: u32,
 }
 
+/// Errors the server sends as it ends a session: the session was killed (596) or the server
+/// is shutting down (6005).
+const SESSION_ENDED: &[u32] = &[596, 6005];
+
+/// Whether `error` means the session is over: the socket failed or closed, or the server
+/// said it ended the session.
+pub(crate) fn is_lost(error: &Error) -> bool {
+    match error {
+        Error::Io { .. } => true,
+        Error::Server(token) => SESSION_ENDED.contains(&token.code()),
+        _ => false,
+    }
+}
+
 /// A failed user statement, with the byte offset of the error when it can be placed. SQL
 /// Server reports error numbers rather than SQLSTATEs, so there is none to pass on.
 pub(crate) fn statement_error(error: Error, sql: &str) -> DriverError {
+    if is_lost(&error) {
+        return DriverError::Lost(Box::new(error));
+    }
     match error {
         Error::Server(token) => DriverError::Statement {
             position: position(&token, sql),

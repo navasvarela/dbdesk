@@ -10,8 +10,27 @@ const PARSE_ERROR: u16 = 1064;
 /// table (1146) or function (1305).
 const UNKNOWN_NAMES: &[u16] = &[1049, 1054, 1146, 1305];
 
+/// Errors the server sends as it ends a session: it is shutting down (1053, MariaDB's 1927
+/// for a killed connection), the client's connection went away or was lost (2006, 2013), or
+/// it was idle past `wait_timeout` (MySQL 8's 4031).
+const SESSION_ENDED: &[u16] = &[1053, 1927, 2006, 2013, 4031];
+
+/// Whether `error` means the session is over: the socket failed or closed, or the server
+/// said it ended the session.
+pub(crate) fn is_lost(error: &mysql_async::Error) -> bool {
+    match error {
+        mysql_async::Error::Io(_)
+        | mysql_async::Error::Driver(mysql_async::DriverError::ConnectionClosed) => true,
+        mysql_async::Error::Server(server) => SESSION_ENDED.contains(&server.code),
+        _ => false,
+    }
+}
+
 /// A failed user statement, with the byte offset of the error when the server says where.
 pub(crate) fn statement_error(error: mysql_async::Error, sql: &str) -> DriverError {
+    if is_lost(&error) {
+        return DriverError::Lost(Box::new(error));
+    }
     let (position, sqlstate) = match &error {
         mysql_async::Error::Server(server) => {
             (position(&server.message, sql), Some(server.state.clone()))

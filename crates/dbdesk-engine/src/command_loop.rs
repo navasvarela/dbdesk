@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use dbdesk_core::{DataSource, DataSourceId, Password, ProjectId, describe_error};
 use dbdesk_store::{
@@ -63,6 +64,7 @@ pub(crate) async fn run(
         secrets: config.secrets,
         passwords: SessionPasswords::default(),
         tunnels: Tunnels::new(config.known_hosts),
+        idle_ping_after: config.idle_ping_after,
         console_files: config.consoles,
         keymap_file: config.keymap,
         settings_file: config.settings,
@@ -99,6 +101,7 @@ struct Engine {
     passwords: SessionPasswords,
     /// SSH tunnels, shared with every session so a data source's sessions share one.
     tunnels: Tunnels,
+    idle_ping_after: Duration,
     console_files: ConsoleFiles,
     keymap_file: KeymapFile,
     settings_file: SettingsFile,
@@ -719,6 +722,7 @@ impl Engine {
 
     fn services(&self) -> Services {
         Services {
+            idle_ping_after: self.idle_ping_after,
             secrets: Arc::clone(&self.secrets),
             passwords: self.passwords.clone(),
             tunnels: self.tunnels.clone(),

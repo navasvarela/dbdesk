@@ -108,7 +108,8 @@ impl DataSourceEntry {
 
     fn set_session(&mut self, state: &SessionState) {
         // Everything loaded came from the connection that just went away, and the next
-        // connection may see a different catalog.
+        // connection may see a different catalog. A lost connection keeps it: the explorer
+        // reconnects on its next request, which may be loading a node of it right now.
         if matches!(state, SessionState::Disconnected | SessionState::Failed(_)) {
             self.catalog.reset();
         }
@@ -376,7 +377,7 @@ mod tests {
     }
 
     #[test]
-    fn losing_the_connection_forgets_the_loaded_catalog() {
+    fn failing_to_connect_forgets_the_loaded_catalog_but_losing_it_does_not() {
         let mut state = AppState::default();
         let source = data_source("app");
         state.apply(&Event::DataSourcesLoaded(vec![source.clone()]));
@@ -387,6 +388,19 @@ mod tests {
         state.apply(&Event::SessionChanged {
             id: source.id,
             state: SessionState::Connecting,
+        });
+        assert!(
+            state
+                .data_source(source.id)
+                .unwrap()
+                .catalog
+                .is_expanded(&root)
+        );
+        // A lost connection keeps the tree: the explorer reconnects on its next request,
+        // which may be loading a node of it.
+        state.apply(&Event::SessionChanged {
+            id: source.id,
+            state: SessionState::Lost("the connection was lost".to_owned()),
         });
         assert!(
             state

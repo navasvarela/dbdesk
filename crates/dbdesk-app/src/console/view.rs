@@ -479,6 +479,14 @@ fn run_status(ui: &mut Ui, console: &QueryConsole, palette: &Palette) {
         (SessionState::Connected(server), None) => {
             ui.weak(format!("Connected to {server}"));
         }
+        (SessionState::Lost(reason), None) => {
+            widgets::status(
+                ui,
+                icons::PLUGS,
+                palette.warning,
+                &format!("Disconnected: {reason}"),
+            );
+        }
         (_, None) => {}
     }
 }

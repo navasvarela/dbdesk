@@ -6,13 +6,14 @@
 mod catalog;
 mod edits;
 mod guard;
+mod loss;
 mod query;
 mod transaction;
 mod validate;
 
 use std::future::Future;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use dbdesk_core::{
     CancelHandle, CatalogPath, Connection, DataSource, DataSourceId, RelationName, SafetyLevel,
@@ -32,6 +33,7 @@ use crate::read_only;
 use crate::tunnels::Tunnels;
 use crate::{ConsoleId, Event, RunId, RunPurpose, SessionState, TransactionEnd, TransactionMode};
 use guard::ReadOnly;
+use loss::{Loss, Watched};
 
 /// Work for a session's connection. Answered with events, in the order received.
 #[derive(Debug)]
@@ -65,6 +67,7 @@ pub(crate) enum SessionOwner {
 
 /// What a session needs from the engine.
 pub(crate) struct Services {
+    pub(crate) idle_ping_after: Duration,
     pub(crate) secrets: Arc<dyn SecretStore>,
     pub(crate) passwords: SessionPasswords,
     pub(crate) tunnels: Tunnels,
@@ -89,6 +92,7 @@ pub(crate) struct Session {
 impl Session {
     pub(crate) fn start(data_source: DataSource, owner: SessionOwner, services: Services) -> Self {
         let Services {
+            idle_ping_after,
             secrets,
             passwords,
             tunnels,
@@ -107,6 +111,7 @@ impl Session {
         };
         let context = SessionContext {
             data_source,
+            idle_ping_after,
             read_only,
             owner,
             events,
@@ -167,6 +172,8 @@ impl Session {
 struct SessionContext {
     /// As connected to: a read-only data source's SQLite file is opened read-only.
     data_source: DataSource,
+    /// How long the connection may sit unused before it is pinged ahead of its next request.
+    idle_ping_after: Duration,
     /// Set for a read-only data source: every statement is checked, and runs read-only.
     read_only: Option<ReadOnly>,
     owner: SessionOwner,
@@ -277,29 +284,94 @@ async fn run(
     mut signals: Signals,
     mut requests: UnboundedReceiver<SessionRequest>,
 ) {
-    let Some(mut connection) = connect(&context, &credentials, &mut signals.disconnect).await
-    else {
-        return;
-    };
-    let cancel_handle = connection.cancel_handle();
-    let mut worker = Worker {
-        context: &context,
-        connection: connection.as_mut(),
-        cancel_handle: cancel_handle.as_ref(),
-        signals: &mut signals,
-        parked: None,
-        transaction: TransactionStatus::Idle,
-        read_only_open: None,
-    };
-    worker.serve(&mut requests).await;
-    if let Some(parked) = worker.parked.take() {
-        query::discard(&context, parked, cancel_handle.as_ref()).await;
+    let mut pending = None;
+    loop {
+        let Some(connection) = connect(&context, &credentials, &mut signals.disconnect).await
+        else {
+            return;
+        };
+        let loss = Loss::default();
+        let mut connection: Box<dyn Connection> = Box::new(Watched::new(connection, loss.clone()));
+        let cancel_handle = connection.cancel_handle();
+        let mut worker = Worker {
+            context: &context,
+            connection: connection.as_mut(),
+            cancel_handle: cancel_handle.as_ref(),
+            signals: &mut signals,
+            loss: &loss,
+            last_used: Instant::now(),
+            parked: None,
+            transaction: TransactionStatus::Idle,
+            read_only_open: None,
+        };
+        let ended = worker.serve(&mut requests, pending.take()).await;
+        if let Some(parked) = worker.parked.take() {
+            query::discard(&context, parked, cancel_handle.as_ref()).await;
+        }
+        let closed = connection.close().await;
+        let Ended::Lost { reason, unserved } = ended else {
+            if let Err(error) = closed {
+                tracing::warn!(data_source = %context.name(), "error while disconnecting: {}", describe_error(&error));
+            }
+            tracing::info!(data_source = %context.name(), "disconnected");
+            context.notify(SessionState::Disconnected);
+            return;
+        };
+        tracing::warn!(data_source = %context.name(), "the connection was lost: {reason}");
+        context.notify(SessionState::Lost(reason.clone()));
+        match context.owner {
+            // A console's transaction, temporary tables and settings went with the
+            // connection; it reconnects only when asked, knowing that.
+            SessionOwner::Console(_) => {
+                if let Some(request) = unserved {
+                    loss::refuse(&context, request, &reason);
+                }
+                return;
+            }
+            // The explorer has nothing to lose by reconnecting, so it does on its next
+            // request.
+            SessionOwner::Explorer(_) => {
+                pending = match unserved {
+                    Some(request) => Some(request),
+                    None => match next_request_while_lost(&mut signals, &mut requests).await {
+                        Some(request) => Some(request),
+                        None => {
+                            context.notify(SessionState::Disconnected);
+                            return;
+                        }
+                    },
+                };
+            }
+        }
     }
-    if let Err(error) = connection.close().await {
-        tracing::warn!(data_source = %context.name(), "error while disconnecting: {}", describe_error(&error));
+}
+
+/// How a connected session stopped serving.
+enum Ended {
+    /// Told to disconnect.
+    Disconnected,
+    /// The connection is gone. `unserved` is the request the idle ping found that out
+    /// before; a request that ran into it was answered with its failure.
+    Lost {
+        reason: String,
+        unserved: Option<SessionRequest>,
+    },
+}
+
+/// The next request for a session whose connection is gone, or `None` if it is told to
+/// disconnect first.
+async fn next_request_while_lost(
+    signals: &mut Signals,
+    requests: &mut UnboundedReceiver<SessionRequest>,
+) -> Option<SessionRequest> {
+    loop {
+        tokio::select! {
+            _ = &mut signals.disconnect => return None,
+            // Nothing is running to cancel.
+            changed = signals.cancel.changed() => changed.ok()?,
+            request = requests.recv() => return request,
+        }
     }
-    tracing::info!(data_source = %context.name(), "disconnected");
-    context.notify(SessionState::Disconnected);
 }
 
 /// Opens the connection, reporting progress. `None` if it failed or was cancelled.
@@ -370,6 +442,10 @@ struct Worker<'a> {
     connection: &'a mut dyn Connection,
     cancel_handle: &'a dyn CancelHandle,
     signals: &'a mut Signals,
+    /// Why the connection was lost, once any call has found out.
+    loss: &'a Loss,
+    /// When the connection last did something, to know when to ping before using it.
+    last_used: Instant,
     /// The last run's final statement, with rows still unread.
     parked: Option<query::Parked>,
     /// The connection's transaction status as last reported to the UI.
@@ -379,18 +455,57 @@ struct Worker<'a> {
 }
 
 impl Worker<'_> {
-    /// Answers requests until told to disconnect.
-    async fn serve(&mut self, requests: &mut UnboundedReceiver<SessionRequest>) {
-        while let Some(request) = self.next_request(requests).await {
+    /// Answers `first`, if given, then requests, until told to disconnect or the connection
+    /// is lost.
+    async fn serve(
+        &mut self,
+        requests: &mut UnboundedReceiver<SessionRequest>,
+        mut first: Option<SessionRequest>,
+    ) -> Ended {
+        loop {
+            let request = match first.take() {
+                Some(request) => request,
+                None => match self.next_request(requests).await {
+                    Some(request) => request,
+                    None => return Ended::Disconnected,
+                },
+            };
+            if let Some(reason) = self.ping_if_idle().await {
+                return Ended::Lost {
+                    reason,
+                    unserved: Some(request),
+                };
+            }
             if self.handle(request).await.is_err() {
-                return;
+                return Ended::Disconnected;
             }
             // A statement whose rows are no longer parked is done with its read-only
             // transaction.
             if self.parked.is_none() && guard::close(self).await.is_err() {
-                return;
+                return Ended::Disconnected;
+            }
+            self.last_used = Instant::now();
+            if let Some(reason) = self.loss.reason() {
+                return Ended::Lost {
+                    reason,
+                    unserved: None,
+                };
             }
         }
+    }
+
+    /// Pings a connection that has been idle for a while, so a statement isn't sent down a
+    /// connection that is gone. Not while rows are parked: their statement still holds the
+    /// connection, so it is in use. Returns why the connection was lost, if it was.
+    async fn ping_if_idle(&mut self) -> Option<String> {
+        if self.parked.is_some() || self.last_used.elapsed() < self.context.idle_ping_after {
+            return None;
+        }
+        if let Err(error) = self.connection.ping().await {
+            tracing::debug!(data_source = %self.context.name(), "ping failed: {}", describe_error(&error));
+        }
+        self.last_used = Instant::now();
+        self.loss.reason()
     }
 
     /// The next request, meanwhile discarding parked rows whose run gets cancelled.

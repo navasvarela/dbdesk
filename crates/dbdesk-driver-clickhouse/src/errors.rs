@@ -14,6 +14,14 @@ const SYNTAX_ERROR: u32 = 62;
 /// identifier (47), table (60) or database (81).
 const UNKNOWN_NAMES: &[u32] = &[16, 46, 47, 60, 81];
 
+/// `SESSION_NOT_FOUND`: the server has no session of that id, as after it restarts.
+const SESSION_NOT_FOUND: u32 = 372;
+
+/// Whether a server error means the connection's session is gone.
+pub(crate) fn ends_the_session(response: &str) -> bool {
+    code(&message(response)) == Some(SESSION_NOT_FOUND)
+}
+
 /// ClickHouse's message without the server's version.
 #[derive(Debug)]
 pub(crate) struct ClickHouseError(String);
@@ -97,6 +105,14 @@ fn position(message: &str, sql: &str, offset: usize) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_session_the_server_has_forgotten_is_over() {
+        assert!(ends_the_session(
+            "Code: 372. DB::Exception: Session 1b2c not found. (SESSION_NOT_FOUND) (version 25.8)"
+        ));
+        assert!(!ends_the_session("Code: 60. DB::Exception: Unknown table"));
+    }
 
     #[test]
     fn reads_the_code_and_the_position() {

@@ -1172,6 +1172,7 @@ mod tests {
             releases: Arc::new(releases),
             updater: Arc::new(crate::test_support::FakeInstaller::default()),
             known_hosts: dir.join("known_hosts"),
+            idle_ping_after: dbdesk_engine::IDLE_PING_AFTER,
         }
     }
 
