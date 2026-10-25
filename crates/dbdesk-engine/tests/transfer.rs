@@ -23,6 +23,7 @@ fn server(host: &str, port: Port, tls: TlsMode) -> ServerConfig {
         database: "app".to_owned(),
         user: "juan".to_owned(),
         tls,
+        ssh: None,
     }
 }
 

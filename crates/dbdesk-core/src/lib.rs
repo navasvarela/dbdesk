@@ -21,7 +21,7 @@ pub use connection::{Connection, Rejection, RejectionKind, ServerInfo};
 pub use data_source::{
     ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DriverKind, DuckDbConfig,
     DuckDbDatabase, McpLogin, MysqlConfig, Port, PostgresConfig, ProjectId, SafetyLevel,
-    ServerConfig, SourceColor, SqlServerConfig, SqliteConfig, TlsMode,
+    ServerConfig, SourceColor, SqlServerConfig, SqliteConfig, SshConfig, SshLogin, TlsMode,
 };
 pub use error::{BoxError, DriverError, describe_error};
 pub use execution::{CancelHandle, Cell, ColumnInfo, ResultCursor, Row, TransactionStatus};

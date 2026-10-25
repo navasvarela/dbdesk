@@ -26,8 +26,8 @@ pub struct HistoryWindow {
 
 /// What the user did in the window this frame.
 pub enum HistoryAction {
-    /// The search changed or needs refreshing; send this.
-    Search(Command),
+    /// The search changed or needs refreshing; run this one.
+    Search(HistoryQuery),
     /// Put this statement into the window's console.
     Insert {
         console: ConsoleKey,
@@ -107,7 +107,7 @@ impl HistoryWindow {
             .inner;
         if searched {
             self.results = None;
-            return Some(HistoryAction::Search(self.search_command()));
+            return Some(HistoryAction::Search(self.query()));
         }
         ui.weak("Double-click a statement, or click Insert, to put it into the console.");
         ui.separator();

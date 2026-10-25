@@ -410,6 +410,7 @@ mod tests {
                     tls: TlsMode::VerifyFull {
                         ca_file: Some("/etc/ca.pem".into()),
                     },
+                    ssh: None,
                 },
             }),
         ];

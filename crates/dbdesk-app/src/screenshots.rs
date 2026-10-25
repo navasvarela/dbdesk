@@ -511,6 +511,7 @@ fn postgres_data_source(url: &str) -> (DataSource, Password) {
                 database: database.to_owned(),
                 user: user.to_owned(),
                 tls: TlsMode::default(),
+                ssh: None,
             },
         }),
     };
@@ -686,6 +687,7 @@ fn import_preview(harness: &mut Harness<'static, DbDeskApp>, fixture: &Fixture) 
                 database: "analytics".to_owned(),
                 user: "reporting".to_owned(),
                 tls: TlsMode::Require,
+                ssh: None,
             },
         }),
     };

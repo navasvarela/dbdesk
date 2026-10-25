@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use dbdesk_core::{
-    ConnectionConfig, DataSource, DataSourceId, DuckDbDatabase, ProjectId, ServerConfig, TlsMode,
-    Variables, expand_path,
+    ConnectionConfig, DataSource, DataSourceId, DuckDbDatabase, ProjectId, ServerConfig, SshLogin,
+    TlsMode, Variables, expand_path,
 };
 
 use super::Incoming;
@@ -478,6 +478,17 @@ fn server_settings(server: &ServerConfig, settings: &mut Settings) {
         }
     };
     settings.push(("TLS", mode.to_owned()));
+    let Some(ssh) = &server.ssh else {
+        settings.push(("SSH", "none".to_owned()));
+        return;
+    };
+    settings.push(("SSH", ssh.to_string()));
+    let login = match &ssh.login {
+        SshLogin::Agent => "agent".to_owned(),
+        SshLogin::KeyFile { key_file } => format!("key file {}", key_file.display()),
+        SshLogin::Password => "password".to_owned(),
+    };
+    settings.push(("SSH login", login));
 }
 
 fn yes_no(value: bool) -> String {
@@ -499,12 +510,17 @@ fn paths(config: &ConnectionConfig) -> Vec<(&'static str, &Path)> {
         ConnectionConfig::SqlServer(config) => &config.server,
         ConnectionConfig::ClickHouse(config) => &config.server,
     };
-    match &server.tls {
+    let ca_file = match &server.tls {
         TlsMode::VerifyFull {
             ca_file: Some(ca_file),
-        } => vec![("CA file", ca_file)],
-        _ => Vec::new(),
-    }
+        } => Some(("CA file", ca_file.as_path())),
+        _ => None,
+    };
+    let key_file = match server.ssh.as_ref().map(|ssh| &ssh.login) {
+        Some(SshLogin::KeyFile { key_file }) => Some(("SSH key file", key_file.as_path())),
+        _ => None,
+    };
+    ca_file.into_iter().chain(key_file).collect()
 }
 
 fn missing_paths(config: &ConnectionConfig, variables: &dyn Variables) -> Vec<MissingPath> {

@@ -194,6 +194,7 @@ pub fn server_from_env(variable: &str) -> Option<(ServerConfig, Password)> {
             database: database.to_owned(),
             user: user.to_owned(),
             tls: TlsMode::default(),
+            ssh: None,
         },
         Password::new(password),
     ))

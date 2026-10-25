@@ -680,7 +680,7 @@ impl DbDeskApp {
             return;
         };
         match action {
-            HistoryAction::Search(command) => self.send(command),
+            HistoryAction::Search(query) => self.send(Command::SearchHistory(query)),
             HistoryAction::Insert { console, sql } => {
                 self.consoles.insert_statement(&console, &sql);
             }
@@ -1539,6 +1539,7 @@ mod tests {
                     database: "warehouse".to_owned(),
                     user: "owner".to_owned(),
                     tls: dbdesk_core::TlsMode::Prefer,
+                    ssh: None,
                 },
             }),
             ..shop.clone()
@@ -1804,6 +1805,7 @@ mod tests {
                     database: "app".to_owned(),
                     user: "juan".to_owned(),
                     tls: dbdesk_core::TlsMode::Disable,
+                    ssh: None,
                 },
             }),
         };

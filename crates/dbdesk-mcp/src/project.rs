@@ -286,6 +286,7 @@ mod tests {
                             database: "erp".to_owned(),
                             user: "reader".to_owned(),
                             tls: TlsMode::default(),
+                            ssh: None,
                         },
                     }),
                     ..sqlite("erp", Some(shop.id))

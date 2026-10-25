@@ -384,6 +384,7 @@ fn parse_server(rest: &str, default_port: &str) -> (ServerConfig, Password) {
         database: database.to_owned(),
         user: user.to_owned(),
         tls: TlsMode::default(),
+        ssh: None,
     };
     (server, Password::new(password))
 }

@@ -129,6 +129,7 @@ impl ServerFields {
             database: required(&self.database, FormError::DatabaseMissing)?,
             user: required(&self.user, FormError::UserMissing)?,
             tls: self.tls_mode(),
+            ssh: None,
         })
     }
 
@@ -263,6 +264,7 @@ mod tests {
                 database: "postgres".to_owned(),
                 user: "postgres".to_owned(),
                 tls: TlsMode::Prefer,
+                ssh: None,
             }
         );
     }
@@ -332,6 +334,7 @@ mod tests {
                 database: "app".to_owned(),
                 user: "juan".to_owned(),
                 tls,
+                ssh: None,
             };
 
             let fields = ServerFields::from_config(&config, DEFAULTS);

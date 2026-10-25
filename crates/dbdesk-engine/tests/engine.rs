@@ -83,6 +83,7 @@ fn reloads_saved_data_sources_and_stores_passwords_in_the_secret_store() {
                 database: "app".to_owned(),
                 user: "juan".to_owned(),
                 tls: TlsMode::Require,
+                ssh: None,
             },
         }),
     };
