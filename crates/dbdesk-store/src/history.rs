@@ -7,7 +7,7 @@
 //! failing at once.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use dbdesk_core::DataSourceId;
 use jiff::Timestamp;
@@ -20,6 +20,10 @@ const TIMESTAMP_FORMAT: &str = "%Y-%m-%dT%H:%M:%S%.3fZ";
 /// How long a write waits for the other process's write to finish. Each write is one small
 /// row, so a wait anywhere near this long means something is wrong, not busy.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How long to wait between attempts to switch the file to WAL (see [`switch_to_wal`]): long
+/// enough not to spin, short next to the other process's few milliseconds of opening.
+const WAL_RETRY_DELAY: Duration = Duration::from_millis(10);
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS history (
@@ -151,16 +155,37 @@ impl HistoryFile {
         };
         let mut connection = rusqlite::Connection::open(&self.path).map_err(open_error)?;
         connection.busy_timeout(BUSY_TIMEOUT).map_err(open_error)?;
-        // Persistent: once one process switches the file, every later connection, an older
-        // dbdesk's included, opens it in WAL mode.
-        connection
-            .query_row("PRAGMA journal_mode = WAL", [], |row| {
-                row.get::<_, String>(0)
-            })
-            .map_err(open_error)?;
+        switch_to_wal(&connection).map_err(open_error)?;
         migrate(&mut connection).map_err(open_error)?;
         Ok(History { connection })
     }
+}
+
+/// Puts the file in WAL mode. Persistent: once one process switches the file, every later
+/// connection, an older dbdesk's included, opens it in WAL mode.
+///
+/// The switch needs an exclusive lock, which SQLite takes without calling the busy handler, so
+/// when the app and `dbdesk mcp` open a new file at the same moment, one of them fails at once
+/// with `SQLITE_BUSY` whatever [`BUSY_TIMEOUT`] says. That was
+/// `tests::two_processes_write_at_once` failing about 1 run in 1,000 (in 0.08 s, nowhere near
+/// the timeout). So the switch is retried here for as long as a write would wait.
+fn switch_to_wal(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
+    let deadline = Instant::now() + BUSY_TIMEOUT;
+    loop {
+        let switched = connection.query_row("PRAGMA journal_mode = WAL", [], |row| {
+            row.get::<_, String>(0)
+        });
+        match switched {
+            Err(error) if is_busy(&error) && Instant::now() < deadline => {
+                std::thread::sleep(WAL_RETRY_DELAY);
+            }
+            other => return other.map(drop),
+        }
+    }
+}
+
+fn is_busy(error: &rusqlite::Error) -> bool {
+    error.sqlite_error_code() == Some(rusqlite::ErrorCode::DatabaseBusy)
 }
 
 /// Brings the schema up to date. In an immediate transaction, so when the app and the MCP
@@ -452,7 +477,7 @@ mod tests {
     fn two_processes_write_at_once() {
         let dir = tempfile::tempdir().unwrap();
         let file = HistoryFile::new(dir.path().join("history.sqlite"));
-        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
                 "history::tests::write_as_second_process",
@@ -460,12 +485,18 @@ mod tests {
                 "--quiet",
             ])
             .env(CHILD_PATH, file.path())
-            .stdout(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
             .spawn()
             .unwrap();
 
         write_many(&file, HistorySource::App);
-        assert!(child.wait().unwrap().success(), "the second process failed");
+        // libtest prints a failed test's panic to stdout, so that is where the child's is.
+        let child = child.wait_with_output().unwrap();
+        assert!(
+            child.status.success(),
+            "the second process failed:\n{}",
+            String::from_utf8_lossy(&child.stdout)
+        );
 
         let counts: Vec<(String, i64)> = rusqlite::Connection::open(file.path())
             .unwrap()
