@@ -39,6 +39,9 @@ env:
   # Recorded by crates/dbdesk-app/build.rs and shown by `dbdesk --version`.
   DBDESK_COMMIT: ${{ github.sha }}
   CARGO_PACKAGER_VERSION: 0.11.8
+  # Link DuckDB's prebuilt library rather than compile it; see docs/duckdb-prebuilt.md. Each
+  # job runs packaging/duckdb/fetch.sh for its targets before building.
+  RUSTFLAGS: --cfg dbdesk_prebuilt_duckdb
 
 jobs:
   version:
@@ -77,7 +80,7 @@ jobs:
       # Spike: a cache of its own, so the first run is cold and the second warm.
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: v0-duckdb-spike-baseline
+          prefix-key: v0-duckdb-spike-prebuilt
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-packager@${{ env.CARGO_PACKAGER_VERSION }}
@@ -85,7 +88,12 @@ jobs:
       - name: Build a universal binary
         run: |
           for target in aarch64-apple-darwin x86_64-apple-darwin; do
-            cargo build --release --locked -p dbdesk-app --target "$target"
+            (
+              set -a
+              eval "$(packaging/duckdb/fetch.sh "$target" "$RUNNER_TEMP/duckdb")"
+              set +a
+              cargo build --release --locked -p dbdesk-app --target "$target"
+            )
           done
           mkdir -p target/universal/release
           lipo -create -output target/universal/release/dbdesk \
@@ -149,13 +157,14 @@ jobs:
       # Spike: a cache of its own, so the first run is cold and the second warm.
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: v0-duckdb-spike-baseline
+          prefix-key: v0-duckdb-spike-prebuilt
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-packager@${{ env.CARGO_PACKAGER_VERSION }}
       - run: |
           sudo apt-get update
           sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev file
+      - run: packaging/duckdb/fetch.sh x86_64-unknown-linux-gnu "$RUNNER_TEMP/duckdb" | tee -a "$GITHUB_ENV"
       - run: cargo build --release --locked -p dbdesk-app
       # With the signing key set, cargo-packager signs the AppImage, which the app installs as
       # its update as is. The .deb's signature is dropped: the package manager updates it.
@@ -209,19 +218,45 @@ jobs:
       # Spike: a cache of its own, so the first run is cold and the second warm.
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: v0-duckdb-spike-baseline
+          prefix-key: v0-duckdb-spike-prebuilt
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-packager@${{ env.CARGO_PACKAGER_VERSION }}
+      - run: packaging/duckdb/fetch.sh x86_64-pc-windows-msvc "$RUNNER_TEMP/duckdb" | tee -a "$GITHUB_ENV"
       - run: cargo build --release --locked -p dbdesk-app
+      # dbdesk.exe loads duckdb.dll from its own folder. cargo-packager's resources apply to
+      # every platform, so the Windows package gets a configuration of its own: the one in
+      # Cargo.toml plus the DLL, written beside Cargo.toml so its relative paths still resolve.
       - name: Package
         run: |
-          cargo packager -p dbdesk-app --release --formats nsis --out-dir "$GITHUB_WORKSPACE/dist"
+          dll="$(cygpath -m "$DUCKDB_LIB_DIR")/duckdb.dll"
+          cp "$dll" target/release/
+          cargo metadata --format-version 1 --no-deps | jq \
+            --arg dll "$dll" --arg version "$VERSION" --arg bin "$(cygpath -m "$PWD/target/release")" \
+            '.packages[] | select(.name == "dbdesk-app") | .metadata.packager
+              + {name: "dbdesk-app", version: $version, binariesDir: $bin}
+              | .resources += [{src: $dll, target: "duckdb.dll"}]' \
+            > crates/dbdesk-app/packager-windows.json
+          cargo packager --config crates/dbdesk-app/packager-windows.json --release --formats nsis \
+            --out-dir "$(cygpath -m "$GITHUB_WORKSPACE/dist")"
           mv dist/*-setup.exe "dist/dbdesk-$VERSION-windows-x64-setup.exe"
       - name: Smoke test
         run: |
           target/release/dbdesk.exe --version | tee version.txt
           grep -q "dbdesk $VERSION" version.txt
+      # The installed copy, with no DuckDB on PATH: it must find the DLL beside itself.
+      - name: Smoke test the installer
+        shell: pwsh
+        run: |
+          $env:Path = ($env:Path -split ';' | Where-Object { $_ -notlike '*duckdb*' }) -join ';'
+          7z l "dist/dbdesk-$env:VERSION-windows-x64-setup.exe"
+          $installer = Start-Process -Wait -PassThru "dist/dbdesk-$env:VERSION-windows-x64-setup.exe" `
+            -ArgumentList '/S', "/D=$env:RUNNER_TEMP\dbdesk-installed"
+          if ($installer.ExitCode -ne 0) { throw "installer exit code $($installer.ExitCode)" }
+          Get-ChildItem "$env:RUNNER_TEMP\dbdesk-installed"
+          $version = & "$env:RUNNER_TEMP\dbdesk-installed\dbdesk.exe" --version
+          $version
+          if ("$version" -notlike "dbdesk $env:VERSION*") { throw "unexpected version: $version" }
       - name: Sizes
         run: ls -l target/release/dbdesk.exe dist/
       - uses: actions/upload-artifact@v4

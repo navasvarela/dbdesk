@@ -116,6 +116,35 @@ async fn a_cancel_while_idle_is_forgotten() {
 }
 
 /// The exit criterion of DB3: query a Parquet file from an in-memory database.
+/// Whichever way DuckDB got into the build (compiled, or a prebuilt library; see
+/// docs/duckdb-prebuilt.md), it is the release the bindings were generated for, with Parquet
+/// and JSON inside. An extension missing from the library would otherwise still work, but by
+/// downloading it from DuckDB's extension repository the first time a query needs it.
+#[tokio::test]
+async fn links_duckdb_1_5_6_with_parquet_and_json() {
+    let mut connection = connect(&in_memory()).await.unwrap();
+
+    let version = rows(&mut connection, "SELECT library_version FROM pragma_version()").await;
+    let linked = rows(
+        &mut connection,
+        "SELECT extension_name FROM duckdb_extensions() \
+         WHERE install_mode = 'STATICALLY_LINKED' ORDER BY 1",
+    )
+    .await;
+    eprintln!("statically linked extensions: {linked:?}");
+    let json = rows(
+        &mut connection,
+        r#"SELECT json_extract('{"a": [1, 2]}', '$.a[1]')"#,
+    )
+    .await;
+
+    assert_eq!(version, [text(&[Some("v1.5.6")])]);
+    for extension in ["json", "parquet"] {
+        assert!(linked.contains(&text(&[Some(extension)])), "{linked:?}");
+    }
+    assert_eq!(json, [text(&[Some("2")])]);
+}
+
 #[tokio::test]
 async fn queries_a_parquet_file_from_memory() {
     let dir = tempfile::tempdir().unwrap();

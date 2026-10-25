@@ -17,7 +17,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: -D warnings
+  # dbdesk_prebuilt_duckdb: link DuckDB's prebuilt library rather than compile it; see
+  # docs/duckdb-prebuilt.md.
+  RUSTFLAGS: -D warnings --cfg dbdesk_prebuilt_duckdb
 
 jobs:
   fmt:
@@ -55,7 +57,17 @@ jobs:
       # Spike: a cache of its own, so the first run is cold and the second warm.
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: v0-duckdb-spike-baseline
+          prefix-key: v0-duckdb-spike-prebuilt
+      # DuckDB's own library for this runner, checked against packaging/duckdb/SHA256SUMS. The
+      # tests on Windows load its DLL from PATH.
+      - name: Fetch DuckDB's prebuilt library
+        shell: bash
+        run: |
+          packaging/duckdb/fetch.sh "$(rustc -vV | sed -n 's/^host: //p')" "$RUNNER_TEMP/duckdb" \
+            | tee -a "$GITHUB_ENV"
+      - if: runner.os == 'Windows'
+        shell: bash
+        run: echo "$DUCKDB_LIB_DIR" >> "$GITHUB_PATH"
       # Headers eframe's windowing backends link against on Linux (same list egui's own CI uses).
       - if: runner.os == 'Linux'
         run: |
