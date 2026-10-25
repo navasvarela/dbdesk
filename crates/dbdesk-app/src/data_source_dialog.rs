@@ -3,10 +3,10 @@
 use std::path::Path;
 
 use dbdesk_core::{
-    DataSource, DataSourceId, DriverKind, ServerInfo, SourceColor, expand, expand_path,
-    has_placeholder,
+    DataSource, DataSourceId, DriverKind, SafetyLevel, ServerInfo, SourceColor, expand,
+    expand_path, has_placeholder,
 };
-use dbdesk_engine::{DatabaseFile, Event, PasswordUpdate, ProcessEnvironment};
+use dbdesk_engine::{DatabaseFile, Event, PasswordUpdate, ProcessEnvironment, read_only};
 use egui::{
     Align, Button, Color32, Grid, Id, Layout, Modal, RichText, Sense, Stroke, TextEdit, Ui,
     WidgetInfo, WidgetType, vec2,
@@ -161,6 +161,7 @@ impl DataSourceDialog {
                 ui.label("Colour");
                 color_picker(ui, &mut self.form.color);
                 ui.end_row();
+                safety_rows(ui, &mut self.form);
                 match &mut self.form.fields {
                     DriverFields::Postgres(fields) => {
                         server_rows(ui, &mut fields.server, password_hint);
@@ -433,6 +434,66 @@ fn duckdb_rows(ui: &mut Ui, fields: &mut DuckDbFields) -> Option<DatabaseFile> {
 fn file_button(ui: &mut Ui, glyph: &str, icon_color: Color32, text: &str) -> egui::Response {
     let label = widgets::icon_text(ui, glyph, icon_color, text);
     widgets::name(ui.button(label), WidgetType::Button, text, true)
+}
+
+/// The safety level, like radio buttons, then a suggestion when the colour makes one, and a
+/// note when the engine can only be made read-only in part.
+fn safety_rows(ui: &mut Ui, form: &mut DataSourceForm) {
+    let label = ui.label("Safety");
+    ui.horizontal(|ui| {
+        for level in SafetyLevel::ALL {
+            let selected = form.safety == level;
+            let response = ui.selectable_value(&mut form.safety, level, level.display_name());
+            response.widget_info(|| {
+                WidgetInfo::selected(
+                    WidgetType::RadioButton,
+                    true,
+                    selected,
+                    level.display_name(),
+                )
+            });
+            response.on_hover_text(level.description());
+        }
+    })
+    .response
+    .labelled_by(label.id);
+    ui.end_row();
+    let palette = Palette::for_visuals(ui.visuals());
+    if let Some(suggested) = SafetyLevel::suggested_by(form.color)
+        .filter(|suggested| form.safety == SafetyLevel::Normal && *suggested != form.safety)
+    {
+        ui.label("");
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new("Red usually marks production.")
+                    .small()
+                    .color(palette.text_weak),
+            );
+            if ui
+                .small_button(format!(
+                    "Make it {}",
+                    suggested.display_name().to_lowercase()
+                ))
+                .clicked()
+            {
+                form.safety = suggested;
+            }
+        });
+        ui.end_row();
+    }
+    if form.safety == SafetyLevel::ReadOnly && read_only::mode(form.driver()).is_none() {
+        ui.label("");
+        ui.label(
+            RichText::new(format!(
+                "{} has no read-only mode dbdesk can use: statements are checked, but a \
+                 write inside a procedure or function isn't stopped.",
+                form.driver().display_name()
+            ))
+            .small()
+            .color(palette.warning),
+        );
+        ui.end_row();
+    }
 }
 
 /// "None" and one swatch per [`SourceColor`], like radio buttons.

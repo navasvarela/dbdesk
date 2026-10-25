@@ -16,8 +16,8 @@ use crate::icons::{self, Role};
 use crate::keymap::{Action, Keymap};
 use crate::theme::Palette;
 use crate::widgets::{self, IconButton};
-use dbdesk_core::TransactionStatus;
 use dbdesk_core::{CatalogPath, RelationName};
+use dbdesk_core::{SafetyLevel, TransactionStatus};
 use dbdesk_engine::{RunId, RunOutcome, RunPurpose, SessionState, TransactionEnd, TransactionMode};
 use dbdesk_sql::{ProblemSource, Severity};
 use dbdesk_store::ExportFormat;
@@ -313,6 +313,7 @@ fn toolbar(
         ui.add_space(6.0);
         ui.separator();
         ui.add_space(6.0);
+        safety_badge(ui, console, palette);
         run_status(ui, console, palette);
         problem_count(ui, console, keymap, palette);
         if let Some(error) = console.save_error() {
@@ -324,6 +325,24 @@ fn toolbar(
                 .on_hover_text(error);
         }
     });
+}
+
+/// The data source's safety level, unless it is normal, with what it means on hover.
+fn safety_badge(ui: &mut Ui, console: &QueryConsole, palette: &Palette) {
+    let safety = console.safety();
+    let (glyph, color) = match safety {
+        SafetyLevel::Normal => return,
+        SafetyLevel::Careful => (icons::WARNING, palette.warning),
+        SafetyLevel::ReadOnly => (icons::LOCK_SIMPLE, palette.primary),
+    };
+    let job = widgets::icon_text(ui, glyph, color, safety.display_name());
+    ui.label(job).on_hover_text(format!(
+        "\u{201c}{}\u{201d} is {}. {}",
+        console.data_source_name(),
+        safety.display_name().to_lowercase(),
+        safety.description()
+    ));
+    ui.add_space(6.0);
 }
 
 /// How many errors and warnings the console has; a click goes to the next one.
