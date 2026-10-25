@@ -52,7 +52,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      # Pull requests restore main's cache but never save their own. Each save took 30–50 s,
+      # and GitHub keeps 10 GB of cache per repository, so pull request caches pushed main's
+      # out and later runs started cold.
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # Headers eframe's windowing backends link against on Linux (same list egui's own CI uses).
       - if: runner.os == 'Linux'
         run: |
@@ -67,5 +72,9 @@ jobs:
         run: |
           docker compose up -d --wait
           grep -E '^[A-Z_]+=' test-servers.env >> "$GITHUB_ENV"
-      - run: cargo clippy --workspace --all-targets
+      # Clippy on macOS found nothing Linux didn't, so it's skipped there to save a build.
+      # Windows keeps it: some lints depend on type sizes, and `result_large_err` once failed
+      # only there.
+      - if: runner.os != 'macOS'
+        run: cargo clippy --workspace --all-targets
       - run: cargo test --workspace
