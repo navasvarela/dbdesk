@@ -23,7 +23,9 @@ mod split;
 mod transaction;
 
 pub use check::{LintRule, Problem, ProblemSource, Severity, check_statement, is_checkable};
-pub use classify::{StatementKind, Unclassified, classify};
+pub use classify::{
+    Analysis, NamePart, NamedSchemas, StatementKind, Unclassified, analyze, classify,
+};
 pub use dialect::{Dialect, ExplainSetting, Savepoint};
 pub use format::{FormatError, FormatOptions, Formatted, KeywordCase, format_ranges, same_meaning};
 pub use keywords::{is_keyword, keywords};
