@@ -242,6 +242,7 @@ impl Engine {
                     console.session.cancel(run);
                 }
             }
+            Command::ReconnectConsole(console) => self.reconnect_console(console),
             Command::CloseConsole(console) => self.close_console(console),
             Command::SaveConsole { key, text } => {
                 if let Some(failed) = console_files::save(&self.console_files, key, text).await {
@@ -729,6 +730,35 @@ impl Engine {
             events: self.events.clone(),
             history: self.history.clone(),
         }
+    }
+
+    /// Replaces the console's session with a new one to the same data source.
+    fn reconnect_console(&mut self, console: ConsoleId) {
+        let Some(data_source) = self
+            .consoles
+            .get(&console)
+            .map(|existing| existing.data_source)
+        else {
+            return;
+        };
+        self.close_console(console);
+        let Some(config) = self.registry.get(data_source) else {
+            tracing::warn!(%data_source, "reconnect requested for an unknown data source");
+            return;
+        };
+        tracing::info!(data_source = %config.name, "reconnecting a console");
+        let session = Session::start(
+            config.clone(),
+            SessionOwner::Console(console),
+            self.services(),
+        );
+        self.consoles.insert(
+            console,
+            ConsoleSession {
+                data_source,
+                session,
+            },
+        );
     }
 
     fn close_console(&mut self, console: ConsoleId) {

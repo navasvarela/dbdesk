@@ -714,6 +714,25 @@ impl QueryConsole {
             .is_some_and(|run| run.state == RunState::Running)
     }
 
+    #[cfg(test)]
+    pub fn session(&self) -> &SessionState {
+        &self.session
+    }
+
+    /// Whether the latest run finished without a failure.
+    #[cfg(test)]
+    pub fn last_run_completed(&self) -> bool {
+        self.run.as_ref().is_some_and(|run| {
+            matches!(
+                run.state,
+                RunState::Finished {
+                    outcome: RunOutcome::Completed,
+                    ..
+                }
+            )
+        })
+    }
+
     /// The statement ⌘↵ would run, to shade in the editor: the one at the cursor, unless text
     /// is selected (the selection is what runs then, and is already highlighted).
     pub fn current_statement(&self) -> Option<Range<usize>> {

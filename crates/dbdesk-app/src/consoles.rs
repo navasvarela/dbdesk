@@ -243,6 +243,7 @@ impl Consoles {
                 console: id,
                 statements,
             }),
+            ConsoleAction::Reconnect => Some(Command::ReconnectConsole(id)),
             ConsoleAction::CompletionAccepted(candidate) => {
                 self.recent_completions.record(&candidate);
                 None

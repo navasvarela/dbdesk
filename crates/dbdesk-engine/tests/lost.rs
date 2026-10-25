@@ -191,7 +191,7 @@ fn failure(event: &Event) -> Option<&str> {
 }
 
 #[test]
-fn a_statement_on_a_lost_connection_fails_and_shows_the_console_lost() {
+fn a_lost_console_runs_nothing_until_it_reconnects() {
     let Some(server) = postgres_test_server() else {
         return;
     };
@@ -217,6 +217,30 @@ fn a_statement_on_a_lost_connection_fails_and_shows_the_console_lost() {
         } => assert_is_a_reason(&reason),
         other => panic!("expected the console to be lost, got {other:?}"),
     }
+
+    // It runs nothing until asked to reconnect, then runs in a new session.
+    run(&engine, &scratch, 3);
+    let (events, outcome) = until_run_finished(&mut engine, 3);
+    assert_eq!(outcome, RunOutcome::Failed);
+    assert!(
+        events
+            .iter()
+            .filter_map(failure)
+            .any(|message| message.contains("reconnect to go on")),
+        "{events:?}"
+    );
+    engine.send(Command::ReconnectConsole(CONSOLE));
+    for expected in ["Connecting", "Connected"] {
+        match engine.next_event() {
+            Event::ConsoleSessionChanged {
+                console: CONSOLE,
+                state,
+            } => assert!(format!("{state:?}").starts_with(expected), "{state:?}"),
+            other => panic!("expected the console {expected}, got {other:?}"),
+        }
+    }
+    run(&engine, &scratch, 4);
+    assert_eq!(until_run_finished(&mut engine, 4).1, RunOutcome::Completed);
     engine.shut_down();
 }
 

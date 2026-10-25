@@ -322,8 +322,16 @@ async fn run(
         match context.owner {
             // A console's transaction, temporary tables and settings went with the
             // connection; it reconnects only when asked, knowing that.
+            //
+            // The session stays, refusing every request, until Reconnect or closing the
+            // console replaces it. Ending here instead would leave a request sent meanwhile in
+            // a channel nobody reads, unanswered.
             SessionOwner::Console(_) => {
                 if let Some(request) = unserved {
+                    loss::refuse(&context, request, &reason);
+                }
+                while let Some(request) = next_request_while_lost(&mut signals, &mut requests).await
+                {
                     loss::refuse(&context, request, &reason);
                 }
                 return;

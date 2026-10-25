@@ -2545,6 +2545,155 @@ mod tests {
         );
     }
 
+    /// The first value of `sql`'s first row, on `connection`.
+    fn first_value(
+        runtime: &tokio::runtime::Runtime,
+        connection: &mut Box<dyn dbdesk_core::Connection>,
+        sql: &str,
+    ) -> Option<String> {
+        runtime.block_on(async {
+            let mut cursor = connection.execute(sql).await.unwrap();
+            let rows = cursor.next_page(1).await.unwrap();
+            cursor.finish().await.unwrap();
+            rows.into_iter()
+                .next()
+                .and_then(|row| row.into_iter().next().flatten())
+        })
+    }
+
+    /// Ends a console's session server-side, as a restart would, then reconnects it from its
+    /// toolbar. Works in a database of its own, so ending its sessions touches no other test.
+    #[test]
+    fn a_console_whose_connection_was_lost_says_so_and_reconnects_when_asked() {
+        let Ok(url) = std::env::var("DBDESK_TEST_POSTGRES_URL") else {
+            eprintln!("skipped: DBDESK_TEST_POSTGRES_URL is not set");
+            return;
+        };
+        let (login, rest) = url
+            .strip_prefix("postgres://")
+            .unwrap()
+            .split_once('@')
+            .unwrap();
+        let (user, password) = login.split_once(':').unwrap();
+        let (address, _) = rest.split_once('/').unwrap();
+        let (host, port) = address.split_once(':').unwrap();
+        let postgres = |database: &str, name: &str| dbdesk_core::DataSource {
+            id: DataSourceId::generate(),
+            name: name.to_owned(),
+            color: None,
+            safety: dbdesk_core::SafetyLevel::Normal,
+            project: None,
+            mcp_login: None,
+            config: dbdesk_core::ConnectionConfig::Postgres(dbdesk_core::PostgresConfig {
+                server: dbdesk_core::ServerConfig {
+                    host: host.to_owned(),
+                    port: port.parse::<u16>().unwrap().into(),
+                    database: database.to_owned(),
+                    user: user.to_owned(),
+                    tls: dbdesk_core::TlsMode::Disable,
+                    ssh: None,
+                },
+            }),
+        };
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let admin_source = postgres("postgres", "admin");
+        let secrets: Arc<dyn SecretStore> =
+            Arc::new(crate::test_support::MemorySecrets::with_password(
+                admin_source.id,
+                Password::new(password),
+            ));
+        let tunnels = dbdesk_engine::Tunnels::new("known_hosts".into());
+        let mut admin = runtime
+            .block_on(dbdesk_engine::open_data_source(
+                &admin_source,
+                &secrets,
+                &tunnels,
+            ))
+            .unwrap();
+        let database = format!("dbdesk_reconnect_{}", std::process::id());
+        first_value(
+            &runtime,
+            &mut admin,
+            &format!("DROP DATABASE IF EXISTS {database} WITH (FORCE)"),
+        );
+        first_value(&runtime, &mut admin, &format!("CREATE DATABASE {database}"));
+        let scratch = postgres(&database, "scratch");
+        let dir = tempfile::tempdir().unwrap();
+        DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .save(std::slice::from_ref(&scratch))
+            .unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = crate::test_support::start_app(
+            harness_at_default_size(),
+            dir.path(),
+            feed,
+            crate::test_support::MemorySecrets::with_password(scratch.id, Password::new(password)),
+        );
+        step_until_visible(&mut harness, "Expand scratch");
+        // Opening a console loads the catalog for completion, so a connection's spinner may
+        // be turning: frames, not `run()`, which gives up while the UI keeps repainting.
+        harness.get_by_label("scratch").click_secondary();
+        harness.run_steps(2);
+        harness
+            .get_all_by_label("New query console")
+            .next()
+            .unwrap()
+            .click();
+        harness.run_steps(2);
+        harness.get_by_role(Role::MultilineTextInput).focus();
+        harness.run_steps(2);
+        harness
+            .get_by_role(Role::MultilineTextInput)
+            .type_text("SELECT 1");
+        harness.run_steps(2);
+        harness.get_by_label("Run").click();
+        step_until_visible(&mut harness, "Done in");
+
+        first_value(
+            &runtime,
+            &mut admin,
+            &format!(
+                "SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity \
+                 WHERE datname = '{database}'"
+            ),
+        );
+        let remaining =
+            format!("SELECT count(*) FROM pg_stat_activity WHERE datname = '{database}'");
+        let deadline = std::time::Instant::now() + WAIT_TIMEOUT;
+        while first_value(&runtime, &mut admin, &remaining).as_deref() != Some("0") {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the session never ended"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        harness.get_by_label("Run").click();
+        step_until_visible(&mut harness, "session settings are gone");
+        harness.get_by_label("Reconnect").click();
+        step_until(&mut harness, "the console reconnecting", |harness| {
+            harness
+                .query_by_label_contains("session settings are gone")
+                .is_none()
+                && harness.state().open_consoles().any(|console| {
+                    matches!(console.session(), dbdesk_engine::SessionState::Connected(_))
+                })
+        });
+        harness.get_by_label("Run").click();
+        step_until(&mut harness, "the query running again", |harness| {
+            harness
+                .state()
+                .open_consoles()
+                .any(|console| console.last_run_completed())
+        });
+
+        drop(harness);
+        first_value(
+            &runtime,
+            &mut admin,
+            &format!("DROP DATABASE IF EXISTS {database} WITH (FORCE)"),
+        );
+    }
+
     /// Opens a console on the shop's data source and focuses its editor.
     fn open_console(harness: &mut Harness<'_, DbDeskApp>) {
         step_until_visible(harness, "Expand shop");
