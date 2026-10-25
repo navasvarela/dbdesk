@@ -5,7 +5,9 @@ src = "src"
 
 [output.html]
 # Where the manual is published (see site/build.sh); mdBook needs it for the 404 page's links.
-site-url = "/dbdesk/manual/"
+# The site is served from the root of https://dbdesk.org, the repository's GitHub Pages
+# custom domain, so the manual is at /manual/ (it was /dbdesk/manual/ under github.io).
+site-url = "/manual/"
 git-repository-url = "https://github.com/navasvarela/dbdesk"
 edit-url-template = "https://github.com/navasvarela/dbdesk/edit/main/book/{path}"
 
