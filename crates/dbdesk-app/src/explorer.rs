@@ -820,7 +820,7 @@ fn status_color(session: &SessionState, palette: &Palette) -> Option<Color32> {
         SessionState::Disconnected => None,
         SessionState::Connecting => Some(palette.warning),
         SessionState::Connected(_) => Some(palette.success),
-        SessionState::Failed(_) => Some(palette.error),
+        SessionState::Failed(_) | SessionState::Lost(_) => Some(palette.error),
     }
 }
 
@@ -831,6 +831,9 @@ fn tooltip(entry: &DataSourceEntry) -> String {
         SessionState::Connecting => "Connecting…".to_owned(),
         SessionState::Connected(server) => format!("Connected to {server}"),
         SessionState::Failed(error) => format!("Connection failed: {error}"),
+        SessionState::Lost(reason) => {
+            format!("Disconnected: {reason}\nReconnects when you next browse it.")
+        }
     };
     format!("{} · {config}\n{status}", config.driver().display_name())
 }

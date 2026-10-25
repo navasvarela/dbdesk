@@ -31,7 +31,7 @@ mod updater;
 pub use dbdesk_ssh::HostKey;
 pub use environment::ProcessEnvironment;
 pub use export::Export;
-pub use handle::{EngineConfig, EngineError, EngineHandle};
+pub use handle::{EngineConfig, EngineError, EngineHandle, IDLE_PING_AFTER};
 pub use open::{OpenError, open_data_source, open_data_source_for_mcp};
 pub use passwords::PasswordNeeded;
 pub use protocol::{

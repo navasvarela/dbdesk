@@ -949,12 +949,15 @@ impl QueryConsole {
         if matches!(state, SessionState::Connected(_)) {
             self.problems.forget_database(Instant::now());
         }
-        if matches!(state, SessionState::Disconnected | SessionState::Failed(_)) {
+        if matches!(
+            state,
+            SessionState::Disconnected | SessionState::Failed(_) | SessionState::Lost(_)
+        ) {
             // The database rolls back whatever a closed connection left uncommitted.
             self.transaction = TransactionStatus::Idle;
         }
         let failure = match state {
-            SessionState::Failed(error) => error.clone(),
+            SessionState::Failed(error) | SessionState::Lost(error) => error.clone(),
             SessionState::Disconnected => "the connection closed".to_owned(),
             SessionState::Connecting | SessionState::Connected(_) => return,
         };
