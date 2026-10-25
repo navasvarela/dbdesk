@@ -2,8 +2,9 @@ name: Release
 
 # Builds the downloadable packages. See docs/releasing.md.
 #
-# - A tag `vX.Y.Z` on main: checks the tag against the version, runs the full CI, builds and
-#   smoke-tests every package, and creates a *draft* GitHub release for a person to publish.
+# - A tag `vX.Y.Z` on main: checks the tag against the version and that CI passed on the commit,
+#   builds and smoke-tests every package, and creates a *draft* GitHub release for a person to
+#   publish.
 # - Run by hand (Actions > Release > Run workflow): the same builds as a dry run, kept as
 #   workflow artifacts, with no release.
 # - A pull request that touches packaging: the builds and smoke tests only, so a broken package
@@ -57,11 +58,45 @@ jobs:
             exit 1
           fi
 
-  # The full test suite, Postgres included, for the exact commit being released. Pull requests
-  # already run it through ci.yml, so it is skipped there.
+  # The tagged commit is the release pull request's merge commit, which already ran the full CI
+  # (every database server included) when it landed on main. Running it again here took three
+  # runners and about 15 minutes, so this only checks that run passed, waiting while it is still
+  # going. A tag on a commit with no CI run on main fails. Pull requests and manual dry runs build
+  # whatever they are given, so they skip the check.
   ci:
-    if: github.event_name != 'pull_request'
-    uses: ./.github/workflows/ci.yml
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: CI passed on this commit
+        run: |
+          # Up to an hour: CI on main may still be running, or not even started, when the tag
+          # is pushed straight after the merge.
+          for attempt in $(seq 1 60); do
+            run=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$GITHUB_SHA" \
+              --event push --json status,conclusion,url --jq '.[0] // empty')
+            if [[ -z "$run" ]]; then
+              if (( attempt >= 10 )); then
+                echo "::error::No CI run on main for $GITHUB_SHA. Tag the release pull request's merge commit."
+                exit 1
+              fi
+            elif [[ "$(jq -r .status <<<"$run")" == completed ]]; then
+              conclusion=$(jq -r .conclusion <<<"$run")
+              url=$(jq -r .url <<<"$run")
+              if [[ "$conclusion" == success ]]; then
+                echo "CI passed on this commit: $url"
+                exit 0
+              fi
+              echo "::error::CI on this commit ended with $conclusion: $url"
+              exit 1
+            fi
+            sleep 60
+          done
+          echo "::error::CI on this commit didn't finish within an hour"
+          exit 1
 
   macos:
     needs: [version, ci]

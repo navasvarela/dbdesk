@@ -28,7 +28,7 @@ Pushing a tag `vX.Y.Z` on `main` runs `.github/workflows/release.yml`:
 
 ```mermaid
 flowchart LR
-    T[tag vX.Y.Z] --> V[verify: tag = version,<br/>full CI incl. Postgres]
+    T[tag vX.Y.Z] --> V[verify: tag = version,<br/>CI passed on this commit]
     V --> M[macOS: build arm64 + x86_64,<br/>lipo, .app, .dmg]
     V --> L[Linux: build on Ubuntu 22.04,<br/>AppImage + .deb]
     V --> W[Windows: build,<br/>NSIS installer]
@@ -42,8 +42,10 @@ flowchart LR
     P --> H[bump Homebrew cask]
 ```
 
-1. **Verify.** The tag must match the workspace version in `Cargo.toml`, and the full CI suite
-   runs again, Postgres tests included. A tag on a commit that fails CI produces nothing.
+1. **Verify.** The tag must match the workspace version in `Cargo.toml`, and the full CI suite,
+   with every database server, must have passed on that commit when it landed on main. The
+   release checks that run rather than repeating it, and a tag on a commit without a green CI run
+   on main produces nothing.
 2. **Build.**
    - **macOS** on an Apple-silicon runner: `aarch64-apple-darwin` and `x86_64-apple-darwin`
      binaries, joined into a universal binary with `lipo`. One download, no "which Mac do I
