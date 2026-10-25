@@ -166,6 +166,9 @@ impl AppState {
             | Event::ConsoleSaveFailed { .. }
             | Event::ConnectionTested { .. }
             | Event::PasswordNeeded { .. }
+            | Event::DataSourcesExported { .. }
+            | Event::ImportPreviewed { .. }
+            | Event::ImportApplied(_)
             | Event::PasswordProvided { .. }
             | Event::DefinitionLoaded { .. }
             | Event::DatabaseFileCreated { .. }

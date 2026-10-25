@@ -6,7 +6,8 @@ use dbdesk_core::{
     ProjectId, Rejection, RelationName, Row, ServerInfo, TableDescription, TransactionStatus,
 };
 use dbdesk_store::{
-    ConsoleKey, HistoryEntry, KeymapBindings, Project, Projects, SavedConsole, Settings,
+    ConsoleKey, HistoryEntry, ImportPlan, ImportPreview, KeymapBindings, Project, Projects,
+    SavedConsole, Settings,
 };
 
 use crate::{Export, PasswordNeeded, Release};
@@ -57,6 +58,21 @@ pub enum Command {
         data_source: DataSourceId,
         project: Option<ProjectId>,
     },
+    /// Writes the data sources, the projects, and every project those data sources are in,
+    /// to a file another machine can import. Never a password. Answered by
+    /// [`Event::DataSourcesExported`].
+    ExportDataSources {
+        path: PathBuf,
+        data_sources: Vec<DataSourceId>,
+        projects: Vec<ProjectId>,
+    },
+    /// Reads an exported file and compares it with the data sources and projects here,
+    /// changing nothing. Answered by [`Event::ImportPreviewed`].
+    PreviewImport(PathBuf),
+    /// Saves what the user chose to import: the projects first, then the data sources, each
+    /// added or replacing the one with its id. Answered by an [`Event::ProjectSaved`] and
+    /// [`Event::DataSourceSaved`] for each, then [`Event::ImportApplied`].
+    ApplyImport(ImportPlan),
     /// Connects with these settings without saving them, then disconnects.
     /// Answered by [`Event::ConnectionTested`].
     TestConnection {
@@ -327,6 +343,20 @@ pub enum Event {
         data_source: DataSourceId,
         reason: PasswordNeeded,
     },
+    /// The answer to [`Command::ExportDataSources`]: how many data sources were written.
+    DataSourcesExported {
+        path: PathBuf,
+        result: Result<usize, String>,
+    },
+    /// The answer to [`Command::PreviewImport`]. Boxed, since a preview is large next to
+    /// every other event.
+    ImportPreviewed {
+        path: PathBuf,
+        result: Result<Box<ImportPreview>, String>,
+    },
+    /// The answer to [`Command::ApplyImport`], once everything chosen is saved, or once
+    /// saving failed. Projects saved before a data source failed stay saved.
+    ImportApplied(Result<(), String>),
     /// The answer to [`Command::ProvidePassword`].
     PasswordProvided {
         data_source: DataSourceId,

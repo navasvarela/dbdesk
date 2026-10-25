@@ -303,7 +303,7 @@ impl Projects {
     }
 
     /// Ids and slugs must each be unique: data sources point at the id, clients at the slug.
-    pub(crate) fn check_unique(&self) -> Result<(), String> {
+    pub fn check_unique(&self) -> Result<(), String> {
         let mut ids = HashSet::new();
         let mut slugs = HashSet::new();
         for project in &self.projects {
