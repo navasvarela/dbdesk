@@ -1,0 +1,19 @@
+# The test SSH server: signs in the `dbdesk` user with a key or its password, and forwards
+# only to the compose PostgreSQL service, so a test can also see a forward refused.
+Port 22
+HostKey /etc/ssh/ssh_host_ed25519_key
+AuthorizedKeysFile /etc/ssh/authorized_keys
+PermitRootLogin no
+PubkeyAuthentication yes
+PasswordAuthentication yes
+KbdInteractiveAuthentication no
+AllowTcpForwarding local
+PermitOpen postgres:5432
+AllowAgentForwarding no
+X11Forwarding no
+PermitTTY no
+# The tests fail logins and abandon handshakes on purpose, all from the one address, and run in
+# parallel. OpenSSH 9.8 and later would penalise that address and refuse its next connections
+# for a few seconds, failing unrelated tests; MaxStartups would drop handshakes past ten.
+PerSourcePenalties no
+MaxStartups 100
