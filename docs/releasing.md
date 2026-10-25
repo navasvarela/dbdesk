@@ -1,8 +1,8 @@
 # Release binaries
 
 Status: **R1 released** as v0.1.0 on 2026-10-23, followed by v0.2.0 (MySQL and MariaDB, TLS,
-the update notice), v0.3.0 (SQL Server), v0.4.0 (projects, and links that open) and v0.5.0 (installing updates,
-the read-only MCP server). R3's update
+the update notice), v0.3.0 (SQL Server), v0.4.0 (projects, and links that open), v0.5.0
+(installing updates, the read-only MCP server) and v0.6.0 (DuckDB and ClickHouse). R3's update
 notice is built, ahead of R2 (see [R3](#r3--updates)).
 Decisions settled on 2026-10-23 (see [Decisions](#decisions)).
 
