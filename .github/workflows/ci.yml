@@ -17,6 +17,14 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
 
+# The first failure stops the whole run: every job ends with a step that cancels the run when
+# the job fails, so the other jobs (a slow macOS or Windows build, say) stop instead of using a
+# runner for a result that no longer matters. `gh run rerun --failed` reruns the cancelled jobs
+# too.
+permissions:
+  contents: read
+  actions: write
+
 jobs:
   fmt:
     runs-on: ubuntu-latest
@@ -26,6 +34,11 @@ jobs:
         with:
           components: rustfmt
       - run: cargo fmt --all --check
+      - name: Cancel the rest of the run
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
 
   # The user manual in book/. A broken link to a page or an image fails the build.
   book:
@@ -36,10 +49,16 @@ jobs:
         with:
           tool: mdbook@0.5.4,mdbook-linkcheck2@0.13.0
       - run: mdbook build book
+      - name: Cancel the rest of the run
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
 
   check:
     strategy:
-      fail-fast: false
+      # Also cancels the other systems' jobs straight away when one fails.
+      fail-fast: true
       matrix:
         # Windows builds and runs the tests, but dbdesk hasn't been tried on a real Windows
         # machine yet; see docs/releasing.md.
@@ -83,3 +102,8 @@ jobs:
       - if: runner.os != 'macOS'
         run: cargo clippy --workspace --all-targets
       - run: cargo test --workspace
+      - name: Cancel the rest of the run
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
