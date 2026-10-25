@@ -7,7 +7,7 @@ keychain, never in that file.
 ## Adding one
 
 Click **+** at the top of the explorer (or **New data source** on the Welcome tab) and choose
-**PostgreSQL**, **SQLite**, **MySQL / MariaDB**, **SQL Server** or **DuckDB**.
+**PostgreSQL**, **SQLite**, **MySQL / MariaDB**, **SQL Server**, **DuckDB** or **ClickHouse**.
 
 ![The New PostgreSQL data source dialog](images/data-source-dialog.png)
 
@@ -85,6 +85,26 @@ One data source type serves both: dbdesk tells MySQL and MariaDB apart once it c
 
 **Test connection** says which server it reached ("Connected to SQL Server 16.0.4305.5"; 16 is
 SQL Server 2022).
+
+**ClickHouse** has the same fields, with these defaults:
+
+![The New ClickHouse data source dialog](images/clickhouse-data-source-dialog.png)
+
+| Field | Default | Notes |
+| --- | --- | --- |
+| Host | `localhost` | Name or IP address of the server. For ClickHouse Cloud, the service's host name. |
+| Port | `8123` | ClickHouse's HTTP port: dbdesk speaks HTTP to ClickHouse, not its native protocol on 9000. |
+| Database | `default` | The database unqualified names refer to, as `USE` would set. The explorer lists every database you may see. |
+| User | `default` | |
+| TLS | `disable` | `disable`, `require` or `verify-full`; see below. |
+| Password | none | Stored in the keychain when you save. |
+
+ClickHouse serves HTTPS on a port of its own (8443) rather than offering encryption on the HTTP
+one, so there is no `prefer`: choosing `require` or `verify-full` moves the port to `8443`, and
+`disable` moves it back, unless you typed a port of your own. ClickHouse Cloud only accepts
+HTTPS, with a publicly signed certificate, so `verify-full` with no CA file works there.
+
+**Test connection** says which server it reached ("Connected to ClickHouse 25.8.33.6").
 
 **SQLite** adds:
 

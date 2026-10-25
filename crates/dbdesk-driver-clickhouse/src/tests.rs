@@ -168,6 +168,39 @@ async fn runs_pages_cancels_and_reports_error_positions() {
     Box::new(connection).close().await.unwrap();
 }
 
+/// A result of millions of rows pages like any other, and abandoning it stops the query at
+/// once, rather than leaving the session busy until the server has sent the rest.
+#[tokio::test]
+async fn pages_through_millions_of_rows_and_abandons_the_rest() {
+    let Some(server) = test_server() else { return };
+    let mut connection = server.connect().await;
+    let started = std::time::Instant::now();
+
+    let mut cursor = connection
+        .execute("SELECT number, toString(number) FROM numbers(10000000)")
+        .await
+        .expect("select");
+    for page in 0..3 {
+        let rows = cursor.next_page(500).await.expect("page");
+        assert_eq!(rows.len(), 500);
+        assert_eq!(
+            rows[0][0].as_deref(),
+            Some((page * 500).to_string().as_str())
+        );
+    }
+    assert!(!cursor.is_exhausted());
+    assert!(matches!(
+        cursor.finish().await,
+        Err(DriverError::Statement { .. })
+    ));
+    connection.ping().await.expect("the session is free again");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "took {:?}",
+        started.elapsed()
+    );
+}
+
 /// What a value's type promises reaches the grid: every digit of a 64-bit integer or a
 /// decimal, a decimal's trailing zeros, `NULL` apart from text, and arrays, maps and dates as
 /// ClickHouse writes them.

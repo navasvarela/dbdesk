@@ -273,6 +273,44 @@ release packages stay within the size budget agreed below.
 tables, run a query over millions of rows and page through it, cancel a long one, and the
 conformance suite (without transactions) passes in CI.
 
+**As built**, where it differs from the plan above or settles what it left open:
+
+- **TLS through `dbdesk-tls`**, not the crate's `rustls-tls-*` features, which trust only the
+  public authorities and so can't do `verify-full` with a CA file. The rustls configuration the
+  PostgreSQL driver built moved into a crate of its own, and the ClickHouse driver hands it to
+  `hyper-rustls`. `prefer` is accepted in a saved file and means plain HTTP, as `disable` does.
+- **The session's database is set once, with `USE`**, when the connection opens. The client
+  would otherwise send `database` with every request, which undoes the user's own `USE`. A
+  session idle for an hour ends on the server, and the next request starts a new one in the
+  user's default database, without its temporary tables.
+- **Values** stay as ClickHouse writes them in JSON: a `UInt64` or `Int128` keeps every digit
+  (ClickHouse quotes 64-bit and larger integers), decimals keep their trailing zeros
+  (`output_format_decimal_trailing_zeros`), and arrays, maps and tuples show as JSON. An error
+  partway through a result arrives as plain text (`http_write_exception_in_output_format=0`),
+  which the client turns into an error rather than a last row.
+- **Cancel** is `KILL QUERY … SYNC`, which returns once the query has stopped, so the session
+  is free for the next statement. A result abandoned with rows unread is stopped the same way,
+  after its response is dropped: a query blocked writing rows nobody reads never sees a kill.
+- **Validate** parses every statement with `EXPLAIN AST`, so a syntax error in an `INSERT` or
+  `ALTER` is caught too, and then resolves names with `EXPLAIN PLAN` for queries only, the one
+  kind ClickHouse plans.
+- **Catalog:** functions are left out, since a ClickHouse function (built in or made with
+  `CREATE FUNCTION`) belongs to the server, not to a database. Indexes are the data-skipping
+  indexes; the primary key is the sort order and shows in the definition, which comes from
+  `system.tables.create_table_query` rather than `SHOW CREATE`. The `.inner` table of a
+  materialized view without a `TO` table is a system object.
+- **Grid editing** stays off: `Dialect::read_only_results` gives the reason, and the console
+  doesn't describe the table at all.
+- **Conformance:** the suite's error-position check now uses `WHERE id = = 1` (ClickHouse reads
+  `WHERE WHERE id` as a column named `WHERE`), and its accepted `DELETE` has a `WHERE`, which
+  ClickHouse requires. `check_describe_table` is skipped along with `check_transactions`.
+- **A client bug worked around:** `BytesCursor`'s `AsyncRead` can fill part of a buffer and
+  then return `Pending`, which tokio's `read_to_end` panics on, so whole responses are read
+  with its own `collect` and results line by line through `AsyncBufRead`, which is sound.
+- **Size:** measured on an Apple-silicon Mac, the stripped release binary went from 68.0 MB to
+  69.1 MB, and from 26.1 MB to 26.5 MB with `gzip -9`: the downloads grow by about half a
+  megabyte, the client being little more than hyper, which dbdesk already had.
+
 ### DB5 — Oracle (planned, not scheduled)
 
 Waits until after R2 (signed installs).
