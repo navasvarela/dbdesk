@@ -12,6 +12,12 @@ const TEST_URL_VAR: &str = "DBDESK_TEST_SQLSERVER_URL";
 /// the cancel reaches a statement the server is still running.
 const LONG_RUNNING: &str = "WAITFOR DELAY '00:01:00'";
 
+/// Held by every test that talks to the test server. They share one database, and the catalog
+/// walk asked for the definition of a view that another test (the `describe_table` check) had
+/// just dropped, which failed CI now and then. Tests that only need no server don't take it.
+static SHARED_DATABASE: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
 struct TestServer {
     config: SqlServerConfig,
     password: Option<Password>,
@@ -81,6 +87,7 @@ async fn run(connection: &mut SqlServerConnection, sql: &str) -> Option<u64> {
 
 #[tokio::test]
 async fn conforms_to_the_connection_lifecycle() {
+    let _shared = SHARED_DATABASE.lock().await;
     let Some(server) = test_server() else { return };
     let connection = server.connect().await;
 
@@ -95,6 +102,7 @@ async fn conforms_to_the_connection_lifecycle() {
 
 #[tokio::test]
 async fn wrong_password_is_a_connect_error() {
+    let _shared = SHARED_DATABASE.lock().await;
     let Some(server) = test_server() else { return };
     let result = connect(&server.config, Some(&Password::new("definitely wrong"))).await;
 
@@ -120,6 +128,7 @@ async fn unreachable_server_is_a_connect_error() {
 
 #[tokio::test]
 async fn runs_pages_cancels_and_reports_error_positions() {
+    let _shared = SHARED_DATABASE.lock().await;
     let Some(server) = test_server() else { return };
     let mut connection = server.connect().await;
 
@@ -142,6 +151,7 @@ async fn runs_pages_cancels_and_reports_error_positions() {
 /// connection usable, as cancelling a statement that hasn't answered yet does.
 #[tokio::test]
 async fn cancels_a_result_that_is_still_arriving() {
+    let _shared = SHARED_DATABASE.lock().await;
     let Some(server) = test_server() else { return };
     let mut connection = server.connect().await;
     let handle = connection.cancel_handle();
@@ -176,6 +186,7 @@ async fn cancels_a_result_that_is_still_arriving() {
 
 #[tokio::test]
 async fn counts_changed_rows_and_shows_values_as_sql_server_does() {
+    let _shared = SHARED_DATABASE.lock().await;
     let Some(server) = test_server() else { return };
     let mut connection = server.connect().await;
 
@@ -222,6 +233,7 @@ async fn counts_changed_rows_and_shows_values_as_sql_server_does() {
 /// true.
 #[tokio::test]
 async fn sets_the_session_options_client_libraries_set() {
+    let _shared = SHARED_DATABASE.lock().await;
     let Some(server) = test_server() else { return };
     let mut connection = server.connect().await;
 
@@ -272,6 +284,7 @@ fn folder(parent: &CatalogPath, folder: FolderKind) -> CatalogPath {
 
 #[tokio::test]
 async fn walks_the_catalog_and_shows_definitions() {
+    let _shared = SHARED_DATABASE.lock().await;
     let Some(server) = test_server() else { return };
     let mut connection = server.connect().await;
     for statement in FIXTURE {
@@ -373,6 +386,7 @@ async fn walks_the_catalog_and_shows_definitions() {
 /// Connecting with TLS also proves ring was installed as rustls's process-wide provider.
 #[tokio::test]
 async fn encrypts_as_the_tls_mode_says() {
+    let _shared = SHARED_DATABASE.lock().await;
     let Some(server) = test_server() else { return };
     for (tls, encrypted) in [
         (TlsMode::Disable, "FALSE"),

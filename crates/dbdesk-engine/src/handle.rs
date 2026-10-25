@@ -119,6 +119,13 @@ impl EngineHandle {
     /// [`EngineError::CommandLoopFailed`] if the command loop panicked, or
     /// [`EngineError::ShutdownTimedOut`] if it did not finish in time.
     pub fn shutdown(self) -> Result<(), EngineError> {
+        self.shutdown_within(SHUTDOWN_TIMEOUT)
+    }
+
+    /// [`EngineHandle::shutdown`] with a different wait. Tests use a longer one: on a busy CI
+    /// runner (Windows especially), closing the history database took longer than the app's
+    /// two seconds, and tests that restart the engine failed with `ShutdownTimedOut`.
+    pub fn shutdown_within(self, timeout: Duration) -> Result<(), EngineError> {
         let Self {
             runtime,
             commands,
@@ -128,13 +135,13 @@ impl EngineHandle {
         drop(commands);
 
         let finished =
-            runtime.block_on(async { tokio::time::timeout(SHUTDOWN_TIMEOUT, command_loop).await });
+            runtime.block_on(async { tokio::time::timeout(timeout, command_loop).await });
         runtime.shutdown_background();
 
         match finished {
             Ok(Ok(())) => Ok(()),
             Ok(Err(join_error)) => Err(EngineError::CommandLoopFailed(join_error)),
-            Err(_elapsed) => Err(EngineError::ShutdownTimedOut(SHUTDOWN_TIMEOUT)),
+            Err(_elapsed) => Err(EngineError::ShutdownTimedOut(timeout)),
         }
     }
 }

@@ -81,7 +81,7 @@ fn groups_data_sources_into_projects_that_survive_a_restart() {
         renamed.slug, shop.slug,
         "renaming keeps the slug clients use"
     );
-    engine.engine.shutdown().unwrap();
+    engine.shut_down();
 
     let saved = projects_file(dir.path()).load().unwrap();
     assert_eq!(saved.get(shop.id), Some(&renamed));
@@ -118,7 +118,7 @@ fn deleting_a_project_moves_its_data_sources_to_no_project() {
             .projects
             .is_empty()
     );
-    engine.engine.shutdown().unwrap();
+    engine.shut_down();
 }
 
 #[test]
@@ -160,7 +160,7 @@ fn refuses_unknown_projects_and_empty_names() {
         DataSourceFile::new(&file).load().unwrap(),
         vec![data_source]
     );
-    engine.engine.shutdown().unwrap();
+    engine.shut_down();
 }
 
 #[test]
@@ -191,7 +191,7 @@ fn never_overwrites_an_unreadable_projects_file() {
     ));
     // Data sources don't depend on the projects file.
     save(&mut engine, &sqlite_data_source(dir.path().join("app.db")));
-    engine.engine.shutdown().unwrap();
+    engine.shut_down();
 
     assert_eq!(
         std::fs::read_to_string(dir.path().join("projects.toml")).unwrap(),
