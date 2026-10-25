@@ -366,6 +366,7 @@ impl Fixture {
             id: DataSourceId::generate(),
             name: "shop".to_owned(),
             color: Some(SourceColor::Orange),
+            safety: dbdesk_core::SafetyLevel::Normal,
             project: None,
             config: ConnectionConfig::Sqlite(SqliteConfig {
                 path: shop,
@@ -454,6 +455,7 @@ fn postgres_data_source(url: &str) -> (DataSource, Password) {
         id: DataSourceId::generate(),
         name: "warehouse".to_owned(),
         color: Some(SourceColor::Red),
+        safety: dbdesk_core::SafetyLevel::Normal,
         project: None,
         config: ConnectionConfig::Postgres(PostgresConfig {
             server: ServerConfig {
@@ -627,6 +629,7 @@ fn import_preview(harness: &mut Harness<'static, DbDeskApp>, fixture: &Fixture) 
         id: DataSourceId::generate(),
         name: "analytics".to_owned(),
         color: Some(SourceColor::Red),
+        safety: dbdesk_core::SafetyLevel::Normal,
         project: Some(reporting.id),
         config: ConnectionConfig::Postgres(PostgresConfig {
             server: ServerConfig {
@@ -642,6 +645,7 @@ fn import_preview(harness: &mut Harness<'static, DbDeskApp>, fixture: &Fixture) 
         id: DataSourceId::generate(),
         name: "archive".to_owned(),
         color: None,
+        safety: dbdesk_core::SafetyLevel::Normal,
         project: Some(reporting.id),
         config: ConnectionConfig::Sqlite(SqliteConfig {
             path: fixture.dir.path().join("archive/2025.db"),

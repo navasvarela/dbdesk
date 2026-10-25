@@ -17,6 +17,7 @@ mod open;
 mod passwords;
 mod projects;
 mod protocol;
+pub mod read_only;
 mod registry;
 mod releases;
 mod repaint;

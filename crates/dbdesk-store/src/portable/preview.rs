@@ -417,6 +417,7 @@ fn data_source_settings(data_source: &DataSource, names: &ProjectNames) -> Setti
                 .map_or("none", |color| color.display_name())
                 .to_owned(),
         ),
+        ("Safety", data_source.safety.display_name().to_owned()),
         ("Project", names.describe(data_source.project)),
         (
             "Driver",

@@ -59,6 +59,7 @@ fn home_with_a_project() -> tempfile::TempDir {
             id: DataSourceId::generate(),
             name: "orders db".to_owned(),
             color: None,
+            safety: dbdesk_core::SafetyLevel::Normal,
             project: Some(project.id),
             config: ConnectionConfig::Sqlite(SqliteConfig {
                 path: database,

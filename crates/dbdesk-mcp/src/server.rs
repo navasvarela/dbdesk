@@ -9,7 +9,8 @@ use dbdesk_core::{
     CatalogNode, CatalogPath, Connection, DataSource, DriverError, Identifier, NodeKind,
     RelationName, describe_error,
 };
-use dbdesk_sql::{Dialect, StatementKind, classify};
+use dbdesk_engine::read_only::{self as guard, Refusal};
+use dbdesk_sql::{Dialect, StatementKind};
 use dbdesk_store::HistoryOutcome;
 use jiff::Timestamp;
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -329,22 +330,22 @@ impl DbdeskMcp {
         let data_source = self.data_source(tool, &args.data_source)?;
         let dialect = Dialect::from(data_source.config.driver());
         let sql = args.sql.trim().trim_end_matches(';').trim_end();
-        let kind = match classify(sql, dialect) {
-            Ok(kind) => kind,
-            Err(unclassified) => {
-                let reason = unclassified.to_string();
-                self.inner.audit.refused(tool, &data_source.name, &reason);
-                return Err(ToolError::refused(reason));
-            }
+        let refusal = guard::check(sql, dialect).err();
+        let kind = match &refusal {
+            None => Some(StatementKind::Read),
+            Some(Refusal::Changes(kind)) => Some(*kind),
+            Some(Refusal::Unknown(_)) => None,
         };
-        self.inner
-            .audit
-            .call(tool, Some(&data_source.name), Some(kind));
-        if kind != StatementKind::Read {
-            let reason = format!(
-                "this statement {}, and this project only allows reading",
-                kind.description()
-            );
+        if kind.is_some() {
+            self.inner.audit.call(tool, Some(&data_source.name), kind);
+        }
+        if let Some(refusal) = refusal {
+            let reason = match refusal {
+                Refusal::Changes(_) => {
+                    format!("{}, and this project only allows reading", refusal.reason())
+                }
+                Refusal::Unknown(_) => refusal.reason(),
+            };
             self.inner.audit.refused(tool, &data_source.name, &reason);
             return Err(ToolError::refused(reason));
         }
@@ -421,7 +422,7 @@ impl DbdeskMcp {
         data_source: &DataSource,
         work: impl for<'c> FnOnce(&'c mut dyn Connection) -> Work<'c, T>,
     ) -> Result<T, RunError> {
-        let Some(mode) = read_only::mode(data_source.config.driver()) else {
+        let Some(mode) = guard::mode(data_source.config.driver()) else {
             // `ServedProject` leaves such data sources out, so no call can name one.
             unreachable!("a served data source without a read-only mode");
         };
@@ -434,7 +435,7 @@ impl DbdeskMcp {
                 .checkout(data_source.id)
                 .await
                 .map_err(|error| RunError::Driver(DriverError::Connect(Box::new(error))))?;
-            match read_only::begin(&mut *connection, mode, timeout).await {
+            match guard::begin(&mut *connection, mode, Some(timeout)).await {
                 Ok(()) => break connection,
                 Err(DriverError::Connection(_)) if !retried => {
                     tracing::info!(data_source = %data_source.name, "reconnecting");

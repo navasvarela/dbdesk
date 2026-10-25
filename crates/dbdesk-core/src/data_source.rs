@@ -62,6 +62,10 @@ pub struct DataSource {
     /// a local copy at a glance. Optional, and absent from files written before it existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<SourceColor>,
+    /// What consoles may change: everything, everything after asking, or nothing. Written
+    /// only when it isn't [`SafetyLevel::Normal`], so older files load unchanged.
+    #[serde(default, skip_serializing_if = "SafetyLevel::is_normal")]
+    pub safety: SafetyLevel,
     /// The project the data source is grouped under; `None` is "No project". Absent from
     /// files written before projects existed. An id `projects.toml` doesn't know also means
     /// no project, rather than an error, so deleting that file never loses a data source.
@@ -111,6 +115,54 @@ impl SourceColor {
             Self::Violet => "Violet",
             Self::Pink => "Pink",
         }
+    }
+}
+
+/// How careful dbdesk is with a data source's data. Its own setting, apart from the colour:
+/// a colour is only a look, though red suggests [`Careful`](Self::Careful).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SafetyLevel {
+    /// Changes run when asked; only an `UPDATE` or `DELETE` without `WHERE` asks first.
+    #[default]
+    Normal,
+    /// Every change asks first, naming the data source: statements that change data or the
+    /// schema, and grid edits. New consoles start in manual commit mode.
+    Careful,
+    /// Changes are refused: statements are classified before they are sent, and run in the
+    /// database's read-only mode, as the MCP server's read-only projects are.
+    ReadOnly,
+}
+
+impl SafetyLevel {
+    pub const ALL: [Self; 3] = [Self::Normal, Self::Careful, Self::ReadOnly];
+
+    pub fn is_normal(&self) -> bool {
+        *self == Self::Normal
+    }
+
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Normal => "Normal",
+            Self::Careful => "Careful",
+            Self::ReadOnly => "Read-only",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Normal => "Changes run when asked. UPDATE or DELETE without WHERE asks first.",
+            Self::Careful => {
+                "Every change asks first: statements and grid edits. Consoles start in manual \
+                 commit mode."
+            }
+            Self::ReadOnly => "Changes are refused, by dbdesk and by the database.",
+        }
+    }
+
+    /// The level a colour suggests: red usually marks production.
+    pub fn suggested_by(color: Option<SourceColor>) -> Option<Self> {
+        (color == Some(SourceColor::Red)).then_some(Self::Careful)
     }
 }
 
@@ -558,6 +610,7 @@ mod tests {
                     id: DataSourceId::generate(),
                     name: "local".to_owned(),
                     color: None,
+                    safety: SafetyLevel::Normal,
                     project: None,
                     config: ConnectionConfig::Postgres(PostgresConfig {
                         server: ServerConfig {
@@ -575,6 +628,7 @@ mod tests {
                     id: DataSourceId::generate(),
                     name: "chinook".to_owned(),
                     color: None,
+                    safety: SafetyLevel::Normal,
                     project: None,
                     config: ConnectionConfig::Sqlite(SqliteConfig {
                         path: "/tmp/chinook.db".into(),
@@ -633,6 +687,7 @@ mod tests {
                     id: DataSourceId::generate(),
                     name: "local".to_owned(),
                     color: None,
+                    safety: SafetyLevel::Normal,
                     project: None,
                     config: ConnectionConfig::Postgres(PostgresConfig {
                         server: ServerConfig {
@@ -735,6 +790,7 @@ mod tests {
                     id: DataSourceId::generate(),
                     name: "duck".to_owned(),
                     color: None,
+                    safety: SafetyLevel::Normal,
                     project: None,
                     config: ConnectionConfig::DuckDb(DuckDbConfig { database }),
                 }],
@@ -856,6 +912,21 @@ mod tests {
 
         assert_eq!(postgres.to_string(), "juan@db.internal:6432/app");
         assert_eq!(sqlite.to_string(), "/data/app.db (read-only)");
+    }
+
+    #[test]
+    fn safety_is_optional_written_only_when_not_normal() {
+        let mut file: File = toml::from_str(FILE_FROM_0_2_0).unwrap();
+        assert!(file.data_source.iter().all(|ds| ds.safety.is_normal()));
+        assert!(!toml::to_string(&file).unwrap().contains("safety"));
+
+        file.data_source[0].safety = SafetyLevel::ReadOnly;
+        file.data_source[1].safety = SafetyLevel::Careful;
+        let text = toml::to_string(&file).unwrap();
+
+        assert!(text.contains(r#"safety = "read-only""#), "{text}");
+        assert!(text.contains(r#"safety = "careful""#), "{text}");
+        assert_eq!(toml::from_str::<File>(&text).unwrap(), file);
     }
 
     #[test]

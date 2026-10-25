@@ -5,6 +5,7 @@
 
 mod catalog;
 mod edits;
+mod guard;
 mod query;
 mod transaction;
 mod validate;
@@ -14,7 +15,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use dbdesk_core::{
-    CancelHandle, CatalogPath, Connection, DataSource, DataSourceId, RelationName,
+    CancelHandle, CatalogPath, Connection, DataSource, DataSourceId, RelationName, SafetyLevel,
     TransactionStatus, describe_error,
 };
 use dbdesk_sql::Dialect;
@@ -27,10 +28,12 @@ use crate::events::EventSink;
 use crate::history::HistoryLog;
 use crate::open::{OpenError, open};
 use crate::passwords::{Prompting, SessionPasswords};
+use crate::read_only;
 use crate::{
     ConsoleId, Event, PasswordUpdate, RunId, RunPurpose, SessionState, TransactionEnd,
     TransactionMode,
 };
+use guard::ReadOnly;
 
 /// Work for a session's connection. Answered with events, in the order received.
 #[derive(Debug)]
@@ -95,8 +98,16 @@ impl Session {
         let (disconnect, disconnect_signal) = oneshot::channel();
         let (requests, request_receiver) = mpsc::unbounded_channel();
         let (cancel, cancel_signal) = watch::channel(None);
+        let read_only = (data_source.safety == SafetyLevel::ReadOnly).then(|| ReadOnly {
+            mode: read_only::mode(data_source.config.driver()),
+        });
+        let data_source = match read_only {
+            Some(_) => read_only::connection_config(data_source),
+            None => data_source,
+        };
         let context = SessionContext {
             data_source,
+            read_only,
             owner,
             events,
             // Only what the user runs in a console belongs in the history, not the
@@ -150,7 +161,10 @@ impl Session {
 }
 
 struct SessionContext {
+    /// As connected to: a read-only data source's SQLite file is opened read-only.
     data_source: DataSource,
+    /// Set for a read-only data source: every statement is checked, and runs read-only.
+    read_only: Option<ReadOnly>,
     owner: SessionOwner,
     events: EventSink,
     history: Option<HistoryLog>,
@@ -270,6 +284,7 @@ async fn run(
         signals: &mut signals,
         parked: None,
         transaction: TransactionStatus::Idle,
+        read_only_open: None,
     };
     worker.serve(&mut requests).await;
     if let Some(parked) = worker.parked.take() {
@@ -342,6 +357,8 @@ struct Worker<'a> {
     parked: Option<query::Parked>,
     /// The connection's transaction status as last reported to the UI.
     transaction: TransactionStatus,
+    /// The read-only transaction a read-only data source's statement runs in, while open.
+    read_only_open: Option<read_only::ReadOnlyMode>,
 }
 
 impl Worker<'_> {
@@ -349,6 +366,11 @@ impl Worker<'_> {
     async fn serve(&mut self, requests: &mut UnboundedReceiver<SessionRequest>) {
         while let Some(request) = self.next_request(requests).await {
             if self.handle(request).await.is_err() {
+                return;
+            }
+            // A statement whose rows are no longer parked is done with its read-only
+            // transaction.
+            if self.parked.is_none() && guard::close(self).await.is_err() {
                 return;
             }
         }
@@ -367,6 +389,7 @@ impl Worker<'_> {
                     let cancelled = *self.signals.cancel.borrow_and_update();
                     if let Some(parked) = self.parked.take_if(|parked| Some(parked.run()) == cancelled) {
                         query::discard(self.context, parked, self.cancel_handle).await;
+                        guard::close(self).await.ok()?;
                     }
                 }
                 request = requests.recv() => return request,

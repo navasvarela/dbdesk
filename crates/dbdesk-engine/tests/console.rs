@@ -376,6 +376,7 @@ fn committing_a_failed_postgres_transaction_rolls_it_back() {
         id: DataSourceId::generate(),
         name: "test server".to_owned(),
         color: None,
+        safety: dbdesk_core::SafetyLevel::Normal,
         project: None,
         config: ConnectionConfig::Postgres(server.config),
     };
@@ -570,6 +571,7 @@ fn applies_and_rolls_back_edits_on_postgres() {
         id: DataSourceId::generate(),
         name: "test server".to_owned(),
         color: None,
+        safety: dbdesk_core::SafetyLevel::Normal,
         project: None,
         config: ConnectionConfig::Postgres(server.config),
     };
@@ -624,6 +626,7 @@ fn applies_and_rolls_back_edits_on_mysql() {
             id: DataSourceId::generate(),
             name: "test server".to_owned(),
             color: None,
+            safety: dbdesk_core::SafetyLevel::Normal,
             project: None,
             config: ConnectionConfig::Mysql(config),
         };
@@ -684,6 +687,7 @@ fn applies_and_rolls_back_edits_on_sqlserver() {
         id: DataSourceId::generate(),
         name: "test server".to_owned(),
         color: None,
+        safety: dbdesk_core::SafetyLevel::Normal,
         project: None,
         config: ConnectionConfig::SqlServer(config),
     };
@@ -755,6 +759,7 @@ fn explains_on_sqlserver_with_showplan_and_switches_it_off() {
         id: DataSourceId::generate(),
         name: "test server".to_owned(),
         color: None,
+        safety: dbdesk_core::SafetyLevel::Normal,
         project: None,
         config: ConnectionConfig::SqlServer(config),
     };
@@ -813,6 +818,7 @@ fn keeps_a_clickhouse_session_across_runs() {
         id: DataSourceId::generate(),
         name: "test server".to_owned(),
         color: None,
+        safety: dbdesk_core::SafetyLevel::Normal,
         project: None,
         config: ConnectionConfig::ClickHouse(config),
     };
@@ -869,6 +875,7 @@ fn applies_edits_on_duckdb_and_refuses_them_inside_a_transaction() {
         id: DataSourceId::generate(),
         name: "duck".to_owned(),
         color: None,
+        safety: dbdesk_core::SafetyLevel::Normal,
         project: None,
         config: ConnectionConfig::DuckDb(DuckDbConfig {
             database: DuckDbDatabase::InMemory,
@@ -1012,6 +1019,7 @@ fn never_validates_inside_a_postgres_transaction() {
         id: DataSourceId::generate(),
         name: "test server".to_owned(),
         color: None,
+        safety: dbdesk_core::SafetyLevel::Normal,
         project: None,
         config: ConnectionConfig::Postgres(server.config),
     };

@@ -72,6 +72,7 @@ fn every_kind(shared: &Path) -> Vec<(DataSource, Password)> {
                 id: DataSourceId::generate(),
                 name: name.to_owned(),
                 color: Some(SourceColor::Teal),
+                safety: dbdesk_core::SafetyLevel::Normal,
                 project: None,
                 config,
             };

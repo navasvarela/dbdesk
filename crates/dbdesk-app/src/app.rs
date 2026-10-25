@@ -1092,6 +1092,7 @@ mod tests {
             id: DataSourceId::generate(),
             name: "shop".to_owned(),
             color: None,
+            safety: dbdesk_core::SafetyLevel::Normal,
             project: None,
             config: dbdesk_core::ConnectionConfig::Sqlite(dbdesk_core::SqliteConfig {
                 path: database,
@@ -1530,6 +1531,7 @@ mod tests {
             id: DataSourceId::generate(),
             name: "shared".to_owned(),
             color: None,
+            safety: dbdesk_core::SafetyLevel::Normal,
             project: None,
             config: dbdesk_core::ConnectionConfig::Postgres(dbdesk_core::PostgresConfig {
                 server: dbdesk_core::ServerConfig {
