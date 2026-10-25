@@ -41,11 +41,70 @@ pub struct Limits {
     pub statement_timeout: Duration,
 }
 
+/// What a project allows beyond reading, each one for the `execute` tool.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Changes {
+    pub write: bool,
+    pub schema: bool,
+    pub admin: bool,
+}
+
+/// A permission beyond reading, as `projects.toml` names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Permission {
+    Write,
+    Schema,
+    Admin,
+}
+
+impl Permission {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Write => "write",
+            Self::Schema => "schema",
+            Self::Admin => "admin",
+        }
+    }
+}
+
+impl Changes {
+    fn from_permissions(permissions: &McpPermissions) -> Self {
+        Self {
+            write: permissions.write,
+            schema: permissions.schema,
+            admin: permissions.admin,
+        }
+    }
+
+    pub fn any(self) -> bool {
+        self.write || self.schema || self.admin
+    }
+
+    pub fn allows(self, permission: Permission) -> bool {
+        match permission {
+            Permission::Write => self.write,
+            Permission::Schema => self.schema,
+            Permission::Admin => self.admin,
+        }
+    }
+
+    /// The names of the permissions this allows, for the log and the client.
+    pub fn names(self) -> Vec<&'static str> {
+        [Permission::Write, Permission::Schema, Permission::Admin]
+            .into_iter()
+            .filter(|permission| self.allows(*permission))
+            .map(Permission::name)
+            .collect()
+    }
+}
+
 /// A project resolved for serving: its data sources, as MCP may use them, and its limits.
 #[derive(Debug, Clone)]
 pub struct ServedProject {
     pub project: Project,
     pub limits: Limits,
+    /// What `execute` may run; nothing, when the project only reads.
+    pub changes: Changes,
     /// The schemas the catalog tools show and statements may name.
     pub schemas: SchemaScope,
     pub data_sources: Vec<DataSource>,
@@ -87,14 +146,22 @@ impl ServedProject {
                 slug: slug.to_owned(),
             });
         }
-        warn_about_ignored_permissions(slug, &permissions);
+        let changes = Changes::from_permissions(&permissions);
         let data_sources = data_sources
             .load()
             .map_err(StartError::DataSources)?
             .into_iter()
             .filter(|data_source| data_source.project == Some(project.id))
             .filter(|data_source| has_read_only_mode(slug, data_source))
-            .map(dbdesk_engine::read_only::connection_config)
+            .map(|data_source| {
+                // Opening SQLite files read-only is stronger than the `query_only` each read
+                // sets on a file opened to run changes too.
+                if changes.any() {
+                    data_source
+                } else {
+                    dbdesk_engine::read_only::connection_config(data_source)
+                }
+            })
             .collect();
         Ok(Self {
             project: project.clone(),
@@ -102,6 +169,7 @@ impl ServedProject {
                 max_rows: usize::try_from(permissions.max_rows.get()).unwrap_or(usize::MAX),
                 statement_timeout: permissions.statement_timeout.duration(),
             },
+            changes,
             schemas: permissions.schemas.clone(),
             data_sources,
         })
@@ -138,24 +206,6 @@ fn has_read_only_mode(slug: &str, data_source: &DataSource) -> bool {
         );
     }
     supported
-}
-
-fn warn_about_ignored_permissions(slug: &str, permissions: &McpPermissions) {
-    let ignored: Vec<&str> = [
-        ("write", permissions.write),
-        ("schema", permissions.schema),
-        ("admin", permissions.admin),
-    ]
-    .into_iter()
-    .filter_map(|(name, allowed)| allowed.then_some(name))
-    .collect();
-    if !ignored.is_empty() {
-        tracing::warn!(
-            project = slug,
-            "this version of dbdesk only reads; ignoring the {} permission(s)",
-            ignored.join(", ")
-        );
-    }
 }
 
 #[cfg(test)]
