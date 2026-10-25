@@ -68,6 +68,8 @@ pub enum ConsoleAction {
     Validate(Vec<String>),
     /// A completion was accepted; it ranks higher next time, in every console.
     CompletionAccepted(Candidate),
+    /// Connects again after the connection was lost, as a new session.
+    Reconnect,
 }
 
 /// What a console draws with besides its own state.
@@ -314,6 +316,7 @@ fn toolbar(
         ui.separator();
         ui.add_space(6.0);
         safety_badge(ui, console, palette);
+        lost_connection(ui, console, palette, actions);
         run_status(ui, console, palette);
         problem_count(ui, console, keymap, palette);
         if let Some(error) = console.save_error() {
@@ -325,6 +328,38 @@ fn toolbar(
                 .on_hover_text(error);
         }
     });
+}
+
+/// While the connection is lost: that it is, what went with it, and Reconnect. The console
+/// never reconnects by itself, so nothing runs in a new session unawares.
+fn lost_connection(
+    ui: &mut Ui,
+    console: &QueryConsole,
+    palette: &Palette,
+    actions: &mut Vec<ConsoleAction>,
+) {
+    let SessionState::Lost(reason) = &console.session else {
+        return;
+    };
+    let job = widgets::icon_text(
+        ui,
+        icons::PLUGS,
+        palette.warning,
+        "Disconnected: its transaction, temporary tables and session settings are gone",
+    );
+    ui.label(job).on_hover_text(reason);
+    let reconnect = widgets::icon_text(ui, icons::ARROWS_CLOCKWISE, palette.primary, "Reconnect");
+    let response = widgets::name(
+        ui.button(reconnect),
+        egui::WidgetType::Button,
+        "Reconnect",
+        true,
+    )
+    .on_hover_text("Connect again, as a new session");
+    if response.clicked() {
+        actions.push(ConsoleAction::Reconnect);
+    }
+    ui.add_space(6.0);
 }
 
 /// The data source's safety level, unless it is normal, with what it means on hover.
@@ -478,14 +513,6 @@ fn run_status(ui: &mut Ui, console: &QueryConsole, palette: &Palette) {
         }
         (SessionState::Connected(server), None) => {
             ui.weak(format!("Connected to {server}"));
-        }
-        (SessionState::Lost(reason), None) => {
-            widgets::status(
-                ui,
-                icons::PLUGS,
-                palette.warning,
-                &format!("Disconnected: {reason}"),
-            );
         }
         (_, None) => {}
     }

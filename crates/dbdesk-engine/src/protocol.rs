@@ -161,6 +161,10 @@ pub enum Command {
         console: ConsoleId,
         run: RunId,
     },
+    /// Connects a console whose connection was lost again, to the same data source, as a new
+    /// session: whatever the old one had open is gone. A console that lost its connection
+    /// refuses to run anything until then. Answered by [`Event::ConsoleSessionChanged`].
+    ReconnectConsole(ConsoleId),
     /// Disconnects the console's connection, which rolls back its open transaction.
     CloseConsole(ConsoleId),
     /// Writes a console's text to its file. Saves are applied in the order sent. A failure is

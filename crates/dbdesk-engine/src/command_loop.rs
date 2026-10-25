@@ -20,14 +20,14 @@ use crate::passwords::SessionPasswords;
 use crate::projects::{ProjectError, ProjectRegistry};
 use crate::registry::{Registry, RegistryError};
 use crate::releases::{self, ReleaseFeed};
-use crate::session::{Script, Services, Session, SessionOwner, SessionRequest};
+use crate::session::{Script, Services, Session, SessionOwner, SessionRequest, refusal};
 use crate::settings;
 use crate::transfer;
 use crate::tunnels::Tunnels;
 use crate::updater::{self, UpdateInstaller};
 use crate::{
     Command, ConsoleId, EditFailure, EngineConfig, Event, HostKey, PasswordKept, PasswordUpdate,
-    RunOutcome, StatementCheck,
+    RunOutcome, StatementCheck, StatementFailure,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -228,7 +228,12 @@ impl Engine {
                 },
             ),
             Command::EndTransaction { console, end } => {
-                if let Some(console) = self.consoles.get(&console) {
+                if let Some(reason) = self.lost_console(console) {
+                    self.events.send(Event::TransactionEnded {
+                        console,
+                        result: Err(refusal(&reason)),
+                    });
+                } else if let Some(console) = self.consoles.get(&console) {
                     console.session.request(SessionRequest::EndTransaction(end));
                 }
             }
@@ -242,6 +247,7 @@ impl Engine {
                     console.session.cancel(run);
                 }
             }
+            Command::ReconnectConsole(console) => self.reconnect_console(console),
             Command::CloseConsole(console) => self.close_console(console),
             Command::SaveConsole { key, text } => {
                 if let Some(failed) = console_files::save(&self.console_files, key, text).await {
@@ -258,6 +264,15 @@ impl Engine {
                 console,
                 statements,
             } => match self.consoles.get(&console) {
+                Some(session) if let Some(reason) = session.session.lost() => {
+                    self.events.send(Event::EditsApplied {
+                        console,
+                        result: Err(EditFailure {
+                            statement: None,
+                            message: refusal(&reason),
+                        }),
+                    });
+                }
                 Some(session) => session
                     .session
                     .request(SessionRequest::ApplyEdits(statements)),
@@ -688,6 +703,27 @@ impl Engine {
     /// Queues a run on the console's session, (re)connecting it if it isn't connected to
     /// `data_source`.
     fn execute(&mut self, console: ConsoleId, data_source: DataSourceId, script: Script) {
+        let lost = self
+            .consoles
+            .get(&console)
+            .filter(|existing| existing.data_source == data_source)
+            .and_then(|existing| existing.session.lost());
+        if let Some(reason) = lost {
+            self.events.send(Event::StatementFinished {
+                run: script.run,
+                statement: 0,
+                result: Err(StatementFailure {
+                    message: refusal(&reason),
+                    position: None,
+                }),
+            });
+            self.events.send(Event::RunFinished {
+                run: script.run,
+                outcome: RunOutcome::Failed,
+                elapsed: std::time::Duration::ZERO,
+            });
+            return;
+        }
         let reusable = self.consoles.get(&console).is_some_and(|existing| {
             existing.data_source == data_source && !existing.session.is_finished()
         });
@@ -729,6 +765,40 @@ impl Engine {
             events: self.events.clone(),
             history: self.history.clone(),
         }
+    }
+
+    /// Why the console's connection was lost, while it hasn't reconnected.
+    fn lost_console(&self, console: ConsoleId) -> Option<String> {
+        self.consoles.get(&console)?.session.lost()
+    }
+
+    /// Replaces the console's session with a new one to the same data source.
+    fn reconnect_console(&mut self, console: ConsoleId) {
+        let Some(data_source) = self
+            .consoles
+            .get(&console)
+            .map(|existing| existing.data_source)
+        else {
+            return;
+        };
+        self.close_console(console);
+        let Some(config) = self.registry.get(data_source) else {
+            tracing::warn!(%data_source, "reconnect requested for an unknown data source");
+            return;
+        };
+        tracing::info!(data_source = %config.name, "reconnecting a console");
+        let session = Session::start(
+            config.clone(),
+            SessionOwner::Console(console),
+            self.services(),
+        );
+        self.consoles.insert(
+            console,
+            ConsoleSession {
+                data_source,
+                session,
+            },
+        );
     }
 
     fn close_console(&mut self, console: ConsoleId) {
