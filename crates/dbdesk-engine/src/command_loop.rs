@@ -386,12 +386,19 @@ impl Engine {
     /// Remembers the password for the session first, so the next connection works even if
     /// the keychain refuses it.
     async fn provide_password(
-        &self,
+        &mut self,
         data_source: DataSourceId,
         password: dbdesk_core::Password,
         save: bool,
     ) {
         self.passwords.insert(data_source, password.clone());
+        // The explorer's session that asked for the password has reported its failure, but
+        // its task may not have ended yet; `connect` would then take it for one still
+        // connecting and ignore the Connect the UI sends next. A prompt only follows a failed
+        // attempt, so the session is let go here.
+        if let Some(session) = self.sessions.remove(&data_source) {
+            self.closing.spawn(session.stop());
+        }
         let kept = if save {
             let secrets = Arc::clone(&self.secrets);
             let result =
