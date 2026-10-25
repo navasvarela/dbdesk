@@ -1978,18 +1978,20 @@ mod tests {
             "the fingerprint is shown"
         );
         // The modal is measured on its first frame and placed on the next, so a click aimed
-        // at the first frame's button misses. Two frames rather than `run()`, which a spinner
-        // turning elsewhere can keep from settling.
+        // at the first frame's button misses. A connection's spinner turns from here on, so
+        // every wait is a fixed number of frames or a condition, never `run()`, which waits for
+        // the UI to stop repainting and gives up while the spinner turns.
         harness.run_steps(2);
         harness.get_by_label("Trust and connect").click();
-        harness.run();
+        harness.run_steps(2);
 
         // Trusted, it connects again, and then asks for the database's password.
         step_until_visible(&mut harness, "Connect to behind the bastion");
+        harness.run_steps(2);
         harness
             .get_by_role_and_label(Role::PasswordInput, "Password")
             .type_text(&password);
-        harness.run();
+        harness.run_steps(2);
         harness.get_by_label("Connect").click();
         step_until(&mut harness, "connecting through the tunnel", |harness| {
             harness
