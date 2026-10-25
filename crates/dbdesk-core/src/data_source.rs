@@ -132,6 +132,8 @@ pub enum ConnectionConfig {
     /// DuckDB, in a file or in memory.
     #[serde(rename = "duckdb")]
     DuckDb(DuckDbConfig),
+    #[serde(rename = "clickhouse")]
+    ClickHouse(ClickHouseConfig),
 }
 
 impl ConnectionConfig {
@@ -142,23 +144,25 @@ impl ConnectionConfig {
             Self::Mysql(_) => DriverKind::Mysql,
             Self::SqlServer(_) => DriverKind::SqlServer,
             Self::DuckDb(_) => DriverKind::DuckDb,
+            Self::ClickHouse(_) => DriverKind::ClickHouse,
         }
     }
 
     /// The database a connection opens, on engines whose catalog has databases above its
-    /// schemas; the explorer lists that database's schemas. MySQL's databases are its
-    /// schemas, so it has no such level.
+    /// schemas; the explorer lists that database's schemas. MySQL's and ClickHouse's databases
+    /// are their schemas, so they have no such level.
     pub fn database(&self) -> Option<&str> {
         match self {
             Self::Postgres(config) => Some(&config.server.database),
             Self::SqlServer(config) => Some(&config.server.database),
             Self::DuckDb(config) => config.database_name(),
-            Self::Sqlite(_) | Self::Mysql(_) => None,
+            Self::Sqlite(_) | Self::Mysql(_) | Self::ClickHouse(_) => None,
         }
     }
 
     /// The schema unqualified names resolve to, as a new connection sees it. A fact of the
-    /// configuration rather than of the dialect: on MySQL it is the database connected to.
+    /// configuration rather than of the dialect: on MySQL and ClickHouse it is the database
+    /// connected to.
     /// On SQL Server it is each user's own setting, `dbo` unless an administrator chose
     /// another.
     pub fn default_schema(&self) -> &str {
@@ -166,6 +170,7 @@ impl ConnectionConfig {
             Self::Postgres(_) => "public",
             Self::SqlServer(_) => "dbo",
             Self::DuckDb(_) => "main",
+            Self::ClickHouse(config) => &config.server.database,
             Self::Sqlite(_) => "main",
             Self::Mysql(config) => &config.server.database,
         }
@@ -187,6 +192,9 @@ impl ConnectionConfig {
                 server: config.server.resolve(variables)?,
             }),
             Self::SqlServer(config) => Self::SqlServer(SqlServerConfig {
+                server: config.server.resolve(variables)?,
+            }),
+            Self::ClickHouse(config) => Self::ClickHouse(ClickHouseConfig {
                 server: config.server.resolve(variables)?,
             }),
             Self::Sqlite(config) => Self::Sqlite(SqliteConfig {
@@ -213,6 +221,7 @@ impl ConnectionConfig {
             Self::Postgres(config) => config.server.default_name(),
             Self::Mysql(config) => config.server.default_name(),
             Self::SqlServer(config) => config.server.default_name(),
+            Self::ClickHouse(config) => config.server.default_name(),
             Self::Sqlite(config) => file_name(&config.path),
             Self::DuckDb(config) => match &config.database {
                 DuckDbDatabase::File { path, .. } => file_name(path),
@@ -227,7 +236,7 @@ impl DriverKind {
     /// Skipping the lookup for other drivers avoids pointless keychain prompts.
     pub fn uses_password(self) -> bool {
         match self {
-            Self::Postgres | Self::Mysql | Self::SqlServer => true,
+            Self::Postgres | Self::Mysql | Self::SqlServer | Self::ClickHouse => true,
             Self::Sqlite | Self::DuckDb => false,
         }
     }
@@ -240,6 +249,7 @@ impl fmt::Display for ConnectionConfig {
             Self::Postgres(config) => config.server.fmt(f),
             Self::Mysql(config) => config.server.fmt(f),
             Self::SqlServer(config) => config.server.fmt(f),
+            Self::ClickHouse(config) => config.server.fmt(f),
             Self::Sqlite(config) if config.read_only => {
                 write!(f, "{} (read-only)", config.path.display())
             }
@@ -443,6 +453,21 @@ pub enum TlsMode {
     },
 }
 
+/// A ClickHouse server, reached through its HTTP interface. Its `database` is the one
+/// unqualified names resolve in, and the explorer lists every database the user can see.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClickHouseConfig {
+    #[serde(flatten)]
+    pub server: ServerConfig,
+}
+
+impl ClickHouseConfig {
+    /// The HTTP interface's port.
+    pub const DEFAULT_PORT: u16 = 8123;
+    /// The HTTPS interface's port: TLS is a port of its own, not an upgrade of the HTTP one.
+    pub const DEFAULT_TLS_PORT: u16 = 8443;
+}
+
 /// A DuckDB database: a file, or one in memory that starts empty each time, for querying CSV,
 /// Parquet and JSON files with DuckDB's table functions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -490,15 +515,17 @@ pub enum DriverKind {
     Mysql,
     SqlServer,
     DuckDb,
+    ClickHouse,
 }
 
 impl DriverKind {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Postgres,
         Self::Sqlite,
         Self::Mysql,
         Self::SqlServer,
         Self::DuckDb,
+        Self::ClickHouse,
     ];
 
     pub fn display_name(self) -> &'static str {
@@ -508,6 +535,7 @@ impl DriverKind {
             Self::Mysql => "MySQL / MariaDB",
             Self::SqlServer => "SQL Server",
             Self::DuckDb => "DuckDB",
+            Self::ClickHouse => "ClickHouse",
         }
     }
 }

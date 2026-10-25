@@ -98,6 +98,9 @@ async fn connect(
             Box::new(dbdesk_driver_sqlserver::connect(config, password).await?)
         }
         ConnectionConfig::DuckDb(config) => Box::new(dbdesk_driver_duckdb::connect(config).await?),
+        ConnectionConfig::ClickHouse(config) => {
+            Box::new(dbdesk_driver_clickhouse::connect(config, password).await?)
+        }
     })
 }
 

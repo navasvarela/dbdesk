@@ -12,8 +12,8 @@ use std::time::Duration;
 use std::str::FromStr;
 
 use dbdesk_core::{
-    ConnectionConfig, DataSource, DataSourceId, MysqlConfig, Password, PostgresConfig,
-    ServerConfig, SqlServerConfig, SqliteConfig, TlsMode,
+    ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, MysqlConfig, Password,
+    PostgresConfig, ServerConfig, SqlServerConfig, SqliteConfig, TlsMode,
 };
 use dbdesk_engine::{
     Command, EngineConfig, EngineHandle, Event, InstallError, InstallSupport, Release,
@@ -291,6 +291,18 @@ pub fn sqlserver_test_server() -> Option<(SqlServerConfig, Password)> {
     let rest = url.strip_prefix("sqlserver://").expect("sqlserver:// URL");
     let (server, password) = parse_server(rest, "1433");
     Some((SqlServerConfig { server }, password))
+}
+
+pub fn clickhouse_test_server() -> Option<(ClickHouseConfig, Password)> {
+    let Ok(url) = std::env::var("DBDESK_TEST_CLICKHOUSE_URL") else {
+        eprintln!("skipping: DBDESK_TEST_CLICKHOUSE_URL is not set");
+        return None;
+    };
+    let rest = url
+        .strip_prefix("clickhouse://")
+        .expect("clickhouse:// URL");
+    let (server, password) = parse_server(rest, "8123");
+    Some((ClickHouseConfig { server }, password))
 }
 
 pub struct ParsedUrl {

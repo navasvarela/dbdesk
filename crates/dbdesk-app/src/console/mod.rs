@@ -251,6 +251,10 @@ impl QueryConsole {
             if statement.columns.is_empty() || statement.edits.editability != Editability::Unknown {
                 continue;
             }
+            if let Some(reason) = dialect.read_only_results() {
+                statement.edits.editability = Editability::ReadOnly(reason.to_owned());
+                continue;
+            }
             statement.edits.editability = match edit::editable_source(&statement.sql, dialect) {
                 Ok(table) => {
                     tables.push(table.clone());
