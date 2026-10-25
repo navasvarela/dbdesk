@@ -4,18 +4,20 @@
 mod server;
 
 use dbdesk_core::{
-    ConnectionConfig, DataSource, DataSourceId, DriverKind, MysqlConfig, Password, PostgresConfig,
-    ProjectId, SourceColor, SqlServerConfig, SqliteConfig,
+    ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DriverKind, DuckDbConfig,
+    DuckDbDatabase, McpLogin, MysqlConfig, Password, PostgresConfig, ProjectId, SafetyLevel,
+    SourceColor, SqlServerConfig, SqliteConfig,
 };
 use dbdesk_engine::PasswordUpdate;
 
-pub use server::{ServerDefaults, ServerFields, TlsChoice};
+pub use server::{ServerDefaults, ServerFields, TlsChoice, TlsOffer};
 
 const POSTGRES_DEFAULTS: ServerDefaults = ServerDefaults {
     host: "localhost",
     port: PostgresConfig::DEFAULT_PORT,
     database: "postgres",
     user: "postgres",
+    tls: TlsOffer::Negotiated,
 };
 
 /// `mysql` exists on every server, as `postgres` does on PostgreSQL; `root` is the account
@@ -25,6 +27,7 @@ const MYSQL_DEFAULTS: ServerDefaults = ServerDefaults {
     port: MysqlConfig::DEFAULT_PORT,
     database: "mysql",
     user: "root",
+    tls: TlsOffer::Negotiated,
 };
 
 /// `master` exists on every server and every login may open it; `sa` is the administrator
@@ -34,13 +37,24 @@ const SQL_SERVER_DEFAULTS: ServerDefaults = ServerDefaults {
     port: SqlServerConfig::DEFAULT_PORT,
     database: "master",
     user: "sa",
+    tls: TlsOffer::Negotiated,
+};
+
+/// `default` exists on every server, and is the user every installation (and the official
+/// container) starts with.
+const CLICKHOUSE_DEFAULTS: ServerDefaults = ServerDefaults {
+    host: "localhost",
+    port: ClickHouseConfig::DEFAULT_PORT,
+    database: "default",
+    user: "default",
+    tls: TlsOffer::OwnPort(ClickHouseConfig::DEFAULT_TLS_PORT),
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum FormError {
     #[error("Host is required.")]
     HostMissing,
-    #[error("Port must be a number from 1 to 65535.")]
+    #[error("Port must be a number from 1 to 65535, or a ${{VARIABLE}}.")]
     InvalidPort,
     #[error("Database is required.")]
     DatabaseMissing,
@@ -56,10 +70,32 @@ pub struct DataSourceForm {
     /// Optional: an empty name becomes [`ConnectionConfig::default_name`].
     pub name: String,
     pub color: Option<SourceColor>,
+    pub safety: SafetyLevel,
     /// Not edited in the dialog, only carried through it, so saving an edit keeps the data
     /// source in its project.
     pub project: Option<ProjectId>,
+    pub mcp_login: McpLoginFields,
     pub fields: DriverFields,
+}
+
+/// The login `dbdesk mcp` signs in as instead of the data source's own. An empty user means
+/// none, and MCP clients sign in as the data source does.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct McpLoginFields {
+    pub user: String,
+    /// Empty keeps the saved one.
+    pub password: String,
+    /// Whether the data source had an MCP login when the dialog opened, so removing it also
+    /// removes its saved password.
+    had_login: bool,
+}
+
+/// What saving the dialog does to the MCP login's saved password.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum McpPasswordChange {
+    Keep,
+    Set(Password),
+    Remove,
 }
 
 /// Each engine's fields: the shared [`ServerFields`] for a network engine, plus whatever is
@@ -70,6 +106,8 @@ pub enum DriverFields {
     Sqlite(SqliteFields),
     Mysql(MysqlFields),
     SqlServer(SqlServerFields),
+    DuckDb(DuckDbFields),
+    ClickHouse(ClickHouseFields),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,6 +123,26 @@ pub struct MysqlFields {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SqlServerFields {
     pub server: ServerFields,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClickHouseFields {
+    pub server: ServerFields,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DuckDbFields {
+    pub location: DuckDbLocation,
+    /// Kept while In memory is chosen, so switching back to File doesn't lose it.
+    pub path: String,
+    pub read_only: bool,
+}
+
+/// Where a DuckDB data source's database is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DuckDbLocation {
+    File,
+    InMemory,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,6 +167,14 @@ impl DriverFields {
             DriverKind::SqlServer => Self::SqlServer(SqlServerFields {
                 server: ServerFields::new(SQL_SERVER_DEFAULTS),
             }),
+            DriverKind::DuckDb => Self::DuckDb(DuckDbFields {
+                location: DuckDbLocation::File,
+                path: String::new(),
+                read_only: false,
+            }),
+            DriverKind::ClickHouse => Self::ClickHouse(ClickHouseFields {
+                server: ServerFields::new(CLICKHOUSE_DEFAULTS),
+            }),
         }
     }
 
@@ -127,6 +193,21 @@ impl DriverFields {
             ConnectionConfig::SqlServer(config) => Self::SqlServer(SqlServerFields {
                 server: ServerFields::from_config(&config.server, SQL_SERVER_DEFAULTS),
             }),
+            ConnectionConfig::DuckDb(config) => Self::DuckDb(match &config.database {
+                DuckDbDatabase::File { path, read_only } => DuckDbFields {
+                    location: DuckDbLocation::File,
+                    path: path.display().to_string(),
+                    read_only: *read_only,
+                },
+                DuckDbDatabase::InMemory => DuckDbFields {
+                    location: DuckDbLocation::InMemory,
+                    path: String::new(),
+                    read_only: false,
+                },
+            }),
+            ConnectionConfig::ClickHouse(config) => Self::ClickHouse(ClickHouseFields {
+                server: ServerFields::from_config(&config.server, CLICKHOUSE_DEFAULTS),
+            }),
         }
     }
 
@@ -136,6 +217,8 @@ impl DriverFields {
             Self::Sqlite(_) => DriverKind::Sqlite,
             Self::Mysql(_) => DriverKind::Mysql,
             Self::SqlServer(_) => DriverKind::SqlServer,
+            Self::DuckDb(_) => DriverKind::DuckDb,
+            Self::ClickHouse(_) => DriverKind::ClickHouse,
         }
     }
 
@@ -145,7 +228,8 @@ impl DriverFields {
             Self::Postgres(fields) => Some(&fields.server),
             Self::Mysql(fields) => Some(&fields.server),
             Self::SqlServer(fields) => Some(&fields.server),
-            Self::Sqlite(_) => None,
+            Self::ClickHouse(fields) => Some(&fields.server),
+            Self::Sqlite(_) | Self::DuckDb(_) => None,
         }
     }
 
@@ -161,6 +245,10 @@ impl DriverFields {
             Self::SqlServer(fields) => ConnectionConfig::SqlServer(SqlServerConfig {
                 server: fields.server.to_config()?,
             }),
+            Self::DuckDb(fields) => ConnectionConfig::DuckDb(fields.to_config()?),
+            Self::ClickHouse(fields) => ConnectionConfig::ClickHouse(ClickHouseConfig {
+                server: fields.server.to_config()?,
+            }),
         })
     }
 }
@@ -170,7 +258,9 @@ impl DataSourceForm {
         Self {
             name: String::new(),
             color: None,
+            safety: SafetyLevel::Normal,
             project: None,
+            mcp_login: McpLoginFields::default(),
             fields: DriverFields::new(driver),
         }
     }
@@ -179,7 +269,17 @@ impl DataSourceForm {
         Self {
             name: data_source.name.clone(),
             color: data_source.color,
+            safety: data_source.safety,
             project: data_source.project,
+            mcp_login: McpLoginFields {
+                user: data_source
+                    .mcp_login
+                    .as_ref()
+                    .map(|login| login.user.clone())
+                    .unwrap_or_default(),
+                password: String::new(),
+                had_login: data_source.mcp_login.is_some(),
+            },
             fields: DriverFields::from_config(&data_source.config),
         }
     }
@@ -198,9 +298,33 @@ impl DataSourceForm {
             id,
             name,
             color: self.color,
+            safety: self.safety,
             project: self.project,
+            mcp_login: self.mcp_login(),
             config,
         })
+    }
+
+    /// Only engines that sign in have a login to swap.
+    fn mcp_login(&self) -> Option<McpLogin> {
+        let user = self.mcp_login.user.trim();
+        (self.driver().uses_password() && !user.is_empty()).then(|| McpLogin {
+            user: user.to_owned(),
+        })
+    }
+
+    pub fn mcp_password_change(&self) -> McpPasswordChange {
+        if self.mcp_login().is_none() {
+            return if self.mcp_login.had_login {
+                McpPasswordChange::Remove
+            } else {
+                McpPasswordChange::Keep
+            };
+        }
+        match self.mcp_login.password.as_str() {
+            "" => McpPasswordChange::Keep,
+            password => McpPasswordChange::Set(Password::new(password.to_owned())),
+        }
     }
 
     pub fn password_update(&self) -> PasswordUpdate {
@@ -219,6 +343,19 @@ impl SqliteFields {
             path: required(&self.path, FormError::PathMissing)?.into(),
             read_only: self.read_only,
         })
+    }
+}
+
+impl DuckDbFields {
+    fn to_config(&self) -> Result<DuckDbConfig, FormError> {
+        let database = match self.location {
+            DuckDbLocation::File => DuckDbDatabase::File {
+                path: required(&self.path, FormError::PathMissing)?.into(),
+                read_only: self.read_only,
+            },
+            DuckDbLocation::InMemory => DuckDbDatabase::InMemory,
+        };
+        Ok(DuckDbConfig { database })
     }
 }
 
@@ -267,7 +404,7 @@ mod tests {
             ConnectionConfig::Postgres(PostgresConfig {
                 server: ServerConfig {
                     host: "db.internal".to_owned(),
-                    port: 6432,
+                    port: 6432.into(),
                     database: "app".to_owned(),
                     user: "juan".to_owned(),
                     tls: TlsMode::VerifyFull {
@@ -281,7 +418,11 @@ mod tests {
                 id: DataSourceId::generate(),
                 name: "saved".to_owned(),
                 color: Some(SourceColor::Teal),
+                safety: SafetyLevel::ReadOnly,
                 project: Some(ProjectId::generate()),
+                mcp_login: config.driver().uses_password().then(|| McpLogin {
+                    user: "assistant".to_owned(),
+                }),
                 config,
             };
 
@@ -306,5 +447,36 @@ mod tests {
             DataSourceForm::new(DriverKind::Sqlite).password_update(),
             PasswordUpdate::Keep
         );
+    }
+
+    #[test]
+    fn keeps_sets_or_removes_the_mcp_logins_password() {
+        let mut form = postgres_form(|_| {});
+        assert_eq!(form.mcp_password_change(), McpPasswordChange::Keep);
+
+        form.mcp_login.user = " assistant ".to_owned();
+        form.mcp_login.password = "for the assistant".to_owned();
+        let saved = form.to_data_source(DataSourceId::generate()).unwrap();
+        assert_eq!(
+            saved.mcp_login,
+            Some(McpLogin {
+                user: "assistant".to_owned()
+            })
+        );
+        assert_eq!(
+            form.mcp_password_change(),
+            McpPasswordChange::Set(Password::new("for the assistant"))
+        );
+
+        let mut edited = DataSourceForm::from_data_source(&saved);
+        assert_eq!(edited.mcp_login.user, "assistant");
+        assert_eq!(edited.mcp_password_change(), McpPasswordChange::Keep);
+        edited.mcp_login.user.clear();
+        assert_eq!(edited.mcp_password_change(), McpPasswordChange::Remove);
+        assert_eq!(edited.to_data_source(saved.id).unwrap().mcp_login, None);
+
+        let mut sqlite = DataSourceForm::new(DriverKind::Sqlite);
+        sqlite.mcp_login.user = "assistant".to_owned();
+        assert_eq!(sqlite.mcp_password_change(), McpPasswordChange::Keep);
     }
 }

@@ -6,14 +6,15 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use std::str::FromStr;
 
 use dbdesk_core::{
-    ConnectionConfig, DataSource, DataSourceId, MysqlConfig, Password, PostgresConfig,
-    ServerConfig, SqlServerConfig, SqliteConfig, TlsMode,
+    ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, MysqlConfig, Password,
+    PostgresConfig, ServerConfig, SqlServerConfig, SqliteConfig, TlsMode,
 };
 use dbdesk_engine::{
     Command, EngineConfig, EngineHandle, Event, InstallError, InstallSupport, Release,
@@ -26,27 +27,75 @@ use dbdesk_store::{
 
 pub const EVENT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// How long a test lets the engine take to stop. Far longer than the app's own two seconds:
+/// what matters here is that it stops and saves, not how fast, and a busy Windows runner has
+/// taken over two seconds to close the history database.
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
+
 #[derive(Default)]
-pub struct MemorySecrets(Mutex<HashMap<DataSourceId, Password>>);
+pub struct MemorySecrets {
+    own: Mutex<HashMap<DataSourceId, Password>>,
+    mcp: Mutex<HashMap<DataSourceId, Password>>,
+    /// Refuses every read and write of either kind, like a keychain that is locked or missing.
+    locked: AtomicBool,
+}
 
 impl MemorySecrets {
+    pub fn locked() -> Self {
+        Self {
+            locked: AtomicBool::new(true),
+            ..Self::default()
+        }
+    }
+
     pub fn get(&self, id: DataSourceId) -> Option<Password> {
-        self.0.lock().unwrap().get(&id).cloned()
+        self.own.lock().unwrap().get(&id).cloned()
+    }
+
+    pub fn mcp(&self, id: DataSourceId) -> Option<Password> {
+        self.mcp.lock().unwrap().get(&id).cloned()
+    }
+
+    fn check_unlocked(&self) -> Result<(), SecretError> {
+        if self.locked.load(Ordering::Relaxed) {
+            return Err(SecretError::unavailable("the keychain is locked"));
+        }
+        Ok(())
     }
 }
 
 impl SecretStore for MemorySecrets {
     fn password(&self, id: DataSourceId) -> Result<Option<Password>, SecretError> {
+        self.check_unlocked()?;
         Ok(self.get(id))
     }
 
     fn set_password(&self, id: DataSourceId, password: &Password) -> Result<(), SecretError> {
-        self.0.lock().unwrap().insert(id, password.clone());
+        self.check_unlocked()?;
+        self.own.lock().unwrap().insert(id, password.clone());
         Ok(())
     }
 
     fn delete_password(&self, id: DataSourceId) -> Result<(), SecretError> {
-        self.0.lock().unwrap().remove(&id);
+        self.check_unlocked()?;
+        self.own.lock().unwrap().remove(&id);
+        Ok(())
+    }
+
+    fn mcp_password(&self, id: DataSourceId) -> Result<Option<Password>, SecretError> {
+        self.check_unlocked()?;
+        Ok(self.mcp(id))
+    }
+
+    fn set_mcp_password(&self, id: DataSourceId, password: &Password) -> Result<(), SecretError> {
+        self.check_unlocked()?;
+        self.mcp.lock().unwrap().insert(id, password.clone());
+        Ok(())
+    }
+
+    fn delete_mcp_password(&self, id: DataSourceId) -> Result<(), SecretError> {
+        self.check_unlocked()?;
+        self.mcp.lock().unwrap().remove(&id);
         Ok(())
     }
 }
@@ -147,6 +196,11 @@ impl TestEngine {
         Self { engine, repaints }
     }
 
+    /// Stops the engine, waiting for it to save everything first.
+    pub fn shut_down(self) {
+        self.engine.shutdown_within(SHUTDOWN_TIMEOUT).unwrap();
+    }
+
     pub fn send(&self, command: Command) {
         self.engine.send(command).unwrap();
     }
@@ -232,7 +286,9 @@ pub fn sqlite_data_source(path: PathBuf) -> DataSource {
         id: DataSourceId::generate(),
         name: "app".to_owned(),
         color: None,
+        safety: dbdesk_core::SafetyLevel::Normal,
         project: None,
+        mcp_login: None,
         config: ConnectionConfig::Sqlite(SqliteConfig {
             path,
             read_only: false,
@@ -283,6 +339,18 @@ pub fn sqlserver_test_server() -> Option<(SqlServerConfig, Password)> {
     Some((SqlServerConfig { server }, password))
 }
 
+pub fn clickhouse_test_server() -> Option<(ClickHouseConfig, Password)> {
+    let Ok(url) = std::env::var("DBDESK_TEST_CLICKHOUSE_URL") else {
+        eprintln!("skipping: DBDESK_TEST_CLICKHOUSE_URL is not set");
+        return None;
+    };
+    let rest = url
+        .strip_prefix("clickhouse://")
+        .expect("clickhouse:// URL");
+    let (server, password) = parse_server(rest, "8123");
+    Some((ClickHouseConfig { server }, password))
+}
+
 pub struct ParsedUrl {
     pub config: PostgresConfig,
     pub password: Password,
@@ -312,10 +380,25 @@ fn parse_server(rest: &str, default_port: &str) -> (ServerConfig, Password) {
         .unwrap_or((host_port, default_port));
     let server = ServerConfig {
         host: host.to_owned(),
-        port: u16::from_str(port).expect("numeric port"),
+        port: u16::from_str(port).expect("numeric port").into(),
         database: database.to_owned(),
         user: user.to_owned(),
         tls: TlsMode::default(),
     };
     (server, Password::new(password))
+}
+
+/// A port on this machine where every connection is accepted and closed at once, so a
+/// connection attempt fails straight away. A port nothing listens on isn't enough: some
+/// machines (CI runners among them) drop the attempt instead of refusing it, and it then
+/// waits for the connect timeout.
+pub fn closing_server() -> u16 {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for connection in listener.incoming() {
+            drop(connection);
+        }
+    });
+    port
 }

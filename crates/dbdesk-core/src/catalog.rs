@@ -34,6 +34,8 @@ pub enum NodeKind {
     Event,
     /// Another name for an object, possibly in another database or server (SQL Server).
     Synonym,
+    /// A key-value lookup kept in memory and loaded from a source (ClickHouse).
+    Dictionary,
     Column,
     Index,
     Constraint,
@@ -51,6 +53,7 @@ pub enum FolderKind {
     Sequences,
     Events,
     Synonyms,
+    Dictionaries,
     Columns,
     Indexes,
     Constraints,
@@ -68,6 +71,7 @@ impl FolderKind {
             Self::Sequences => "sequences",
             Self::Events => "events",
             Self::Synonyms => "synonyms",
+            Self::Dictionaries => "dictionaries",
             Self::Columns => "columns",
             Self::Indexes => "indexes",
             Self::Constraints => "constraints",
@@ -169,6 +173,7 @@ impl CatalogPath {
             | NodeKind::Procedure
             | NodeKind::Event
             | NodeKind::Synonym
+            | NodeKind::Dictionary
             | NodeKind::Index => Some(self.schema_qualified(&quote(&object.name), quoting)),
             // Function names already carry their argument list, e.g. `add(integer, integer)`.
             NodeKind::Function => Some(self.schema_qualified(&object.name, quoting)),

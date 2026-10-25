@@ -10,6 +10,7 @@ mod export;
 mod history;
 mod keymap;
 mod paths;
+mod portable;
 mod projects;
 mod secrets;
 mod settings;
@@ -19,12 +20,18 @@ pub use consoles::{
 };
 pub use data_sources::{DataSourceFile, StoreError};
 pub use export::{ExportError, ExportFormat, export_rows};
-pub use history::{History, HistoryEntry, HistoryError, HistoryFile, HistoryOutcome};
+pub use history::{
+    History, HistoryEntry, HistoryError, HistoryFile, HistoryOutcome, HistoryQuery, HistorySource,
+};
 pub use keymap::{KeymapBindings, KeymapError, KeymapFile};
 pub use paths::{APP_NAME, AppPaths};
+pub use portable::{
+    DataSourceImport, Difference, EntryStatus, ImportChoice, ImportChoices, ImportPlan,
+    ImportPreview, Incoming, MissingPath, PortableError, ProjectImport, read_export, write_export,
+};
 pub use projects::{
-    InvalidSlug, InvalidTimeout, McpOverrides, McpPermissions, Project, ProjectFile, ProjectSlug,
-    ProjectStoreError, Projects, StatementTimeout,
+    InvalidSchemaScope, InvalidSlug, InvalidTimeout, McpOverrides, McpPermissions, Project,
+    ProjectFile, ProjectSlug, ProjectStoreError, Projects, SchemaScope, StatementTimeout,
 };
 pub use secrets::{Keychain, SecretError, SecretStore};
 pub use settings::{

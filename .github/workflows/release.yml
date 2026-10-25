@@ -2,8 +2,9 @@ name: Release
 
 # Builds the downloadable packages. See docs/releasing.md.
 #
-# - A tag `vX.Y.Z` on main: checks the tag against the version, runs the full CI, builds and
-#   smoke-tests every package, and creates a *draft* GitHub release for a person to publish.
+# - A tag `vX.Y.Z` on main: checks the tag against the version and that its commit is on main
+#   (which only takes commits whose CI passed), builds and smoke-tests every package, and creates
+#   a *draft* GitHub release for a person to publish.
 # - Run by hand (Actions > Release > Run workflow): the same builds as a dry run, kept as
 #   workflow artifacts, with no release.
 # - A pull request that touches packaging: the builds and smoke tests only, so a broken package
@@ -19,8 +20,17 @@ on:
       - crates/dbdesk-app/Cargo.toml
       - crates/dbdesk-app/build.rs
 
+# `actions: write` lets a failing packaging job cancel the rest of the run, as in ci.yml: a
+# release with one broken package is no release, so the other builds stop at once.
 permissions:
   contents: read
+  actions: write
+
+# A pull request's packaging dry run is superseded by its next push, so the older one is
+# cancelled. Tag and manual runs each get a group of their own and always finish.
+concurrency:
+  group: release-${{ github.event_name == 'pull_request' && github.head_ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # cargo-packager, given `-p dbdesk-app`, resolves relative paths from the crate's folder and
 # always packages `target/release/<binary>` under `--release` (`--binaries-dir` is ignored when
@@ -51,15 +61,27 @@ jobs:
             exit 1
           fi
 
-  # The full test suite, Postgres included, for the exact commit being released. Pull requests
-  # already run it through ci.yml, so it is skipped there.
-  ci:
-    if: github.event_name != 'pull_request'
-    uses: ./.github/workflows/ci.yml
+  # No CI here. main only takes pull requests whose required checks (fmt, book, and check on all
+  # three systems) passed, so every commit on main has been through CI. Running it again took
+  # three runners and 15-30 minutes. This only makes sure the tag is on main.
+  on-main:
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: The tagged commit is on main
+        run: |
+          git fetch --quiet origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME points at a commit that isn't on main. Tag the release pull request's merge commit."
+            exit 1
+          fi
 
   macos:
-    needs: [version, ci]
-    if: ${{ !cancelled() && needs.version.result == 'success' && needs.ci.result != 'failure' }}
+    needs: [version, on-main]
+    if: ${{ !cancelled() && needs.version.result == 'success' && needs.on-main.result != 'failure' }}
     runs-on: macos-latest
     env:
       VERSION: ${{ needs.version.outputs.version }}
@@ -119,10 +141,15 @@ jobs:
             dist/*.app.tar.gz
             dist/*.app.tar.gz.sig
           if-no-files-found: error
+      - name: Cancel the rest of the run
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
 
   linux:
-    needs: [version, ci]
-    if: ${{ !cancelled() && needs.version.result == 'success' && needs.ci.result != 'failure' }}
+    needs: [version, on-main]
+    if: ${{ !cancelled() && needs.version.result == 'success' && needs.on-main.result != 'failure' }}
     # The oldest supported runner: binaries need the glibc they were built against or newer,
     # so building here keeps the AppImage running on older distributions.
     runs-on: ubuntu-22.04
@@ -175,10 +202,15 @@ jobs:
             dist/*.AppImage.sig
             dist/*.deb
           if-no-files-found: error
+      - name: Cancel the rest of the run
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
 
   windows:
-    needs: [version, ci]
-    if: ${{ !cancelled() && needs.version.result == 'success' && needs.ci.result != 'failure' }}
+    needs: [version, on-main]
+    if: ${{ !cancelled() && needs.version.result == 'success' && needs.on-main.result != 'failure' }}
     runs-on: windows-2022
     env:
       VERSION: ${{ needs.version.outputs.version }}
@@ -206,6 +238,11 @@ jobs:
           name: windows
           path: dist/*-setup.exe
           if-no-files-found: error
+      - name: Cancel the rest of the run
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
 
   release:
     if: github.ref_type == 'tag'

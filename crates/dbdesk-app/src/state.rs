@@ -1,6 +1,6 @@
 use dbdesk_core::{DataSource, DataSourceId, ProjectId, SourceColor};
 use dbdesk_engine::{Event, SessionState};
-use dbdesk_store::Project;
+use dbdesk_store::{McpPermissions, Project};
 
 use crate::catalog_tree::CatalogTree;
 
@@ -10,6 +10,8 @@ pub struct AppState {
     pub engine_status: EngineStatus,
     pub data_sources: DataSources,
     pub projects: ProjectList,
+    /// What projects allow MCP clients when they don't say otherwise.
+    pub mcp_defaults: McpPermissions,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -132,12 +134,16 @@ impl AppState {
             }
             Event::DataSourceSaved(data_source) => self.data_sources.upsert(data_source),
             Event::DataSourceDeleted(id) => self.data_sources.remove(*id),
-            Event::ProjectsLoaded(projects) => self.projects.set(projects.projects.clone()),
+            Event::ProjectsLoaded(projects) => {
+                self.projects.set(projects.projects.clone());
+                self.mcp_defaults = projects.mcp_defaults.clone();
+            }
             Event::ProjectsUnavailable { error } => {
                 self.projects = ProjectList::Unavailable(error.clone());
             }
             Event::ProjectSaved(project) => self.projects.upsert(project),
             Event::ProjectDeleted(id) => self.projects.remove(*id),
+            Event::McpDefaultsSaved(defaults) => self.mcp_defaults = defaults.clone(),
             Event::SessionChanged { id, state } => {
                 if let Some(entry) = self.data_sources.entry_mut(*id) {
                     entry.set_session(state);
@@ -151,6 +157,7 @@ impl AppState {
             // The dialogs, the definition window and the consoles track these themselves.
             Event::DataSourceSaveFailed { .. }
             | Event::ProjectSaveFailed { .. }
+            | Event::McpDefaultsSaveFailed { .. }
             | Event::ConsolesLoaded(_)
             | Event::KeymapLoaded { .. }
             | Event::SettingsLoaded { .. }
@@ -165,8 +172,13 @@ impl AppState {
             | Event::TransactionEnded { .. }
             | Event::ConsoleSaveFailed { .. }
             | Event::ConnectionTested { .. }
+            | Event::PasswordNeeded { .. }
+            | Event::DataSourcesExported { .. }
+            | Event::ImportPreviewed { .. }
+            | Event::ImportApplied(_)
+            | Event::PasswordProvided { .. }
             | Event::DefinitionLoaded { .. }
-            | Event::SqliteDatabaseCreated { .. }
+            | Event::DatabaseFileCreated { .. }
             | Event::ConsoleSessionChanged { .. }
             | Event::StatementsValidated { .. }
             | Event::StatementStarted { .. }
@@ -258,7 +270,9 @@ mod tests {
             id: DataSourceId::generate(),
             name: name.to_owned(),
             color: None,
+            safety: dbdesk_core::SafetyLevel::Normal,
             project: None,
+            mcp_login: None,
             config: ConnectionConfig::Sqlite(SqliteConfig {
                 path: format!("/data/{name}.db").into(),
                 read_only: false,

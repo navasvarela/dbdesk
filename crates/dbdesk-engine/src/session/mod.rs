@@ -5,6 +5,7 @@
 
 mod catalog;
 mod edits;
+mod guard;
 mod query;
 mod transaction;
 mod validate;
@@ -14,7 +15,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use dbdesk_core::{
-    CancelHandle, CatalogPath, Connection, DataSource, DataSourceId, RelationName,
+    CancelHandle, CatalogPath, Connection, DataSource, DataSourceId, RelationName, SafetyLevel,
     TransactionStatus, describe_error,
 };
 use dbdesk_sql::Dialect;
@@ -25,11 +26,14 @@ use tokio::task::JoinHandle;
 
 use crate::events::EventSink;
 use crate::history::HistoryLog;
-use crate::open::open;
+use crate::open::{OpenError, open};
+use crate::passwords::{Prompting, SessionPasswords};
+use crate::read_only;
 use crate::{
     ConsoleId, Event, PasswordUpdate, RunId, RunPurpose, SessionState, TransactionEnd,
     TransactionMode,
 };
+use guard::ReadOnly;
 
 /// Work for a session's connection. Answered with events, in the order received.
 #[derive(Debug)]
@@ -64,6 +68,7 @@ pub(crate) enum SessionOwner {
 /// What a session needs from the engine.
 pub(crate) struct Services {
     pub(crate) secrets: Arc<dyn SecretStore>,
+    pub(crate) passwords: SessionPasswords,
     pub(crate) events: EventSink,
     pub(crate) history: HistoryLog,
 }
@@ -86,14 +91,23 @@ impl Session {
     pub(crate) fn start(data_source: DataSource, owner: SessionOwner, services: Services) -> Self {
         let Services {
             secrets,
+            passwords,
             events,
             history,
         } = services;
         let (disconnect, disconnect_signal) = oneshot::channel();
         let (requests, request_receiver) = mpsc::unbounded_channel();
         let (cancel, cancel_signal) = watch::channel(None);
+        let read_only = (data_source.safety == SafetyLevel::ReadOnly).then(|| ReadOnly {
+            mode: read_only::mode(data_source.config.driver()),
+        });
+        let data_source = match read_only {
+            Some(_) => read_only::connection_config(data_source),
+            None => data_source,
+        };
         let context = SessionContext {
             data_source,
+            read_only,
             owner,
             events,
             // Only what the user runs in a console belongs in the history, not the
@@ -104,7 +118,12 @@ impl Session {
             disconnect: disconnect_signal,
             cancel: cancel_signal,
         };
-        let task = tokio::spawn(run(context, secrets, signals, request_receiver));
+        let task = tokio::spawn(run(
+            context,
+            Credentials { secrets, passwords },
+            signals,
+            request_receiver,
+        ));
         Self {
             disconnect,
             requests,
@@ -142,7 +161,10 @@ impl Session {
 }
 
 struct SessionContext {
+    /// As connected to: a read-only data source's SQLite file is opened read-only.
     data_source: DataSource,
+    /// Set for a read-only data source: every statement is checked, and runs read-only.
+    read_only: Option<ReadOnly>,
     owner: SessionOwner,
     events: EventSink,
     history: Option<HistoryLog>,
@@ -238,13 +260,20 @@ async fn cancel_running_statement(cancel_handle: &dyn CancelHandle) {
     }
 }
 
+/// Where a session finds its password.
+struct Credentials {
+    secrets: Arc<dyn SecretStore>,
+    passwords: SessionPasswords,
+}
+
 async fn run(
     context: SessionContext,
-    secrets: Arc<dyn SecretStore>,
+    credentials: Credentials,
     mut signals: Signals,
     mut requests: UnboundedReceiver<SessionRequest>,
 ) {
-    let Some(mut connection) = connect(&context, &secrets, &mut signals.disconnect).await else {
+    let Some(mut connection) = connect(&context, &credentials, &mut signals.disconnect).await
+    else {
         return;
     };
     let cancel_handle = connection.cancel_handle();
@@ -255,6 +284,7 @@ async fn run(
         signals: &mut signals,
         parked: None,
         transaction: TransactionStatus::Idle,
+        read_only_open: None,
     };
     worker.serve(&mut requests).await;
     if let Some(parked) = worker.parked.take() {
@@ -270,7 +300,7 @@ async fn run(
 /// Opens the connection, reporting progress. `None` if it failed or was cancelled.
 async fn connect(
     context: &SessionContext,
-    secrets: &Arc<dyn SecretStore>,
+    credentials: &Credentials,
     disconnect_signal: &mut oneshot::Receiver<()>,
 ) -> Option<Box<dyn Connection>> {
     let name = context.name();
@@ -278,7 +308,12 @@ async fn connect(
     tracing::info!(data_source = %name, "connecting to {}", context.data_source.config);
     let started = Instant::now();
     let attempt = tokio::select! {
-        attempt = open(&context.data_source, secrets, &PasswordUpdate::Keep) => attempt,
+        attempt = open(
+            &context.data_source,
+            &credentials.secrets,
+            &PasswordUpdate::Keep,
+            Prompting::Ask(&credentials.passwords),
+        ) => attempt,
         _ = disconnect_signal => {
             tracing::info!(data_source = %name, "connection attempt cancelled");
             context.notify(SessionState::Disconnected);
@@ -298,9 +333,15 @@ async fn connect(
             Some(connection)
         }
         Err(error) => {
-            let error = describe_error(&error);
-            tracing::warn!(data_source = %name, "connection failed: {error}");
-            context.notify(SessionState::Failed(error));
+            let description = describe_error(&error);
+            tracing::warn!(data_source = %name, "connection failed: {description}");
+            context.notify(SessionState::Failed(description));
+            if let OpenError::PasswordNeeded(reason) = error {
+                context.send(Event::PasswordNeeded {
+                    data_source: context.data_source.id,
+                    reason,
+                });
+            }
             None
         }
     }
@@ -316,6 +357,8 @@ struct Worker<'a> {
     parked: Option<query::Parked>,
     /// The connection's transaction status as last reported to the UI.
     transaction: TransactionStatus,
+    /// The read-only transaction a read-only data source's statement runs in, while open.
+    read_only_open: Option<read_only::ReadOnlyMode>,
 }
 
 impl Worker<'_> {
@@ -323,6 +366,11 @@ impl Worker<'_> {
     async fn serve(&mut self, requests: &mut UnboundedReceiver<SessionRequest>) {
         while let Some(request) = self.next_request(requests).await {
             if self.handle(request).await.is_err() {
+                return;
+            }
+            // A statement whose rows are no longer parked is done with its read-only
+            // transaction.
+            if self.parked.is_none() && guard::close(self).await.is_err() {
                 return;
             }
         }
@@ -341,6 +389,7 @@ impl Worker<'_> {
                     let cancelled = *self.signals.cancel.borrow_and_update();
                     if let Some(parked) = self.parked.take_if(|parked| Some(parked.run()) == cancelled) {
                         query::discard(self.context, parked, self.cancel_handle).await;
+                        guard::close(self).await.ok()?;
                     }
                 }
                 request = requests.recv() => return request,

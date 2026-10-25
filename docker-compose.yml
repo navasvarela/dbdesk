@@ -121,3 +121,30 @@ services:
       timeout: 10s
       retries: 60
       start_period: 10s
+
+  # ClickHouse 25.8 LTS, over HTTP on 8123 and HTTPS on 8443 (docker/clickhouse/https.xml),
+  # with the certificate postgres-tls serves. The image only creates the user and database
+  # when told to, and the user may then kill its own queries, which cancelling needs.
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.8
+    environment:
+      CLICKHOUSE_USER: dbdesk
+      CLICKHOUSE_PASSWORD: dbdesk
+      CLICKHOUSE_DB: dbdesk
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "58123:8123"
+      - "58443:8443"
+    volumes:
+      - ./docker/postgres-tls:/tls:ro
+      - ./docker/clickhouse/https.xml:/etc/clickhouse-server/config.d/https.xml:ro
+    # The user exists once a query as it works; HTTPS starts a moment after HTTP.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          clickhouse-client --user dbdesk --password dbdesk --query 'SELECT 1' &&
+          wget -qO- --no-check-certificate https://localhost:8443/ping
+      interval: 1s
+      timeout: 5s
+      retries: 60

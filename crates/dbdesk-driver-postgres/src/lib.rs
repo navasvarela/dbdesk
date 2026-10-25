@@ -42,9 +42,7 @@ pub async fn connect(
 ) -> Result<PostgresConnection, DriverError> {
     let tls = tls::connector(&config.server.tls)
         .map_err(|error| DriverError::Connect(Box::new(error)))?;
-    let primary = DatabaseClient::open(config, &config.server.database, password, &tls)
-        .await
-        .map_err(connect_error)?;
+    let primary = DatabaseClient::open(config, &config.server.database, password, &tls).await?;
     let version = server_version(&primary.client)
         .await
         .map_err(connect_error)?;
@@ -90,11 +88,11 @@ impl DatabaseClient {
         database: &str,
         password: Option<&Password>,
         tls: &MakeRustlsConnect,
-    ) -> Result<Self, tokio_postgres::Error> {
+    ) -> Result<Self, DriverError> {
         let mut pg_config = tokio_postgres::Config::new();
         pg_config
             .host(&config.server.host)
-            .port(config.server.port)
+            .port(config.server.port_number()?)
             .dbname(database)
             .user(&config.server.user)
             .application_name(APPLICATION_NAME)
@@ -103,7 +101,10 @@ impl DatabaseClient {
             pg_config.password(password.expose());
         }
 
-        let (client, connection) = pg_config.connect(tls.clone()).await?;
+        let (client, connection) = pg_config
+            .connect(tls.clone())
+            .await
+            .map_err(connect_error)?;
         let connection_task = tokio::spawn(drive_connection(connection, database.to_owned()));
         Ok(Self {
             client,
@@ -178,8 +179,7 @@ impl PostgresConnection {
             Entry::Vacant(entry) => {
                 let client =
                     DatabaseClient::open(&self.config, database, self.password.as_ref(), &self.tls)
-                        .await
-                        .map_err(connect_error)?;
+                        .await?;
                 tracing::info!(
                     database,
                     "opened a connection for browsing another database"
@@ -316,7 +316,8 @@ mod tests {
                     .get_ports()
                     .first()
                     .copied()
-                    .unwrap_or(PostgresConfig::DEFAULT_PORT),
+                    .unwrap_or(PostgresConfig::DEFAULT_PORT)
+                    .into(),
                 database: parsed
                     .get_dbname()
                     .expect("database in test URL")
@@ -361,7 +362,7 @@ mod tests {
                 host: "127.0.0.1".to_owned(),
                 // Port 1 (tcpmux) is reserved and has no listener on any normal machine, so the
                 // connection is refused immediately instead of timing out.
-                port: 1,
+                port: 1.into(),
                 database: "postgres".to_owned(),
                 user: "postgres".to_owned(),
                 tls: TlsMode::default(),

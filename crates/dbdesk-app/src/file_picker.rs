@@ -1,13 +1,54 @@
-//! The platform's open and save dialogs, for choosing an existing SQLite database or naming a
-//! new one, and for choosing a CA certificate.
+//! The platform's open and save dialogs, for choosing an existing database file (SQLite or
+//! DuckDB) or naming a new one, for choosing a CA certificate, and for exporting and importing
+//! data sources.
 
 use std::path::{Path, PathBuf};
 
-const OPEN_TITLE: &str = "Choose a SQLite database";
-const NEW_TITLE: &str = "Create a SQLite database";
+use dbdesk_engine::DatabaseFile;
+
 const CA_TITLE: &str = "Choose a CA certificate (PEM)";
-/// What the Save dialog suggests for a new database.
-const NEW_FILE_NAME: &str = "database.db";
+const EXPORT_TITLE: &str = "Export data sources";
+const IMPORT_TITLE: &str = "Import data sources";
+const EXPORT_FILE_NAME: &str = "dbdesk-data-sources.toml";
+
+/// An engine whose databases are files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileEngine {
+    Sqlite,
+    DuckDb,
+}
+
+impl FileEngine {
+    fn open_title(self) -> &'static str {
+        match self {
+            Self::Sqlite => "Choose a SQLite database",
+            Self::DuckDb => "Choose a DuckDB database",
+        }
+    }
+
+    fn new_title(self) -> &'static str {
+        match self {
+            Self::Sqlite => "Create a SQLite database",
+            Self::DuckDb => "Create a DuckDB database",
+        }
+    }
+
+    /// What the Save dialog suggests for a new database.
+    fn new_file_name(self) -> &'static str {
+        match self {
+            Self::Sqlite => "database.db",
+            Self::DuckDb => "database.duckdb",
+        }
+    }
+
+    /// The new database file at `path`, for the engine to create.
+    pub fn file(self, path: PathBuf) -> DatabaseFile {
+        match self {
+            Self::Sqlite => DatabaseFile::Sqlite(path),
+            Self::DuckDb => DatabaseFile::DuckDb(path),
+        }
+    }
+}
 
 /// Shows the open-file dialog and returns the chosen file, or `None` if it was cancelled.
 ///
@@ -17,25 +58,43 @@ const NEW_FILE_NAME: &str = "database.db";
 /// for no visible difference.
 ///
 /// No extension filter: SQLite files are named `.db`, `.sqlite`, `.sqlite3`, `.db3`, or have
-/// no extension at all, and on macOS rfd merges all filters into one allowed list, so an "All
-/// files" escape hatch isn't possible. The connection test catches files that aren't SQLite.
-pub fn pick_sqlite_file(current: &str) -> Option<PathBuf> {
-    dialog(OPEN_TITLE, current).pick_file()
+/// no extension at all (DuckDB's `.duckdb` or `.db`), and on macOS rfd merges all filters into
+/// one allowed list, so an "All files" escape hatch isn't possible. The connection test catches
+/// files of another kind.
+pub fn pick_database_file(engine: FileEngine, current: &str) -> Option<PathBuf> {
+    dialog(engine.open_title(), current).pick_file()
 }
 
 /// Shows the save-file dialog for a new database and returns the chosen path, or `None` if it
 /// was cancelled. Nothing is created here; the engine creates the file, and refuses if it
 /// already exists, even if the dialog asked "Replace?".
-pub fn pick_new_sqlite_file(current: &str) -> Option<PathBuf> {
-    dialog(NEW_TITLE, current)
-        .set_file_name(NEW_FILE_NAME)
+pub fn pick_new_database_file(engine: FileEngine, current: &str) -> Option<PathBuf> {
+    dialog(engine.new_title(), current)
+        .set_file_name(engine.new_file_name())
         .save_file()
 }
 
 /// Shows the open-file dialog for a PEM file of trusted authorities. No extension filter, for
-/// the same reason as [`pick_sqlite_file`]: they come as `.pem`, `.crt` and `.cer`.
+/// the same reason as [`pick_database_file`]: they come as `.pem`, `.crt` and `.cer`.
 pub fn pick_ca_file(current: &str) -> Option<PathBuf> {
     dialog(CA_TITLE, current).pick_file()
+}
+
+/// Shows the save dialog for an export of data sources.
+pub fn pick_data_sources_export() -> Option<PathBuf> {
+    rfd::FileDialog::new()
+        .set_title(EXPORT_TITLE)
+        .add_filter("TOML", &["toml"])
+        .set_file_name(EXPORT_FILE_NAME)
+        .save_file()
+}
+
+/// Shows the open dialog for a file of data sources to import.
+pub fn pick_data_sources_import() -> Option<PathBuf> {
+    rfd::FileDialog::new()
+        .set_title(IMPORT_TITLE)
+        .add_filter("TOML", &["toml"])
+        .pick_file()
 }
 
 fn dialog(title: &str, current: &str) -> rfd::FileDialog {

@@ -129,3 +129,9 @@ title and a description with `gh pr edit`.
   Each layer becomes its own squash commit on `main`, titled with its pull request's title. The
   layers above it are retargeted to `main` automatically. The merge is all or nothing: if one
   layer conflicts with `main`, nothing merges until it is brought up to date.
+
+## Adding a database
+
+Support for a new database engine follows the steps in
+[Adding a database](docs/adding-a-database.md): the dialect, the driver crate, the wiring, the
+app, the test server and the documentation, one pull request each.

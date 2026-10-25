@@ -12,6 +12,12 @@ const TEST_URL_VAR: &str = "DBDESK_TEST_SQLSERVER_URL";
 /// the cancel reaches a statement the server is still running.
 const LONG_RUNNING: &str = "WAITFOR DELAY '00:01:00'";
 
+/// Held by every test that talks to the test server. They share one database, and the catalog
+/// walk asked for the definition of a view that another test (the `describe_table` check) had
+/// just dropped, which failed CI now and then. Tests that only need no server don't take it.
+static SHARED_DATABASE: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
 struct TestServer {
     config: SqlServerConfig,
     password: Option<Password>,
@@ -36,7 +42,7 @@ fn parse_url(url: &str) -> TestServer {
         config: SqlServerConfig {
             server: ServerConfig {
                 host: host.to_owned(),
-                port: port.parse().expect("numeric port"),
+                port: port.parse::<u16>().expect("numeric port").into(),
                 database: database.to_owned(),
                 user: user.to_owned(),
                 tls: TlsMode::default(),
@@ -81,6 +87,7 @@ async fn run(connection: &mut SqlServerConnection, sql: &str) -> Option<u64> {
 
 #[tokio::test]
 async fn conforms_to_the_connection_lifecycle() {
+    let _shared = SHARED_DATABASE.lock().await;
     let Some(server) = test_server() else { return };
     let connection = server.connect().await;
 
@@ -95,6 +102,7 @@ async fn conforms_to_the_connection_lifecycle() {
 
 #[tokio::test]
 async fn wrong_password_is_a_connect_error() {
+    let _shared = SHARED_DATABASE.lock().await;
     let Some(server) = test_server() else { return };
     let result = connect(&server.config, Some(&Password::new("definitely wrong"))).await;
 
@@ -108,7 +116,7 @@ async fn unreachable_server_is_a_connect_error() {
             host: "127.0.0.1".to_owned(),
             // Port 1 (tcpmux) is reserved and has no listener on any normal machine, so the
             // connection is refused immediately instead of timing out.
-            port: 1,
+            port: 1.into(),
             database: "master".to_owned(),
             user: "sa".to_owned(),
             tls: TlsMode::Disable,
@@ -120,6 +128,7 @@ async fn unreachable_server_is_a_connect_error() {
 
 #[tokio::test]
 async fn runs_pages_cancels_and_reports_error_positions() {
+    let _shared = SHARED_DATABASE.lock().await;
     let Some(server) = test_server() else { return };
     let mut connection = server.connect().await;
 
@@ -138,10 +147,65 @@ async fn runs_pages_cancels_and_reports_error_positions() {
     Box::new(connection).close().await.unwrap();
 }
 
+/// Cancelling a result whose rows trickle in, a packet at a time with pauses between, still
+/// stops between two rows. The client is then most often waiting halfway through a row for
+/// the next packet, and dropping that read used to lose the half already read, leaving the
+/// connection out of step with the server (7 runs in 8 against a container).
+#[tokio::test]
+async fn cancels_a_result_that_trickles_in() {
+    let _shared = SHARED_DATABASE.lock().await;
+    let Some(server) = test_server() else { return };
+    let mut connection = server.connect().await;
+    let handle = connection.cancel_handle();
+
+    // Billions of combinations, of which one in 49,999 is a row: a few rows a millisecond.
+    let mut cursor = connection
+        .execute(
+            "SELECT a.object_id, b.name FROM sys.all_objects a \
+             CROSS JOIN sys.all_objects b CROSS JOIN sys.all_objects c \
+             WHERE (CAST(a.object_id AS bigint) + b.object_id + c.object_id) % 49999 = 0",
+        )
+        .await
+        .unwrap();
+    let first = cursor.next_page(100).await.unwrap();
+    assert_eq!(first.len(), 100, "rows are arriving");
+    // Cancelled while a page is being read, so a read is under way when the cancel arrives.
+    let canceller = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        handle.cancel().await
+    });
+    let started = std::time::Instant::now();
+    // The cancel ends the result: the page being read fails, or `finish` reports it.
+    let outcome = async {
+        while !cursor.is_exhausted() {
+            cursor.next_page(100_000_000).await?;
+        }
+        cursor.finish().await
+    }
+    .await;
+    canceller.await.unwrap().unwrap();
+    assert!(
+        matches!(outcome, Err(DriverError::Statement { .. })),
+        "{outcome:?}"
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(10),
+        "the result took {:?} to end",
+        started.elapsed()
+    );
+
+    connection.ping().await.unwrap();
+    assert_eq!(
+        first_row(&mut connection, "SELECT 42").await,
+        [Some("42".to_owned())]
+    );
+}
+
 /// Cancelling while a page of rows is arriving stops between two rows and leaves the
 /// connection usable, as cancelling a statement that hasn't answered yet does.
 #[tokio::test]
 async fn cancels_a_result_that_is_still_arriving() {
+    let _shared = SHARED_DATABASE.lock().await;
     let Some(server) = test_server() else { return };
     let mut connection = server.connect().await;
     let handle = connection.cancel_handle();
@@ -176,6 +240,7 @@ async fn cancels_a_result_that_is_still_arriving() {
 
 #[tokio::test]
 async fn counts_changed_rows_and_shows_values_as_sql_server_does() {
+    let _shared = SHARED_DATABASE.lock().await;
     let Some(server) = test_server() else { return };
     let mut connection = server.connect().await;
 
@@ -222,6 +287,7 @@ async fn counts_changed_rows_and_shows_values_as_sql_server_does() {
 /// true.
 #[tokio::test]
 async fn sets_the_session_options_client_libraries_set() {
+    let _shared = SHARED_DATABASE.lock().await;
     let Some(server) = test_server() else { return };
     let mut connection = server.connect().await;
 
@@ -272,6 +338,7 @@ fn folder(parent: &CatalogPath, folder: FolderKind) -> CatalogPath {
 
 #[tokio::test]
 async fn walks_the_catalog_and_shows_definitions() {
+    let _shared = SHARED_DATABASE.lock().await;
     let Some(server) = test_server() else { return };
     let mut connection = server.connect().await;
     for statement in FIXTURE {
@@ -373,6 +440,7 @@ async fn walks_the_catalog_and_shows_definitions() {
 /// Connecting with TLS also proves ring was installed as rustls's process-wide provider.
 #[tokio::test]
 async fn encrypts_as_the_tls_mode_says() {
+    let _shared = SHARED_DATABASE.lock().await;
     let Some(server) = test_server() else { return };
     for (tls, encrypted) in [
         (TlsMode::Disable, "FALSE"),

@@ -42,9 +42,10 @@ Follow-ups left out of M1:
 - ~~TLS for Postgres (`sslmode`).~~ Done in DB0: `disable`, `prefer`, `require` and
   `verify-full` with an optional CA file, on rustls.
 - ~~A file picker for SQLite paths.~~ Done: **Browse…** and **New…** (create an empty database).
-- Prompting for a password when none is saved or the keychain is unavailable.
+- ~~Prompting for a password when none is saved or the keychain is unavailable.~~ Done in W1.
 - Noticing when an established connection drops (the session still shows "connected").
-- Duplicate data source; colour and safety level per data source.
+- Duplicate data source; ~~colour and safety level per data source~~ (colour in M4, safety
+  levels in W2).
 - Preserving comments in `data_sources.toml` (`toml_edit`).
 
 ## M2 — Connection explorer
@@ -344,6 +345,44 @@ arriving, engine tests of grid edits and explain, lexer, splitter, syntax-check 
 corpora for the dialect, and a UI test that adds a SQL Server data source. Not tried: connecting
 to Azure SQL, for want of an account.
 
+**DB3 demo note:** built in #49, #52 and #55, as a native stack. **+** → **DuckDB**
+opens a form with **File** (with **Browse…**, **New…** and **Read-only**, as for SQLite) or **In
+memory**; **Test connection** says "Connected to DuckDB 1.5.6", and nothing is installed:
+DuckDB is compiled into dbdesk. In an in-memory data source, `SELECT * FROM
+'/path/orders.parquet'` or `read_csv(…)` queries files directly. The explorer lists the database
+(and attached ones), schemas, tables, views, macros and sequences, and **Show definition** gives
+DuckDB's own `CREATE` statement, tables included. A trillion-row cross join stops at ⌘., `EXPLAIN`
+shows DuckDB's text plan, and editing a cell writes a standard `UPDATE`, refused inside an open
+transaction since DuckDB has no savepoints. The downloads grow by about 13 MB (the stripped
+binary from 27.0 MB to 68.0 MB), inside the 30 MB budget. Underneath: rows arrive as Arrow
+chunks and are formatted by Arrow, statements without rows answer with a status the driver reads
+to the end, and `Command::CreateDatabaseFile` creates SQLite and DuckDB files alike. Covered by
+the whole conformance suite on DuckDB in every CI job, driver tests for the catalog, definitions,
+value formatting, status results and reading a Parquet file from memory, an engine test of grid
+edits, lexer, syntax-check and formatter corpora for the dialect, and a UI test that adds an
+in-memory DuckDB data source.
+
+**DB4 demo note:** built in #56, #60 and #61, as a native stack. `docker
+compose up -d --wait` now also starts ClickHouse 25.8, over HTTP on port 58123 and HTTPS on
+58443. **+** → **ClickHouse** opens the shared server form (`localhost:8123`, database and user
+`default`) with TLS `disable`, `require` or `verify-full`; choosing `require` moves the port to
+8443. **Test connection** says "Connected to ClickHouse 25.8.33.6", over HTTPS with
+`docker/postgres-tls/ca.crt` as the CA file. The explorer lists databases, then tables, views,
+materialized views and dictionaries, with columns and data-skipping indexes, and **Show
+definition** gives ClickHouse's `CREATE` statement. `SELECT number FROM numbers(10000000)`
+pages 500 rows at a time, and running anything else stops the rest at once; `SELECT
+sum(number) FROM numbers(1000000000000)` stops at ⌘.. `USE`, `SET` and temporary tables last
+from run to run, `EXPLAIN` shows the plan a step per row, results are read-only (hover over
+**Read-only** for why), and there is no transaction mode. **Format** keeps `toDate` and
+`countIf` as typed. The downloads grow by about half a megabyte. Underneath: one HTTP session
+per console, `KILL QUERY … SYNC` by `query_id` for ⌘. and for abandoned results, `EXPLAIN AST`
+then `EXPLAIN PLAN` for the linter, and the rustls configuration shared with PostgreSQL in
+`dbdesk-tls`. Covered by the conformance suite without transactions or table descriptions on
+ClickHouse in CI, driver tests for TLS, value formats, the session, paging and abandoning ten
+million rows, and the catalog with definitions, an engine test of a session across runs,
+lexer, syntax-check and formatter corpora for the dialect, and UI tests of the form's TLS port
+and read-only results.
+
 ## Object helpers track
 
 Dialogs that write, show and run the SQL to create and change tables, views and users, from a
@@ -392,13 +431,53 @@ projects with permissions per project. The full plan is in [MCP server](mcp-serv
   - `dbdesk mcp --project <slug>` over stdio, with catalog, describe, query and explain tools;
   - read-only transactions, row and time limits, and every call logged and recorded in the
     history.
+
+  **MCP1 demo note:** built. In `projects.toml`, set `mcp_enabled = true` on a project, then add
+  `dbdesk mcp --project <slug>` to an MCP client (the manual's "Connecting an AI assistant"
+  has the JSON). The assistant gets six read-only tools: `list_data_sources`, `list_objects`,
+  `describe_table`, `get_definition`, `query` and `explain`. Ask it to describe a table and
+  query it: rows come back as text cells, at most 500, with `truncated` when there were more.
+  Ask it to run `WITH gone AS (DELETE FROM t RETURNING *) SELECT * FROM gone` and dbdesk
+  refuses it before sending; `SELECT f()` on a function that inserts is refused by the
+  database's read-only transaction (SQLSTATE 25006). Both refusals are in
+  `dbdesk-mcp.YYYY-MM-DD.log`, and every statement sent is in the query history with `source =
+  'mcp'`. Covered by the classifier's corpus per dialect, the history's two-process WAL test,
+  `dbdesk-mcp`'s stdio test (a real server process against SQLite, PostgreSQL, MySQL and
+  MariaDB), and tests of the `mcp` subcommand on the real binary.
+
 - **MCP2 — Permissions:**
   - an `execute` tool, gated by the project's `write`, `schema` and `admin` permissions, which
     fall back to global defaults that only read;
   - statements classified by the parser;
   - an optional separate MCP login per data source.
+
+  **MCP2 demo note:** built. In `projects.toml`, give a project `[project.mcp] write = true` and
+  restart its server. The assistant now also has `execute`, marked destructive. An `INSERT`
+  goes through and is committed. A `CREATE TABLE` is refused, and `dbdesk-mcp.YYYY-MM-DD.log`
+  says `missing_permission="schema"`. Add `schema = true`, restart, and it goes through. Give
+  the data source `mcp_login = { user = "…" }` for a role that may only `SELECT`, with its
+  password in the keychain entry `<id>/mcp`. The same `INSERT` is then refused by the database
+  (SQLSTATE 42501), though the project allows it. `schemas = ["public"]` hides and refuses
+  other schemas. A batch whose second statement fails rolls back the first. Covered by the
+  classifier's corpus per dialect (now with `CALL`, `COPY`, grants, settings and session
+  killing), unit tests of the allow-list and of `execute`'s planning, and `dbdesk-mcp`'s
+  `permissions` test: a real server process against SQLite, PostgreSQL, MySQL and MariaDB,
+  checking the exit criterion end to end.
 - **MCP3 — In the app:** project settings, Copy MCP configuration, MCP statements marked in the
   history, and a manual chapter.
+
+  **MCP3 demo note:** built. From a fresh install, add a data source, then right-click it →
+  **Move to project › New project…**. Right-click the project → **Project settings…**, tick
+  **Allow MCP clients to use this project**, and save. Turning on **Write** without an MCP
+  login on a server data source shows the warning that only a dedicated login's grants are
+  airtight. Set the login in the data source's dialog (**MCP login**, **MCP password**).
+  **Copy MCP configuration** on the project copies the `mcpServers` entry with this machine's
+  path to dbdesk; paste it into the client, as the manual's "Connecting an AI assistant"
+  chapter shows. **View › Settings… › MCP** edits the defaults every project starts from. The
+  assistant's statements appear in the console's **History**, marked **MCP**, and the menu
+  beside the search shows only them. Covered by kittest UI tests (project settings with the
+  warning and Reset, the MCP defaults, the copied configuration, the history's marks and
+  filter), engine tests of the new commands, and store tests of the history's source filter.
 
 ## Hackability track
 
@@ -423,8 +502,41 @@ The gaps that keep dbdesk from being an everyday tool. The full plan is in
     entries by id;
   - paths that travel, and `${VARIABLE}` placeholders;
   - a password prompt on first connect.
+
+  **W1 demo note:** built. **File › Export data sources…**, tick a project (its data sources
+  follow), **Export…**: the TOML file has `format_version = 1`, the projects with their MCP
+  settings, and `[[data_source]]` tables in `data_sources.toml`'s format, with no password,
+  token or command. A SQLite file next to the export is written relative to it, one in the home
+  folder as `~/…`. On another machine, **File › Import data sources…** shows each project and
+  data source as new, unchanged, or what differs (`Host: localhost → db.internal`), flags files
+  that machine doesn't have, and offers Import/Update, Skip, or Import as a copy per entry;
+  projects match by id, then by slug. Import, then expand a data source: it asks for its
+  password once, with **Save to keychain** ticked (a locked keychain asks too, and the password
+  is kept for the session). Import the same file again and everything is unchanged and nothing
+  is written. A data source with host `${PGHOST}` connects wherever that is set; the dialog
+  shows what each placeholder resolves to, and an unset one stops the connection naming the
+  setting. Covered by core tests of placeholders, store tests of the format, paths and preview,
+  engine tests of a round trip between two engines, a re-import that changes no file, a search
+  of an export of every kind of data source for every saved password, the password prompt (a
+  real PostgreSQL connection included), and kittest tests of the prompt, the export and the
+  import preview.
 - **W2 — Safety per data source:** Normal, Careful (confirm every change) and Read-only
   (enforced as for MCP).
+
+  **W2 demo note:** built. In the data source dialog, pick **Red** and it suggests **Careful**
+  (**Make it careful**); the level is saved as `safety = "careful"` and travels in exports. Open
+  a console on it: the toolbar shows **Careful**, the console starts in **Manual commit**, and
+  an `UPDATE` asks *Run on "production"?* first; editing a cell and pressing **Submit** asks
+  *Apply edits to "production"?*. Make it **Read-only**: an `INSERT` or `CREATE TABLE` is
+  refused before it is sent (*Refused: this statement changes data, and "production" is
+  read-only.*), `SELECT f()` on a PostgreSQL function that inserts fails with the database's
+  read-only transaction error, rows still page in 500s, and the grid isn't editable. The
+  statement check and the read-only modes moved from `dbdesk-mcp` to `dbdesk_engine::read_only`,
+  which the MCP server and consoles now share. SQL Server, DuckDB and ClickHouse have no
+  read-only mode dbdesk uses yet, so only the check applies there, and the dialog says so. Covered by engine tests (SQLite refusals and
+  edits; PostgreSQL `INSERT`, `CREATE TABLE`, a write inside a function, and paging inside the
+  read-only transaction), the read-only module's tests, hazard dialog tests, and kittest tests
+  of a careful grid edit, a read-only refusal and red suggesting Careful.
 - **W3 — Connections you can rely on:** SSH tunnels with `russh`, and noticing and reconnecting
   dropped connections.
 - **W4 — History as an audit trail:**

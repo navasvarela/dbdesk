@@ -50,6 +50,15 @@ Each driver crate runs the suite against its own backend:
   `DBDESK_TEST_MARIADB_URL` is unset. Both make a self-signed certificate on first start, so
   the TLS tests need no fixture of their own. `check_describe_table` asks the server's
   `lower_case_table_names` whether unquoted names match ignoring case: on Linux they don't.
+- **DuckDB**: in memory or a temporary file, always runs, like SQLite: DuckDB is compiled into
+  the driver. It runs the suite with `Spelling::STANDARD`, and reading a Parquet file from an
+  in-memory database is a test of its own.
+- **ClickHouse**: the `clickhouse` container (25.8, HTTP on port 58123 and HTTPS on 58443,
+  with the `postgres-tls` certificate), skipped when `DBDESK_TEST_CLICKHOUSE_URL` or
+  `DBDESK_TEST_CLICKHOUSE_TLS_URL` is unset. It runs `check_execution`, `check_validate` and
+  `check_cancel` with `Spelling::STANDARD`, but not `check_transactions` (ClickHouse has none
+  to speak of) or `check_describe_table` (no key tells a table's rows apart, so results are
+  never editable).
 - **SQL Server**: the `sqlserver` container (2022, port 51433), skipped when
   `DBDESK_TEST_SQLSERVER_URL` is unset. Its image is x86-64 only: native on CI's Linux runner,
   emulated (slowly, and it can crash) by Docker on an Apple-silicon Mac. The image can't
@@ -78,6 +87,24 @@ directory for `data_sources.toml`, console files, `history.sqlite` and exports, 
 in-memory `SecretStore`. Tests that need PostgreSQL (a commit of a failed transaction, say)
 skip without `DBDESK_TEST_POSTGRES_URL`, like the driver tests. Planned: a fake driver (in-memory, scripted responses) covers ordering cases that are hard to trigger
 against a real server, such as a cancel arriving after the last row.
+
+## MCP server
+
+- `dbdesk_sql::classify` has a corpus per dialect: reads, writes hidden in CTEs, `SELECT …
+  INTO`, locking reads, DDL, transaction control and administration, and statements the parser
+  can't read, which must never come out as reads.
+- `dbdesk-mcp/tests/stdio.rs` starts the server as another process (the test binary again, so
+  it has no libtest harness: libtest would print onto the protocol's standard output) and
+  drives it with rmcp's client over stdin and stdout. It runs against SQLite always, and
+  against PostgreSQL, MySQL and MariaDB when their `DBDESK_TEST_*_URL` is set. Each engine gets
+  a table and a function that writes, both with a random suffix so runs sharing the servers
+  don't clash. The MySQL one needs `log_bin_trust_function_creators`, which
+  `docker-compose.yml` sets.
+- `dbdesk-app/tests/mcp_subcommand.rs` runs the real `dbdesk mcp` binary with `HOME` pointed at
+  a temporary folder: argument errors, nothing on stdout but the protocol, and one query.
+  Unix only, since Windows ignores `HOME`.
+- `dbdesk-store`'s history test writes from two processes at once, the second being the test
+  binary again.
 
 ## UI
 

@@ -1,6 +1,8 @@
 # MCP server
 
-Status: **P0 (projects) built**; the MCP server itself is not built yet. Proposed on 2026-10-24.
+Status: **built**: P0 (projects), MCP1 (the read-only server), MCP2 (permissions) and MCP3
+(in the app). What remains is under Later.
+Proposed on 2026-10-24.
 
 The [Model Context Protocol](https://modelcontextprotocol.io) (MCP) lets AI assistants and
 coding agents call tools that an application provides. This plan gives dbdesk an MCP server, so
@@ -181,6 +183,32 @@ every permission beyond `read` is ignored. This is safe to ship first.
 - `SELECT` on a function that writes is refused by the database's read-only transaction.
 - Both refusals appear in the log.
 
+**As built** (2026-10-24):
+- **rmcp 3.7.0**, the official SDK under the `modelcontextprotocol` organisation, released two
+  days before this milestone. It is very actively maintained: seven minor releases in the two
+  and a half months before (3.1 to 3.7), with small API churn between them (3.7 deprecates
+  `ServerInfo` for `ServerConfig`). Only its `server`, `macros` and `transport-io` features are
+  used; the tests add `client` and `transport-child-process`. Its `schemars` dependency brings
+  `chrono` along. Nothing in it changed the plan; expect to adjust a few names on upgrades.
+- The server is the `dbdesk-mcp` crate; `dbdesk mcp --project <slug>` in the app's binary
+  parses its arguments strictly and runs it on a tokio runtime, with no window.
+- Statements are classified by `dbdesk_sql::classify`, which walks every nested statement and
+  query in `sqlparser`'s tree (its `visitor` feature), so a `DELETE` inside a `WITH`, `SELECT …
+  INTO` and `FOR UPDATE` are caught. Unknown statement types count as admin, and `EXPLAIN` of a
+  write is refused even though it wouldn't run, to keep the rule simple.
+- `DriverError::Statement` gained a `sqlstate`, which PostgreSQL and MySQL report and SQLite
+  doesn't have.
+- Projects and data sources are read once, when the server starts; restarting the server picks
+  up changes.
+- `history.sqlite` gained a `source` column (`app` or `mcp`) and switched to WAL mode with a
+  busy timeout. The migration runs in an immediate transaction, so two processes opening an
+  old file at once is safe; a test writes from two processes at the same time.
+- On PostgreSQL the time limit is also set as `SET LOCAL statement_timeout`; on every engine,
+  dbdesk's watchdog cancels through the driver.
+- SQL Server (DB2) landed during MCP1. It has no read-only transaction, so `dbdesk mcp` leaves
+  its data sources out, with a warning in the log, until its equivalent is chosen (a read-only
+  login, most likely, with MCP2's separate login).
+
 ### MCP2 — Permissions
 
 The `execute` tool, the parser's classification, and the `write`, `schema` and `admin`
@@ -192,6 +220,40 @@ permissions with their fallback to the defaults. Also the separate MCP login per
 - With an MCP login whose role lacks `INSERT`, the database refuses the insert even though the
   project allows it.
 
+**As built** (2026-10-24):
+- `execute` takes one or more statements separated by semicolons. Each is classified before
+  anything runs; one the project doesn't allow refuses the whole call, and the log line names
+  the missing permission (`missing_permission="schema"`). Transaction control is always
+  refused, since every call is a transaction of its own. A project that only reads doesn't list
+  `execute` at all, so it looks to a client exactly as in MCP1.
+- The statements run in one transaction (`BEGIN READ WRITE` on PostgreSQL, `START TRANSACTION
+  READ WRITE` on MySQL and MariaDB), committed only if all succeed. MySQL's DDL commits on its
+  own, so a call holding some reports `atomic: false`, and its error says what stayed
+  committed. Each statement gets the time limit and returns at most `max_rows` rows.
+- SQLite files are opened read-only only when the project only reads. Otherwise every call sets
+  `PRAGMA query_only` for itself: on for reads, off for `execute`.
+- The transactions are the engine's: `dbdesk_engine::read_only`, which the consoles of
+  read-only data sources share (W2), gained `ReadOnlyMode::QueryOnly` for that SQLite case,
+  and `dbdesk_engine::read_write` beside it opens, commits and rolls back `execute`'s.
+- Classification, beyond MCP1's: `CALL` is admin, because a procedure can do anything;
+  `LOAD DATA` and extensions are admin; `DROP DATABASE`, roles and users are admin. Built-in
+  functions that end sessions, change settings, touch the server's files or reach other servers
+  (`pg_terminate_backend`, `set_config`, `pg_read_file`, `lo_export`, `dblink`, SQLite's
+  `load_extension`…) make any statement admin, `query`'s included: some of them work inside a
+  read-only transaction. A corpus per dialect (`crates/dbdesk-sql/tests/classify/`) pins all
+  this.
+- **`schemas`** is `"all"` or a list, in `[mcp_defaults]` and each project. It hides other
+  schemas from `list_objects`, refuses paths, tables and statements that name them, and refuses
+  statements whose names can't all be read (grants, procedures, anything unparseable). On
+  PostgreSQL each call sets `search_path` to the list, so unqualified names resolve there;
+  elsewhere unqualified names need the connection's default schema in the list.
+- **The MCP login** is `mcp_login = { user = "…" }` on a data source, with its password in the
+  keychain entry `<id>/mcp`. `dbdesk mcp` always signs in with it when it is set, and fails
+  rather than falling back when its password is missing. When a project allows changes, the
+  server warns at start-up for each data source without one.
+- SQL Server stays unserved: a read-only login, now possible, is its likely equivalent, but
+  isn't switched on yet.
+
 ### MCP3 — In the app
 
 - The Project settings window with its checkboxes and overrides, and the MCP section of
@@ -202,6 +264,24 @@ permissions with their fallback to the defaults. Also the separate MCP login per
 
 **Exit:** starting from a fresh install, I set up an MCP client for a project using only the
 app and the manual.
+
+**As built** (2026-10-24):
+- **Project settings…** on a project header holds the MCP switch and every permission and
+  limit. Each starts at the default, and once changed shows **Reset**. It warns when write,
+  schema or admin is on and a data source that signs in with a password has no MCP login. It
+  also notes that SQLite files have no logins, and that SQL Server isn't served yet.
+- The data source dialog has **MCP login** and **MCP password** for network engines. Clearing
+  the login also removes its keychain entry.
+- **View › Settings… › MCP** edits `[mcp_defaults]`. Unlike the rest of the window, it has its
+  own Save button, so a limit typed digit by digit doesn't rewrite `projects.toml` at each
+  keystroke.
+- **Copy MCP configuration** uses `std::env::current_exe` with symbolic links resolved: inside
+  the `.app` bundle on macOS, the installed `.exe` on Windows. On Linux it uses `$APPIMAGE`
+  when set, because the running executable sits in the AppImage's temporary mount.
+- The History window marks MCP statements and filters by source. The search became a
+  `HistoryQuery` (data source, text, source), carried by the engine's command and event.
+- The manual's "Connecting an AI assistant" chapter covers the setup, the permissions and how
+  they are enforced, the MCP login with an example role, and where query results go.
 
 ## Later
 

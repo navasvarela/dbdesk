@@ -1,9 +1,11 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use dbdesk_core::{CatalogPath, DataSourceId};
-use dbdesk_engine::{Command, EngineConfig, EngineError, EngineHandle, Event, Repaint};
-use dbdesk_store::{ConsoleKey, ExportFormat};
+use dbdesk_core::{CatalogPath, DataSource, DataSourceId};
+use dbdesk_engine::{
+    Command, EngineConfig, EngineError, EngineHandle, Event, PasswordKept, Repaint,
+};
+use dbdesk_store::{ConsoleKey, ExportFormat, McpPermissions};
 use egui::{Frame, Margin, RichText, ThemePreference};
 use egui_dock::{DockArea, DockState};
 
@@ -11,17 +13,24 @@ use crate::about_dialog;
 use crate::console::{ConsoleAction, FormatScope};
 use crate::consoles::Consoles;
 use crate::data_source_dialog::{DataSourceDialog, DialogAction};
+use crate::data_source_form::McpPasswordChange;
 use crate::definition_window::DefinitionWindow;
 use crate::delete_dialog::{DeleteChoice, DeleteConfirmation};
 use crate::explorer::{ExplorerAction, ExplorerOptions};
 use crate::export_dialog;
+use crate::export_sources_dialog::{ExportAction, ExportSourcesDialog};
+use crate::file_picker;
 use crate::history_window::{HistoryAction, HistoryWindow};
+use crate::import_dialog::{ImportAction, ImportDialog};
 use crate::keymap::{self, Keymap};
 use crate::keymap_window::{self, KeymapWindowAction};
 use crate::log_console::{LogConsole, LogFeed};
+use crate::mcp_settings::McpDefaultsEditor;
+use crate::password_prompt::{PasswordPrompt, PromptAction};
 use crate::project_dialog::{
     DeleteProjectChoice, DeleteProjectConfirmation, ProjectDialogAction, ProjectNameDialog,
 };
+use crate::project_settings::{ProjectSettingsAction, ProjectSettingsDialog};
 use crate::rollback_dialog::{Closing, RollbackChoice, RollbackConfirmation};
 use crate::settings::AppSettings;
 use crate::settings_window::{self, SettingsWindowAction};
@@ -49,10 +58,20 @@ pub struct DbDeskApp {
     data_source_dialog: Option<DataSourceDialog>,
     delete_confirmation: Option<DeleteConfirmation>,
     project_dialog: Option<ProjectNameDialog>,
+    project_settings: Option<ProjectSettingsDialog>,
+    /// View › Settings › MCP's draft, kept while the window is closed.
+    mcp_defaults: McpDefaultsEditor,
     delete_project_confirmation: Option<DeleteProjectConfirmation>,
     definition_window: Option<DefinitionWindow>,
     history_window: Option<HistoryWindow>,
     rollback_confirmation: Option<RollbackConfirmation>,
+    password_prompt: Option<PasswordPrompt>,
+    export_sources_dialog: Option<ExportSourcesDialog>,
+    import_dialog: Option<ImportDialog>,
+    /// Ask where to export data sources to and which file to import. The platform's file
+    /// dialogs, except in tests.
+    pick_data_sources_export: Box<dyn Fn() -> Option<PathBuf>>,
+    pick_data_sources_import: Box<dyn Fn() -> Option<PathBuf>>,
     /// Set once quitting may roll back open transactions, so the close isn't asked again.
     quit_confirmed: bool,
     keymap: Keymap,
@@ -100,10 +119,17 @@ impl DbDeskApp {
             data_source_dialog: None,
             delete_confirmation: None,
             project_dialog: None,
+            project_settings: None,
+            mcp_defaults: McpDefaultsEditor::new(&McpPermissions::default()),
             delete_project_confirmation: None,
             definition_window: None,
             history_window: None,
             rollback_confirmation: None,
+            password_prompt: None,
+            export_sources_dialog: None,
+            import_dialog: None,
+            pick_data_sources_export: Box::new(file_picker::pick_data_sources_export),
+            pick_data_sources_import: Box::new(file_picker::pick_data_sources_import),
             quit_confirmed: false,
             pick_export_path: Box::new(export_dialog::pick_export_path),
             keymap: Keymap::default(),
@@ -115,6 +141,15 @@ impl DbDeskApp {
             consoles: Consoles::default(),
             maximize_window,
         })
+    }
+
+    /// Makes the export and import file dialogs answer `path`, for tests and screenshots.
+    #[cfg(test)]
+    pub fn answer_file_dialogs_with(&mut self, path: &std::path::Path) {
+        let export = path.to_owned();
+        let import = path.to_owned();
+        self.pick_data_sources_export = Box::new(move || Some(export.clone()));
+        self.pick_data_sources_import = Box::new(move || Some(import.clone()));
     }
 
     /// The open consoles, for tests that look at what a console drew.
@@ -142,6 +177,12 @@ impl DbDeskApp {
 
     fn apply(&mut self, event: &Event) {
         self.state.apply(event);
+        match event {
+            Event::ProjectsLoaded(projects) => self.mcp_defaults.follow(&projects.mcp_defaults),
+            Event::McpDefaultsSaved(defaults) => self.mcp_defaults.follow(defaults),
+            Event::McpDefaultsSaveFailed { error } => self.mcp_defaults.failed(error),
+            _ => {}
+        }
         if self
             .data_source_dialog
             .as_mut()
@@ -156,6 +197,13 @@ impl DbDeskApp {
         {
             self.project_dialog = None;
         }
+        if self
+            .project_settings
+            .as_mut()
+            .is_some_and(|dialog| dialog.apply(event))
+        {
+            self.project_settings = None;
+        }
         if let Some(window) = &mut self.definition_window {
             window.apply(event);
         }
@@ -167,6 +215,13 @@ impl DbDeskApp {
             && let Some(window) = &self.history_window
         {
             self.send(window.search_command());
+        }
+        self.apply_to_password_prompt(event);
+        if let Some(dialog) = &mut self.export_sources_dialog {
+            dialog.apply(event);
+        }
+        if let Some(dialog) = &mut self.import_dialog {
+            dialog.apply(event);
         }
         self.consoles.apply(event);
         self.settings.apply(event);
@@ -184,6 +239,53 @@ impl DbDeskApp {
         }
         if matches!(event, Event::ConsolesLoaded(_)) {
             self.restore_console_tabs();
+        }
+    }
+
+    /// Opens the prompt when a connection needs a password, unless one is open already (the
+    /// explorer and a console may both have asked), and connects again once it is given.
+    fn apply_to_password_prompt(&mut self, event: &Event) {
+        if let Event::PasswordNeeded {
+            data_source,
+            reason,
+        } = event
+            && self.password_prompt.is_none()
+            && let Some(entry) = self.state.data_source(*data_source)
+        {
+            self.password_prompt = Some(PasswordPrompt::new(&entry.data_source, reason.clone()));
+        }
+        let Some(prompt) = &self.password_prompt else {
+            return;
+        };
+        let Some(kept) = prompt.apply(event) else {
+            return;
+        };
+        let data_source = prompt.data_source();
+        self.password_prompt = None;
+        if let PasswordKept::SaveFailed(error) = kept {
+            tracing::warn!(
+                "the password was not saved to the keychain, so it is kept until dbdesk quits: \
+                 {error}"
+            );
+        }
+        self.send(Command::Connect(data_source));
+    }
+
+    fn show_password_prompt(&mut self, ctx: &egui::Context) {
+        let Some(prompt) = &mut self.password_prompt else {
+            return;
+        };
+        let data_source = prompt.data_source();
+        let Some(action) = prompt.show(ctx) else {
+            return;
+        };
+        match action {
+            PromptAction::Provide { password, save } => self.send(Command::ProvidePassword {
+                data_source,
+                password,
+                save,
+            }),
+            PromptAction::Cancel => self.password_prompt = None,
         }
     }
 
@@ -329,6 +431,14 @@ impl DbDeskApp {
                     self.project_dialog = Some(ProjectNameDialog::rename(project));
                 }
             }
+            ExplorerAction::ProjectSettings(id) => {
+                if let Some(project) = self.state.projects.get(id) {
+                    self.project_settings = Some(ProjectSettingsDialog::new(
+                        project,
+                        &self.state.mcp_defaults,
+                    ));
+                }
+            }
             ExplorerAction::DeleteProject(id) => {
                 if let Some(project) = self.state.projects.get(id) {
                     let members = self
@@ -381,12 +491,21 @@ impl DbDeskApp {
                 data_source,
                 password,
             }),
-            DialogAction::Save(data_source, password) => self.send(Command::SaveDataSource {
-                data_source,
-                password,
-            }),
-            DialogAction::CreateSqliteDatabase(path) => {
-                self.send(Command::CreateSqliteDatabase(path));
+            DialogAction::Save(data_source, password, mcp_password) => {
+                let id = data_source.id;
+                self.send(Command::SaveDataSource {
+                    data_source,
+                    password,
+                });
+                let password = match mcp_password {
+                    McpPasswordChange::Keep => return,
+                    McpPasswordChange::Set(password) => Some(password),
+                    McpPasswordChange::Remove => None,
+                };
+                self.send(Command::SaveMcpPassword { id, password });
+            }
+            DialogAction::CreateDatabaseFile(file) => {
+                self.send(Command::CreateDatabaseFile(file));
             }
             DialogAction::Close => self.data_source_dialog = None,
         }
@@ -419,6 +538,35 @@ impl DbDeskApp {
                 self.send(Command::RenameProject { id, name });
             }
             ProjectDialogAction::Close => self.project_dialog = None,
+        }
+    }
+
+    fn show_project_settings(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.project_settings else {
+            return;
+        };
+        let members: Vec<&DataSource> = self
+            .state
+            .data_sources
+            .entries()
+            .iter()
+            .map(|entry| &entry.data_source)
+            .filter(|data_source| data_source.project == Some(dialog.project()))
+            .collect();
+        let Some(action) = dialog.show(ctx, &self.state.mcp_defaults, &members) else {
+            return;
+        };
+        match action {
+            ProjectSettingsAction::Save {
+                id,
+                mcp_enabled,
+                overrides,
+            } => self.send(Command::SaveProjectMcp {
+                id,
+                mcp_enabled,
+                overrides,
+            }),
+            ProjectSettingsAction::Close => self.project_settings = None,
         }
     }
 
@@ -542,6 +690,7 @@ impl DbDeskApp {
 
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
+            ui.menu_button("File", |ui| self.file_menu(ui));
             ui.menu_button("View", |ui| {
                 ui.menu_button("Theme", theme_menu);
                 if ui.button("Keymap…").clicked() {
@@ -566,6 +715,63 @@ impl DbDeskApp {
                 }
             });
         });
+    }
+
+    fn file_menu(&mut self, ui: &mut egui::Ui) {
+        let has_data_sources = !self.state.data_sources.entries().is_empty();
+        if ui
+            .add_enabled(has_data_sources, egui::Button::new("Export data sources…"))
+            .on_hover_text("Write data sources and projects to a file, without passwords")
+            .on_disabled_hover_text("There are no data sources to export yet")
+            .clicked()
+        {
+            self.export_sources_dialog = Some(ExportSourcesDialog::new());
+        }
+        if ui
+            .button("Import data sources…")
+            .on_hover_text("Add or update data sources from an exported file")
+            .clicked()
+            && let Some(path) = (self.pick_data_sources_import)()
+        {
+            let (dialog, read) = ImportDialog::open(path);
+            self.import_dialog = Some(dialog);
+            self.send(read);
+        }
+    }
+
+    fn show_export_sources_dialog(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.export_sources_dialog else {
+            return;
+        };
+        let data_sources: Vec<_> = self
+            .state
+            .data_sources
+            .entries()
+            .iter()
+            .map(|entry| entry.data_source.clone())
+            .collect();
+        match dialog.show(ctx, self.state.projects.projects(), &data_sources) {
+            Some(ExportAction::ChooseFile) => {
+                if let Some(path) = (self.pick_data_sources_export)() {
+                    let command = dialog.command(path);
+                    self.send(command);
+                }
+            }
+            Some(ExportAction::Close) => self.export_sources_dialog = None,
+            None => {}
+        }
+    }
+
+    fn show_import_dialog(&mut self, ctx: &egui::Context) {
+        match self
+            .import_dialog
+            .as_mut()
+            .and_then(|dialog| dialog.show(ctx))
+        {
+            Some(ImportAction::Apply(plan)) => self.send(Command::ApplyImport(plan)),
+            Some(ImportAction::Close) => self.import_dialog = None,
+            None => {}
+        }
     }
 
     fn show_about(&mut self, ctx: &egui::Context) {
@@ -629,7 +835,10 @@ impl DbDeskApp {
         if !self.settings.window_open {
             return;
         }
-        match settings_window::show(ctx, &self.settings) {
+        match settings_window::show(ctx, &self.settings, &mut self.mcp_defaults) {
+            Some(SettingsWindowAction::SaveMcpDefaults(defaults)) => {
+                self.send(Command::SaveMcpDefaults(defaults));
+            }
             Some(SettingsWindowAction::Save(settings)) => {
                 self.settings.set(settings.clone());
                 self.send(Command::SaveSettings(settings));
@@ -780,7 +989,11 @@ impl eframe::App for DbDeskApp {
         self.show_data_source_dialog(&ctx);
         self.show_delete_confirmation(&ctx);
         self.show_project_dialog(&ctx);
+        self.show_project_settings(&ctx);
         self.show_delete_project_confirmation(&ctx);
+        self.show_password_prompt(&ctx);
+        self.show_export_sources_dialog(&ctx);
+        self.show_import_dialog(&ctx);
         if self
             .definition_window
             .as_ref()
@@ -884,6 +1097,18 @@ mod tests {
         fn delete_password(&self, _: DataSourceId) -> Result<(), SecretError> {
             Ok(())
         }
+
+        fn mcp_password(&self, _: DataSourceId) -> Result<Option<Password>, SecretError> {
+            Ok(None)
+        }
+
+        fn set_mcp_password(&self, _: DataSourceId, _: &Password) -> Result<(), SecretError> {
+            Ok(())
+        }
+
+        fn delete_mcp_password(&self, _: DataSourceId) -> Result<(), SecretError> {
+            Ok(())
+        }
     }
 
     fn engine_config(dir: &Path) -> EngineConfig {
@@ -950,7 +1175,9 @@ mod tests {
             id: DataSourceId::generate(),
             name: "shop".to_owned(),
             color: None,
+            safety: dbdesk_core::SafetyLevel::Normal,
             project: None,
+            mcp_login: None,
             config: dbdesk_core::ConnectionConfig::Sqlite(dbdesk_core::SqliteConfig {
                 path: database,
                 read_only: false,
@@ -1050,11 +1277,11 @@ mod tests {
         assert_eq!(
             (
                 server.host.as_str(),
-                server.port,
+                server.port.clone(),
                 server.database.as_str(),
                 server.user.as_str()
             ),
-            ("localhost", 3306, "mysql", "root")
+            ("localhost", 3306.into(), "mysql", "root")
         );
     }
 
@@ -1090,11 +1317,96 @@ mod tests {
         assert_eq!(
             (
                 server.host.as_str(),
-                server.port,
+                server.port.clone(),
                 server.database.as_str(),
                 server.user.as_str()
             ),
-            ("localhost", 1433, "master", "sa")
+            ("localhost", 1433.into(), "master", "sa")
+        );
+    }
+
+    #[test]
+    fn adds_an_in_memory_duckdb_data_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "No data sources yet.");
+
+        harness
+            .get_all_by_label("New data source")
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness.get_by_label("DuckDB").click();
+        harness.run();
+        harness.get_by_label_contains("New DuckDB data source");
+        harness.get_by_label("In memory").click();
+        harness.run();
+        harness.get_by_label("Save").click();
+
+        step_until_visible(&mut harness, "Expand memory");
+        let saved = DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .load()
+            .unwrap();
+        let [saved] = saved.as_slice() else {
+            panic!("expected one data source, got {saved:?}");
+        };
+        assert_eq!(
+            saved.config,
+            dbdesk_core::ConnectionConfig::DuckDb(dbdesk_core::DuckDbConfig {
+                database: dbdesk_core::DuckDbDatabase::InMemory,
+            })
+        );
+    }
+
+    #[test]
+    fn adds_a_clickhouse_data_source_whose_port_follows_its_tls_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "No data sources yet.");
+
+        harness
+            .get_all_by_label("New data source")
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness.get_by_label("ClickHouse").click();
+        harness.run();
+        harness.get_by_label_contains("New ClickHouse data source");
+        harness.get_by_label("TLS").click();
+        harness.run();
+        assert!(harness.query_by_label("prefer").is_none());
+        harness.get_by_label("require").click();
+        harness.run();
+        harness.get_by_label("Save").click();
+
+        step_until_visible(&mut harness, "Expand default@localhost");
+        let saved = DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .load()
+            .unwrap();
+        let [saved] = saved.as_slice() else {
+            panic!("expected one data source, got {saved:?}");
+        };
+        let dbdesk_core::ConnectionConfig::ClickHouse(config) = &saved.config else {
+            panic!("expected a ClickHouse data source, got {saved:?}");
+        };
+        let server = &config.server;
+        assert_eq!(
+            (
+                server.port.clone(),
+                server.database.as_str(),
+                server.user.as_str(),
+                &server.tls
+            ),
+            (
+                8443.into(),
+                "default",
+                "default",
+                &dbdesk_core::TlsMode::Require
+            )
         );
     }
 
@@ -1193,6 +1505,185 @@ mod tests {
             .and_then(|data_source| data_source.project)
     }
 
+    fn saved_project(dir: &Path) -> dbdesk_store::Project {
+        let projects = ProjectFile::new(dir.join("projects.toml")).load().unwrap();
+        let [project] = projects.projects.as_slice() else {
+            panic!("expected one project, got {projects:?}");
+        };
+        project.clone()
+    }
+
+    #[test]
+    fn sets_a_projects_mcp_permissions_warning_about_shared_logins() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut shop = save_shop(dir.path(), "CREATE TABLE orders (id INTEGER PRIMARY KEY)");
+        let project = dbdesk_store::Project::new(
+            dbdesk_core::ProjectId::generate(),
+            "Analytics".to_owned(),
+            dbdesk_store::ProjectSlug::from_name("Analytics"),
+        );
+        ProjectFile::new(dir.path().join("projects.toml"))
+            .save(&dbdesk_store::Projects {
+                projects: vec![project.clone()],
+                ..dbdesk_store::Projects::default()
+            })
+            .unwrap();
+        shop.project = Some(project.id);
+        let warehouse = dbdesk_core::DataSource {
+            id: DataSourceId::generate(),
+            name: "warehouse".to_owned(),
+            config: dbdesk_core::ConnectionConfig::Postgres(dbdesk_core::PostgresConfig {
+                server: dbdesk_core::ServerConfig {
+                    host: "warehouse.invalid".to_owned(),
+                    port: 5432.into(),
+                    database: "warehouse".to_owned(),
+                    user: "owner".to_owned(),
+                    tls: dbdesk_core::TlsMode::Prefer,
+                },
+            }),
+            ..shop.clone()
+        };
+        DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .save(&[shop, warehouse])
+            .unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "Collapse Analytics");
+
+        harness.get_by_label("Analytics").click_secondary();
+        harness.run();
+        harness.get_by_label("Project settings…").click();
+        harness.run();
+        harness.get_by_label_contains("dbdesk mcp --project analytics");
+        harness
+            .get_by_label("Allow MCP clients to use this project")
+            .click();
+        harness.run();
+        assert!(
+            harness.query_by_label_contains("No MCP login").is_none(),
+            "reading needs no warning"
+        );
+        harness.get_by_label("Write").click();
+        harness.run();
+        harness.get_by_label_contains("No MCP login on warehouse.");
+        harness.get_by_label("Save").click();
+        step_until(&mut harness, "the project being saved", |harness| {
+            harness
+                .query_by_label("Allow MCP clients to use this project")
+                .is_none()
+        });
+        let saved = saved_project(dir.path());
+        assert!(saved.mcp_enabled);
+        assert_eq!(saved.mcp.write, Some(true));
+        assert_eq!(
+            saved.mcp.schema, None,
+            "untouched settings stay at the default"
+        );
+
+        harness.get_by_label("Analytics").click_secondary();
+        harness.run();
+        harness.get_by_label("Project settings…").click();
+        harness.run();
+        harness.get_by_label("Reset Write").click();
+        harness.run();
+        harness.get_by_label("Save").click();
+        step_until(&mut harness, "the reset being saved", |_| {
+            saved_project(dir.path()).mcp.write.is_none()
+        });
+    }
+
+    #[test]
+    fn saves_the_mcp_defaults_from_the_settings_window() {
+        let dir = tempfile::tempdir().unwrap();
+        save_shop(dir.path(), "CREATE TABLE orders (id INTEGER PRIMARY KEY)");
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "Expand shop");
+
+        harness.get_by_label("View").click();
+        harness.run();
+        harness.get_by_label("Settings…").click();
+        harness.run();
+        // The window scrolls, and the MCP section is at its bottom, out of reach of clicks.
+        harness.get_by_label("Save MCP defaults").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Schema").click();
+        harness.run();
+        harness.get_by_label("Only").click();
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::TextInput, "Allowed schemas")
+            .focus();
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::TextInput, "Allowed schemas")
+            .type_text("public, reports");
+        harness.run();
+        harness.get_by_label("Save MCP defaults").click();
+        step_until(&mut harness, "the defaults being saved", |_| {
+            ProjectFile::new(dir.path().join("projects.toml"))
+                .load()
+                .is_ok_and(|projects| projects.mcp_defaults.schema)
+        });
+        let defaults = ProjectFile::new(dir.path().join("projects.toml"))
+            .load()
+            .unwrap()
+            .mcp_defaults;
+        assert_eq!(
+            defaults.schemas,
+            dbdesk_store::SchemaScope::Only(vec!["public".to_owned(), "reports".to_owned()])
+        );
+        assert!(defaults.read && !defaults.write, "only what was changed");
+    }
+
+    #[test]
+    fn copies_a_projects_mcp_configuration() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut shop = save_shop(dir.path(), "CREATE TABLE orders (id INTEGER PRIMARY KEY)");
+        let project = dbdesk_store::Project::new(
+            dbdesk_core::ProjectId::generate(),
+            "Shop EU".to_owned(),
+            dbdesk_store::ProjectSlug::from_name("Shop EU"),
+        );
+        ProjectFile::new(dir.path().join("projects.toml"))
+            .save(&dbdesk_store::Projects {
+                projects: vec![project.clone()],
+                ..dbdesk_store::Projects::default()
+            })
+            .unwrap();
+        shop.project = Some(project.id);
+        DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .save(&[shop])
+            .unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "Collapse Shop EU");
+
+        harness.get_by_label("Shop EU").click_secondary();
+        harness.run();
+        harness.get_by_label("Copy MCP configuration").click();
+        harness.step();
+
+        let copied = harness
+            .output()
+            .platform_output
+            .commands
+            .iter()
+            .find_map(|command| match command {
+                egui::OutputCommand::CopyText(text) => Some(text.clone()),
+                _ => None,
+            })
+            .expect("the configuration is copied");
+        let parsed: serde_json::Value = serde_json::from_str(&copied).unwrap();
+        let entry = &parsed["mcpServers"]["dbdesk-shop-eu"];
+        assert_eq!(
+            entry["args"],
+            serde_json::json!(["mcp", "--project", "shop-eu"])
+        );
+        let command = std::path::PathBuf::from(entry["command"].as_str().unwrap());
+        assert!(command.is_absolute(), "{copied}");
+    }
+
     #[test]
     fn groups_data_sources_into_projects_that_survive_a_restart() {
         let dir = tempfile::tempdir().unwrap();
@@ -1289,6 +1780,168 @@ mod tests {
         step_until(&mut harness, "shop leaving the project", |_| {
             saved_project_of(dir.path(), "shop").is_none()
         });
+    }
+
+    #[test]
+    fn asks_for_the_password_a_data_source_has_none_saved_for_then_connects() {
+        let dir = tempfile::tempdir().unwrap();
+        // A server that hangs up at once: the second attempt fails as soon as it is made. A
+        // port nothing listens on can hang until the connect timeout on CI runners.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || listener.incoming().for_each(drop));
+        let data_source = dbdesk_core::DataSource {
+            id: DataSourceId::generate(),
+            name: "shared".to_owned(),
+            color: None,
+            safety: dbdesk_core::SafetyLevel::Normal,
+            project: None,
+            mcp_login: None,
+            config: dbdesk_core::ConnectionConfig::Postgres(dbdesk_core::PostgresConfig {
+                server: dbdesk_core::ServerConfig {
+                    host: "127.0.0.1".to_owned(),
+                    port: port.into(),
+                    database: "app".to_owned(),
+                    user: "juan".to_owned(),
+                    tls: dbdesk_core::TlsMode::Disable,
+                },
+            }),
+        };
+        DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .save(std::slice::from_ref(&data_source))
+            .unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+
+        step_until_visible(&mut harness, "Expand shared");
+        harness.get_by_label("Expand shared").click();
+        step_until_visible(&mut harness, "Connect to shared");
+        harness.get_by_label_contains("no password is saved");
+        let save = harness.get_by_label("Save to keychain");
+        assert_eq!(
+            egui_kittest::kittest::NodeT::accesskit_node(&save).toggled(),
+            Some(egui::accesskit::Toggled::True)
+        );
+        harness
+            .get_by_role_and_label(Role::PasswordInput, "Password")
+            .type_text("typed once");
+        harness.run();
+        harness.get_by_label("Connect").click();
+
+        step_until(&mut harness, "the prompt closing", |harness| {
+            harness
+                .query_by_label_contains("Connect to shared")
+                .is_none()
+        });
+        step_until(&mut harness, "connecting with the password", |harness| {
+            harness
+                .state()
+                .state
+                .data_source(data_source.id)
+                .is_some_and(|entry| {
+                    matches!(&entry.session, dbdesk_engine::SessionState::Failed(error)
+                        if error.starts_with("could not connect"))
+                })
+        });
+    }
+
+    #[test]
+    fn exports_a_project_with_its_data_sources_and_no_password() {
+        let dir = tempfile::tempdir().unwrap();
+        let shop = save_shop(dir.path(), "CREATE TABLE t (id INTEGER)");
+        let export_path = dir.path().join("team.toml");
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        let picked = export_path.clone();
+        harness.state_mut().pick_data_sources_export = Box::new(move || Some(picked.clone()));
+        step_until_visible(&mut harness, "Expand shop");
+
+        harness.get_by_label("File").click();
+        harness.run();
+        harness.get_by_label("Export data sources…").click();
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::CheckBox, "shop")
+            .click();
+        harness.run();
+        harness.get_by_label_contains("1 data source chosen");
+        harness.get_by_label("Export…").click();
+
+        step_until_visible(&mut harness, "Exported 1 data source to");
+        let text = std::fs::read_to_string(&export_path).unwrap();
+        assert!(text.contains(&shop.id.to_string()), "{text}");
+        assert!(text.contains(r#"path = "shop.db""#), "{text}");
+    }
+
+    #[test]
+    fn previews_an_import_then_imports_what_was_chosen() {
+        let dir = tempfile::tempdir().unwrap();
+        let shop = save_shop(dir.path(), "CREATE TABLE t (id INTEGER)");
+        let analytics = dbdesk_store::Project::new(
+            dbdesk_core::ProjectId::generate(),
+            "Analytics".to_owned(),
+            dbdesk_store::ProjectSlug::from_name("Analytics"),
+        );
+        let changed_shop = dbdesk_core::DataSource {
+            color: Some(dbdesk_core::SourceColor::Green),
+            ..shop.clone()
+        };
+        let warehouse = dbdesk_core::DataSource {
+            id: DataSourceId::generate(),
+            name: "warehouse".to_owned(),
+            project: Some(analytics.id),
+            config: dbdesk_core::ConnectionConfig::Sqlite(dbdesk_core::SqliteConfig {
+                path: dir.path().join("elsewhere/warehouse.db"),
+                read_only: true,
+            }),
+            ..shop.clone()
+        };
+        let export_path = dir.path().join("team.toml");
+        dbdesk_store::write_export(
+            &export_path,
+            &[changed_shop, warehouse],
+            std::slice::from_ref(&analytics),
+            None,
+        )
+        .unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        let picked = export_path.clone();
+        harness.state_mut().pick_data_sources_import = Box::new(move || Some(picked.clone()));
+        step_until_visible(&mut harness, "Expand shop");
+
+        harness.get_by_label("File").click();
+        harness.run();
+        harness.get_by_label("Import data sources…").click();
+        step_until_visible(&mut harness, "Imports 1 project and 2 data sources.");
+        harness.get_by_label_contains("Colour: none → Green");
+        harness.get_by_label_contains("not found on this machine");
+        for (entry, choice) in [
+            ("Analytics", "Import"),
+            ("shop", "Update"),
+            ("warehouse", "Import"),
+        ] {
+            let label = format!("Import choice for {entry}");
+            let combo = harness.get_by_label(&label);
+            assert_eq!(combo.value().as_deref(), Some(choice), "{entry}");
+        }
+        harness
+            .get_by_label("Import choice for shop")
+            .click_accesskit();
+        harness.run();
+        harness.get_by_label("Skip").click_accesskit();
+        harness.run();
+        harness.get_by_label_contains("Imports 1 project and 1 data source.");
+        harness.get_by_label("Import").click();
+
+        step_until_visible(&mut harness, "Imported 1 project and 1 data source.");
+        let saved = DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .load()
+            .unwrap();
+        assert_eq!(saved.len(), 2, "{saved:#?}");
+        assert_eq!(saved[0], shop);
+        assert_eq!(saved[1].name, "warehouse");
+        assert_eq!(saved[1].project, Some(analytics.id));
     }
 
     #[test]
@@ -1400,6 +2053,46 @@ mod tests {
 
         let query = "SELECT * FROM main.orders;\n";
         harness.get_by_value(&query.repeat(2));
+    }
+
+    #[test]
+    fn marks_and_filters_statements_from_mcp_clients() {
+        let dir = tempfile::tempdir().unwrap();
+        let shop = save_shop(dir.path(), "CREATE TABLE orders (id INTEGER PRIMARY KEY)");
+        let from_assistant = "SELECT 'from an assistant'";
+        dbdesk_store::HistoryFile::new(dir.path().join("history.sqlite"))
+            .open()
+            .unwrap()
+            .record(&dbdesk_store::HistoryEntry {
+                data_source: shop.id,
+                executed_at: jiff::Timestamp::UNIX_EPOCH,
+                sql: from_assistant.to_owned(),
+                duration: None,
+                rows: Some(1),
+                outcome: dbdesk_store::HistoryOutcome::Ok,
+                source: dbdesk_store::HistorySource::Mcp,
+            })
+            .unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        open_orders(&mut harness, "0 rows");
+
+        harness.get_by_label("History").click();
+        step_until(&mut harness, "the history loading", |harness| {
+            harness.query_all_by_label("Insert").count() == 2
+        });
+        harness.get_by_label("MCP");
+        harness
+            .get_by(|node| {
+                node.role() == Role::ComboBox && node.value().as_deref() == Some("All sources")
+            })
+            .click();
+        harness.run();
+        harness.get_by_label("MCP clients").click();
+        step_until(&mut harness, "the MCP statements alone", |harness| {
+            harness.query_all_by_label("Insert").count() == 1
+        });
+        harness.get_by_label(from_assistant);
     }
 
     fn count_orders(dir: &Path) -> i64 {
@@ -1569,7 +2262,11 @@ mod tests {
         harness
             .get_by_role(Role::MultilineTextInput)
             .type_text("SELECT 42 AS answer");
-        harness.step();
+        // F5 runs what the console holds, so wait until the typed text has reached it: one frame
+        // wasn't always enough on a busy CI runner, and F5 then ran an empty console.
+        step_until(&mut harness, "the query to be typed", |harness| {
+            editor_text(harness) == "SELECT 42 AS answer"
+        });
 
         harness.key_press(egui::Key::F5);
 
@@ -1807,17 +2504,8 @@ mod tests {
         assert!(harness.query_by_label_contains("is available").is_none());
     }
 
-    #[test]
-    fn edits_a_cell_and_submits_it_as_an_update() {
-        let dir = tempfile::tempdir().unwrap();
-        save_shop(
-            dir.path(),
-            "CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT);
-             INSERT INTO orders VALUES (1, 'ada'), (2, 'bob');",
-        );
-        let (_layer, feed) = log_console::pipeline();
-        let mut harness = start_app(dir.path(), feed);
-        open_orders(&mut harness, "2 rows");
+    /// Edits the `ada` cell of the open orders to `Ada Lovelace`, leaving it to be submitted.
+    fn rename_ada(harness: &mut Harness<'_, DbDeskApp>) {
         let cell_editor = |harness: &Harness<'_, DbDeskApp>| {
             harness
                 .query_by(|node| {
@@ -1830,7 +2518,7 @@ mod tests {
         harness.run();
         // F2 edits once the table has been described; until then it does nothing.
         let deadline = std::time::Instant::now() + WAIT_TIMEOUT;
-        while !cell_editor(&harness) {
+        while !cell_editor(harness) {
             assert!(
                 std::time::Instant::now() < deadline,
                 "the cell editor never opened"
@@ -1855,6 +2543,140 @@ mod tests {
                 .is_none(),
             "Enter closes the editor and keeps it closed"
         );
+    }
+
+    /// Saves `shop` over a database of two orders, at `safety`.
+    fn save_orders_at(dir: &Path, safety: dbdesk_core::SafetyLevel) {
+        let shop = save_shop(
+            dir,
+            "CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT);
+             INSERT INTO orders VALUES (1, 'ada'), (2, 'bob');",
+        );
+        DataSourceFile::new(dir.join("data_sources.toml"))
+            .save(&[dbdesk_core::DataSource { safety, ..shop }])
+            .unwrap();
+    }
+
+    fn customer_of_order_1(dir: &Path) -> String {
+        rusqlite::Connection::open(dir.join("shop.db"))
+            .unwrap()
+            .query_row("SELECT customer FROM orders WHERE id = 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn a_careful_data_source_asks_before_a_grid_edit_naming_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        save_orders_at(dir.path(), dbdesk_core::SafetyLevel::Careful);
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        open_orders(&mut harness, "2 rows");
+        harness.get_by_label_contains("Careful");
+        harness.get_by(|node| {
+            node.role() == Role::ComboBox && node.value().as_deref() == Some("Manual commit")
+        });
+
+        rename_ada(&mut harness);
+        harness.get_by_label("Submit").click();
+        step_until_visible(&mut harness, "Apply edits to \u{201c}shop\u{201d}?");
+        harness
+            .get_by_label_contains("\u{201c}shop\u{201d} is careful: this updates 1 edited row.");
+        assert_eq!(
+            customer_of_order_1(dir.path()),
+            "ada",
+            "nothing runs before the answer"
+        );
+        // The dialog settles where it is centred before a pointer can find its buttons.
+        harness.run();
+        harness.get_by_label("Apply").click();
+
+        step_until(&mut harness, "the edit being saved", |harness| {
+            harness.query_by_label("1 changed cell").is_none()
+                && harness.query_by_label("Saving…").is_none()
+        });
+        // Manual commit mode opened a transaction with the first statement, so the edit waits
+        // in it for Commit.
+        harness.get_by_label("● Transaction open");
+        assert_eq!(customer_of_order_1(dir.path()), "ada");
+        harness.get_by_label("Commit").click();
+        step_until_visible(&mut harness, "Committed");
+        assert_eq!(customer_of_order_1(dir.path()), "Ada Lovelace");
+    }
+
+    #[test]
+    fn a_read_only_data_source_says_why_it_refused_a_statement() {
+        let dir = tempfile::tempdir().unwrap();
+        save_orders_at(dir.path(), dbdesk_core::SafetyLevel::ReadOnly);
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        open_console(&mut harness);
+        harness.get_by_label_contains("Read-only");
+
+        harness
+            .get_by_role(Role::MultilineTextInput)
+            .type_text("UPDATE orders SET customer = 'x' WHERE id = 1");
+        harness.run();
+        harness.get_by_label("Run all").click();
+
+        step_until_visible(
+            &mut harness,
+            "Refused: this statement changes data, and \u{201c}shop\u{201d} is read-only.",
+        );
+        assert_eq!(customer_of_order_1(dir.path()), "ada");
+    }
+
+    #[test]
+    fn red_suggests_careful_in_the_data_source_dialog() {
+        let dir = tempfile::tempdir().unwrap();
+        let shop = save_shop(dir.path(), "CREATE TABLE t (id INTEGER)");
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "Expand shop");
+        harness.get_by_label("shop").click_secondary();
+        harness.run();
+        harness.get_by_label("Edit…").click();
+        harness.run();
+
+        harness.get_by_label("Red").click();
+        harness.run();
+        harness.get_by_label("Red usually marks production.");
+        harness.get_by_label("Make it careful").click();
+        harness.run();
+        assert!(
+            harness
+                .query_by_label("Red usually marks production.")
+                .is_none()
+        );
+        harness.get_by_label("Save").click();
+
+        step_until(&mut harness, "the data source being saved", |_| {
+            DataSourceFile::new(dir.path().join("data_sources.toml"))
+                .load()
+                .is_ok_and(|saved| {
+                    saved.first().map(|ds| ds.safety) == Some(dbdesk_core::SafetyLevel::Careful)
+                })
+        });
+        let saved = DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .load()
+            .unwrap();
+        assert_eq!(saved[0].id, shop.id);
+        assert_eq!(saved[0].color, Some(dbdesk_core::SourceColor::Red));
+    }
+
+    #[test]
+    fn edits_a_cell_and_submits_it_as_an_update() {
+        let dir = tempfile::tempdir().unwrap();
+        save_shop(
+            dir.path(),
+            "CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT);
+             INSERT INTO orders VALUES (1, 'ada'), (2, 'bob');",
+        );
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        open_orders(&mut harness, "2 rows");
+        rename_ada(&mut harness);
         harness.get_by_label("Submit").click();
 
         // Submit swaps "1 changed cell" for "Saving…" at once; only when that goes too has the

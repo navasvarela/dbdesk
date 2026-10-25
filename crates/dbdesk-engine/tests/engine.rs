@@ -16,20 +16,26 @@ use dbdesk_core::{
     CatalogPath, ConnectionConfig, DataSource, DataSourceId, FolderKind, NodeKind, Password,
     PostgresConfig, ServerConfig, TlsMode,
 };
-use dbdesk_engine::{Command, ConsoleId, Event, Export, PasswordUpdate, Release, SessionState};
+use dbdesk_engine::{
+    Command, ConsoleId, DatabaseFile, Event, Export, PasswordUpdate, Release, SessionState,
+};
 use dbdesk_store::{
     ConsoleKey, ConsoleName, DataSourceFile, ExportFormat, FormatSettings, KeymapBindings,
-    KeywordCase, Projects, SavedConsole, Settings,
+    KeywordCase, Projects, SavedConsole, SecretStore, Settings,
 };
 
 #[test]
 fn saves_connects_disconnects_and_deletes_a_data_source() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("data_sources.toml");
-    let mut engine = TestEngine::start(&file, Arc::default());
+    let secrets = Arc::new(MemorySecrets::default());
+    let mut engine = TestEngine::start(&file, Arc::clone(&secrets));
     engine.expect_started(vec![]);
     let data_source = sqlite_data_source(sqlite_database(dir.path()));
     let id = data_source.id;
+    secrets
+        .set_mcp_password(id, &Password::new("left over"))
+        .unwrap();
 
     engine.send(Command::SaveDataSource {
         data_source: data_source.clone(),
@@ -54,7 +60,8 @@ fn saves_connects_disconnects_and_deletes_a_data_source() {
     engine.send(Command::DeleteDataSource(id));
     engine.expect(Event::DataSourceDeleted(id));
     assert!(DataSourceFile::new(&file).load().unwrap().is_empty());
-    engine.engine.shutdown().unwrap();
+    assert_eq!(secrets.mcp(id), None, "the MCP login's password goes too");
+    engine.shut_down();
 }
 
 #[test]
@@ -66,11 +73,13 @@ fn reloads_saved_data_sources_and_stores_passwords_in_the_secret_store() {
         id: DataSourceId::generate(),
         name: "remote".to_owned(),
         color: None,
+        safety: dbdesk_core::SafetyLevel::Normal,
         project: None,
+        mcp_login: None,
         config: ConnectionConfig::Postgres(PostgresConfig {
             server: ServerConfig {
                 host: "db.internal".to_owned(),
-                port: 5432,
+                port: 5432.into(),
                 database: "app".to_owned(),
                 user: "juan".to_owned(),
                 tls: TlsMode::Require,
@@ -85,7 +94,7 @@ fn reloads_saved_data_sources_and_stores_passwords_in_the_secret_store() {
         password: PasswordUpdate::Set(Password::new("s3cret")),
     });
     engine.expect(Event::DataSourceSaved(data_source.clone()));
-    engine.engine.shutdown().unwrap();
+    engine.shut_down();
 
     assert_eq!(secrets.get(data_source.id), Some(Password::new("s3cret")));
     assert!(!std::fs::read_to_string(&file).unwrap().contains("s3cret"));
@@ -116,7 +125,7 @@ fn saves_console_files_in_order_and_reloads_them_after_a_restart() {
         text: "gone".to_owned(),
     });
     engine.send(Command::DeleteConsoleFile(key("console_2")));
-    engine.engine.shutdown().unwrap();
+    engine.shut_down();
 
     let mut restarted = TestEngine::start(&file, Arc::default());
     restarted.expect(Event::Started);
@@ -304,6 +313,34 @@ fn reports_failed_tests_and_connections() {
     assert!(matches!(engine.expect_session(id), SessionState::Failed(_)));
 }
 
+/// Never set anywhere, so the placeholder that names it can't resolve.
+const UNSET_VARIABLE: &str = "DBDESK_TEST_NEVER_SET";
+
+#[test]
+fn stops_a_connection_whose_placeholder_is_unset_saying_which_setting_uses_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    engine.expect_started(vec![]);
+    let shared = sqlite_data_source(format!("${{{UNSET_VARIABLE}}}/shop.db").into());
+    let id = shared.id;
+    engine.send(Command::SaveDataSource {
+        data_source: shared,
+        password: PasswordUpdate::Keep,
+    });
+    assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
+
+    engine.send(Command::Connect(id));
+
+    assert_eq!(engine.expect_session(id), SessionState::Connecting);
+    assert_eq!(
+        engine.expect_session(id),
+        SessionState::Failed(format!(
+            "could not resolve the file: ${{{UNSET_VARIABLE}}} is not set"
+        ))
+    );
+    assert!(!dir.path().join(format!("${{{UNSET_VARIABLE}}}")).exists());
+}
+
 #[test]
 fn never_overwrites_an_unreadable_data_sources_file() {
     let dir = tempfile::tempdir().unwrap();
@@ -390,24 +427,29 @@ fn loading_children_connects_first_and_answers_catalog_requests() {
 }
 
 #[test]
-fn creates_a_sqlite_database_but_never_overwrites_one() {
+fn creates_sqlite_and_duckdb_databases_but_never_overwrites_one() {
     let dir = tempfile::tempdir().unwrap();
     let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
     engine.expect_started(vec![]);
-    let path = dir.path().join("new.db");
+    let files = [
+        DatabaseFile::Sqlite(dir.path().join("new.db")),
+        DatabaseFile::DuckDb(dir.path().join("new.duckdb")),
+    ];
 
-    engine.send(Command::CreateSqliteDatabase(path.clone()));
-    engine.expect(Event::SqliteDatabaseCreated {
-        path: path.clone(),
-        result: Ok(()),
-    });
-    engine.send(Command::CreateSqliteDatabase(path.clone()));
+    for file in files {
+        engine.send(Command::CreateDatabaseFile(file.clone()));
+        engine.expect(Event::DatabaseFileCreated {
+            file: file.clone(),
+            result: Ok(()),
+        });
+        engine.send(Command::CreateDatabaseFile(file.clone()));
 
-    match engine.next_event() {
-        Event::SqliteDatabaseCreated {
-            result: Err(error), ..
-        } => assert!(error.contains("already exists"), "{error}"),
-        other => panic!("expected a refusal to overwrite, got {other:?}"),
+        match engine.next_event() {
+            Event::DatabaseFileCreated {
+                result: Err(error), ..
+            } => assert!(error.contains("already exists"), "{error}"),
+            other => panic!("expected a refusal to overwrite, got {other:?}"),
+        }
     }
 }
 
@@ -424,7 +466,9 @@ fn connects_to_postgres_with_the_saved_password() {
         id: DataSourceId::generate(),
         name: "test server".to_owned(),
         color: None,
+        safety: dbdesk_core::SafetyLevel::Normal,
         project: None,
+        mcp_login: None,
         config: ConnectionConfig::Postgres(parsed.config),
     };
     let id = data_source.id;

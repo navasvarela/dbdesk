@@ -19,7 +19,10 @@ use dbdesk_core::{
     ConnectionConfig, DataSource, DataSourceId, Password, PostgresConfig, ProjectId, ServerConfig,
     SourceColor, SqliteConfig, TlsMode,
 };
-use dbdesk_store::{DataSourceFile, Project, ProjectFile, ProjectSlug, Projects};
+use dbdesk_store::{
+    DataSourceFile, HistoryEntry, HistoryFile, HistoryOutcome, HistorySource, Project, ProjectFile,
+    ProjectSlug, Projects,
+};
 use egui::accesskit::Role;
 use egui::{Theme, Vec2};
 use egui_kittest::kittest::{By, Queryable};
@@ -178,6 +181,60 @@ const SCENES: &[Scene] = &[
         keeps_pointer: false,
     },
     Scene {
+        name: "duckdb-data-source-dialog",
+        data_sources: FixtureSources::Shop,
+        play: duckdb_data_source_dialog,
+        keeps_pointer: false,
+    },
+    Scene {
+        name: "clickhouse-data-source-dialog",
+        data_sources: FixtureSources::Shop,
+        play: clickhouse_data_source_dialog,
+        keeps_pointer: false,
+    },
+    Scene {
+        name: "data-source-placeholders",
+        data_sources: FixtureSources::Shop,
+        play: data_source_placeholders,
+        keeps_pointer: false,
+    },
+    Scene {
+        name: "password-prompt",
+        data_sources: FixtureSources::Shop,
+        play: password_prompt,
+        keeps_pointer: false,
+    },
+    Scene {
+        name: "export-data-sources",
+        data_sources: FixtureSources::Projects,
+        play: export_data_sources,
+        keeps_pointer: false,
+    },
+    Scene {
+        name: "import-preview",
+        data_sources: FixtureSources::Shop,
+        play: import_preview,
+        keeps_pointer: false,
+    },
+    Scene {
+        name: "safety-level",
+        data_sources: FixtureSources::Shop,
+        play: safety_level,
+        keeps_pointer: false,
+    },
+    Scene {
+        name: "careful-confirmation",
+        data_sources: FixtureSources::Shop,
+        play: careful_confirmation,
+        keeps_pointer: false,
+    },
+    Scene {
+        name: "read-only-refusal",
+        data_sources: FixtureSources::Shop,
+        play: read_only_refusal,
+        keeps_pointer: false,
+    },
+    Scene {
         name: "explorer-menu",
         data_sources: FixtureSources::Shop,
         play: explorer_menu,
@@ -189,6 +246,30 @@ const SCENES: &[Scene] = &[
         play: explorer_projects,
         // The Move to project submenu stays open only while the pointer is over it.
         keeps_pointer: true,
+    },
+    Scene {
+        name: "project-menu",
+        data_sources: FixtureSources::Projects,
+        play: project_menu,
+        keeps_pointer: false,
+    },
+    Scene {
+        name: "project-settings",
+        data_sources: FixtureSources::Projects,
+        play: project_settings,
+        keeps_pointer: false,
+    },
+    Scene {
+        name: "settings-mcp",
+        data_sources: FixtureSources::Shop,
+        play: settings_mcp,
+        keeps_pointer: false,
+    },
+    Scene {
+        name: "history-mcp",
+        data_sources: FixtureSources::Shop,
+        play: history_mcp,
+        keeps_pointer: false,
     },
     Scene {
         name: "explorer-filter",
@@ -330,7 +411,9 @@ impl Fixture {
             id: DataSourceId::generate(),
             name: "shop".to_owned(),
             color: Some(SourceColor::Orange),
+            safety: dbdesk_core::SafetyLevel::Normal,
             project: None,
+            mcp_login: None,
             config: ConnectionConfig::Sqlite(SqliteConfig {
                 path: shop,
                 read_only: false,
@@ -418,11 +501,13 @@ fn postgres_data_source(url: &str) -> (DataSource, Password) {
         id: DataSourceId::generate(),
         name: "warehouse".to_owned(),
         color: Some(SourceColor::Red),
+        safety: dbdesk_core::SafetyLevel::Normal,
         project: None,
+        mcp_login: None,
         config: ConnectionConfig::Postgres(PostgresConfig {
             server: ServerConfig {
                 host: host.to_owned(),
-                port: port.parse().unwrap(),
+                port: port.parse::<u16>().unwrap().into(),
                 database: database.to_owned(),
                 user: user.to_owned(),
                 tls: TlsMode::default(),
@@ -503,6 +588,14 @@ fn sqlserver_data_source_dialog(harness: &mut Harness<'static, DbDeskApp>, _: &F
     open_new_data_source_dialog(harness, "SQL Server");
 }
 
+fn duckdb_data_source_dialog(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    open_new_data_source_dialog(harness, "DuckDB");
+}
+
+fn clickhouse_data_source_dialog(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    open_new_data_source_dialog(harness, "ClickHouse");
+}
+
 fn open_new_data_source_dialog(harness: &mut Harness<'static, DbDeskApp>, driver: &str) {
     harness
         .get_all_by_label("New data source")
@@ -512,6 +605,158 @@ fn open_new_data_source_dialog(harness: &mut Harness<'static, DbDeskApp>, driver
     harness.run_ok();
     harness.get_by_label(driver).click();
     harness.run_ok();
+}
+
+/// Replaces the text of the field labelled `label` with `text`.
+fn retype(harness: &mut Harness<'static, DbDeskApp>, label: &str, text: &str) {
+    harness
+        .get_by_role_and_label(Role::TextInput, label)
+        .focus();
+    harness.run_ok();
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    harness.key_press(egui::Key::Backspace);
+    harness
+        .get_by_role_and_label(Role::TextInput, label)
+        .type_text(text);
+    harness.run_ok();
+}
+
+fn data_source_placeholders(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    open_new_data_source_dialog(harness, "PostgreSQL");
+    retype(harness, "Name", "staging");
+    retype(harness, "Host", "db-${DBDESK_ENV}.internal");
+    retype(harness, "Port", "${PGPORT}");
+    retype(harness, "User", "${USER}");
+}
+
+fn password_prompt(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    open_new_data_source_dialog(harness, "PostgreSQL");
+    retype(harness, "Name", "staging");
+    retype(harness, "Host", "staging.internal");
+    harness.get_by_label("Save").click();
+    expand(harness, &["staging"]);
+    step_until_visible(harness, "Connect to staging");
+}
+
+fn open_file_menu_item(harness: &mut Harness<'static, DbDeskApp>, item: &str) {
+    harness.get_by_label("File").click();
+    harness.run_ok();
+    harness.get_by_label(item).click();
+    harness.run_ok();
+}
+
+fn export_data_sources(harness: &mut Harness<'static, DbDeskApp>, fixture: &Fixture) {
+    harness
+        .state_mut()
+        .answer_file_dialogs_with(&fixture.dir.path().join("dbdesk.toml"));
+    open_file_menu_item(harness, "Export data sources…");
+    harness
+        .get_by_role_and_label(Role::CheckBox, "Web shop")
+        .click();
+    harness.run_ok();
+}
+
+/// A file from a teammate: the shop marked differently, a new project with a PostgreSQL data
+/// source whose host is a placeholder, and a SQLite file this machine doesn't have.
+fn import_preview(harness: &mut Harness<'static, DbDeskApp>, fixture: &Fixture) {
+    let local = DataSourceFile::new(fixture.dir.path().join("data_sources.toml"))
+        .load()
+        .unwrap();
+    let shop = local[0].clone();
+    let reporting = Project::new(
+        ProjectId::generate(),
+        "Reporting".to_owned(),
+        ProjectSlug::from_name("Reporting"),
+    );
+    let teams_shop = DataSource {
+        color: Some(SourceColor::Green),
+        ..shop.clone()
+    };
+    let analytics = DataSource {
+        id: DataSourceId::generate(),
+        name: "analytics".to_owned(),
+        color: Some(SourceColor::Red),
+        safety: dbdesk_core::SafetyLevel::Normal,
+        project: Some(reporting.id),
+        mcp_login: None,
+        config: ConnectionConfig::Postgres(PostgresConfig {
+            server: ServerConfig {
+                host: "${ANALYTICS_HOST}".to_owned(),
+                port: 5432.into(),
+                database: "analytics".to_owned(),
+                user: "reporting".to_owned(),
+                tls: TlsMode::Require,
+            },
+        }),
+    };
+    let archive = DataSource {
+        id: DataSourceId::generate(),
+        name: "archive".to_owned(),
+        color: None,
+        safety: dbdesk_core::SafetyLevel::Normal,
+        project: Some(reporting.id),
+        mcp_login: None,
+        config: ConnectionConfig::Sqlite(SqliteConfig {
+            path: fixture.dir.path().join("archive/2025.db"),
+            read_only: true,
+        }),
+    };
+    let file = fixture.dir.path().join("team.toml");
+    dbdesk_store::write_export(
+        &file,
+        &[teams_shop, analytics, archive],
+        std::slice::from_ref(&reporting),
+        None,
+    )
+    .unwrap();
+    harness.state_mut().answer_file_dialogs_with(&file);
+    open_file_menu_item(harness, "Import data sources…");
+    step_until_visible(harness, "Imports 1 project and 3 data sources.");
+}
+
+fn edit_shop(harness: &mut Harness<'static, DbDeskApp>) {
+    harness.get_by_label("shop").click_secondary();
+    harness.run_ok();
+    harness.get_by_label("Edit…").click();
+    harness.run_ok();
+}
+
+/// Sets `shop`'s safety level through its dialog, as a user would.
+fn set_shop_safety(harness: &mut Harness<'static, DbDeskApp>, level: &str) {
+    edit_shop(harness);
+    harness
+        .get_by_role_and_label(Role::RadioButton, level)
+        .click();
+    harness.run_ok();
+    harness.get_by_label("Save").click();
+    harness.run_ok();
+    step_until_visible(harness, "Expand shop");
+}
+
+fn safety_level(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    edit_shop(harness);
+    harness.get_by_label("Red").click();
+    harness.run_ok();
+}
+
+fn careful_confirmation(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    set_shop_safety(harness, "Careful");
+    open_console(
+        harness,
+        "shop",
+        "UPDATE orders SET status = 'shipped' WHERE id = 4;\n",
+    );
+    run_all(harness, "Run on \u{201c}shop\u{201d}?");
+}
+
+fn read_only_refusal(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    set_shop_safety(harness, "Read-only");
+    open_console(
+        harness,
+        "shop",
+        "DELETE FROM order_items WHERE order_id = 4;\n",
+    );
+    run_all(harness, "Refused:");
 }
 
 fn explorer_menu(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
@@ -526,6 +771,81 @@ fn explorer_projects(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
     harness.run_ok();
     harness.get_by_label("Move to project").hover();
     harness.run_ok();
+}
+
+fn project_menu(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    harness.get_by_label("Web shop").click_secondary();
+    harness.run_ok();
+}
+
+/// The project with `warehouse` when there is one, so the missing MCP login is warned about;
+/// otherwise the SQLite one.
+fn project_settings(harness: &mut Harness<'static, DbDeskApp>, fixture: &Fixture) {
+    let project = if fixture.postgres.is_some() {
+        "Reporting"
+    } else {
+        "Web shop"
+    };
+    harness.get_by_label(project).click_secondary();
+    harness.run_ok();
+    harness.get_by_label("Project settings…").click();
+    harness.run_ok();
+    harness
+        .get_by_label("Allow MCP clients to use this project")
+        .click();
+    harness.run_ok();
+    harness.get_by_label("Write").click();
+    harness.run_ok();
+}
+
+fn settings_mcp(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    harness.get_by_label("View").click();
+    harness.run_ok();
+    harness.get_by_label("Settings…").click();
+    harness.run_ok();
+    harness.get_by_label("Save MCP defaults").scroll_to_me();
+    harness.run_ok();
+}
+
+/// A few statements an assistant ran, recorded as `dbdesk mcp` records them, beside the one
+/// the console runs.
+fn history_mcp(harness: &mut Harness<'static, DbDeskApp>, fixture: &Fixture) {
+    let data_sources = DataSourceFile::new(fixture.dir.path().join("data_sources.toml"))
+        .load()
+        .unwrap();
+    let shop = data_sources
+        .iter()
+        .find(|data_source| data_source.name == "shop")
+        .unwrap();
+    let history = HistoryFile::new(fixture.dir.path().join("history.sqlite"))
+        .open()
+        .unwrap();
+    let now = jiff::Timestamp::now();
+    for (minutes_ago, sql, rows) in [
+        (12, "SELECT status, count(*) FROM orders GROUP BY status", 3),
+        (9, "SELECT * FROM customers WHERE country = 'ES'", 2),
+        (
+            4,
+            "INSERT INTO customers (name, country) VALUES ('Lucía', 'ES')",
+            1,
+        ),
+    ] {
+        history
+            .record(&HistoryEntry {
+                data_source: shop.id,
+                executed_at: now - jiff::SignedDuration::from_mins(minutes_ago),
+                sql: sql.to_owned(),
+                duration: Some(std::time::Duration::from_millis(3)),
+                rows: Some(rows),
+                outcome: HistoryOutcome::Ok,
+                source: HistorySource::Mcp,
+            })
+            .unwrap();
+    }
+    open_console(harness, "shop", BEST_CUSTOMERS);
+    run_all(harness, "8 rows");
+    harness.get_by_label("History").click();
+    step_until_visible(harness, "MCP");
 }
 
 fn explorer_filter(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {

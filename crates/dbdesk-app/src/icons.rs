@@ -13,9 +13,9 @@ use crate::{database_brand, fonts};
 pub use egui_phosphor::regular::{
     ARROW_SQUARE_RIGHT, ARROWS_CLOCKWISE, BOOK_OPEN, CARET_DOWN, CARET_RIGHT, CHECK_CIRCLE,
     CLOCK_COUNTER_CLOCKWISE, COPY, EYE, EYE_SLASH, FAST_FORWARD, FILE_PLUS, FILE_SQL, FOLDER_OPEN,
-    FOLDER_SIMPLE, FOLDER_SIMPLE_DASHED, FOLDER_SIMPLE_PLUS, LIST_DASHES, MAGNIFYING_GLASS,
-    MONITOR, MOON, PENCIL_SIMPLE, PLAY, PLUGS, PLUGS_CONNECTED, PLUS, PROHIBIT, SPARKLE, STOP, SUN,
-    TABLE, TERMINAL_WINDOW, TEXT_INDENT, TRASH, TREE_VIEW, WARNING, X_CIRCLE,
+    FOLDER_SIMPLE, FOLDER_SIMPLE_DASHED, FOLDER_SIMPLE_PLUS, GEAR, LIST_DASHES, LOCK_SIMPLE,
+    MAGNIFYING_GLASS, MONITOR, MOON, PENCIL_SIMPLE, PLAY, PLUGS, PLUGS_CONNECTED, PLUS, PROHIBIT,
+    SPARKLE, STOP, SUN, TABLE, TERMINAL_WINDOW, TEXT_INDENT, TRASH, TREE_VIEW, WARNING, X_CIRCLE,
 };
 
 /// A glyph and the palette role that colours it.
@@ -102,6 +102,7 @@ pub fn node(kind: NodeKind) -> Icon {
         NodeKind::Procedure => Icon::new(glyph::GEAR_SIX, Role::Success),
         NodeKind::Event => Icon::new(glyph::CLOCK, Role::Success),
         NodeKind::Synonym => Icon::new(glyph::ARROW_BEND_UP_RIGHT, Role::Success),
+        NodeKind::Dictionary => Icon::new(glyph::BOOK_OPEN, Role::Primary),
         NodeKind::Sequence => Icon::new(glyph::LIST_NUMBERS, Role::Success),
         NodeKind::Column => Icon::new(glyph::TEXT_COLUMNS, Role::Weak),
         NodeKind::Index => Icon::new(glyph::LIST_MAGNIFYING_GLASS, Role::Warning),

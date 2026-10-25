@@ -1,0 +1,280 @@
+//! Consoles of read-only data sources: changes refused before they are sent, and statements
+//! run in the database's read-only mode.
+
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
+mod common;
+
+use std::sync::Arc;
+
+use common::{TestEngine, postgres_test_server, sqlite_data_source, sqlite_database};
+use dbdesk_core::{ConnectionConfig, DataSource, DataSourceId, SafetyLevel};
+use dbdesk_engine::{
+    Command, ConsoleId, EditFailure, Event, PasswordUpdate, RunId, RunOutcome, RunPurpose,
+    TransactionMode,
+};
+
+const SETUP_CONSOLE: ConsoleId = ConsoleId(1);
+const READ_ONLY_CONSOLE: ConsoleId = ConsoleId(2);
+
+fn save(engine: &mut TestEngine, data_source: &DataSource, password: PasswordUpdate) {
+    engine.send(Command::SaveDataSource {
+        data_source: data_source.clone(),
+        password,
+    });
+    engine.expect(Event::DataSourceSaved(data_source.clone()));
+}
+
+fn read_only(data_source: &DataSource) -> DataSource {
+    DataSource {
+        id: DataSourceId::generate(),
+        name: "production".to_owned(),
+        safety: SafetyLevel::ReadOnly,
+        ..data_source.clone()
+    }
+}
+
+/// The next event about a run, skipping connection state changes. A transaction change
+/// fails the test: a read-only console never shows one.
+fn next_run_event(engine: &mut TestEngine) -> Event {
+    loop {
+        match engine.next_event() {
+            Event::ConsoleSessionChanged { .. } => {}
+            event @ Event::TransactionChanged { .. } => {
+                panic!("a read-only console reported a transaction: {event:?}")
+            }
+            event => return event,
+        }
+    }
+}
+
+/// Runs one statement and returns its failure message, or `None` if it succeeded.
+fn run(
+    engine: &mut TestEngine,
+    console: ConsoleId,
+    data_source: DataSourceId,
+    run: u64,
+    sql: &str,
+) -> Option<String> {
+    engine.send(Command::Execute {
+        console,
+        data_source,
+        run: RunId(run),
+        statements: vec![sql.to_owned()],
+        transactions: TransactionMode::Auto,
+        purpose: RunPurpose::Run,
+    });
+    let mut failure = None;
+    loop {
+        match next_run_event(engine) {
+            Event::StatementFinished {
+                result: Err(error), ..
+            } => failure = Some(error.message),
+            Event::RunFinished {
+                run: RunId(r),
+                outcome,
+                ..
+            } if r == run => {
+                assert_eq!(
+                    outcome == RunOutcome::Completed,
+                    failure.is_none(),
+                    "{sql}: {failure:?}"
+                );
+                return failure;
+            }
+            _ => {}
+        }
+    }
+}
+
+fn refused(kind: &str) -> String {
+    format!("Refused: this statement {kind}, and \u{201c}production\u{201d} is read-only.")
+}
+
+#[test]
+fn a_read_only_sqlite_data_source_refuses_changes_and_edits() {
+    let dir = tempfile::tempdir().unwrap();
+    let database = sqlite_database(dir.path());
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    engine.expect_started(vec![]);
+    let production = read_only(&sqlite_data_source(database.clone()));
+    save(&mut engine, &production, PasswordUpdate::Keep);
+    let id = production.id;
+
+    let cases = [
+        (
+            "INSERT INTO t (id) VALUES (1)",
+            Some(refused("changes data")),
+        ),
+        (
+            "CREATE TABLE u (id INTEGER)",
+            Some(refused("changes the schema")),
+        ),
+        ("BEGIN", Some(refused("controls the transaction"))),
+        ("SELECT count(*) FROM t", None),
+    ];
+    for (number, (sql, expected)) in cases.into_iter().enumerate() {
+        let failure = run(&mut engine, READ_ONLY_CONSOLE, id, number as u64 + 1, sql);
+        assert_eq!(failure, expected, "{sql}");
+    }
+
+    engine.send(Command::ApplyEdits {
+        console: READ_ONLY_CONSOLE,
+        statements: vec!["UPDATE t SET id = 2 WHERE id = 1".to_owned()],
+    });
+    assert_eq!(
+        next_run_event(&mut engine),
+        Event::EditsApplied {
+            console: READ_ONLY_CONSOLE,
+            result: Err(EditFailure {
+                statement: None,
+                message: "\u{201c}production\u{201d} is read-only, so its rows can't be edited."
+                    .to_owned(),
+            }),
+        }
+    );
+    let tables: i64 = rusqlite::Connection::open(&database)
+        .unwrap()
+        .query_row("SELECT count(*) FROM sqlite_master", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(tables, 1, "the database was changed");
+}
+
+/// The exit test of W2: an `INSERT`, a `CREATE TABLE`, and a write hidden in a function.
+#[test]
+fn a_read_only_postgres_data_source_refuses_writes_even_inside_a_function() {
+    let Some(server) = postgres_test_server() else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    engine.expect_started(vec![]);
+    let normal = DataSource {
+        id: DataSourceId::generate(),
+        name: "setup".to_owned(),
+        color: None,
+        safety: SafetyLevel::Normal,
+        project: None,
+        mcp_login: None,
+        config: ConnectionConfig::Postgres(server.config.clone()),
+    };
+    let production = read_only(&normal);
+    for data_source in [&normal, &production] {
+        save(
+            &mut engine,
+            data_source,
+            PasswordUpdate::Set(server.password.clone()),
+        );
+    }
+    // A table and a function of this test's own, so tests sharing the server don't collide.
+    let table = format!("w2_{}", normal.id.to_string().replace('-', ""));
+    let setup = [
+        format!("CREATE TABLE {table} (n integer)"),
+        format!(
+            "CREATE FUNCTION {table}_add() RETURNS integer LANGUAGE sql \
+             AS $$ INSERT INTO {table} VALUES (1) RETURNING n $$"
+        ),
+    ];
+    for (number, sql) in setup.iter().enumerate() {
+        assert_eq!(
+            run(
+                &mut engine,
+                SETUP_CONSOLE,
+                normal.id,
+                number as u64 + 1,
+                sql
+            ),
+            None
+        );
+    }
+
+    let insert = run(
+        &mut engine,
+        READ_ONLY_CONSOLE,
+        production.id,
+        10,
+        &format!("INSERT INTO {table} VALUES (2)"),
+    );
+    let create = run(
+        &mut engine,
+        READ_ONLY_CONSOLE,
+        production.id,
+        11,
+        "CREATE TABLE w2_never (n integer)",
+    );
+    let hidden = run(
+        &mut engine,
+        READ_ONLY_CONSOLE,
+        production.id,
+        12,
+        &format!("SELECT {table}_add()"),
+    );
+    let read = run(
+        &mut engine,
+        READ_ONLY_CONSOLE,
+        production.id,
+        13,
+        &format!("SELECT count(*) FROM {table}"),
+    );
+    let pages = page_through(&mut engine, production.id, 14);
+
+    for (number, sql) in [
+        format!("DROP FUNCTION {table}_add()"),
+        format!("DROP TABLE {table}"),
+    ]
+    .iter()
+    .enumerate()
+    {
+        assert_eq!(
+            run(
+                &mut engine,
+                SETUP_CONSOLE,
+                normal.id,
+                number as u64 + 20,
+                sql
+            ),
+            None
+        );
+    }
+    assert_eq!(insert, Some(refused("changes data")));
+    assert_eq!(create, Some(refused("changes the schema")));
+    let hidden = hidden.expect("the write inside the function was refused");
+    assert!(hidden.contains("read-only transaction"), "{hidden}");
+    assert_eq!(read, None);
+    assert_eq!(pages, vec![500, 500, 200]);
+}
+
+/// Reads 1,200 rows a page at a time on the read-only console, which keeps its read-only
+/// transaction open while rows are left, and returns the size of each page.
+fn page_through(engine: &mut TestEngine, data_source: DataSourceId, run: u64) -> Vec<usize> {
+    engine.send(Command::Execute {
+        console: READ_ONLY_CONSOLE,
+        data_source,
+        run: RunId(run),
+        statements: vec!["SELECT g FROM generate_series(1, 1200) AS g".to_owned()],
+        transactions: TransactionMode::Auto,
+        purpose: RunPurpose::Run,
+    });
+    let mut pages = Vec::new();
+    loop {
+        match next_run_event(engine) {
+            Event::RowsFetched { rows, more, .. } => {
+                pages.push(rows.len());
+                if !more {
+                    break;
+                }
+                engine.send(Command::FetchMore {
+                    console: READ_ONLY_CONSOLE,
+                    run: RunId(run),
+                });
+            }
+            Event::StatementFinished {
+                result: Err(error), ..
+            } => {
+                panic!("paging failed: {}", error.message)
+            }
+            _ => {}
+        }
+    }
+    pages
+}

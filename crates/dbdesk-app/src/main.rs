@@ -13,15 +13,22 @@ mod definition_window;
 mod delete_dialog;
 mod explorer;
 mod export_dialog;
+mod export_sources_dialog;
 mod file_picker;
 mod fonts;
 mod hazard_dialog;
 mod history_window;
 mod icons;
+mod import_dialog;
 mod keymap;
 mod keymap_window;
 mod log_console;
+mod mcp;
+mod mcp_client_config;
+mod mcp_settings;
+mod password_prompt;
 mod project_dialog;
+mod project_settings;
 mod relaunch;
 mod rollback_dialog;
 #[cfg(test)]
@@ -56,9 +63,18 @@ const DEFAULT_WINDOW_SIZE: [f32; 2] = [1440.0, 900.0];
 
 fn main() -> anyhow::Result<()> {
     // Before anything else: `--version` must work without a display, a home directory or a
-    // config folder, because the release workflow smoke-tests packaged builds with it.
-    if version::CliRequest::parse(std::env::args().skip(1)).answer() {
+    // config folder, because the release workflow smoke-tests packaged builds with it; and
+    // `mcp` must not open a window.
+    let request = version::CliRequest::parse(std::env::args().skip(1));
+    if request.answer() {
         return Ok(());
+    }
+    match request {
+        version::CliRequest::Mcp { project } => return mcp::run(&project),
+        version::CliRequest::Invalid(problem) => {
+            anyhow::bail!("{problem}\n\n{}", version::CliRequest::usage())
+        }
+        version::CliRequest::Version | version::CliRequest::Help | version::CliRequest::Run => {}
     }
     let paths = AppPaths::discover()
         .context("the OS reports no home directory, so dbdesk has nowhere to keep its files")?;

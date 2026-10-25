@@ -32,7 +32,8 @@ pub(crate) struct ServerError {
     code: u32,
 }
 
-/// A failed user statement, with the byte offset of the error when it can be placed.
+/// A failed user statement, with the byte offset of the error when it can be placed. SQL
+/// Server reports error numbers rather than SQLSTATEs, so there is none to pass on.
 pub(crate) fn statement_error(error: Error, sql: &str) -> DriverError {
     match error {
         Error::Server(token) => DriverError::Statement {
@@ -41,10 +42,12 @@ pub(crate) fn statement_error(error: Error, sql: &str) -> DriverError {
                 message: token.message().to_owned(),
                 code: token.code(),
             }),
+            sqlstate: None,
         },
         other => DriverError::Statement {
             source: Box::new(other),
             position: None,
+            sqlstate: None,
         },
     }
 }

@@ -17,6 +17,7 @@ use egui::{
 use crate::catalog_tree::{CatalogTree, Children};
 use crate::consoles::SavedConsoles;
 use crate::icons;
+use crate::mcp_client_config;
 use crate::state::{DataSourceEntry, DataSources};
 use crate::theme::Palette;
 use crate::widgets::{self, IconButton};
@@ -51,6 +52,8 @@ pub enum ExplorerAction {
         then_move: Option<DataSourceId>,
     },
     RenameProject(ProjectId),
+    /// Opens Project settings…, where MCP access is set.
+    ProjectSettings(ProjectId),
     DeleteProject(ProjectId),
     /// Puts the data source in the project, or in no project.
     MoveToProject(DataSourceId, Option<ProjectId>),
@@ -288,12 +291,35 @@ fn group_menu(ui: &mut Ui, header: GroupHeader<'_>, actions: &mut Vec<ExplorerAc
         if widgets::menu_item(ui, icons::PENCIL_SIMPLE, "Rename…").clicked() {
             actions.push(ExplorerAction::RenameProject(project.id));
         }
+        if widgets::menu_item(ui, icons::GEAR, "Project settings…").clicked() {
+            actions.push(ExplorerAction::ProjectSettings(project.id));
+        }
+        let copy = widgets::menu_item(ui, icons::COPY, "Copy MCP configuration").on_hover_text(
+            "The entry an MCP client's configuration needs to run dbdesk mcp for this project",
+        );
+        if copy.clicked() {
+            copy_mcp_configuration(ui, project);
+        }
         if widgets::menu_item(ui, icons::TRASH, "Delete…").clicked() {
             actions.push(ExplorerAction::DeleteProject(project.id));
         }
         ui.separator();
     }
     new_project_item(ui, None, actions);
+}
+
+fn copy_mcp_configuration(ui: &Ui, project: &Project) {
+    match mcp_client_config::executable() {
+        Ok(executable) => {
+            let text = mcp_client_config::client_configuration(&project.slug, &executable);
+            ui.ctx().copy_text(text);
+            tracing::info!(project = %project.slug, "copied the MCP configuration");
+        }
+        Err(error) => tracing::error!(
+            "could not find dbdesk's executable for the MCP configuration: {}",
+            dbdesk_core::describe_error(&error)
+        ),
+    }
 }
 
 fn new_project_item(

@@ -18,6 +18,8 @@ flowchart LR
         Engine --> SQ[driver-sqlite]
         Engine --> MY[driver-mysql]
         Engine --> MS[driver-sqlserver]
+        Engine --> DK[driver-duckdb]
+        Engine --> CH[driver-clickhouse]
         Engine -->|Event + request_repaint| EvRx
     end
     Engine --> Store[dbdesk-store<br/>config, keychain, history]
@@ -30,10 +32,13 @@ flowchart LR
 | --- | --- | --- |
 | `dbdesk-core` | Domain types (`DataSource`, `ConnectionConfig`, `Password`, …) and the `Connection` trait. No I/O. | — |
 | `dbdesk-sql` | A forgiving SQL lexer: statement splitting, statement at the cursor, highlighting tokens, the UPDATE/DELETE-without-WHERE check, the formatter, and the syntax checker (`sqlparser`) and lint rules. What differs between dialects lives in its `dialect` module. | core, sqlparser |
-| `dbdesk-driver-postgres` | `tokio-postgres` implementation of `Connection`. | core |
+| `dbdesk-driver-postgres` | `tokio-postgres` implementation of `Connection`. | core, tls |
 | `dbdesk-driver-sqlite` | `rusqlite` implementation, run on `spawn_blocking`. | core |
 | `dbdesk-driver-mysql` | `mysql_async` implementation for MySQL and MariaDB; a statement's task owns the connection while its result is open, and cancel is `KILL QUERY` from a second connection. | core |
 | `dbdesk-driver-sqlserver` | `tiberius` implementation for SQL Server and Azure SQL; statements run as plain batches on a task that owns the connection while its result is open, and cancel is TDS's attention message, sent by that task. Uses `dbdesk-sql` only to place syntax errors, which SQL Server reports by line and token. | core, sql |
+| `dbdesk-driver-duckdb` | `duckdb` implementation, with DuckDB 1.5 compiled in, run on `spawn_blocking` like SQLite; results are read as DuckDB streams them, in Arrow chunks, and formatted by Arrow. Uses `dbdesk-sql` only to tell a change's row count from a result. | core, sql |
+| `dbdesk-driver-clickhouse` | The official `clickhouse` client over HTTP(S); a connection is a server session (`session_id`), so `USE`, `SET` and temporary tables last between statements. Results are read a line at a time in `JSONCompactEachRowWithNamesAndTypes`, values kept as ClickHouse writes them; cancel is `KILL QUERY` by `query_id` from a client outside the session. | core, tls |
+| `dbdesk-tls` | The rustls client configuration for each TLS mode, shared by the PostgreSQL and ClickHouse drivers. | core |
 | `dbdesk-engine` | Session lifecycle, command handling, cancellation, transactions, event emission. | core, sql, store, drivers |
 | `dbdesk-store` | Data source file (TOML), secrets (`SecretStore`, OS keychain via `keyring`), console files, query history (`rusqlite`), CSV/JSON export. All blocking; the engine calls it from the blocking pool. | core |
 | `dbdesk-app` | `eframe` binary: panels, widgets, app state, keymap. | core, engine, sql, store |

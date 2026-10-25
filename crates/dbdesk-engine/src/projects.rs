@@ -1,5 +1,7 @@
 use dbdesk_core::{ProjectId, describe_error};
-use dbdesk_store::{Project, ProjectFile, ProjectStoreError, Projects};
+use dbdesk_store::{
+    McpOverrides, McpPermissions, Project, ProjectFile, ProjectStoreError, Projects,
+};
 use tokio::task::JoinError;
 
 use crate::Event;
@@ -12,6 +14,8 @@ pub(crate) enum ProjectError {
     Unknown,
     #[error("a project's name can't be empty")]
     EmptyName,
+    #[error("{0}")]
+    Conflict(String),
     #[error(transparent)]
     Store(#[from] ProjectStoreError),
     #[error("a background task failed")]
@@ -93,6 +97,60 @@ impl ProjectRegistry {
                 .ok_or(ProjectError::Unknown)?;
             name.clone_into(&mut project.name);
             Ok(project.clone())
+        })
+        .await
+    }
+
+    /// What `projects.toml` holds, or why it can't be used.
+    pub(crate) fn projects(&self) -> Result<&Projects, ProjectError> {
+        match self {
+            Self::Loaded { projects, .. } => Ok(projects),
+            Self::Unavailable { reason } => Err(ProjectError::Unavailable(reason.clone())),
+        }
+    }
+
+    /// Adds each project, or replaces the one with its id, and saves the file once.
+    pub(crate) async fn import(&mut self, imported: Vec<Project>) -> Result<(), ProjectError> {
+        self.update(|projects| {
+            for project in imported {
+                match projects.projects.iter_mut().find(|p| p.id == project.id) {
+                    Some(existing) => *existing = project,
+                    None => projects.projects.push(project),
+                }
+            }
+            projects.check_unique().map_err(ProjectError::Conflict)
+        })
+        .await
+    }
+
+    /// Replaces the project's MCP settings and saves the file.
+    pub(crate) async fn save_mcp(
+        &mut self,
+        id: ProjectId,
+        mcp_enabled: bool,
+        overrides: McpOverrides,
+    ) -> Result<Project, ProjectError> {
+        self.update(|projects| {
+            let project = projects
+                .projects
+                .iter_mut()
+                .find(|project| project.id == id)
+                .ok_or(ProjectError::Unknown)?;
+            project.mcp_enabled = mcp_enabled;
+            project.mcp = overrides;
+            Ok(project.clone())
+        })
+        .await
+    }
+
+    /// Replaces the MCP defaults and saves the file.
+    pub(crate) async fn save_mcp_defaults(
+        &mut self,
+        defaults: McpPermissions,
+    ) -> Result<McpPermissions, ProjectError> {
+        self.update(|projects| {
+            projects.mcp_defaults = defaults.clone();
+            Ok(defaults)
         })
         .await
     }

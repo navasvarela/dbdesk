@@ -8,15 +8,17 @@ use crate::{EditFailure, Event};
 
 /// How the edits are wrapped: a transaction of their own, or a savepoint inside the console's
 /// open one (PostgreSQL refuses `SAVEPOINT` outside a transaction, and a nested `BEGIN` would
-/// fail). Both are spelt as the dialect writes them.
-fn wrapping(worker: &Worker<'_>) -> Savepoint {
+/// fail). Both are spelt as the dialect writes them. `None` inside an open transaction on a
+/// database without savepoints (DuckDB): a failed edit couldn't be undone without undoing the
+/// whole transaction.
+fn wrapping(worker: &Worker<'_>) -> Option<Savepoint> {
     let dialect = worker.context.dialect();
     match worker.transaction {
-        TransactionStatus::Idle => Savepoint {
+        TransactionStatus::Idle => Some(Savepoint {
             open: dialect.begin_transaction(),
             keep: &["COMMIT"],
             undo: &["ROLLBACK"],
-        },
+        }),
         TransactionStatus::InTransaction | TransactionStatus::Failed => dialect.edits_savepoint(),
     }
 }
@@ -30,7 +32,34 @@ pub(super) async fn apply(
     let SessionOwner::Console(console) = worker.context.owner else {
         return Ok(());
     };
-    let wrapping = wrapping(worker);
+    if worker.context.read_only.is_some() {
+        let message = format!(
+            "\u{201c}{}\u{201d} is read-only, so its rows can't be edited.",
+            worker.context.name()
+        );
+        tracing::warn!(data_source = %worker.context.name(), "edits refused: read-only");
+        worker.context.send(Event::EditsApplied {
+            console,
+            result: Err(EditFailure {
+                statement: None,
+                message,
+            }),
+        });
+        return Ok(());
+    }
+    let Some(wrapping) = wrapping(worker) else {
+        let failure = EditFailure {
+            statement: None,
+            message: "This database has no savepoints, so edits can't be applied inside an open \
+                      transaction and undone on their own: commit or roll back first."
+                .to_owned(),
+        };
+        worker.context.send(Event::EditsApplied {
+            console,
+            result: Err(failure),
+        });
+        return Ok(());
+    };
     let result = match run_wrapped(worker, &wrapping, statements).await? {
         Ok(()) => Ok(()),
         Err(failure) => {

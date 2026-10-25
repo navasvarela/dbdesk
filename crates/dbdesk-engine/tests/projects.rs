@@ -8,10 +8,13 @@ mod common;
 use std::path::Path;
 use std::sync::Arc;
 
-use common::{TestEngine, sqlite_data_source};
-use dbdesk_core::{DataSource, ProjectId};
+use common::{MemorySecrets, TestEngine, sqlite_data_source};
+use dbdesk_core::{DataSource, DataSourceId, Password, ProjectId};
 use dbdesk_engine::{Command, Event, PasswordUpdate};
-use dbdesk_store::{DataSourceFile, KeymapBindings, Project, ProjectFile, Settings};
+use dbdesk_store::{
+    DataSourceFile, KeymapBindings, McpOverrides, McpPermissions, Project, ProjectFile,
+    SchemaScope, Settings,
+};
 
 fn save(engine: &mut TestEngine, data_source: &DataSource) {
     engine.send(Command::SaveDataSource {
@@ -81,7 +84,7 @@ fn groups_data_sources_into_projects_that_survive_a_restart() {
         renamed.slug, shop.slug,
         "renaming keeps the slug clients use"
     );
-    engine.engine.shutdown().unwrap();
+    engine.shut_down();
 
     let saved = projects_file(dir.path()).load().unwrap();
     assert_eq!(saved.get(shop.id), Some(&renamed));
@@ -118,7 +121,7 @@ fn deleting_a_project_moves_its_data_sources_to_no_project() {
             .projects
             .is_empty()
     );
-    engine.engine.shutdown().unwrap();
+    engine.shut_down();
 }
 
 #[test]
@@ -160,7 +163,7 @@ fn refuses_unknown_projects_and_empty_names() {
         DataSourceFile::new(&file).load().unwrap(),
         vec![data_source]
     );
-    engine.engine.shutdown().unwrap();
+    engine.shut_down();
 }
 
 #[test]
@@ -191,10 +194,68 @@ fn never_overwrites_an_unreadable_projects_file() {
     ));
     // Data sources don't depend on the projects file.
     save(&mut engine, &sqlite_data_source(dir.path().join("app.db")));
-    engine.engine.shutdown().unwrap();
+    engine.shut_down();
 
     assert_eq!(
         std::fs::read_to_string(dir.path().join("projects.toml")).unwrap(),
         broken
+    );
+}
+
+#[test]
+fn saves_mcp_settings_defaults_and_an_mcp_logins_password() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("data_sources.toml");
+    let secrets = Arc::new(MemorySecrets::default());
+    let mut engine = TestEngine::start(&file, Arc::clone(&secrets));
+    engine.expect_started(vec![]);
+    let project = create(&mut engine, "Analytics");
+    let overrides = McpOverrides {
+        write: Some(true),
+        schemas: Some(SchemaScope::Only(vec!["reports".to_owned()])),
+        ..McpOverrides::default()
+    };
+
+    engine.send(Command::SaveProjectMcp {
+        id: project.id,
+        mcp_enabled: true,
+        overrides: overrides.clone(),
+    });
+
+    let saved = expect_project_saved(&mut engine);
+    assert!(saved.mcp_enabled);
+    assert_eq!(saved.mcp, overrides);
+    assert_eq!(
+        projects_file(dir.path()).load().unwrap().projects,
+        vec![saved.clone()]
+    );
+    assert_eq!(saved.slug, project.slug, "the slug never changes");
+
+    let defaults = McpPermissions {
+        schema: true,
+        ..McpPermissions::default()
+    };
+    engine.send(Command::SaveMcpDefaults(defaults.clone()));
+    engine.expect(Event::McpDefaultsSaved(defaults.clone()));
+    let file = projects_file(dir.path()).load().unwrap();
+    assert_eq!(file.mcp_defaults, defaults);
+    assert_eq!(file.projects, vec![saved], "the projects are untouched");
+
+    let id = DataSourceId::generate();
+    engine.send(Command::SaveMcpPassword {
+        id,
+        password: Some(Password::new("for the assistant")),
+    });
+    engine.send(Command::SaveMcpPassword { id, password: None });
+    engine.send(Command::SaveMcpPassword {
+        id,
+        password: Some(Password::new("again")),
+    });
+    engine.engine.shutdown().unwrap();
+    assert_eq!(secrets.mcp(id), Some(Password::new("again")));
+    assert_eq!(
+        secrets.get(id),
+        None,
+        "the data source's own entry is untouched"
     );
 }

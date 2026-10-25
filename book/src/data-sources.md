@@ -7,7 +7,7 @@ keychain, never in that file.
 ## Adding one
 
 Click **+** at the top of the explorer (or **New data source** on the Welcome tab) and choose
-**PostgreSQL**, **SQLite**, **MySQL / MariaDB** or **SQL Server**.
+**PostgreSQL**, **SQLite**, **MySQL / MariaDB**, **SQL Server**, **DuckDB** or **ClickHouse**.
 
 ![The New PostgreSQL data source dialog](images/data-source-dialog.png)
 
@@ -18,6 +18,7 @@ Every kind has:
 - **Colour** — optional. The colour tints the data source's row in the explorer, the tabs of its
   consoles and a band along the top of each console. Giving production a red and your local copy
   nothing makes it hard to run something in the wrong place.
+- **Safety** — how careful dbdesk is with the data. See [Safety levels](#safety-levels).
 
 **PostgreSQL** adds:
 
@@ -29,6 +30,8 @@ Every kind has:
 | User | `postgres` | |
 | TLS | `prefer` | Whether to encrypt the connection; see below. |
 | Password | none | Stored in the keychain when you save. See below. |
+| MCP login | none | Another user, only for AI assistants; see [The MCP login](mcp.md#the-mcp-login). |
+| MCP password | none | Shown once there is an MCP login. Stored in the keychain apart from the password. |
 
 ### TLS
 
@@ -66,11 +69,14 @@ install. Client certificates aren't supported yet.
 | User | `root` | |
 | TLS | `prefer` | As for PostgreSQL. MySQL 8 and MariaDB 11.4 encrypt by default, with a self-signed certificate unless the server is given one, so `verify-full` needs that server's CA file. |
 | Password | none | Stored in the keychain when you save. |
+| MCP login | none | Another user, only for AI assistants; see [The MCP login](mcp.md#the-mcp-login). |
+| MCP password | none | Shown once there is an MCP login. Stored in the keychain apart from the password. |
 
 One data source type serves both: dbdesk tells MySQL and MariaDB apart once it connects, and
 **Test connection** says which it found ("Connected to MariaDB 11.4.4").
 
-**SQL Server** has the same fields too, for SQL Server and Azure SQL, with these defaults:
+**SQL Server** has the same fields too, for SQL Server and Azure SQL, with these defaults. It has
+no MCP login, since [MCP clients](mcp.md) can't use SQL Server yet.
 
 ![The New SQL Server data source dialog](images/sqlserver-data-source-dialog.png)
 
@@ -85,6 +91,26 @@ One data source type serves both: dbdesk tells MySQL and MariaDB apart once it c
 
 **Test connection** says which server it reached ("Connected to SQL Server 16.0.4305.5"; 16 is
 SQL Server 2022).
+
+**ClickHouse** has the same fields, with these defaults:
+
+![The New ClickHouse data source dialog](images/clickhouse-data-source-dialog.png)
+
+| Field | Default | Notes |
+| --- | --- | --- |
+| Host | `localhost` | Name or IP address of the server. For ClickHouse Cloud, the service's host name. |
+| Port | `8123` | ClickHouse's HTTP port: dbdesk speaks HTTP to ClickHouse, not its native protocol on 9000. |
+| Database | `default` | The database unqualified names refer to, as `USE` would set. The explorer lists every database you may see. |
+| User | `default` | |
+| TLS | `disable` | `disable`, `require` or `verify-full`; see below. |
+| Password | none | Stored in the keychain when you save. |
+
+ClickHouse serves HTTPS on a port of its own (8443) rather than offering encryption on the HTTP
+one, so there is no `prefer`: choosing `require` or `verify-full` moves the port to `8443`, and
+`disable` moves it back, unless you typed a port of your own. ClickHouse Cloud only accepts
+HTTPS, with a publicly signed certificate, so `verify-full` with no CA file works there.
+
+**Test connection** says which server it reached ("Connected to ClickHouse 25.8.33.6").
 
 **SQLite** adds:
 
@@ -105,6 +131,20 @@ SQL Server 2022).
 - **Read-only** — opens the file read-only. Statements that would change it fail with SQLite's
   error.
 
+**DuckDB** has two kinds of database, chosen under **Database**:
+
+![The New DuckDB data source dialog](images/duckdb-data-source-dialog.png)
+
+- **File** — a DuckDB database file (`.duckdb`), with **File**, **Browse…**, **New…** and
+  **Read-only** as for SQLite. Only one program at a time may have a DuckDB file open for
+  writing, so connecting fails while another program (the `duckdb` command, say) has it open.
+- **In memory** — an empty database that lives as long as the connection, for querying files
+  rather than storing data: DuckDB reads CSV, Parquet and JSON files directly. Each console has
+  its own, and everything created in it is gone when it disconnects.
+
+DuckDB is part of dbdesk, so there is nothing to install. **Test connection** says which
+version it is ("Connected to DuckDB 1.5.6").
+
 ## Testing the connection
 
 **Test connection** connects with what is in the form right now, checks the connection works,
@@ -119,9 +159,56 @@ gone through; if it fails, the reason is shown in the dialog.
 
 **Cancel**, **Esc** or a click outside the dialog closes it without saving.
 
+## Safety levels
+
+A colour only marks a data source. Its **safety level** decides what its consoles may change:
+
+| Level | What happens |
+| --- | --- |
+| **Normal** | Changes run when asked. Only an `UPDATE` or `DELETE` without `WHERE` asks first (see [Query consoles](consoles.md#statements-that-change-every-row)). |
+| **Careful** | Every change asks first, naming the data source: statements that change data or the schema, and edits in the grid. New consoles start in **Manual commit** mode. |
+| **Read-only** | Changes are refused. dbdesk reads each statement before sending it and refuses anything but reading, then runs it in the database's own read-only mode, which also stops a write hidden in a function. The grid can't be edited. |
+
+![Red suggests Careful in the data source dialog](images/safety-level.png)
+
+Picking red for a data source whose level is Normal suggests **Careful**, since red usually marks
+production; **Make it careful** takes the suggestion. The level is its own setting, so a red data
+source can stay Normal, and a careful one can be any colour.
+
+Read-only uses the same checks as an AI assistant's read-only projects (see
+[Connecting an AI assistant](mcp.md)):
+
+- **PostgreSQL** runs each statement in `BEGIN READ ONLY`, **MySQL and MariaDB** in
+  `START TRANSACTION READ ONLY`, rolled back once its rows are read. **SQLite** opens the file
+  read-only.
+- **SQL Server**, **DuckDB** and **ClickHouse** have no read-only mode dbdesk uses yet:
+  statements are still checked, but a write inside a procedure or function isn't stopped. The
+  dialog says so. (A DuckDB file can also be opened with its own **Read-only** box ticked.)
+- Anything that isn't a plain read is refused, including `SET`, `BEGIN` and statements dbdesk
+  can't parse, since what they do can't be told.
+
+## Placeholders: `${VARIABLE}`
+
+Host, port, database, user, a SQLite or DuckDB file and a CA file may hold `${NAME}`
+placeholders, which dbdesk replaces with the environment variable `NAME` each time it connects.
+One shared list of data sources then works on machines whose settings differ: each machine sets
+`PGHOST`, say, and the data source's host is `${PGHOST}`. A placeholder can be part of a value
+(`db-${ENV}.internal`), and a path starting with `~` is in your home folder.
+
+![Placeholders in the host, port and user, with what each resolves to](images/data-source-placeholders.png)
+
+Under each field with a placeholder, the dialog shows what it resolves to now, or which variable
+isn't set. Connecting with an unset variable stops with an error that names the setting:
+*could not resolve the host: ${PGHOST} is not set*.
+
+Variables come from the environment dbdesk was started in. On macOS, an app opened from the
+Finder or the Dock doesn't see what your shell profile sets; start it from a terminal
+(`open -a dbdesk`, after exporting the variables), or set them with `launchctl setenv`.
+
 ## Passwords and the keychain
 
-PostgreSQL passwords are stored in your operating system's credential store: the Keychain on
+PostgreSQL, MySQL and SQL Server passwords are stored in your operating system's credential
+store: the Keychain on
 macOS, Credential Manager on Windows, the Secret Service (GNOME Keyring, KWallet) on Linux.
 Each entry has the service name `dbdesk` and, as its account, the data source's ID, a long
 string that never changes even if you rename the data source.
@@ -132,7 +219,16 @@ string that never changes even if you rename the data source.
 - **When dbdesk connects** — the explorer, each console, and Test connection with an empty
   password field — it reads the password from the keychain. On macOS the system may ask whether
   to let dbdesk use it; see [Troubleshooting](troubleshooting.md#the-keychain-keeps-asking).
+- **When there is none**, or the keychain can't be read (locked, declined, or missing on this
+  system), connecting asks for the password. **Save to keychain** is ticked, so you are asked
+  once. Whatever you type is also kept in memory until dbdesk quits, so the data source still
+  connects if the keychain refuses it or you untick the box. A server that needs no password
+  (local *trust* login, say) works with the field left empty.
 - **When you delete** a data source, its keychain entry is removed too.
+- **An MCP login's password** has an entry of its own, with the data source's ID followed by
+  `/mcp` as its account. Only `dbdesk mcp` reads it.
+
+![Connecting asks for the password a data source has none saved for](images/password-prompt.png)
 
 SQLite data sources have no password, so dbdesk never asks the keychain for them.
 

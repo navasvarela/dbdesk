@@ -314,7 +314,7 @@ mod tests {
     #[test]
     fn recognises_dialect_specific_quoting() {
         use TokenKind::*;
-        let cases: [Case; 12] = [
+        let cases: [Case; 13] = [
             (
                 "$fn$ a; $x$ b $fn$ ;",
                 Dialect::Postgres,
@@ -421,6 +421,21 @@ mod tests {
                     (Number, "1"),
                     (Punctuation, ","),
                     (String, "n'x'"),
+                ],
+            ),
+            (
+                r#"select `a b`, "c", 'it\'s', $$x;y$$ # note"#,
+                Dialect::ClickHouse,
+                vec![
+                    (Word, "select"),
+                    (QuotedIdentifier, "`a b`"),
+                    (Punctuation, ","),
+                    (QuotedIdentifier, "\"c\""),
+                    (Punctuation, ","),
+                    (String, r"'it\'s'"),
+                    (Punctuation, ","),
+                    (String, "$$x;y$$"),
+                    (LineComment, "# note"),
                 ],
             ),
             // Only Transact-SQL has `@` names; elsewhere `@p` is a parameter marker's sign.

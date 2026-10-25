@@ -12,6 +12,12 @@ const TEST_URL_VARS: &[&str] = &["DBDESK_TEST_MYSQL_URL", "DBDESK_TEST_MARIADB_U
 /// condition, where a kill makes the whole statement fail.
 const LONG_RUNNING: &str = "SELECT 1 FROM DUAL WHERE SLEEP(60) = 0";
 
+/// Held by every test that talks to the test server. They share one database, and the catalog
+/// walk asked for the definition of a view that another test (the `describe_table` check) had
+/// just dropped, which failed CI now and then. Tests that only need no server don't take it.
+static SHARED_DATABASE: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
 struct TestServer {
     variable: &'static str,
     config: MysqlConfig,
@@ -44,7 +50,7 @@ fn parse_url(variable: &'static str, url: &str) -> TestServer {
         config: MysqlConfig {
             server: ServerConfig {
                 host: host.to_owned(),
-                port: port.parse().expect("numeric port"),
+                port: port.parse::<u16>().expect("numeric port").into(),
                 database: database.to_owned(),
                 user: user.to_owned(),
                 tls: TlsMode::default(),
@@ -84,6 +90,7 @@ async fn first_value(connection: &MysqlConnection, sql: &str) -> Option<String> 
 
 #[tokio::test]
 async fn conforms_to_the_connection_lifecycle() {
+    let _shared = SHARED_DATABASE.lock().await;
     for server in test_servers() {
         let connection = server.connect().await;
 
@@ -98,6 +105,7 @@ async fn conforms_to_the_connection_lifecycle() {
 
 #[tokio::test]
 async fn wrong_password_is_a_connect_error() {
+    let _shared = SHARED_DATABASE.lock().await;
     for server in test_servers() {
         let result = connect(&server.config, Some(&Password::new("definitely wrong"))).await;
 
@@ -112,7 +120,7 @@ async fn unreachable_server_is_a_connect_error() {
             host: "127.0.0.1".to_owned(),
             // Port 1 (tcpmux) is reserved and has no listener on any normal machine, so the
             // connection is refused immediately instead of timing out.
-            port: 1,
+            port: 1.into(),
             database: "mysql".to_owned(),
             user: "root".to_owned(),
             tls: TlsMode::Disable,
@@ -124,6 +132,7 @@ async fn unreachable_server_is_a_connect_error() {
 
 #[tokio::test]
 async fn runs_pages_cancels_and_reports_error_positions() {
+    let _shared = SHARED_DATABASE.lock().await;
     for server in test_servers() {
         let mut connection = server.connect().await;
         let names = match first_value(&connection, "SELECT @@lower_case_table_names").await {
@@ -180,6 +189,7 @@ fn folder(parent: &CatalogPath, folder: FolderKind) -> CatalogPath {
 
 #[tokio::test]
 async fn walks_the_catalog_and_shows_definitions() {
+    let _shared = SHARED_DATABASE.lock().await;
     for server in test_servers() {
         let mut connection = server.connect().await;
         for statement in FIXTURE {
@@ -280,6 +290,7 @@ async fn walks_the_catalog_and_shows_definitions() {
 /// a crypto provider: it takes rustls's process-wide one, which `connect` installs.
 #[tokio::test]
 async fn encrypts_as_the_tls_mode_says() {
+    let _shared = SHARED_DATABASE.lock().await;
     for server in test_servers() {
         for (tls, encrypted) in [
             (TlsMode::Disable, false),

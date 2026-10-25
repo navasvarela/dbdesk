@@ -1,17 +1,19 @@
 //! Opening connections: resolving the password, then dispatching to the right driver.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use dbdesk_core::{
-    Connection, ConnectionConfig, DataSource, DriverError, Password, ServerInfo, describe_error,
+    Connection, ConnectionConfig, DataSource, DriverError, Password, PlaceholderError, ServerInfo,
+    describe_error,
 };
 use dbdesk_store::{SecretError, SecretStore};
 use tokio::task::JoinError;
 
+use crate::environment::ProcessEnvironment;
 use crate::events::EventSink;
-use crate::{Event, PasswordUpdate};
+use crate::passwords::{self, PasswordNeeded, Prompting};
+use crate::{DatabaseFile, Event, PasswordUpdate};
 
 /// Gives up on a connection attempt after this long. Long enough for a slow VPN or a cold
 /// cloud database to answer, short enough that a wrong host doesn't leave the UI showing
@@ -19,9 +21,18 @@ use crate::{Event, PasswordUpdate};
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum OpenError {
+pub enum OpenError {
     #[error("could not read the saved password")]
     Password(#[source] SecretError),
+    #[error("a password is needed: {0}")]
+    PasswordNeeded(PasswordNeeded),
+    #[error(transparent)]
+    Placeholder(#[from] PlaceholderError),
+    #[error(
+        "the MCP login {user:?} has no saved password; set it in the data source's settings in \
+         dbdesk"
+    )]
+    NoMcpPassword { user: String },
     #[error(transparent)]
     Driver(#[from] DriverError),
     #[error("could not connect within {0:?}")]
@@ -34,34 +45,77 @@ pub(crate) async fn open(
     data_source: &DataSource,
     secrets: &Arc<dyn SecretStore>,
     password: &PasswordUpdate,
+    prompting: Prompting<'_>,
 ) -> Result<Box<dyn Connection>, OpenError> {
-    let password = resolve_password(data_source, secrets, password).await?;
-    tokio::time::timeout(
-        CONNECT_TIMEOUT,
-        connect(&data_source.config, password.as_ref()),
-    )
-    .await
-    .map_err(|_| OpenError::TimedOut(CONNECT_TIMEOUT))?
-    .map_err(OpenError::Driver)
+    let config = data_source.config.resolve(&ProcessEnvironment)?;
+    let password = passwords::resolve(data_source, secrets, password, prompting).await?;
+    tokio::time::timeout(CONNECT_TIMEOUT, connect(&config, password.as_ref()))
+        .await
+        .map_err(|_| OpenError::TimedOut(CONNECT_TIMEOUT))?
+        .map_err(OpenError::Driver)
 }
 
-async fn resolve_password(
+/// Opens a connection to a saved data source with its saved password, if it needs one.
+///
+/// For other front ends than the app's UI, such as `dbdesk mcp`, so every way in connects
+/// through the same drivers, keychain and timeout.
+///
+/// # Errors
+///
+/// [`OpenError`] if the password can't be read, the driver fails, or connecting takes longer
+/// than the connect timeout.
+pub async fn open_data_source(
     data_source: &DataSource,
     secrets: &Arc<dyn SecretStore>,
-    password: &PasswordUpdate,
-) -> Result<Option<Password>, OpenError> {
-    match password {
-        PasswordUpdate::Set(password) => Ok(Some(password.clone())),
-        PasswordUpdate::Keep if !data_source.config.driver().uses_password() => Ok(None),
-        PasswordUpdate::Keep => {
-            let secrets = Arc::clone(secrets);
-            let id = data_source.id;
-            tokio::task::spawn_blocking(move || secrets.password(id))
-                .await
-                .map_err(OpenError::Task)?
-                .map_err(OpenError::Password)
-        }
-    }
+) -> Result<Box<dyn Connection>, OpenError> {
+    open(
+        data_source,
+        secrets,
+        &PasswordUpdate::Keep,
+        Prompting::Never,
+    )
+    .await
+}
+
+/// Opens a connection for `dbdesk mcp`: as the data source's MCP login when it has one,
+/// with that login's own saved password, and otherwise as [`open_data_source`] does.
+///
+/// An MCP login without a saved password is an error rather than a reason to fall back to
+/// the data source's own login, whose grants are what the MCP login exists to narrow.
+///
+/// # Errors
+///
+/// [`OpenError`] as for [`open_data_source`], and [`OpenError::NoMcpPassword`].
+pub async fn open_data_source_for_mcp(
+    data_source: &DataSource,
+    secrets: &Arc<dyn SecretStore>,
+) -> Result<Box<dyn Connection>, OpenError> {
+    let Some(login) = &data_source.mcp_login else {
+        return open_data_source(data_source, secrets).await;
+    };
+    let Some(config) = data_source.config.with_user(&login.user) else {
+        return open_data_source(data_source, secrets).await;
+    };
+    let id = data_source.id;
+    let store = Arc::clone(secrets);
+    let password = tokio::task::spawn_blocking(move || store.mcp_password(id))
+        .await
+        .map_err(OpenError::Task)?
+        .map_err(OpenError::Password)?
+        .ok_or_else(|| OpenError::NoMcpPassword {
+            user: login.user.clone(),
+        })?;
+    let as_mcp = DataSource {
+        config,
+        ..data_source.clone()
+    };
+    open(
+        &as_mcp,
+        secrets,
+        &PasswordUpdate::Set(password),
+        Prompting::Never,
+    )
+    .await
 }
 
 /// The one place that maps a configuration to its driver.
@@ -79,6 +133,10 @@ async fn connect(
         }
         ConnectionConfig::SqlServer(config) => {
             Box::new(dbdesk_driver_sqlserver::connect(config, password).await?)
+        }
+        ConnectionConfig::DuckDb(config) => Box::new(dbdesk_driver_duckdb::connect(config).await?),
+        ConnectionConfig::ClickHouse(config) => {
+            Box::new(dbdesk_driver_clickhouse::connect(config, password).await?)
         }
     })
 }
@@ -114,26 +172,30 @@ async fn open_ping_close(
     secrets: &Arc<dyn SecretStore>,
     password: &PasswordUpdate,
 ) -> Result<ServerInfo, OpenError> {
-    let mut connection = open(data_source, secrets, password).await?;
+    let mut connection = open(data_source, secrets, password, Prompting::Never).await?;
     connection.ping().await?;
     let server = connection.server_info().clone();
     connection.close().await?;
     Ok(server)
 }
 
-/// Creates an empty SQLite database, then reports it as [`Event::SqliteDatabaseCreated`].
-pub(crate) async fn create_sqlite_database(path: PathBuf, events: EventSink) {
-    let result = dbdesk_driver_sqlite::create_database(&path).await;
+/// Creates an empty database file, then reports it as [`Event::DatabaseFileCreated`].
+pub(crate) async fn create_database_file(file: DatabaseFile, events: EventSink) {
+    let result = match &file {
+        DatabaseFile::Sqlite(path) => dbdesk_driver_sqlite::create_database(path).await,
+        DatabaseFile::DuckDb(path) => dbdesk_driver_duckdb::create_database(path).await,
+    };
+    let engine = file.driver().display_name();
+    let path = file.path().display();
     match &result {
-        Ok(()) => tracing::info!("created SQLite database {}", path.display()),
+        Ok(()) => tracing::info!("created {engine} database {path}"),
         Err(error) => tracing::warn!(
-            "could not create SQLite database {}: {}",
-            path.display(),
+            "could not create {engine} database {path}: {}",
             describe_error(error)
         ),
     }
-    events.send(Event::SqliteDatabaseCreated {
-        path,
+    events.send(Event::DatabaseFileCreated {
+        file,
         result: result.map_err(|error| describe_error(&error)),
     });
 }

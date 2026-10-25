@@ -119,6 +119,58 @@ merge into t using s on t.id = s.id when matched then update set a = s.a when no
 values (1);
 "#;
 
+const VALID_DUCKDB: &str = r#"
+select * from read_parquet('data/*.parquet') where amount > 1 order by 1 limit 10;
+select * from 'events.csv';
+from orders select customer, total where total > 10;
+select * exclude (note) from orders;
+select * replace (total * 2 as total) from orders;
+select columns('total|amount') from orders;
+select [1, 2, 3] as l, {'a': 1, 'b': 2} as s, l[1], s.a from t;
+select list_transform([1, 2], x -> x + 1), list_filter(l, x -> x > 1) from t;
+select customer, count(*) from orders group by all order by all;
+select * from orders qualify row_number() over (partition by customer order by total desc) = 1;
+select * from trades t asof join quotes q on t.symbol = q.symbol and t.ts >= q.ts;
+select * from a positional join b;
+select 1::integer, '2024-01-01'::date, x::varchar[] from t;
+select $1, ? from t;
+select struct_pack(a := 1, b := 'x');
+select * from orders using sample 10%;
+select a // 2, a ** 2, a ^ 2 from t;
+with recursive n(i) as (select 1 union all select i + 1 from n where i < 5) select * from n;
+insert into orders select * from read_csv('new.csv', header = true);
+insert or replace into kv values ('a', 1);
+insert into t by name select 1 as b, 2 as a;
+update orders set total = total * 1.1 where customer = 'ada' returning *;
+delete from orders where total < 0;
+select * from orders where note similar to 'a%' and customer ilike '%da%';
+select date_trunc('month', ts), epoch_ms(ts) from events;
+select string_agg(name, ', ' order by name) from people;
+"#;
+
+const VALID_CLICKHOUSE: &str = r#"
+select toDate(ts) as day, count() from events where ts >= now() - interval 7 day group by day order by day limit 10;
+select `user id`, "event" from events final prewhere event = 'click' where user_id > 0;
+select * from events sample 0.1 settings max_threads = 4;
+select arrayJoin([1, 2, 3]) as x, [1, 2][1], tuple(1, 'a').2, map('k', 1)['k'];
+select x, y from t array join arr as x left array join arr2 as y;
+select uniq(user_id), quantile(0.9)(duration), countIf(ok), sumIf(amount, ok) from events;
+select * from events order by ts with fill step 1;
+select * from events limit 2 by user_id;
+select multiIf(a > 1, 'big', a = 1, 'one', 'small') from t;
+select 'it\'s', 'a''b', $$dollar$$ from t;
+with 5 as n select n * 2;
+select toStartOfHour(ts), argMax(value, ts) from metrics group by 1;
+insert into events (ts, event) values (now(), 'click');
+select * from file('data.csv', 'CSVWithNames');
+select * from events where has(tags, 'x') and match(url, '^/a');
+select * from t where a global in (select a from u);
+select cast(1 as UInt8), 1::UInt8, toTypeName(1);
+select * from t any left join u on t.id = u.id;
+select a from t final;
+select count() from system.tables format JSON;
+"#;
+
 fn syntax_errors(corpus: &str, dialect: Dialect) -> Vec<(String, Problem)> {
     split_statements(corpus, dialect)
         .into_iter()
@@ -138,6 +190,8 @@ fn valid_statements_get_no_syntax_error() {
     assert_eq!(syntax_errors(VALID_SQLITE, Dialect::Sqlite), []);
     assert_eq!(syntax_errors(VALID_MYSQL, Dialect::Mysql), []);
     assert_eq!(syntax_errors(VALID_SQL_SERVER, Dialect::SqlServer), []);
+    assert_eq!(syntax_errors(VALID_DUCKDB, Dialect::DuckDb), []);
+    assert_eq!(syntax_errors(VALID_CLICKHOUSE, Dialect::ClickHouse), []);
 }
 
 #[test]
@@ -191,7 +245,7 @@ type LintCase = (&'static str, Dialect, &'static [(LintRule, &'static str)]);
 #[test]
 fn lint_rules_flag_what_they_describe_and_nothing_else() {
     use LintRule::*;
-    let cases: [LintCase; 13] = [
+    let cases: [LintCase; 15] = [
         (
             "select * from t where a = null",
             Dialect::Postgres,
@@ -257,6 +311,16 @@ fn lint_rules_flag_what_they_describe_and_nothing_else() {
             Dialect::SqlServer,
             &[(SelectStarInInsert, "*")],
         ),
+        (
+            "update orders set total = 0 where note = null",
+            Dialect::DuckDb,
+            &[(NullComparison, "= null")],
+        ),
+        (
+            "delete from orders",
+            Dialect::DuckDb,
+            &[(DeleteWithoutWhere, "delete")],
+        ),
     ];
     for (sql, dialect, expected) in cases {
         assert_eq!(lints(sql, dialect), expected, "{sql}");
@@ -272,15 +336,32 @@ fn rule_ids_read_back() {
 }
 
 #[test]
-fn still_reports_mysql_and_sql_server_syntax_errors_around_their_gaps() {
+fn still_reports_syntax_errors_around_the_dialects_gaps() {
     let cases = [
         "select a from t where",
         "select a, from t",
         "update t set where id = 1",
     ];
-    for (sql, dialect) in cases
-        .into_iter()
-        .flat_map(|sql| [(sql, Dialect::Mysql), (sql, Dialect::SqlServer)])
+    let everywhere = cases.into_iter().flat_map(|sql| {
+        [
+            (sql, Dialect::Mysql),
+            (sql, Dialect::SqlServer),
+            (sql, Dialect::DuckDb),
+            (sql, Dialect::ClickHouse),
+        ]
+    });
+    // DuckDB accepts a trailing comma in a select list, `select a, from t`. `**` is its power
+    // operator only when written together.
+    let duckdb = [
+        ("select a * * 2 from t", Dialect::DuckDb),
+        ("select a,, b from t", Dialect::DuckDb),
+    ];
+    for (sql, dialect) in everywhere
+        .filter(|&(sql, dialect)| {
+            // DuckDB and ClickHouse accept a trailing comma in a select list.
+            !(matches!(dialect, Dialect::DuckDb | Dialect::ClickHouse) && sql == "select a, from t")
+        })
+        .chain(duckdb)
     {
         let problems = check_statement(sql, dialect);
         assert!(

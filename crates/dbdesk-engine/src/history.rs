@@ -1,8 +1,8 @@
 //! The query history database, owned by one thread from the blocking pool. Requests queue
 //! up in order, so a search sent after a run has finished sees that run's statements.
 
-use dbdesk_core::{DataSourceId, describe_error};
-use dbdesk_store::{History, HistoryEntry, HistoryFile};
+use dbdesk_core::describe_error;
+use dbdesk_store::{History, HistoryEntry, HistoryFile, HistoryQuery};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
 
@@ -15,10 +15,7 @@ const SEARCH_LIMIT: usize = 500;
 
 enum HistoryRequest {
     Record(HistoryEntry),
-    Search {
-        data_source: DataSourceId,
-        text: String,
-    },
+    Search(HistoryQuery),
 }
 
 /// A handle for queueing history work. Cheap to clone into sessions.
@@ -41,8 +38,8 @@ impl HistoryLog {
     }
 
     /// Answered by [`Event::HistoryFound`].
-    pub(crate) fn search(&self, data_source: DataSourceId, text: String) {
-        self.send(HistoryRequest::Search { data_source, text });
+    pub(crate) fn search(&self, query: HistoryQuery) {
+        self.send(HistoryRequest::Search(query));
     }
 
     fn send(&self, request: HistoryRequest) {
@@ -66,18 +63,14 @@ fn serve(file: &HistoryFile, mut requests: UnboundedReceiver<HistoryRequest>, ev
                     record(history, &entry);
                 }
             }
-            HistoryRequest::Search { data_source, text } => {
+            HistoryRequest::Search(query) => {
                 let result = match &history {
                     Ok(history) => history
-                        .search(data_source, &text, SEARCH_LIMIT)
+                        .search(&query, SEARCH_LIMIT)
                         .map_err(|error| describe_error(&error)),
                     Err(error) => Err(error.clone()),
                 };
-                events.send(Event::HistoryFound {
-                    data_source,
-                    text,
-                    result,
-                });
+                events.send(Event::HistoryFound { query, result });
             }
         }
     }

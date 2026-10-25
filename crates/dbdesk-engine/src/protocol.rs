@@ -1,15 +1,16 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use dbdesk_core::{
-    CatalogNode, CatalogPath, ColumnInfo, DataSource, DataSourceId, Password, ProjectId, Rejection,
-    RelationName, Row, ServerInfo, TableDescription, TransactionStatus,
+    CatalogNode, CatalogPath, ColumnInfo, DataSource, DataSourceId, DriverKind, Password,
+    ProjectId, Rejection, RelationName, Row, ServerInfo, TableDescription, TransactionStatus,
 };
 use dbdesk_store::{
-    ConsoleKey, HistoryEntry, KeymapBindings, Project, Projects, SavedConsole, Settings,
+    ConsoleKey, HistoryEntry, HistoryQuery, ImportPlan, ImportPreview, KeymapBindings,
+    McpOverrides, McpPermissions, Project, Projects, SavedConsole, Settings,
 };
 
-use crate::{Export, Release};
+use crate::{Export, PasswordNeeded, Release};
 
 /// Identifies a query console. Chosen by the UI, unique for the app's lifetime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -47,6 +48,22 @@ pub enum Command {
         id: ProjectId,
         name: String,
     },
+    /// Sets whether MCP clients may use the project, and what it sets differently from the
+    /// MCP defaults. Answered by [`Event::ProjectSaved`] or [`Event::ProjectSaveFailed`].
+    SaveProjectMcp {
+        id: ProjectId,
+        mcp_enabled: bool,
+        overrides: McpOverrides,
+    },
+    /// Replaces what projects allow MCP clients when they don't say otherwise. Answered by
+    /// [`Event::McpDefaultsSaved`] or [`Event::McpDefaultsSaveFailed`].
+    SaveMcpDefaults(McpPermissions),
+    /// Saves the password of the data source's MCP login, or removes it with `None`. Only
+    /// failures are answered, by [`Event::DataSourceSaveFailed`].
+    SaveMcpPassword {
+        id: DataSourceId,
+        password: Option<Password>,
+    },
     /// Moves the project's data sources to no project, then forgets the project. Never
     /// deletes a data source. Answered by an [`Event::DataSourceSaved`] per data source moved,
     /// then [`Event::ProjectDeleted`], or by [`Event::ProjectSaveFailed`].
@@ -57,6 +74,21 @@ pub enum Command {
         data_source: DataSourceId,
         project: Option<ProjectId>,
     },
+    /// Writes the data sources, the projects, and every project those data sources are in,
+    /// to a file another machine can import. Never a password. Answered by
+    /// [`Event::DataSourcesExported`].
+    ExportDataSources {
+        path: PathBuf,
+        data_sources: Vec<DataSourceId>,
+        projects: Vec<ProjectId>,
+    },
+    /// Reads an exported file and compares it with the data sources and projects here,
+    /// changing nothing. Answered by [`Event::ImportPreviewed`].
+    PreviewImport(PathBuf),
+    /// Saves what the user chose to import: the projects first, then the data sources, each
+    /// added or replacing the one with its id. Answered by an [`Event::ProjectSaved`] and
+    /// [`Event::DataSourceSaved`] for each, then [`Event::ImportApplied`].
+    ApplyImport(ImportPlan),
     /// Connects with these settings without saving them, then disconnects.
     /// Answered by [`Event::ConnectionTested`].
     TestConnection {
@@ -64,6 +96,14 @@ pub enum Command {
         password: PasswordUpdate,
     },
     Connect(DataSourceId),
+    /// The password the user typed at the prompt that [`Event::PasswordNeeded`] opened. Kept
+    /// in memory until dbdesk quits, and also saved to the keychain if `save` is set. The UI
+    /// connects again afterwards. Answered by [`Event::PasswordProvided`].
+    ProvidePassword {
+        data_source: DataSourceId,
+        password: Password,
+        save: bool,
+    },
     /// Disconnects the explorer's connection and every console's connection to the data
     /// source, rolling back their open transactions.
     Disconnect(DataSourceId),
@@ -78,9 +118,9 @@ pub enum Command {
         id: DataSourceId,
         path: CatalogPath,
     },
-    /// Creates a new, empty SQLite database file, refusing to overwrite an existing one.
-    /// Answered by [`Event::SqliteDatabaseCreated`].
-    CreateSqliteDatabase(PathBuf),
+    /// Creates a new, empty database file, refusing to overwrite an existing one. Answered by
+    /// [`Event::DatabaseFileCreated`].
+    CreateDatabaseFile(DatabaseFile),
     /// Runs statements in order on the console's own connection, connecting it to
     /// `data_source` first if needed, and stops at the first failure. Each statement's first
     /// page of rows is reported; the last statement's remaining rows stay available through
@@ -158,12 +198,8 @@ pub enum Command {
         console: ConsoleId,
         export: Export,
     },
-    /// Looks up the data source's past statements containing `text`, newest first.
-    /// Answered by [`Event::HistoryFound`].
-    SearchHistory {
-        data_source: DataSourceId,
-        text: String,
-    },
+    /// Looks up past statements, newest first. Answered by [`Event::HistoryFound`].
+    SearchHistory(HistoryQuery),
     /// Asks the release feed for the newest published release. Answered by
     /// [`Event::LatestRelease`].
     CheckForUpdates,
@@ -188,6 +224,17 @@ pub enum TransactionMode {
 pub enum TransactionEnd {
     Commit,
     Rollback,
+}
+
+/// Where a password given at the prompt was kept.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PasswordKept {
+    /// In the keychain, for this and later sessions.
+    Saved,
+    /// In memory only, as asked.
+    ForThisSession,
+    /// In memory only, because the keychain refused it.
+    SaveFailed(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -233,6 +280,10 @@ pub enum Event {
     },
     /// The project is gone; its data sources were moved to no project first.
     ProjectDeleted(ProjectId),
+    McpDefaultsSaved(McpPermissions),
+    McpDefaultsSaveFailed {
+        error: String,
+    },
     /// Every saved console file, read once at start-up, right after the data sources.
     ConsolesLoaded(Vec<SavedConsole>),
     /// The bindings `keymap.toml` sets, read at start-up (before the data sources) and on
@@ -288,8 +339,7 @@ pub enum Event {
     /// The answer to [`Command::SearchHistory`], echoing what was searched for so the UI can
     /// drop answers to searches it has moved on from.
     HistoryFound {
-        data_source: DataSourceId,
-        text: String,
+        query: HistoryQuery,
         result: Result<Vec<HistoryEntry>, String>,
     },
     SessionChanged {
@@ -299,6 +349,33 @@ pub enum Event {
     ConnectionTested {
         id: DataSourceId,
         result: Result<ServerInfo, String>,
+    },
+    /// A connection to the data source was not attempted for want of a password: none is
+    /// saved, or the keychain couldn't be read. The session that wanted it reports
+    /// [`SessionState::Failed`] too; the UI asks for the password and answers with
+    /// [`Command::ProvidePassword`].
+    PasswordNeeded {
+        data_source: DataSourceId,
+        reason: PasswordNeeded,
+    },
+    /// The answer to [`Command::ExportDataSources`]: how many data sources were written.
+    DataSourcesExported {
+        path: PathBuf,
+        result: Result<usize, String>,
+    },
+    /// The answer to [`Command::PreviewImport`]. Boxed, since a preview is large next to
+    /// every other event.
+    ImportPreviewed {
+        path: PathBuf,
+        result: Result<Box<ImportPreview>, String>,
+    },
+    /// The answer to [`Command::ApplyImport`], once everything chosen is saved, or once
+    /// saving failed. Projects saved before a data source failed stay saved.
+    ImportApplied(Result<(), String>),
+    /// The answer to [`Command::ProvidePassword`].
+    PasswordProvided {
+        data_source: DataSourceId,
+        kept: PasswordKept,
     },
     ChildrenLoaded {
         id: DataSourceId,
@@ -310,8 +387,8 @@ pub enum Event {
         path: CatalogPath,
         result: Result<String, String>,
     },
-    SqliteDatabaseCreated {
-        path: PathBuf,
+    DatabaseFileCreated {
+        file: DatabaseFile,
         result: Result<(), String>,
     },
     ConsoleSessionChanged {
@@ -392,6 +469,28 @@ pub struct StatementFailure {
     pub message: String,
     /// Byte offset into the statement's text, when the database reports one.
     pub position: Option<usize>,
+}
+
+/// A database file to create, for the engines whose databases are files.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DatabaseFile {
+    Sqlite(PathBuf),
+    DuckDb(PathBuf),
+}
+
+impl DatabaseFile {
+    pub fn path(&self) -> &Path {
+        match self {
+            Self::Sqlite(path) | Self::DuckDb(path) => path,
+        }
+    }
+
+    pub fn driver(&self) -> DriverKind {
+        match self {
+            Self::Sqlite(_) => DriverKind::Sqlite,
+            Self::DuckDb(_) => DriverKind::DuckDb,
+        }
+    }
 }
 
 /// What a run is for.

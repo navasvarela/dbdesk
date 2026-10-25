@@ -29,6 +29,12 @@ dbdesk/
   the error. A broken file is never overwritten with an empty list.
 - `color` is optional (one of `red`, `orange`, `yellow`, `green`, `teal`, `blue`, `violet`,
   `pink`) and only written when set, so files from before it existed load unchanged.
+- `safety` is optional (`normal`, `careful` or `read-only`) and only written when it isn't
+  `normal` (W2). Exports carry it.
+- `host`, `port`, `database`, `user`, `path` and `ca_file` may hold `${NAME}` placeholders,
+  resolved when connecting; a port with one is written as a string (W1).
+- `project` and `mcp_login` are optional too. `mcp_login = { user = "…" }` is the database user
+  `dbdesk mcp` signs in as instead of the data source's own (see [MCP server](mcp-server.md)).
 - Comments and unknown fields are **not** preserved when dbdesk rewrites the file (it is written
   with `serde` + `toml`), and the file header says so. Switching to `toml_edit` to edit the
   document in place is a follow-up if hand-editing becomes common.
@@ -57,6 +63,19 @@ path = "/Users/juan/data/chinook.db"
 read_only = true
 ```
 
+## Exports of data sources (W1)
+
+- **File › Export data sources…** writes `[[data_source]]` tables in `data_sources.toml`'s
+  format, plus `format_version = 1` and `[[project]]` tables (id, name, slug, `mcp_enabled`,
+  MCP overrides). Built by `dbdesk_store::write_export` from types that list every field an
+  export may carry; a field added to `DataSource` or `Project` fails to compile there until
+  someone decides whether it travels. Never a password, token or command.
+- Paths beside the exported file are written relative to it, paths under the home folder as
+  `~/…`; `read_export` resolves both again. Paths with `${…}` are left alone.
+- A newer `format_version` is refused. Ids (and project slugs) must be unique in the file.
+- Import matches by id (projects by id, then by slug), previews before writing, and writes
+  `projects.toml` then `data_sources.toml`, each once.
+
 ## Secrets
 
 - Passwords go to the OS keychain via `keyring`: service `dbdesk`, account `<data-source-id>`.
@@ -64,10 +83,16 @@ read_only = true
   SQLite file never triggers a keychain prompt.
 - Behind the `SecretStore` trait, so tests use an in-memory store. A real-keychain round trip is
   an opt-in test: `cargo test -p dbdesk-store -- --ignored`.
-- Deleting a data source removes its keychain entry. If that fails, the failure is only logged,
-  since a leftover entry is harmless.
-- Not yet: if the keychain is unavailable or the user declines, fall back to asking for the
-  password on connect and keeping it in memory for the session only. Never write secrets to disk.
+- A data source's MCP login has an entry of its own, account `<data-source-id>/mcp`, which only
+  `dbdesk mcp` reads.
+- Deleting a data source removes its keychain entries. If that fails, the failure is only
+  logged, since a leftover entry is harmless.
+- A data source that signs in with a password and has none saved (or whose keychain entry
+  can't be read: locked, declined, unavailable) asks for it when it connects, with **Save to
+  keychain** ticked. Whatever is typed is also kept in memory until dbdesk quits, so it still
+  connects when saving fails or is unticked. Never written to disk. `dbdesk mcp` can't ask, so
+  it connects without one. Saving the data source with a new password forgets the remembered
+  one.
 - Later: support `~/.pgpass` and `PG*` environment variables for Postgres, which is what other
   tools on the machine already use.
 

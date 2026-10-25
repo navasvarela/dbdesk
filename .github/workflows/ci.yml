@@ -4,12 +4,26 @@ on:
   push:
     branches: [main]
   pull_request:
-  # The release workflow runs the full suite on the commit it packages.
-  workflow_call:
+
+# One run per pull request at a time: a newer push cancels the run it supersedes. GitHub also
+# sends two pull_request events for one commit when a stacked pull request's base moves, and the
+# second cancels the first. Pushes to main each get a group of their own (the run id), so they are
+# never cancelled.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.head_ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
+
+# The first failure stops the whole run: every job ends with a step that cancels the run when
+# the job fails, so the other jobs (a slow macOS or Windows build, say) stop instead of using a
+# runner for a result that no longer matters. `gh run rerun --failed` reruns the cancelled jobs
+# too.
+permissions:
+  contents: read
+  actions: write
 
 jobs:
   fmt:
@@ -20,6 +34,11 @@ jobs:
         with:
           components: rustfmt
       - run: cargo fmt --all --check
+      - name: Cancel the rest of the run
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
 
   # The user manual in book/. A broken link to a page or an image fails the build.
   book:
@@ -30,21 +49,39 @@ jobs:
         with:
           tool: mdbook@0.5.4,mdbook-linkcheck2@0.13.0
       - run: mdbook build book
+      - name: Cancel the rest of the run
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
 
   check:
     strategy:
-      fail-fast: false
+      # Also cancels the other systems' jobs straight away when one fails.
+      fail-fast: true
       matrix:
         # Windows builds and runs the tests, but dbdesk hasn't been tried on a real Windows
         # machine yet; see docs/releasing.md.
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    # sccache caches compiler output in GitHub's cache. `RUSTC_WRAPPER` puts it in front of rustc,
+    # and the cc crate also uses it for C and C++ when it is sccache, which covers DuckDB's bundled
+    # C++ engine: compiling that took 10–14 minutes per OS on every cold build.
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      # Pull requests restore main's cache but never save their own. Each save took 30–50 s,
+      # and GitHub keeps 10 GB of cache per repository, so pull request caches pushed main's
+      # out and later runs started cold.
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # Headers eframe's windowing backends link against on Linux (same list egui's own CI uses).
       - if: runner.os == 'Linux'
         run: |
@@ -59,5 +96,14 @@ jobs:
         run: |
           docker compose up -d --wait
           grep -E '^[A-Z_]+=' test-servers.env >> "$GITHUB_ENV"
-      - run: cargo clippy --workspace --all-targets
+      # Clippy on macOS found nothing Linux didn't, so it's skipped there to save a build.
+      # Windows keeps it: some lints depend on type sizes, and `result_large_err` once failed
+      # only there.
+      - if: runner.os != 'macOS'
+        run: cargo clippy --workspace --all-targets
       - run: cargo test --workspace
+      - name: Cancel the rest of the run
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}

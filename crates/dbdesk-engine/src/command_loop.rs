@@ -1,8 +1,11 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use dbdesk_core::{DataSource, DataSourceId, ProjectId, describe_error};
-use dbdesk_store::{ConsoleFiles, KeymapFile, Project, SecretError, SecretStore, SettingsFile};
+use dbdesk_core::{DataSource, DataSourceId, Password, ProjectId, describe_error};
+use dbdesk_store::{
+    ConsoleFiles, ImportPlan, KeymapFile, Project, SecretError, SecretStore, SettingsFile,
+};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::task::{JoinError, JoinSet};
 
@@ -11,15 +14,17 @@ use crate::events::EventSink;
 use crate::export;
 use crate::history::HistoryLog;
 use crate::keymap;
-use crate::open::{create_sqlite_database, test_connection};
+use crate::open::{create_database_file, test_connection};
+use crate::passwords::SessionPasswords;
 use crate::projects::{ProjectError, ProjectRegistry};
 use crate::registry::{Registry, RegistryError};
 use crate::releases::{self, ReleaseFeed};
 use crate::session::{Script, Services, Session, SessionOwner, SessionRequest};
 use crate::settings;
+use crate::transfer;
 use crate::updater::{self, UpdateInstaller};
 use crate::{
-    Command, ConsoleId, EditFailure, EngineConfig, Event, PasswordUpdate, RunOutcome,
+    Command, ConsoleId, EditFailure, EngineConfig, Event, PasswordKept, PasswordUpdate, RunOutcome,
     StatementCheck,
 };
 
@@ -55,6 +60,7 @@ pub(crate) async fn run(
         registry,
         projects,
         secrets: config.secrets,
+        passwords: SessionPasswords::default(),
         console_files: config.consoles,
         keymap_file: config.keymap,
         settings_file: config.settings,
@@ -87,6 +93,8 @@ struct Engine {
     projects: ProjectRegistry,
     history: HistoryLog,
     secrets: Arc<dyn SecretStore>,
+    /// Passwords given at the prompt, shared with every session.
+    passwords: SessionPasswords,
     console_files: ConsoleFiles,
     keymap_file: KeymapFile,
     settings_file: SettingsFile,
@@ -120,11 +128,41 @@ impl Engine {
                 let result = self.projects.rename(id, &name).await;
                 self.report_project(id, result);
             }
+            Command::SaveProjectMcp {
+                id,
+                mcp_enabled,
+                overrides,
+            } => {
+                let result = self.projects.save_mcp(id, mcp_enabled, overrides).await;
+                self.report_project(id, result);
+            }
+            Command::SaveMcpDefaults(defaults) => {
+                let event = match self.projects.save_mcp_defaults(defaults).await {
+                    Ok(defaults) => {
+                        tracing::info!("saved the MCP defaults");
+                        Event::McpDefaultsSaved(defaults)
+                    }
+                    Err(error) => {
+                        let error = describe_error(&error);
+                        tracing::error!("could not save the MCP defaults: {error}");
+                        Event::McpDefaultsSaveFailed { error }
+                    }
+                };
+                self.events.send(event);
+            }
+            Command::SaveMcpPassword { id, password } => self.save_mcp_password(id, password).await,
             Command::DeleteProject(id) => self.delete_project(id).await,
             Command::MoveToProject {
                 data_source,
                 project,
             } => self.move_to_project(data_source, project).await,
+            Command::ExportDataSources {
+                path,
+                data_sources,
+                projects,
+            } => self.export(path, &data_sources, &projects),
+            Command::PreviewImport(path) => self.preview_import(path),
+            Command::ApplyImport(plan) => self.apply_import(plan).await,
             Command::TestConnection {
                 data_source,
                 password,
@@ -137,6 +175,11 @@ impl Engine {
                 ));
             }
             Command::Connect(id) => self.connect(id),
+            Command::ProvidePassword {
+                data_source,
+                password,
+                save,
+            } => self.provide_password(data_source, password, save).await,
             Command::Disconnect(id) => self.disconnect(id),
             Command::LoadChildren { id, path } => {
                 self.request(id, SessionRequest::Children(path));
@@ -144,8 +187,8 @@ impl Engine {
             Command::LoadDefinition { id, path } => {
                 self.request(id, SessionRequest::Definition(path));
             }
-            Command::CreateSqliteDatabase(path) => {
-                tokio::spawn(create_sqlite_database(path, self.events.clone()));
+            Command::CreateDatabaseFile(file) => {
+                tokio::spawn(create_database_file(file, self.events.clone()));
             }
             Command::Execute {
                 console,
@@ -236,9 +279,7 @@ impl Engine {
             Command::ExportRows { console, export } => {
                 tokio::spawn(export::run(console, export, self.events.clone()));
             }
-            Command::SearchHistory { data_source, text } => {
-                self.history.search(data_source, text);
-            }
+            Command::SearchHistory(query) => self.history.search(query),
             Command::CheckForUpdates => {
                 tokio::spawn(releases::check(
                     Arc::clone(&self.releases),
@@ -276,6 +317,7 @@ impl Engine {
     ) -> Result<(), SaveError> {
         self.registry.ensure_available()?;
         if let PasswordUpdate::Set(password) = password {
+            self.passwords.remove(data_source.id);
             let secrets = Arc::clone(&self.secrets);
             let id = data_source.id;
             tokio::task::spawn_blocking(move || secrets.set_password(id, &password))
@@ -291,6 +333,7 @@ impl Engine {
         self.disconnect(id);
         match self.registry.remove(id).await {
             Ok(true) => {
+                self.passwords.remove(id);
                 self.delete_password(id).await;
                 tracing::info!(%id, "deleted data source");
                 self.events.send(Event::DataSourceDeleted(id));
@@ -372,10 +415,173 @@ impl Engine {
         }
     }
 
-    /// A leftover keychain entry is harmless, so failing to remove it is only logged.
+    /// Remembers the password for the session first, so the next connection works even if
+    /// the keychain refuses it.
+    async fn provide_password(
+        &mut self,
+        data_source: DataSourceId,
+        password: dbdesk_core::Password,
+        save: bool,
+    ) {
+        self.passwords.insert(data_source, password.clone());
+        // The explorer's session that asked for the password has reported its failure, but
+        // its task may not have ended yet; `connect` would then take it for one still
+        // connecting and ignore the Connect the UI sends next. A prompt only follows a failed
+        // attempt, so the session is let go here.
+        if let Some(session) = self.sessions.remove(&data_source) {
+            self.closing.spawn(session.stop());
+        }
+        let kept = if save {
+            let secrets = Arc::clone(&self.secrets);
+            let result =
+                tokio::task::spawn_blocking(move || secrets.set_password(data_source, &password))
+                    .await;
+            match result {
+                Ok(Ok(())) => PasswordKept::Saved,
+                Ok(Err(error)) => PasswordKept::SaveFailed(describe_error(&error)),
+                Err(error) => PasswordKept::SaveFailed(describe_error(&error)),
+            }
+        } else {
+            PasswordKept::ForThisSession
+        };
+        match &kept {
+            PasswordKept::SaveFailed(error) => {
+                tracing::warn!(%data_source, "could not save the password, keeping it for this session: {error}");
+            }
+            PasswordKept::Saved | PasswordKept::ForThisSession => {
+                tracing::info!(%data_source, "password given: {kept:?}");
+            }
+        }
+        self.events
+            .send(Event::PasswordProvided { data_source, kept });
+    }
+
+    fn export(&self, path: PathBuf, data_sources: &[DataSourceId], projects: &[ProjectId]) {
+        let gathered = self
+            .registry
+            .data_sources()
+            .map_err(|e| describe_error(&e))
+            .and_then(|all| {
+                let projects_here = self.projects.projects().map_err(|e| describe_error(&e))?;
+                Ok(transfer::DataSourceExport::gather(
+                    path.clone(),
+                    all,
+                    projects_here,
+                    data_sources,
+                    projects,
+                ))
+            });
+        match gathered {
+            Ok(export) => {
+                tokio::spawn(transfer::export(export, self.events.clone()));
+            }
+            Err(error) => self.events.send(Event::DataSourcesExported {
+                path,
+                result: Err(error),
+            }),
+        }
+    }
+
+    fn preview_import(&self, path: PathBuf) {
+        let snapshot = self
+            .registry
+            .data_sources()
+            .map_err(|e| describe_error(&e))
+            .and_then(|data_sources| {
+                let projects = self.projects.projects().map_err(|e| describe_error(&e))?;
+                Ok((data_sources.to_vec(), projects.clone()))
+            });
+        match snapshot {
+            Ok((data_sources, projects)) => {
+                tokio::spawn(transfer::preview(
+                    path,
+                    data_sources,
+                    projects,
+                    self.events.clone(),
+                ));
+            }
+            Err(error) => self.events.send(Event::ImportPreviewed {
+                path,
+                result: Err(error),
+            }),
+        }
+    }
+
+    /// Saves the projects, then the data sources, each file once.
+    async fn apply_import(&mut self, plan: ImportPlan) {
+        let ImportPlan {
+            projects,
+            data_sources,
+        } = plan;
+        let result = self.import_projects(projects).await;
+        let result = match result {
+            Ok(()) => self.import_data_sources(data_sources).await,
+            Err(error) => Err(error),
+        };
+        match &result {
+            Ok(()) => tracing::info!("imported data sources"),
+            Err(error) => tracing::error!("could not import data sources: {error}"),
+        }
+        self.events.send(Event::ImportApplied(result));
+    }
+
+    async fn import_projects(&mut self, projects: Vec<Project>) -> Result<(), String> {
+        if projects.is_empty() {
+            return Ok(());
+        }
+        self.projects
+            .import(projects.clone())
+            .await
+            .map_err(|error| describe_error(&error))?;
+        for project in projects {
+            self.events.send(Event::ProjectSaved(project));
+        }
+        Ok(())
+    }
+
+    async fn import_data_sources(&mut self, data_sources: Vec<DataSource>) -> Result<(), String> {
+        if data_sources.is_empty() {
+            return Ok(());
+        }
+        self.registry
+            .upsert_all(data_sources.clone())
+            .await
+            .map_err(|error| describe_error(&error))?;
+        for data_source in data_sources {
+            self.events.send(Event::DataSourceSaved(data_source));
+        }
+        Ok(())
+    }
+
+    async fn save_mcp_password(&self, id: DataSourceId, password: Option<Password>) {
+        let secrets = Arc::clone(&self.secrets);
+        let result = tokio::task::spawn_blocking(move || match password {
+            Some(password) => secrets.set_mcp_password(id, &password),
+            None => secrets.delete_mcp_password(id),
+        })
+        .await;
+        let error = match result {
+            Ok(Ok(())) => {
+                tracing::info!(%id, "saved the MCP login's password");
+                return;
+            }
+            Ok(Err(error)) => describe_error(&error),
+            Err(error) => describe_error(&error),
+        };
+        tracing::error!(%id, "could not save the MCP login's password: {error}");
+        self.events.send(Event::DataSourceSaveFailed { id, error });
+    }
+
+    /// Removes both of the data source's keychain entries, its own and its MCP login's. A
+    /// leftover entry is harmless, so failing to remove one is only logged.
     async fn delete_password(&self, id: DataSourceId) {
         let secrets = Arc::clone(&self.secrets);
-        let result = tokio::task::spawn_blocking(move || secrets.delete_password(id)).await;
+        let result = tokio::task::spawn_blocking(move || {
+            let own = secrets.delete_password(id);
+            let mcp = secrets.delete_mcp_password(id);
+            own.and(mcp)
+        })
+        .await;
         let error = match result {
             Ok(Ok(())) => return,
             Ok(Err(error)) => describe_error(&error),
@@ -443,6 +649,7 @@ impl Engine {
     fn services(&self) -> Services {
         Services {
             secrets: Arc::clone(&self.secrets),
+            passwords: self.passwords.clone(),
             events: self.events.clone(),
             history: self.history.clone(),
         }

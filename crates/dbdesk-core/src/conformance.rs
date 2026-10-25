@@ -260,10 +260,11 @@ async fn finish_ignoring_cancellation(cursor: Box<dyn ResultCursor>) {
 
 async fn check_error_position(connection: &mut dyn Connection, table: &str) {
     // A syntax error, because that is where every engine reports a position (SQLite gives
-    // none for unknown tables or columns).
-    let sql = format!("SELECT id FROM {table} WHERE WHERE id = 1");
+    // none for unknown tables or columns). Not a repeated keyword: ClickHouse reads
+    // `WHERE WHERE id` as a column named `WHERE` and fails at `id`.
+    let sql = format!("SELECT id FROM {table} WHERE id = = 1");
     let sql = sql.as_str();
-    let expected = sql.rfind("WHERE").expect("second WHERE");
+    let expected = sql.rfind('=').expect("second =");
     let error = match connection.execute(sql).await {
         Ok(cursor) => {
             let mut cursor = cursor;
@@ -445,7 +446,7 @@ pub async fn check_validate(connection: &mut dyn Connection, spelling: Spelling)
     for accepted in [
         format!("SELECT n FROM {table} WHERE n > 1"),
         format!("INSERT INTO {table} VALUES (1)"),
-        format!("DELETE FROM {table}"),
+        format!("DELETE FROM {table} WHERE n = 1"),
     ] {
         let rejection = connection.validate(&accepted).await.expect("validate");
         assert_eq!(rejection, None, "{accepted}");

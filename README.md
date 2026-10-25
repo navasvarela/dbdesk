@@ -5,12 +5,12 @@
 **Browse and Query databases.**
 
 dbdesk is a desktop database tool written in Rust. It connects to PostgreSQL, SQLite, MySQL,
-MariaDB and SQL Server today, and support for DuckDB, ClickHouse, Oracle and others is planned. It is a learning project first
+MariaDB, SQL Server, DuckDB and ClickHouse today, and support for Oracle and others is planned. It is a learning project first
 and a personal daily driver second: the goal is a tool small enough to understand end to end
 and easy to bend to my own workflow.
 
-Status: **M5 (personalisation)**. You can add PostgreSQL, SQLite, MySQL, MariaDB and SQL Server
-data sources and browse their catalogs. Query consoles have highlighting, line numbers and completion from the catalog;
+Status: **M5 (personalisation)**. You can add PostgreSQL, SQLite, MySQL, MariaDB, SQL Server,
+DuckDB and ClickHouse data sources and browse their catalogs. Query consoles have highlighting, line numbers and completion from the catalog;
 they run the statement at the cursor or a whole script, explain it, page through results,
 cancel long queries, and point at errors. Consoles are saved as `.sql` files and reopen on
 start, every statement goes to a searchable history, and a console can hold a transaction open
@@ -69,8 +69,8 @@ Passwords are in the macOS Keychain under the service `dbdesk`.
   selection / script, a streaming result grid, and cancellation.
 - **Log console**: one place for connection lifecycle events, query timings, server notices and errors.
 
-Engines: **PostgreSQL**, **SQLite**, **MySQL and MariaDB**, and **SQL Server**, with DuckDB,
-ClickHouse, Oracle and others planned.
+Engines: **PostgreSQL**, **SQLite**, **MySQL and MariaDB**, **SQL Server**, **DuckDB** and
+**ClickHouse**, with Oracle and others planned.
 UI: **egui** (via `eframe`) with **egui_dock** for dockable panels.
 
 ## Documents
@@ -91,6 +91,7 @@ UI: **egui** (via `eframe`) with **egui_dock** for dockable panels.
 | [Roadmap](docs/roadmap.md) | Milestones M0–M5, and the release (R1–R3), database (DB0–DB5), object helpers (E0–E4), MCP (P0, MCP1–MCP3), hackability (H1–H3), well-rounded (W1–W6) and design and documentation (D1–D4) tracks, with exit criteria |
 | [Releasing](docs/releasing.md) | Plan for downloadable builds: packaging, signing, the release workflow (proposed) |
 | [More databases](docs/databases.md) | Which engines come next (MySQL/MariaDB, SQL Server, DuckDB, ClickHouse, Oracle later) and what each needs (proposed) |
+| [Adding a database](docs/adding-a-database.md) | How to contribute support for a new database engine, step by step |
 | [Creating and changing database objects](docs/entity-helpers.md) | Dialogs for tables, views and users that show the SQL before running it (proposed) |
 | [MCP server](docs/mcp-server.md) | Projects of data sources, and an MCP server with permissions per project and global defaults (proposed) |
 | [Hackability](docs/hackability.md) | Custom actions, snippets and themes in files, command actions, then WebAssembly plugins (proposed) |

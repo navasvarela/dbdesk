@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use dbdesk_core::{ServerConfig, TlsMode};
+use dbdesk_core::{Port, ServerConfig, TlsMode, has_placeholder};
 
 use super::{FormError, required};
 
@@ -12,9 +12,42 @@ use super::{FormError, required};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ServerDefaults {
     pub host: &'static str,
+    /// The port of unencrypted connections, and of every connection where TLS is
+    /// [`TlsOffer::Negotiated`].
     pub port: u16,
     pub database: &'static str,
     pub user: &'static str,
+    pub tls: TlsOffer,
+}
+
+/// How a server offers TLS, which decides the modes the form lists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TlsOffer {
+    /// Agreed on the server's one port: every mode, `prefer` first.
+    Negotiated,
+    /// On a port of its own (ClickHouse's HTTPS). No `prefer`, which needs one port that
+    /// may or may not encrypt; `disable` first.
+    OwnPort(u16),
+}
+
+impl TlsOffer {
+    fn choices(self) -> &'static [TlsChoice] {
+        match self {
+            Self::Negotiated => &TlsChoice::ALL,
+            Self::OwnPort(_) => &[
+                TlsChoice::Disable,
+                TlsChoice::Require,
+                TlsChoice::VerifyFull,
+            ],
+        }
+    }
+
+    fn initial_choice(self) -> TlsChoice {
+        match self {
+            Self::Negotiated => TlsChoice::from(&TlsMode::default()),
+            Self::OwnPort(_) => TlsChoice::Disable,
+        }
+    }
 }
 
 /// Text as the user typed it, plus the TLS choice.
@@ -41,9 +74,32 @@ impl ServerFields {
             database: defaults.database.to_owned(),
             user: defaults.user.to_owned(),
             password: String::new(),
-            tls: TlsChoice::from(&TlsMode::default()),
+            tls: defaults.tls.initial_choice(),
             ca_file: String::new(),
             defaults,
+        }
+    }
+
+    /// The TLS modes this server can be connected with.
+    pub fn tls_choices(&self) -> &'static [TlsChoice] {
+        self.defaults.tls.choices()
+    }
+
+    /// The port a connection with the chosen TLS mode goes to unless told otherwise.
+    pub fn default_port(&self) -> u16 {
+        match self.defaults.tls {
+            TlsOffer::OwnPort(tls_port) if self.tls.encrypts() => tls_port,
+            _ => self.defaults.port,
+        }
+    }
+
+    /// Chooses a TLS mode, moving the port along to the new mode's default if it was on the
+    /// old one's, so choosing `require` for ClickHouse goes from 8123 to 8443.
+    pub fn choose_tls(&mut self, choice: TlsChoice) {
+        let on_default_port = self.port.trim() == self.default_port().to_string();
+        self.tls = choice;
+        if on_default_port {
+            self.port = self.default_port().to_string();
         }
     }
 
@@ -67,20 +123,27 @@ impl ServerFields {
     }
 
     pub fn to_config(&self) -> Result<ServerConfig, FormError> {
-        let port = self
-            .port
-            .trim()
-            .parse::<u16>()
-            .ok()
-            .filter(|port| *port != 0)
-            .ok_or(FormError::InvalidPort)?;
         Ok(ServerConfig {
             host: required(&self.host, FormError::HostMissing)?,
-            port,
+            port: self.port()?,
             database: required(&self.database, FormError::DatabaseMissing)?,
             user: required(&self.user, FormError::UserMissing)?,
             tls: self.tls_mode(),
         })
+    }
+
+    /// A number, or text with a `${NAME}` placeholder that must resolve to one when
+    /// connecting.
+    fn port(&self) -> Result<Port, FormError> {
+        let port = self.port.trim();
+        if has_placeholder(port) {
+            return Ok(Port::Placeholder(port.to_owned()));
+        }
+        port.parse::<u16>()
+            .ok()
+            .filter(|port| *port != 0)
+            .map(Port::Number)
+            .ok_or(FormError::InvalidPort)
     }
 
     fn tls_mode(&self) -> TlsMode {
@@ -108,6 +171,11 @@ pub enum TlsChoice {
 
 impl TlsChoice {
     pub const ALL: [Self; 4] = [Self::Disable, Self::Prefer, Self::Require, Self::VerifyFull];
+
+    /// Whether the connection is always encrypted.
+    fn encrypts(self) -> bool {
+        matches!(self, Self::Require | Self::VerifyFull)
+    }
 
     /// libpq's `sslmode` names, which PostgreSQL users and hosting providers' guides use.
     pub fn label(self) -> &'static str {
@@ -151,6 +219,7 @@ mod tests {
         port: 5432,
         database: "postgres",
         user: "postgres",
+        tls: TlsOffer::Negotiated,
     };
 
     fn fields(edit: impl FnOnce(&mut ServerFields)) -> ServerFields {
@@ -190,12 +259,30 @@ mod tests {
             config,
             ServerConfig {
                 host: "db.internal".to_owned(),
-                port: 6432,
+                port: 6432.into(),
                 database: "postgres".to_owned(),
                 user: "postgres".to_owned(),
                 tls: TlsMode::Prefer,
             }
         );
+    }
+
+    #[test]
+    fn keeps_placeholders_as_typed_to_resolve_when_connecting() {
+        let config = fields(|f| {
+            f.host = " ${PGHOST} ".to_owned();
+            f.port = "${PGPORT}".to_owned();
+            f.user = "${USER}".to_owned();
+        })
+        .to_config()
+        .unwrap();
+
+        assert_eq!(config.host, "${PGHOST}");
+        assert_eq!(config.port, Port::Placeholder("${PGPORT}".to_owned()));
+        assert_eq!(config.user, "${USER}");
+        let fields = ServerFields::from_config(&config, DEFAULTS);
+        assert_eq!(fields.port, "${PGPORT}");
+        assert_eq!(fields.to_config(), Ok(config));
     }
 
     #[test]
@@ -241,7 +328,7 @@ mod tests {
         for tls in modes {
             let config = ServerConfig {
                 host: "db.internal".to_owned(),
-                port: 6432,
+                port: 6432.into(),
                 database: "app".to_owned(),
                 user: "juan".to_owned(),
                 tls,
@@ -251,5 +338,35 @@ mod tests {
 
             assert_eq!(fields.to_config(), Ok(config));
         }
+    }
+
+    #[test]
+    fn moves_the_port_with_tls_on_its_own_port() {
+        let defaults = ServerDefaults {
+            port: 8123,
+            tls: TlsOffer::OwnPort(8443),
+            ..DEFAULTS
+        };
+        let mut fields = ServerFields::new(defaults);
+        assert_eq!(
+            (fields.tls, fields.port.as_str()),
+            (TlsChoice::Disable, "8123")
+        );
+        assert!(!fields.tls_choices().contains(&TlsChoice::Prefer));
+
+        fields.choose_tls(TlsChoice::Require);
+        assert_eq!(fields.port, "8443");
+        fields.choose_tls(TlsChoice::VerifyFull);
+        assert_eq!(fields.port, "8443");
+        fields.choose_tls(TlsChoice::Disable);
+        assert_eq!(fields.port, "8123");
+
+        fields.port = "9000".to_owned();
+        fields.choose_tls(TlsChoice::Require);
+        assert_eq!(fields.port, "9000", "a port the user typed stays");
+
+        let mut negotiated = ServerFields::new(DEFAULTS);
+        negotiated.choose_tls(TlsChoice::Require);
+        assert_eq!(negotiated.port, "5432");
     }
 }

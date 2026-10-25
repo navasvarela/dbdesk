@@ -1,7 +1,8 @@
 # Release binaries
 
 Status: **R1 released** as v0.1.0 on 2026-10-23, followed by v0.2.0 (MySQL and MariaDB, TLS,
-the update notice), v0.3.0 (SQL Server) and v0.4.0 (projects, and links that open). R3's update
+the update notice), v0.3.0 (SQL Server), v0.4.0 (projects, and links that open), v0.5.0
+(installing updates, the read-only MCP server) and v0.6.0 (DuckDB and ClickHouse). R3's update
 notice is built, ahead of R2 (see [R3](#r3--updates)).
 Decisions settled on 2026-10-23 (see [Decisions](#decisions)).
 
@@ -27,7 +28,7 @@ Pushing a tag `vX.Y.Z` on `main` runs `.github/workflows/release.yml`:
 
 ```mermaid
 flowchart LR
-    T[tag vX.Y.Z] --> V[verify: tag = version,<br/>full CI incl. Postgres]
+    T[tag vX.Y.Z] --> V[verify: tag = version,<br/>commit is on main]
     V --> M[macOS: build arm64 + x86_64,<br/>lipo, .app, .dmg]
     V --> L[Linux: build on Ubuntu 22.04,<br/>AppImage + .deb]
     V --> W[Windows: build,<br/>NSIS installer]
@@ -41,8 +42,9 @@ flowchart LR
     P --> H[bump Homebrew cask]
 ```
 
-1. **Verify.** The tag must match the workspace version in `Cargo.toml`, and the full CI suite
-   runs again, Postgres tests included. A tag on a commit that fails CI produces nothing.
+1. **Verify.** The tag must match the workspace version in `Cargo.toml`, and its commit must be
+   on main. CI isn't run again: main only takes pull requests whose required checks passed, with
+   every database server, so the commit has already been through it.
 2. **Build.**
    - **macOS** on an Apple-silicon runner: `aarch64-apple-darwin` and `x86_64-apple-darwin`
      binaries, joined into a universal binary with `lipo`. One download, no "which Mac do I
@@ -156,7 +158,7 @@ they are ever needed.
    ```
 
 3. Watch **Actions › Release**. It refuses a tag that doesn't match the version, and builds
-   nothing if CI fails on that commit.
+   nothing if the tagged commit isn't on main.
 4. Open the draft on the releases page, check the assets and notes, and publish it.
 
 To try the packaging without releasing, run **Actions › Release › Run workflow** on any
