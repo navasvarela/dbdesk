@@ -69,6 +69,14 @@ Each driver crate runs the suite against its own backend:
   `BEGIN TRANSACTION`, since `BEGIN` alone opens a block there. The server makes its own
   certificate, so the TLS tests need no fixture.
 
+The SSH tunnel (`dbdesk-ssh`) is tested against the `ssh` service (port 55222): OpenSSH on
+Alpine, built from `docker/ssh/` with committed test keys (`generate.sh` makes them), which
+signs in `dbdesk` with a key or its password and forwards only to the `postgres` service. Its
+tests skip when `DBDESK_TEST_SSH_URL` or `DBDESK_TEST_SSH_POSTGRES_URL` is unset. They fail
+logins and abandon handshakes on purpose, so the server turns off OpenSSH's penalties for an
+address that does that (`PerSourcePenalties`), which would otherwise refuse the next test's
+connection.
+
 Every server engine follows the same pattern: a service in `docker-compose.yml` and its URL in
 `test-servers.env`, which CI reads too. To run everything locally:
 

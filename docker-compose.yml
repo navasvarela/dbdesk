@@ -148,3 +148,20 @@ services:
       interval: 1s
       timeout: 5s
       retries: 60
+
+  # OpenSSH on Alpine (docker/ssh), for the SSH tunnel tests: signs in `dbdesk` with the test
+  # keys there or its password, and forwards only to the postgres service. Built from a few
+  # lines rather than pulled, so it stays a 10 MB image with fixed host and client keys.
+  ssh:
+    build: docker/ssh
+    ports:
+      - "55222:22"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Listening is the only state sshd has to reach before it accepts logins.
+    healthcheck:
+      test: ["CMD-SHELL", "netstat -ltn | grep -q ':22 '"]
+      interval: 1s
+      timeout: 5s
+      retries: 30
