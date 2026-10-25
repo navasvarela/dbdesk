@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 
 use dbdesk_core::{
-    ConnectionConfig, DataSourceId, MysqlConfig, Port, PostgresConfig, ProjectId, ServerConfig,
-    SourceColor, SqlServerConfig, SqliteConfig, TlsMode, Variables,
+    ClickHouseConfig, ConnectionConfig, DataSourceId, DuckDbConfig, DuckDbDatabase, MysqlConfig,
+    Port, PostgresConfig, ProjectId, ServerConfig, SourceColor, SqlServerConfig, SqliteConfig,
+    TlsMode, Variables,
 };
 
 use super::*;
@@ -102,6 +103,30 @@ fn every_kind(home: &Path, beside: &Path, project: ProjectId) -> Vec<DataSource>
                 read_only: false,
             }),
         ),
+        data_source(
+            "events",
+            None,
+            ConnectionConfig::ClickHouse(ClickHouseConfig {
+                server: server("ch.internal", 8443, TlsMode::Require),
+            }),
+        ),
+        data_source(
+            "lake",
+            Some(project),
+            ConnectionConfig::DuckDb(DuckDbConfig {
+                database: DuckDbDatabase::File {
+                    path: beside.join("data/lake.duckdb"),
+                    read_only: true,
+                },
+            }),
+        ),
+        data_source(
+            "scratchpad",
+            None,
+            ConnectionConfig::DuckDb(DuckDbConfig {
+                database: DuckDbDatabase::InMemory,
+            }),
+        ),
     ]
 }
 
@@ -142,6 +167,8 @@ fn writes_portable_paths_and_reads_them_back_for_another_home_and_folder() {
         "{text}"
     );
     assert!(text.contains(r#"path = "data/chinook.db""#), "{text}");
+    assert!(text.contains(r#"path = "data/lake.duckdb""#), "{text}");
+    assert!(text.contains(r#"database = "in-memory""#), "{text}");
     assert!(text.contains(r#"path = "/srv/scratch.db""#), "{text}");
     assert!(text.contains(r#"host = "${SHOP_HOST}""#), "{text}");
 

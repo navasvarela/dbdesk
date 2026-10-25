@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use dbdesk_core::{
-    ConnectionConfig, DataSource, DataSourceId, ProjectId, ServerConfig, TlsMode, Variables,
-    expand_path,
+    ConnectionConfig, DataSource, DataSourceId, DuckDbDatabase, ProjectId, ServerConfig, TlsMode,
+    Variables, expand_path,
 };
 
 use super::Incoming;
@@ -427,10 +427,18 @@ fn data_source_settings(data_source: &DataSource, names: &ProjectNames) -> Setti
         ConnectionConfig::Postgres(config) => server_settings(&config.server, &mut settings),
         ConnectionConfig::Mysql(config) => server_settings(&config.server, &mut settings),
         ConnectionConfig::SqlServer(config) => server_settings(&config.server, &mut settings),
+        ConnectionConfig::ClickHouse(config) => server_settings(&config.server, &mut settings),
         ConnectionConfig::Sqlite(config) => {
             settings.push(("File", config.path.display().to_string()));
             settings.push(("Read-only", yes_no(config.read_only)));
         }
+        ConnectionConfig::DuckDb(config) => match &config.database {
+            DuckDbDatabase::File { path, read_only } => {
+                settings.push(("File", path.display().to_string()));
+                settings.push(("Read-only", yes_no(*read_only)));
+            }
+            DuckDbDatabase::InMemory => settings.push(("File", "in memory".to_owned())),
+        },
     }
     settings
 }
@@ -464,9 +472,16 @@ fn yes_no(value: bool) -> String {
 fn paths(config: &ConnectionConfig) -> Vec<(&'static str, &Path)> {
     let server = match config {
         ConnectionConfig::Sqlite(config) => return vec![("File", &config.path)],
+        ConnectionConfig::DuckDb(config) => {
+            return match &config.database {
+                DuckDbDatabase::File { path, .. } => vec![("File", path)],
+                DuckDbDatabase::InMemory => Vec::new(),
+            };
+        }
         ConnectionConfig::Postgres(config) => &config.server,
         ConnectionConfig::Mysql(config) => &config.server,
         ConnectionConfig::SqlServer(config) => &config.server,
+        ConnectionConfig::ClickHouse(config) => &config.server,
     };
     match &server.tls {
         TlsMode::VerifyFull {

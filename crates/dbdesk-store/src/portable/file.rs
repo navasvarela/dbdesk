@@ -10,8 +10,9 @@
 use std::path::{Path, PathBuf};
 
 use dbdesk_core::{
-    ConnectionConfig, DataSource, DataSourceId, MysqlConfig, Port, PostgresConfig, ProjectId,
-    ServerConfig, SourceColor, SqlServerConfig, SqliteConfig, TlsMode,
+    ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase,
+    MysqlConfig, Port, PostgresConfig, ProjectId, ServerConfig, SourceColor, SqlServerConfig,
+    SqliteConfig, TlsMode,
 };
 use serde::{Deserialize, Serialize};
 
@@ -140,6 +141,10 @@ enum PortableConfig {
     Mysql(PortableServer),
     #[serde(rename = "sqlserver")]
     SqlServer(PortableServer),
+    #[serde(rename = "duckdb")]
+    DuckDb(PortableDuckDb),
+    #[serde(rename = "clickhouse")]
+    ClickHouse(PortableServer),
 }
 
 impl PortableConfig {
@@ -154,12 +159,27 @@ impl PortableConfig {
             ConnectionConfig::SqlServer(SqlServerConfig { server }) => {
                 Self::SqlServer(PortableServer::export(server, path))
             }
+            ConnectionConfig::ClickHouse(ClickHouseConfig { server }) => {
+                Self::ClickHouse(PortableServer::export(server, path))
+            }
             ConnectionConfig::Sqlite(SqliteConfig {
                 path: file,
                 read_only,
             }) => Self::Sqlite(PortableSqlite {
                 path: path(file),
                 read_only: *read_only,
+            }),
+            ConnectionConfig::DuckDb(DuckDbConfig { database }) => Self::DuckDb(PortableDuckDb {
+                database: match database {
+                    DuckDbDatabase::File {
+                        path: file,
+                        read_only,
+                    } => PortableDuckDbDatabase::File {
+                        path: path(file),
+                        read_only: *read_only,
+                    },
+                    DuckDbDatabase::InMemory => PortableDuckDbDatabase::InMemory,
+                },
             }),
         }
     }
@@ -175,12 +195,27 @@ impl PortableConfig {
             Self::SqlServer(server) => ConnectionConfig::SqlServer(SqlServerConfig {
                 server: server.import(path),
             }),
+            Self::ClickHouse(server) => ConnectionConfig::ClickHouse(ClickHouseConfig {
+                server: server.import(path),
+            }),
             Self::Sqlite(PortableSqlite {
                 path: file,
                 read_only,
             }) => ConnectionConfig::Sqlite(SqliteConfig {
                 path: path(&file),
                 read_only,
+            }),
+            Self::DuckDb(PortableDuckDb { database }) => ConnectionConfig::DuckDb(DuckDbConfig {
+                database: match database {
+                    PortableDuckDbDatabase::File {
+                        path: file,
+                        read_only,
+                    } => DuckDbDatabase::File {
+                        path: path(&file),
+                        read_only,
+                    },
+                    PortableDuckDbDatabase::InMemory => DuckDbDatabase::InMemory,
+                },
             }),
         }
     }
@@ -275,4 +310,22 @@ struct PortableSqlite {
     path: PathBuf,
     #[serde(default)]
     read_only: bool,
+}
+
+/// [`DuckDbConfig`], written the same way.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct PortableDuckDb {
+    #[serde(flatten)]
+    database: PortableDuckDbDatabase,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "database", rename_all = "kebab-case")]
+enum PortableDuckDbDatabase {
+    File {
+        path: PathBuf,
+        #[serde(default)]
+        read_only: bool,
+    },
+    InMemory,
 }
