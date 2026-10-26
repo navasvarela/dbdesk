@@ -617,10 +617,14 @@ The gaps that keep dbdesk from being an everyday tool. The full plan is in
 - **W4 — History as an audit trail:**
   - where each statement came from, and grid edits with the values they replaced;
   - retention, a search across data sources, and export.
-- **W5 — Power in the grid:**
-  - insert and delete rows, and follow foreign keys;
-  - sort and filter in the database;
-  - export every row, and import a CSV.
+- **W5 — Power in the grid:** designed in [Power in the grid](grid-power.md), in layers:
+  - **W5a:** insert and delete rows, submitted with cell edits all or none, and recorded in the
+    history;
+  - **W5b:** follow a foreign key from a cell to its row, and from a row to the rows that point
+    at it;
+  - **W5c:** sort and filter in the database, by wrapping the statement;
+  - **W5d:** export every row, streamed to the file;
+  - **W5e:** import a CSV into a table, with a column mapping and a preview.
 - **W6 — Files and parameters:** open and save `.sql` files, `:name` parameters, find and
   replace.
 
