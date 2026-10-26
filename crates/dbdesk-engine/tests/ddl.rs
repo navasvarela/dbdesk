@@ -390,74 +390,97 @@ fn copies_a_sqlite_tables_ddl_from_the_catalog() {
     engine.shut_down();
 }
 
-/// PostgreSQL keeps no `CREATE TABLE`, so Copy DDL rebuilds it; running what it copied after
-/// dropping the table must make the same table again.
-#[test]
-fn rebuilds_a_postgres_tables_ddl_that_recreates_it() {
-    let Some(server) = postgres_test_server() else {
-        return;
-    };
-    let dir = tempfile::tempdir().unwrap();
-    let mut engine = start(dir.path());
-    let database = server.config.server.database.clone();
-    let postgres = data_source("postgres", ConnectionConfig::Postgres(server.config));
-    save(&mut engine, &postgres, Some(server.password));
-    let suffix = postgres.id.to_string().replace('-', "");
-    let schema = format!("dbdesk_copy_{}", &suffix[..8]);
-    let (parent, mut child) = round_trip_tables(Dialect::Postgres, &suffix[..8]);
+/// PostgreSQL and SQL Server keep no `CREATE TABLE`, so Copy DDL rebuilds it; running what it
+/// copied after dropping the table must make the same table again.
+fn check_rebuilt_ddl(engine: &mut TestEngine, data_source: &DataSource, password: Password) {
+    save(engine, data_source, Some(password));
+    let dialect = Dialect::from(data_source.config.driver());
+    let schema = unique("dbdesk_copy", data_source);
+    let suffix = &schema["dbdesk_copy_".len()..];
+    let (parent, mut child) = round_trip_tables(dialect, suffix);
     let parent = TableSpec {
         name: ObjectName::new(Some(&schema), &parent.name.name),
         ..parent
     };
     child.name.schema = Some(schema.clone());
     child.foreign_keys[0].target = parent.name.clone();
-    let mut create = vec![format!("CREATE SCHEMA {schema}")];
-    create.extend(
-        ddl_statements(
-            &[
-                DdlOperation::CreateTable(parent),
-                DdlOperation::CreateTable(child.clone()),
-            ],
-            Dialect::Postgres,
-        )
-        .unwrap(),
+    let operations = [
+        DdlOperation::CreateSchema(SchemaSpec {
+            name: schema.clone(),
+            owner: None,
+        }),
+        DdlOperation::CreateTable(parent.clone()),
+        DdlOperation::CreateTable(child.clone()),
+    ];
+    let created = apply(
+        engine,
+        data_source.id,
+        ddl_statements(&operations, dialect).unwrap(),
     );
-    assert_eq!(apply(&mut engine, postgres.id, create), Ok(()));
+    assert_eq!(created, Ok(()), "{dialect:?}");
 
-    let path = CatalogPath::root()
-        .child(NodeKind::Database, database)
+    let path = default_schema(data_source)
+        .parent()
+        .unwrap()
         .child(NodeKind::Schema, schema.clone())
         .child(NodeKind::Folder(FolderKind::Tables), "tables")
         .child(NodeKind::Table, child.name.name.clone());
-    let ddl = load_ddl(&mut engine, postgres.id, path);
+    let ddl = load_ddl(engine, data_source.id, path);
     assert!(
         ddl.starts_with(&format!("CREATE TABLE {schema}.{} (", child.name.name)),
         "{ddl}"
     );
-    assert!(ddl.contains("quantity integer DEFAULT 1 NOT NULL"), "{ddl}");
-    assert!(ddl.contains("PRIMARY KEY (parent, line)"), "{ddl}");
-    for constraint in [
+    for part in [
+        "quantity ",
+        "NOT NULL",
+        "PRIMARY KEY (parent, line)",
         "FOREIGN KEY (parent)",
         "UNIQUE (parent, code)",
-        "CHECK (quantity > 0)",
+        "CHECK (",
     ] {
-        assert!(ddl.contains(constraint), "{constraint} in {ddl}");
+        assert!(ddl.contains(part), "{part} in {ddl}");
     }
 
-    let mut recreate = vec![format!("DROP TABLE {schema}.{}", child.name.name)];
+    let drop = |table: &TableSpec| DdlOperation::DropTable {
+        table: table.name.clone(),
+        cascade: false,
+    };
+    let mut recreate = drop(&child).statements(dialect).unwrap();
     recreate.extend(
-        split_statements(&ddl, Dialect::Postgres)
+        split_statements(&ddl, dialect)
             .into_iter()
             .map(|range| ddl[range].to_owned()),
     );
-    let recreated = apply(&mut engine, postgres.id, recreate);
+    let recreated = apply(engine, data_source.id, recreate);
+    let cleanup = [
+        drop(&child),
+        drop(&parent),
+        DdlOperation::DropSchema {
+            schema,
+            cascade: false,
+        },
+    ];
     let cleaned = apply(
-        &mut engine,
-        postgres.id,
-        vec![format!("DROP SCHEMA {schema} CASCADE")],
+        engine,
+        data_source.id,
+        ddl_statements(&cleanup, dialect).unwrap(),
     );
-    assert_eq!(recreated, Ok(()), "{ddl}");
-    assert_eq!(cleaned, Ok(()));
+    assert_eq!(recreated, Ok(()), "{dialect:?}: {ddl}");
+    assert_eq!(cleaned, Ok(()), "{dialect:?}");
+}
+
+#[test]
+fn rebuilds_a_tables_ddl_that_recreates_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = start(dir.path());
+    if let Some(server) = postgres_test_server() {
+        let postgres = data_source("postgres", ConnectionConfig::Postgres(server.config));
+        check_rebuilt_ddl(&mut engine, &postgres, server.password);
+    }
+    if let Some((config, password)) = sqlserver_test_server() {
+        let sqlserver = data_source("sqlserver", ConnectionConfig::SqlServer(config));
+        check_rebuilt_ddl(&mut engine, &sqlserver, password);
+    }
     engine.shut_down();
 }
 

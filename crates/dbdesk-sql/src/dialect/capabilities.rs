@@ -28,8 +28,8 @@ pub struct Capabilities {
     /// The changes an existing table takes in place.
     pub table_changes: &'static [TableChange],
     /// Whether Copy DDL rebuilds a table's `CREATE TABLE` from its description and the
-    /// constraints in the catalog, because the database keeps no such statement. Elsewhere
-    /// the catalog's table definition is the statement, or there is none to copy.
+    /// constraints in the catalog, because the database keeps no such statement (PostgreSQL,
+    /// SQL Server). Elsewhere the catalog's table definition is the statement.
     pub rebuilds_table_ddl: bool,
     /// Column types the New table dialog suggests, in the order it lists them. Any other
     /// type can be typed in.
@@ -243,7 +243,7 @@ const SQL_SERVER: Capabilities = Capabilities {
     indexes: true,
     index_methods: &[],
     table_changes: ALL_TABLE_CHANGES,
-    rebuilds_table_ddl: false,
+    rebuilds_table_ddl: true,
     common_types: &[
         "int",
         "bigint",

@@ -5,12 +5,13 @@
 //! views are read through its name, `[sales].sys.objects`, so every database the login may
 //! open can be browsed from one connection; that name is quoted into the SQL, and every
 //! other name is a parameter. Definitions come from `sys.sql_modules`, which holds what
-//! `OBJECT_DEFINITION` returns but, unlike it, can be read from another database.
+//! `OBJECT_DEFINITION` returns but, unlike it, can be read from another database; a
+//! constraint's is written from its catalog view (see [`constraint`]).
 
 use dbdesk_core::{CatalogNode, CatalogPath, DriverError, FolderKind, NodeKind, PathSegment};
 use tiberius::ToSql;
 
-use crate::{SQL_SERVER_QUOTING, SqlClient, column, connection_error};
+use crate::{SQL_SERVER_QUOTING, SqlClient, column, connection_error, constraint};
 
 /// A listing query's detail column when it has none: a typed `NULL`, because a bare one is an
 /// `int` that can't be read as text.
@@ -340,7 +341,7 @@ async fn relation_children(
         FolderKind::Constraints => (
             NodeKind::Constraint,
             format!(
-                "SELECT name, 0, 0, kind FROM (\
+                "SELECT name, 0, 1, kind FROM (\
                  SELECT name, CASE type WHEN 'PK' THEN 'primary key' ELSE 'unique' END AS kind \
                  FROM {catalog}.key_constraints WHERE parent_object_id = OBJECT_ID(@P1) \
                  UNION ALL SELECT name, 'foreign key' FROM {catalog}.foreign_keys \
@@ -411,6 +412,9 @@ pub(crate) async fn definition(
     }
     let catalog = format!("{}.sys", SQL_SERVER_QUOTING.identifier(database));
     let name = three_part_name(database, schema, &object.name);
+    if object.kind == NodeKind::Constraint {
+        return constraint::definition(client, &catalog, &name).await;
+    }
     let sql = match object.kind {
         NodeKind::View | NodeKind::Function | NodeKind::Procedure | NodeKind::Trigger => {
             format!("SELECT definition FROM {catalog}.sql_modules WHERE object_id = OBJECT_ID(@P1)")

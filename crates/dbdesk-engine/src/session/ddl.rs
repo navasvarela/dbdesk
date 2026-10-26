@@ -132,8 +132,9 @@ async fn run_each(
 }
 
 /// The constraints Copy DDL adds after a rebuilt `CREATE TABLE`, by the detail PostgreSQL's
-/// catalog gives them. The primary key is in the table's description already, and NOT NULL
-/// (PostgreSQL 18 lists those as constraints too) in its columns.
+/// and SQL Server's catalogs give them. The primary key is in the table's description already,
+/// and so are NOT NULL (PostgreSQL 18 lists those as constraints too) and SQL Server's
+/// defaults, in its columns.
 const COPIED_CONSTRAINTS: &[&str] = &["foreign key", "unique", "check", "exclusion"];
 
 /// Reports [`Event::DdlLoaded`] for the table or view at `path`.
