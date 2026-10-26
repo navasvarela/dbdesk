@@ -8,6 +8,7 @@ use dbdesk_sql::{
 };
 use egui::{Grid, Response, TextEdit, Ui, WidgetInfo, WidgetType};
 
+use super::fields::{column_picker, columns_folder, loaded_columns};
 use super::{FormContext, ObjectForm};
 use crate::catalog_tree::CatalogTree;
 use crate::{icons, widgets};
@@ -506,31 +507,6 @@ fn remove_button(ui: &mut Ui, label: &str) -> Response {
     widgets::IconButton::new(icons::X_CIRCLE, label).show(ui)
 }
 
-/// The columns of a key, in the order they were ticked, which is the key's order.
-fn column_picker(ui: &mut Ui, chosen: &mut Vec<String>, columns: &[String], label: &str) {
-    let text = if chosen.is_empty() {
-        "Choose…".to_owned()
-    } else {
-        chosen.join(", ")
-    };
-    let menu = ui.menu_button(text, |ui| {
-        if columns.is_empty() {
-            ui.weak("No columns yet");
-        }
-        for column in columns {
-            let mut ticked = chosen.contains(column);
-            if ui.checkbox(&mut ticked, column).changed() {
-                if ticked {
-                    chosen.push(column.clone());
-                } else {
-                    chosen.retain(|other| other != column);
-                }
-            }
-        }
-    });
-    widgets::name(menu.response, WidgetType::Button, label, true);
-}
-
 fn target_picker(
     ui: &mut Ui,
     key: &mut ForeignRow,
@@ -626,25 +602,6 @@ fn cached_tables(catalog: &CatalogTree, folder: &CatalogPath) -> Vec<(CatalogPat
                 .collect::<Vec<_>>()
         })
         .collect()
-}
-
-fn columns_folder(table: &CatalogPath) -> CatalogPath {
-    table.child(
-        NodeKind::Folder(FolderKind::Columns),
-        FolderKind::Columns.label(),
-    )
-}
-
-/// A table's column names, once its columns folder is loaded.
-fn loaded_columns(catalog: &CatalogTree, table: &CatalogPath) -> Option<Vec<String>> {
-    let columns = catalog.loaded_children(&columns_folder(table))?;
-    Some(
-        columns
-            .iter()
-            .filter(|column| column.kind() == Some(NodeKind::Column))
-            .map(|column| column.label.clone())
-            .collect(),
-    )
 }
 
 #[cfg(test)]

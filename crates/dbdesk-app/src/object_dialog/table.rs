@@ -1,8 +1,8 @@
-//! Helpers that act on an existing table: Truncate… and Drop….
+//! Helpers that act on an existing table: Rename…, Truncate… and Drop….
 
-use dbdesk_core::CatalogPath;
+use dbdesk_core::{CatalogPath, NodeKind};
 use dbdesk_sql::{DdlError, DdlOperation, Dialect, ObjectName};
-use egui::Ui;
+use egui::{TextEdit, Ui};
 
 use super::{Destruction, FormContext, ObjectForm, object_name};
 
@@ -16,8 +16,19 @@ pub(crate) struct TableAt {
 impl TableAt {
     /// `None` unless `path` is a table's.
     pub(crate) fn new(path: CatalogPath) -> Option<Self> {
+        if path.last()?.kind != NodeKind::Table {
+            return None;
+        }
         let name = object_name(&path)?;
         Some(Self { path, name })
+    }
+
+    pub(crate) fn path(&self) -> &CatalogPath {
+        &self.path
+    }
+
+    pub(crate) fn name(&self) -> &ObjectName {
+        &self.name
     }
 
     /// The folder the table is listed in, which changes when the table does.
@@ -27,6 +38,46 @@ impl TableAt {
 
     fn qualified(&self, dialect: Dialect) -> String {
         self.name.to_sql(dialect)
+    }
+}
+
+/// Gives the table another name in its schema.
+pub(crate) struct RenameTable {
+    table: TableAt,
+    new_name: String,
+}
+
+impl RenameTable {
+    pub(crate) fn new(table: TableAt) -> Self {
+        Self {
+            new_name: table.name.name.clone(),
+            table,
+        }
+    }
+}
+
+impl ObjectForm for RenameTable {
+    fn title(&self) -> String {
+        format!("Rename table {}", self.table.name.name)
+    }
+
+    fn show(&mut self, ui: &mut Ui, _context: &FormContext<'_>) {
+        ui.horizontal(|ui| {
+            let label = ui.label("New name");
+            ui.add(TextEdit::singleline(&mut self.new_name))
+                .labelled_by(label.id);
+        });
+    }
+
+    fn operations(&self) -> Result<Vec<DdlOperation>, DdlError> {
+        Ok(vec![DdlOperation::RenameTable {
+            table: self.table.name.clone(),
+            new_name: self.new_name.trim().to_owned(),
+        }])
+    }
+
+    fn changed(&self) -> CatalogPath {
+        self.table.folder()
     }
 }
 
