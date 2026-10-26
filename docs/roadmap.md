@@ -395,9 +395,41 @@ and users, from a **New** submenu and object actions in the explorer. The full p
   - a review-and-run panel that shows the SQL before anything runs;
   - `ApplyDdl` in one transaction where the engine allows it;
   - confirmations for destructive actions.
+
+  **E0 demo note:** built, with E1, as one stack. Right-click a table → **Drop…** and the dialog
+  names the table and what goes with it, then shows `DROP TABLE main.orders;`, highlighted,
+  with **Execute**, **Open in console** and **Copy**. Nothing runs until **Execute**; a
+  refusal shows the database's error under the SQL and keeps the dialog open, and success
+  reloads the folder. On a data source coloured red, **Execute** waits until the table's name
+  is typed; a careful one asks "Run on “shop”?" first; a read-only one greys **Execute** out
+  and says why, leaving the console and **Copy**. Underneath: `dbdesk_sql` describes objects
+  as `TableSpec` and `IndexSpec`, turned into each dialect's DDL by pure functions with golden
+  tests, quoting a name only when it has capitals, spaces or a word some dialect reserves; each
+  dialect's `Capabilities` (transactional DDL, `CASCADE`, keys, index methods, in-place table
+  changes, common types) sit next to its other facts and decide the menus; and
+  `Command::ApplyDdl` runs on the explorer's connection, in one transaction on PostgreSQL,
+  SQLite, SQL Server and DuckDB, one statement at a time on MySQL and ClickHouse, where
+  `Event::DdlApplied` says how many stayed applied. Every statement goes into the history.
+  `describe_table` now reports each column's type, nullability and default, on every engine.
+  Covered by the builder's golden tests, engine tests of all-or-none, partial failure,
+  read-only refusal and the history, and kittest tests of the panel in every safety level.
 - **E1 — Tables and indexes:** New table (columns, keys, checks), Rename, Truncate, Drop, and
   Copy DDL, which also gives PostgreSQL tables their missing `CREATE TABLE`; New index and
   Drop index.
+
+  **E1 demo note:** built. Right-click `main` → **New › Table…**, name it `shipments`, add
+  `order_id integer`, untick its **Nullable**, and on **Foreign keys** point it at
+  `main.orders (id)`: the SQL below grows as you type, and **Execute** creates the table and
+  shows it in the reloaded tree. On the table, **New index…** picks columns in order, **Unique**
+  and, on PostgreSQL and MySQL, a method; **Rename…**, **Truncate…** (`DELETE FROM` on SQLite)
+  and **Drop…** (with `CASCADE` on PostgreSQL) do what they say; **Copy DDL** copies SQLite's,
+  MySQL's, DuckDB's and ClickHouse's own `CREATE TABLE`, and on PostgreSQL one rebuilt from
+  `describe_table` and the catalog's constraints, which recreates the table when run. ClickHouse
+  tables get `ENGINE = MergeTree ORDER BY` their key and no index helpers; SQL Server has no
+  Copy DDL yet. Covered by a round trip that builds two tables from one spec on every engine
+  with a test server and compares `describe_table` with it, an engine test that runs
+  PostgreSQL's copied DDL, and kittest tests that create a table with a foreign key, index,
+  rename and drop through the dialogs and wait for the tree to show it.
 - **E2 — Views and schemas:** New view and materialized view with the console's editor, Edit,
   Refresh, Rename, Drop; New schema and Drop schema.
 - **E3 — Users and roles (PostgreSQL):**

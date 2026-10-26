@@ -157,6 +157,11 @@ Right-click an object for what you can do with it:
 | **Copy name** | Objects inside a schema | Copies the name to use in SQL: schema-qualified for tables, views, sequences, indexes and functions (`main."Order Items"`), bare for columns, constraints and triggers. Quoted where needed. |
 | **Show definition** | Objects whose source the database keeps (see below) | Opens the source in a window. |
 | **Refresh** | Anything with children | Reloads the node's children and collapses everything below it. |
+| **Copy DDL** | Tables | Copies the table's `CREATE TABLE` statement; see [Copy DDL](objects.md#copy-ddl). |
+
+Below those come the object helpers, **New › Table…**, **New index…**, **Rename…**,
+**Truncate…**, **Drop…** and **Drop index…**, which [Creating and changing tables](objects.md)
+describes.
 
 A data source's own menu (Connect, New query console, Open saved console, Edit, Delete and so
 on) is described in [Data sources](data-sources.md#editing-connecting-and-deleting).

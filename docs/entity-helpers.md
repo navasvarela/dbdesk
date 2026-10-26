@@ -1,7 +1,7 @@
 # Creating and changing database objects
 
-Status: **planned**, nothing built yet. Proposed on 2026-10-23; on 2026-10-26 indexes moved
-from Later into E1 and schemas into E2.
+Status: **E0 and E1 built** (2026-10-26); E2 to E4 planned. Proposed on 2026-10-23; on
+2026-10-26 indexes moved from Later into E1 and schemas into E2.
 
 Today the explorer only reads: it browses the catalog, opens a table's data and shows
 definitions. Creating or changing anything means writing the SQL by hand in a console. This
@@ -56,20 +56,28 @@ Everything the helpers have in common, built once.
   - the generated SQL, highlighted and read-only;
   - Execute, Open in console and Copy;
   - the database's error inline when it fails.
-- **An engine command for changes**, `Command::ApplyDdl { data_source, statements, sensitive }`,
+- **An engine command for changes**, `Command::ApplyDdl { data_source, statements }`,
   answered by `Event::DdlApplied`. It runs on the explorer's session of that data source.
-  - **On PostgreSQL and SQLite**, whose DDL is transactional, the statements run inside one
-    transaction, so a failure leaves nothing half done.
-  - **On MySQL and SQL Server (from DB1/DB2)**, where DDL commits as it goes, the panel says
-    that a failure part way leaves the earlier statements applied.
-  - **Sensitive statements** (anything holding a password) are kept out of the query history
-    and the log. The log records only the statement's kind, e.g. "CREATE ROLE".
+  - **On PostgreSQL, SQLite, SQL Server and DuckDB**, whose DDL is transactional, the
+    statements run inside one transaction, so a failure leaves nothing half done.
+  - **On MySQL and ClickHouse**, where DDL commits as it goes, the panel says that a failure
+    part way leaves the earlier statements applied, and the answer says how many.
+  - A read-only data source refuses it, and every statement sent is recorded in the history.
+  - **Sensitive statements** (anything holding a password) arrive with E3, which adds a
+    `sensitive` flag: they are kept out of the query history and the log, which records only
+    the statement's kind, e.g. "CREATE ROLE".
 - **Confirmations for destructive actions.** Drop and Truncate name the object and what goes
   with it (`CASCADE` drops dependent views). On a data source coloured red, the user types the
   object's name to confirm. The colour is how the M1 follow-up marks production.
 
 **Exit:** a UI test builds a one-column table spec, runs it from the review panel, and sees the
 table appear in the refreshed tree, on both engines.
+
+**As built:** the helpers act only inside the database the data source connects to, where
+their statements run (PostgreSQL's explorer browses other databases on connections of their
+own). `describe_table` gained each column's type, nullability and default on every engine,
+which Copy DDL's rebuild and E4 need. The UI tests run on SQLite; PostgreSQL and the other
+engines are covered by the engine's round trip.
 
 ## E1 — Tables
 
