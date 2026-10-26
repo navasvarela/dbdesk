@@ -27,6 +27,7 @@ mod log_console;
 mod mcp;
 mod mcp_client_config;
 mod mcp_settings;
+mod object_dialog;
 mod password_prompt;
 mod project_dialog;
 mod project_settings;

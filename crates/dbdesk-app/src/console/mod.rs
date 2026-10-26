@@ -10,7 +10,7 @@ mod completion;
 mod completion_popup;
 mod edit;
 mod grid;
-mod highlight;
+pub(crate) mod highlight;
 mod problems;
 mod results;
 mod view;
