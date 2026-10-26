@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 
 use dbdesk_core::{
-    CatalogNode, CatalogPath, DataSourceId, DriverKind, NodeKind, ProjectId, Quoting,
+    CatalogNode, CatalogPath, DataSourceId, DriverKind, FolderKind, NodeKind, ProjectId, Quoting,
 };
 use dbdesk_engine::SessionState;
 use dbdesk_sql::Dialect;
@@ -63,7 +63,13 @@ pub enum ExplorerAction {
 
 /// An object helper, with the catalog node it was opened on.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[expect(
+    clippy::enum_variant_names,
+    reason = "only table helpers so far; the index helpers end it"
+)]
 pub enum Helper {
+    /// On a schema, or its tables folder.
+    NewTable(CatalogPath),
     TruncateTable(CatalogPath),
     DropTable(CatalogPath),
 }
@@ -755,29 +761,52 @@ fn node_menu(
     }
 }
 
-/// The object helpers for `node`, after the browsing items.
+/// The object helpers for `node`, after the browsing items: a New submenu for what can be
+/// created in it, then what can be done to it.
 fn helpers_menu(
     ui: &mut Ui,
     tree: &TreeView<'_>,
     node: &CatalogNode,
     actions: &mut Vec<ExplorerAction>,
 ) {
-    let mut helpers: Vec<(&str, &str, Helper)> = Vec::new();
-    if node.kind() == Some(NodeKind::Table) {
-        helpers.push((
-            icons::ERASER,
-            "Truncate…",
-            Helper::TruncateTable(node.path.clone()),
-        ));
-        helpers.push((icons::TRASH, "Drop…", Helper::DropTable(node.path.clone())));
+    let path = &node.path;
+    let mut new: Vec<(&str, &str, Helper)> = Vec::new();
+    let mut object: Vec<(&str, &str, Helper)> = Vec::new();
+    match node.kind() {
+        Some(NodeKind::Schema | NodeKind::Folder(FolderKind::Tables)) => {
+            new.push((icons::TABLE, "Table…", Helper::NewTable(path.clone())));
+        }
+        Some(NodeKind::Table) => {
+            object.push((
+                icons::ERASER,
+                "Truncate…",
+                Helper::TruncateTable(path.clone()),
+            ));
+            object.push((icons::TRASH, "Drop…", Helper::DropTable(path.clone())));
+        }
+        _ => {}
     }
-    if helpers.is_empty() {
+    if new.is_empty() && object.is_empty() {
         return;
     }
     ui.separator();
+    if !new.is_empty() {
+        let label = widgets::icon_text(ui, icons::PLUS, Color32::PLACEHOLDER, "New");
+        let menu = ui.menu_button(label, |ui| helper_items(ui, tree.id, new, actions));
+        widgets::name(menu.response, WidgetType::Button, "New", true);
+    }
+    helper_items(ui, tree.id, object, actions);
+}
+
+fn helper_items(
+    ui: &mut Ui,
+    id: DataSourceId,
+    helpers: Vec<(&str, &str, Helper)>,
+    actions: &mut Vec<ExplorerAction>,
+) {
     for (glyph, label, helper) in helpers {
         if widgets::menu_item(ui, glyph, label).clicked() {
-            actions.push(ExplorerAction::Helper(tree.id, helper));
+            actions.push(ExplorerAction::Helper(id, helper));
         }
     }
 }

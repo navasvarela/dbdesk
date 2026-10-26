@@ -4,7 +4,7 @@ use dbdesk_core::CatalogPath;
 use dbdesk_sql::{DdlError, DdlOperation, Dialect, ObjectName};
 use egui::Ui;
 
-use super::{Destruction, ObjectForm, Target, object_name};
+use super::{Destruction, FormContext, ObjectForm, object_name};
 
 /// The table at a catalog path, as both the builder and the user see it.
 #[derive(Debug, Clone)]
@@ -46,7 +46,7 @@ impl ObjectForm for TruncateTable {
         format!("Truncate table {}", self.table.name.name)
     }
 
-    fn show(&mut self, _ui: &mut Ui, _target: &Target) {}
+    fn show(&mut self, _ui: &mut Ui, _context: &FormContext<'_>) {}
 
     fn operations(&self) -> Result<Vec<DdlOperation>, DdlError> {
         Ok(vec![DdlOperation::TruncateTable(self.table.name.clone())])
@@ -88,8 +88,8 @@ impl ObjectForm for DropTable {
         format!("Drop table {}", self.table.name.name)
     }
 
-    fn show(&mut self, ui: &mut Ui, target: &Target) {
-        if target.dialect.capabilities().drop_cascade {
+    fn show(&mut self, ui: &mut Ui, context: &FormContext<'_>) {
+        if context.target.dialect.capabilities().drop_cascade {
             ui.checkbox(&mut self.cascade, "Also drop what depends on it (CASCADE)");
         }
     }
