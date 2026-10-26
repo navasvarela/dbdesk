@@ -11,7 +11,8 @@ pub struct Capabilities {
     /// Whether DDL runs inside a transaction, so that several statements are applied all or
     /// none. MySQL commits each one as it runs; ClickHouse has no transactions.
     pub transactional_ddl: bool,
-    /// `DROP TABLE … CASCADE`, which also drops the views and keys that depend on the table.
+    /// `DROP TABLE … CASCADE` and `DROP VIEW … CASCADE`, which also drop the views and keys
+    /// that depend on the object.
     pub drop_cascade: bool,
     pub unique_keys: bool,
     pub foreign_keys: bool,
@@ -33,6 +34,44 @@ pub struct Capabilities {
     /// Column types the New table dialog suggests, in the order it lists them. Any other
     /// type can be typed in.
     pub common_types: &'static [&'static str],
+    /// Materialized views dbdesk creates, edits and refreshes. ClickHouse's materialized
+    /// views are another kind of object (a trigger that writes each insert into a table),
+    /// so it has none here.
+    pub materialized_views: bool,
+    /// How Edit view gives an existing view a new query.
+    pub view_replacement: ViewReplacement,
+    /// Whether a view can be renamed in place. SQLite's `ALTER TABLE` refuses views.
+    pub renames_views: bool,
+    /// What New schema creates.
+    pub schema_creation: SchemaCreation,
+    /// `CREATE SCHEMA … AUTHORIZATION`, which names the role that owns the new schema.
+    pub schema_owner: bool,
+    /// `DROP SCHEMA … CASCADE`, which also drops everything in the schema.
+    pub drop_schema_cascade: bool,
+}
+
+/// How a dialect replaces an existing view's query.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ViewReplacement {
+    /// `CREATE OR REPLACE VIEW`, which keeps what depends on the view.
+    OrReplace,
+    /// `ALTER VIEW … AS` (SQL Server), which keeps the view's permissions.
+    Alter,
+    /// `DROP VIEW` then `CREATE VIEW`, inside one transaction (SQLite, which has neither).
+    DropAndCreate,
+}
+
+/// What a dialect's New schema creates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SchemaCreation {
+    /// None: SQLite's schemas are database files attached to the connection.
+    Unsupported,
+    /// `CREATE SCHEMA`, inside the database connected to.
+    CreateSchema,
+    /// `CREATE DATABASE`: the schemas in the tree are the server's databases (MySQL, whose
+    /// `CREATE SCHEMA` is another name for it, and ClickHouse). Dropping one drops everything
+    /// in it.
+    CreateDatabase,
 }
 
 /// A change to an existing table that the dialect makes without rebuilding it.
@@ -108,6 +147,12 @@ const POSTGRES: Capabilities = Capabilities {
         "jsonb",
         "bytea",
     ],
+    materialized_views: true,
+    view_replacement: ViewReplacement::OrReplace,
+    renames_views: true,
+    schema_creation: SchemaCreation::CreateSchema,
+    schema_owner: true,
+    drop_schema_cascade: true,
 };
 
 /// SQLite's `ALTER TABLE` renames tables and columns and adds or drops simple columns; any
@@ -128,6 +173,12 @@ const SQLITE: Capabilities = Capabilities {
     ],
     rebuilds_table_ddl: false,
     common_types: &["integer", "real", "text", "blob", "numeric"],
+    materialized_views: false,
+    view_replacement: ViewReplacement::DropAndCreate,
+    renames_views: false,
+    schema_creation: SchemaCreation::Unsupported,
+    schema_owner: false,
+    drop_schema_cascade: false,
 };
 
 /// InnoDB parses `SET DEFAULT` but refuses the table, so it isn't offered. `CASCADE` after
@@ -168,6 +219,12 @@ const MYSQL: Capabilities = Capabilities {
         "blob",
         "binary(16)",
     ],
+    materialized_views: false,
+    view_replacement: ViewReplacement::OrReplace,
+    renames_views: true,
+    schema_creation: SchemaCreation::CreateDatabase,
+    schema_owner: false,
+    drop_schema_cascade: false,
 };
 
 /// SQL Server has no `RESTRICT`: `NO ACTION` is what refuses. Its renames are `sp_rename`
@@ -208,6 +265,12 @@ const SQL_SERVER: Capabilities = Capabilities {
         "uniqueidentifier",
         "varbinary(max)",
     ],
+    materialized_views: false,
+    view_replacement: ViewReplacement::Alter,
+    renames_views: true,
+    schema_creation: SchemaCreation::CreateSchema,
+    schema_owner: true,
+    drop_schema_cascade: false,
 };
 
 /// DuckDB's foreign keys only refuse: it has no `ON DELETE` or `ON UPDATE` actions. Its
@@ -249,6 +312,12 @@ const DUCKDB: Capabilities = Capabilities {
         "json",
         "blob",
     ],
+    materialized_views: false,
+    view_replacement: ViewReplacement::OrReplace,
+    renames_views: true,
+    schema_creation: SchemaCreation::CreateSchema,
+    schema_owner: false,
+    drop_schema_cascade: true,
 };
 
 /// ClickHouse has no unique or foreign keys, only checks; its `PRIMARY KEY` is the sort
@@ -284,6 +353,12 @@ const CLICKHOUSE: Capabilities = Capabilities {
         "Array(String)",
         "Map(String, String)",
     ],
+    materialized_views: false,
+    view_replacement: ViewReplacement::OrReplace,
+    renames_views: true,
+    schema_creation: SchemaCreation::CreateDatabase,
+    schema_owner: false,
+    drop_schema_cascade: false,
 };
 
 impl Dialect {
@@ -322,6 +397,17 @@ mod tests {
                 );
             } else {
                 assert!(capabilities.referential_actions.is_empty(), "{dialect:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn schema_facts_need_create_schema() {
+        for dialect in Dialect::ALL {
+            let capabilities = dialect.capabilities();
+            if capabilities.schema_creation != SchemaCreation::CreateSchema {
+                assert!(!capabilities.schema_owner, "{dialect:?}");
+                assert!(!capabilities.drop_schema_cascade, "{dialect:?}");
             }
         }
     }

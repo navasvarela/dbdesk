@@ -239,29 +239,7 @@ pub(super) fn rename(
     dialect: Dialect,
 ) -> Result<String, DdlError> {
     require_name(new_name, "table's new name")?;
-    let old = table.to_sql(dialect);
-    Ok(match dialect {
-        Dialect::Postgres | Dialect::Sqlite | Dialect::DuckDb => {
-            format!(
-                "ALTER TABLE {old} RENAME TO {}",
-                quote_name(dialect, new_name)
-            )
-        }
-        Dialect::Mysql | Dialect::ClickHouse => format!(
-            "RENAME TABLE {old} TO {}",
-            table.sibling(new_name).to_sql(dialect)
-        ),
-        // `sp_rename` reads its first argument as a (possibly quoted) name, and takes the
-        // second literally: brackets there would become part of the name.
-        Dialect::SqlServer => {
-            let quoting = dialect.quoting();
-            format!(
-                "EXEC sp_rename {}, {}",
-                quoting.string_literal(&old),
-                quoting.string_literal(new_name)
-            )
-        }
-    })
+    Ok(super::rename("TABLE", table, new_name, dialect))
 }
 
 pub(super) fn truncate(table: &ObjectName, dialect: Dialect) -> String {

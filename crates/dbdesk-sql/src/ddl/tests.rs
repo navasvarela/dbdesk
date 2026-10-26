@@ -545,3 +545,388 @@ fn quotes_only_names_that_need_it() {
         assert_eq!(quote_name(dialect, name), expected, "{dialect:?} {name}");
     }
 }
+
+fn big_orders(kind: ViewKind) -> ViewSpec {
+    ViewSpec {
+        name: ObjectName::new(Some("shop"), "Big Orders"),
+        kind,
+        query: "SELECT id, total\nFROM shop.orders\nWHERE total > 100;\n".to_owned(),
+        with_data: true,
+    }
+}
+
+#[test]
+fn creates_replaces_renames_and_drops_views() {
+    let view = big_orders(ViewKind::View);
+    let operations = [
+        DdlOperation::CreateView(view.clone()),
+        DdlOperation::ReplaceView(view.clone()),
+        DdlOperation::RenameView {
+            view: view.name.clone(),
+            kind: ViewKind::View,
+            new_name: "large_orders".to_owned(),
+        },
+        DdlOperation::DropView {
+            view: view.name.clone(),
+            kind: ViewKind::View,
+            cascade: false,
+        },
+    ];
+    let query = "SELECT id, total\nFROM shop.orders\nWHERE total > 100";
+    let cases: [(Dialect, &[&str]); 5] = [
+        (
+            Dialect::Postgres,
+            &[
+                r#"CREATE VIEW shop."Big Orders" AS"#,
+                r#"CREATE OR REPLACE VIEW shop."Big Orders" AS"#,
+                r#"ALTER VIEW shop."Big Orders" RENAME TO large_orders"#,
+                r#"DROP VIEW shop."Big Orders""#,
+            ],
+        ),
+        (
+            Dialect::Mysql,
+            &[
+                "CREATE VIEW shop.`Big Orders` AS",
+                "CREATE OR REPLACE VIEW shop.`Big Orders` AS",
+                "RENAME TABLE shop.`Big Orders` TO shop.large_orders",
+                "DROP VIEW shop.`Big Orders`",
+            ],
+        ),
+        (
+            Dialect::SqlServer,
+            &[
+                "CREATE VIEW shop.[Big Orders] AS",
+                "ALTER VIEW shop.[Big Orders] AS",
+                "EXEC sp_rename N'shop.[Big Orders]', N'large_orders'",
+                "DROP VIEW shop.[Big Orders]",
+            ],
+        ),
+        (
+            Dialect::DuckDb,
+            &[
+                r#"CREATE VIEW shop."Big Orders" AS"#,
+                r#"CREATE OR REPLACE VIEW shop."Big Orders" AS"#,
+                r#"ALTER VIEW shop."Big Orders" RENAME TO large_orders"#,
+                r#"DROP VIEW shop."Big Orders""#,
+            ],
+        ),
+        (
+            Dialect::ClickHouse,
+            &[
+                "CREATE VIEW shop.`Big Orders` AS",
+                "CREATE OR REPLACE VIEW shop.`Big Orders` AS",
+                "RENAME TABLE shop.`Big Orders` TO shop.large_orders",
+                "DROP VIEW shop.`Big Orders`",
+            ],
+        ),
+    ];
+    for (dialect, expected) in cases {
+        let with_query = |statement: &str| match statement.strip_suffix(" AS") {
+            Some(_) => format!("{statement}\n{query}"),
+            None => statement.to_owned(),
+        };
+        assert_eq!(
+            ddl_statements(&operations, dialect),
+            Ok(expected
+                .iter()
+                .map(|statement| with_query(statement))
+                .collect()),
+            "{dialect:?}"
+        );
+    }
+}
+
+#[test]
+fn sqlite_replaces_a_view_by_dropping_and_creating_it_and_cannot_rename_one() {
+    let view = big_orders(ViewKind::View);
+    assert_eq!(
+        DdlOperation::ReplaceView(view.clone()).statements(Dialect::Sqlite),
+        Ok(vec![
+            r#"DROP VIEW shop."Big Orders""#.to_owned(),
+            "CREATE VIEW shop.\"Big Orders\" AS\nSELECT id, total\nFROM shop.orders\nWHERE total > 100"
+                .to_owned(),
+        ])
+    );
+    let rename = DdlOperation::RenameView {
+        view: view.name,
+        kind: ViewKind::View,
+        new_name: "large_orders".to_owned(),
+    };
+    assert_eq!(
+        rename.statements(Dialect::Sqlite),
+        Err(DdlError::Unsupported {
+            what: "way to rename a view",
+            dialect: Dialect::Sqlite
+        })
+    );
+}
+
+#[test]
+fn postgres_creates_refreshes_and_drops_materialized_views() {
+    let view = big_orders(ViewKind::Materialized);
+    let empty = ViewSpec {
+        with_data: false,
+        ..view.clone()
+    };
+    let operations = [
+        DdlOperation::CreateView(empty.clone()),
+        DdlOperation::RefreshMaterializedView {
+            view: view.name.clone(),
+            concurrently: true,
+        },
+        DdlOperation::ReplaceView(view.clone()),
+        DdlOperation::RenameView {
+            view: view.name.clone(),
+            kind: ViewKind::Materialized,
+            new_name: "large_orders".to_owned(),
+        },
+        DdlOperation::DropView {
+            view: view.name.clone(),
+            kind: ViewKind::Materialized,
+            cascade: true,
+        },
+    ];
+    let create = "CREATE MATERIALIZED VIEW shop.\"Big Orders\" AS\nSELECT id, total\nFROM \
+                  shop.orders\nWHERE total > 100";
+    assert_eq!(
+        ddl_statements(&operations, Dialect::Postgres),
+        Ok(strings(&[
+            &format!("{create}\nWITH NO DATA"),
+            r#"REFRESH MATERIALIZED VIEW CONCURRENTLY shop."Big Orders""#,
+            r#"DROP MATERIALIZED VIEW shop."Big Orders""#,
+            create,
+            r#"ALTER MATERIALIZED VIEW shop."Big Orders" RENAME TO large_orders"#,
+            r#"DROP MATERIALIZED VIEW shop."Big Orders" CASCADE"#,
+        ]))
+    );
+}
+
+#[test]
+fn refuses_views_without_a_name_or_query_or_that_the_dialect_lacks() {
+    let unnamed = ViewSpec {
+        name: ObjectName::new(None, " "),
+        ..big_orders(ViewKind::View)
+    };
+    let empty = ViewSpec {
+        query: " ;\n".to_owned(),
+        ..big_orders(ViewKind::Materialized)
+    };
+    let cases = [
+        (
+            DdlOperation::CreateView(unnamed),
+            Dialect::Postgres,
+            DdlError::MissingName("view"),
+        ),
+        (
+            DdlOperation::CreateView(empty),
+            Dialect::Postgres,
+            DdlError::EmptyQuery("materialized view"),
+        ),
+        (
+            DdlOperation::CreateView(big_orders(ViewKind::Materialized)),
+            Dialect::ClickHouse,
+            DdlError::Unsupported {
+                what: "materialized views dbdesk can create",
+                dialect: Dialect::ClickHouse,
+            },
+        ),
+        (
+            DdlOperation::RefreshMaterializedView {
+                view: ObjectName::new(None, "big_orders"),
+                concurrently: false,
+            },
+            Dialect::DuckDb,
+            DdlError::Unsupported {
+                what: "materialized views dbdesk can create",
+                dialect: Dialect::DuckDb,
+            },
+        ),
+        (
+            DdlOperation::DropView {
+                view: ObjectName::new(None, "big_orders"),
+                kind: ViewKind::View,
+                cascade: true,
+            },
+            Dialect::Mysql,
+            DdlError::Unsupported {
+                what: "CASCADE for dropping a view",
+                dialect: Dialect::Mysql,
+            },
+        ),
+    ];
+    for (operation, dialect, expected) in cases {
+        assert_eq!(
+            operation.statements(dialect),
+            Err(expected),
+            "{operation:?}"
+        );
+    }
+}
+
+#[test]
+fn finds_the_query_in_each_engines_view_definition() {
+    let cases = [
+        (
+            Dialect::Postgres,
+            "CREATE VIEW public.big_orders AS\n SELECT id,\n    total\n   FROM orders\n  WHERE \
+             total > 100::numeric;",
+            " SELECT id,\n    total\n   FROM orders\n  WHERE total > 100::numeric".trim_start(),
+        ),
+        (
+            Dialect::Sqlite,
+            "CREATE VIEW big_orders(id, total) AS SELECT id, total FROM orders WHERE total > 100",
+            "SELECT id, total FROM orders WHERE total > 100",
+        ),
+        (
+            Dialect::Mysql,
+            "CREATE ALGORITHM=UNDEFINED DEFINER=`dbdesk`@`%` SQL SECURITY DEFINER VIEW \
+             `big_orders` AS select `orders`.`id` AS `id` from `orders` where (`orders`.`total` > \
+             100)",
+            "select `orders`.`id` AS `id` from `orders` where (`orders`.`total` > 100)",
+        ),
+        (
+            Dialect::SqlServer,
+            "-- the big ones\nCREATE VIEW dbo.big_orders\nWITH SCHEMABINDING\nAS\nSELECT id \
+             FROM dbo.orders WHERE total > 100\n",
+            "SELECT id FROM dbo.orders WHERE total > 100",
+        ),
+        (
+            Dialect::DuckDb,
+            "CREATE VIEW big_orders AS WITH big AS (SELECT * FROM orders WHERE total > 100) \
+             SELECT id FROM big;",
+            "WITH big AS (SELECT * FROM orders WHERE total > 100) SELECT id FROM big",
+        ),
+        (
+            Dialect::ClickHouse,
+            "CREATE VIEW dbdesk.big_orders\n(\n    `id` Int32\n)\nAS SELECT id\nFROM \
+             dbdesk.orders\nWHERE total > 100",
+            "SELECT id\nFROM dbdesk.orders\nWHERE total > 100",
+        ),
+    ];
+    for (dialect, definition, expected) in cases {
+        assert_eq!(
+            view_query(definition, dialect).as_deref(),
+            Some(expected),
+            "{dialect:?}"
+        );
+    }
+    for not_a_view in [
+        "SELECT 1",
+        "CREATE TABLE t AS SELECT 1",
+        "CREATE VIEW v AS",
+        "",
+    ] {
+        assert_eq!(
+            view_query(not_a_view, Dialect::Postgres),
+            None,
+            "{not_a_view}"
+        );
+    }
+}
+
+#[test]
+fn creates_and_drops_schemas_or_databases() {
+    let schema = |owner: Option<&str>| {
+        DdlOperation::CreateSchema(SchemaSpec {
+            name: "Sales".to_owned(),
+            owner: owner.map(str::to_owned),
+        })
+    };
+    let drop = |cascade| DdlOperation::DropSchema {
+        schema: "Sales".to_owned(),
+        cascade,
+    };
+    let cases = [
+        (
+            Dialect::Postgres,
+            [schema(Some("reporting")), drop(true)],
+            [
+                r#"CREATE SCHEMA "Sales" AUTHORIZATION reporting"#,
+                r#"DROP SCHEMA "Sales" CASCADE"#,
+            ],
+        ),
+        (
+            Dialect::SqlServer,
+            [schema(Some("dbo")), drop(false)],
+            [
+                "CREATE SCHEMA [Sales] AUTHORIZATION dbo",
+                "DROP SCHEMA [Sales]",
+            ],
+        ),
+        (
+            Dialect::DuckDb,
+            [schema(None), drop(true)],
+            [r#"CREATE SCHEMA "Sales""#, r#"DROP SCHEMA "Sales" CASCADE"#],
+        ),
+        (
+            Dialect::Mysql,
+            [schema(None), drop(false)],
+            ["CREATE DATABASE `Sales`", "DROP DATABASE `Sales`"],
+        ),
+        (
+            Dialect::ClickHouse,
+            [schema(None), drop(true)],
+            ["CREATE DATABASE `Sales`", "DROP DATABASE `Sales`"],
+        ),
+    ];
+    for (dialect, operations, expected) in cases {
+        assert_eq!(
+            ddl_statements(&operations, dialect),
+            Ok(strings(&expected)),
+            "{dialect:?}"
+        );
+    }
+}
+
+#[test]
+fn refuses_schemas_the_dialect_cannot_create_or_drop() {
+    let cases = [
+        (
+            DdlOperation::CreateSchema(SchemaSpec {
+                name: "sales".to_owned(),
+                owner: None,
+            }),
+            Dialect::Sqlite,
+            "schemas dbdesk can create or drop",
+        ),
+        (
+            DdlOperation::DropSchema {
+                schema: "sales".to_owned(),
+                cascade: false,
+            },
+            Dialect::Sqlite,
+            "schemas dbdesk can create or drop",
+        ),
+        (
+            DdlOperation::CreateSchema(SchemaSpec {
+                name: "sales".to_owned(),
+                owner: Some("reporting".to_owned()),
+            }),
+            Dialect::DuckDb,
+            "schema owners",
+        ),
+        (
+            DdlOperation::DropSchema {
+                schema: "sales".to_owned(),
+                cascade: true,
+            },
+            Dialect::SqlServer,
+            "CASCADE for dropping a schema",
+        ),
+    ];
+    for (operation, dialect, what) in cases {
+        assert_eq!(
+            operation.statements(dialect),
+            Err(DdlError::Unsupported { what, dialect }),
+            "{operation:?}"
+        );
+    }
+    let unnamed = DdlOperation::CreateSchema(SchemaSpec {
+        name: String::new(),
+        owner: None,
+    });
+    assert_eq!(
+        unnamed.statements(Dialect::Postgres),
+        Err(DdlError::MissingName("schema"))
+    );
+}
