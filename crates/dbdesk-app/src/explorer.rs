@@ -61,6 +61,8 @@ pub enum ExplorerAction {
     Helper(DataSourceId, Helper),
     /// Copies the statement that creates the table or view at the path.
     CopyDdl(DataSourceId, CatalogPath),
+    /// Asks for a CSV file, then opens the dialog that imports it into the table at the path.
+    ImportCsv(DataSourceId, CatalogPath),
 }
 
 /// An object helper, with the catalog node it was opened on.
@@ -773,6 +775,12 @@ fn node_menu(
     );
     if holds_rows && widgets::menu_item(ui, icons::TABLE, "Open data").clicked() {
         actions.push(ExplorerAction::OpenData(id, node.path.clone()));
+    }
+    if node.kind() == Some(NodeKind::Table)
+        && tree.can_change(&node.path)
+        && widgets::menu_item(ui, icons::FILE_CSV, "Import CSV…").clicked()
+    {
+        actions.push(ExplorerAction::ImportCsv(id, node.path.clone()));
     }
     if let Some(name) = node.path.qualified_name(tree.quoting)
         && widgets::menu_item(ui, icons::COPY, "Copy name").clicked()

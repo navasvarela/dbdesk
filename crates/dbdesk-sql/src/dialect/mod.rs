@@ -396,6 +396,17 @@ impl Dialect {
         }
     }
 
+    /// Why rows can't be imported from a file here, or `None` where they can. An import runs
+    /// in one transaction, so that a failure undoes it, and ClickHouse has none.
+    pub fn import_refusal(self) -> Option<&'static str> {
+        match self {
+            Self::ClickHouse => Some(
+                "ClickHouse has no transactions, so an import that failed halfway couldn't be undone",
+            ),
+            Self::Postgres | Self::Sqlite | Self::Mysql | Self::SqlServer | Self::DuckDb => None,
+        }
+    }
+
     /// What follows `INSERT INTO table` to add a row with every column at its default. MySQL
     /// and MariaDB have no `DEFAULT VALUES`, but read an empty column list as all defaults.
     /// ClickHouse is grouped with them, though the grid never inserts there (see
@@ -420,7 +431,8 @@ impl Dialect {
         }
     }
 
-    /// The savepoint grid edits use inside a transaction the console already has open. SQL
+    /// The savepoint grid edits use inside a transaction the console already has open, and an
+    /// import around each batch of rows, to undo it alone and find the row that failed. SQL
     /// Server writes it `SAVE TRANSACTION` and has no way to release one: it lasts until the
     /// transaction ends. DuckDB has no savepoints at all, so `None`.
     pub fn edits_savepoint(self) -> Option<Savepoint> {

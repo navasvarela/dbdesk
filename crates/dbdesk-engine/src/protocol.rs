@@ -3,11 +3,12 @@ use std::time::Duration;
 
 use dbdesk_core::{
     CatalogNode, CatalogPath, ColumnInfo, DataSource, DataSourceId, DriverKind, Password,
-    ProjectId, Rejection, RelationName, Row, ServerInfo, TableDescription, TransactionStatus,
+    ProjectId, Rejection, RelationName, Row, ServerInfo, TableDescription, TableName,
+    TransactionStatus,
 };
 use dbdesk_store::{
     ConsoleKey, HistoryEntry, HistoryQuery, ImportPlan, ImportPreview, KeymapBindings,
-    McpOverrides, McpPermissions, Project, Projects, SavedConsole, Secret, Settings,
+    McpOverrides, McpPermissions, Project, Projects, SavedConsole, Secret, Separator, Settings,
 };
 
 use crate::{Export, ExportAll, HostKey, PasswordNeeded, Release};
@@ -200,6 +201,15 @@ pub enum Command {
         data_source: DataSourceId,
         path: CatalogPath,
     },
+    /// Inserts the rows of a CSV file into a table, on the explorer's connection to the data
+    /// source, all in one transaction: in batches of several rows per `INSERT`, and rolled back
+    /// at the first failure, which names the line it was on. Refused on a read-only data
+    /// source and where [`dbdesk_sql::Dialect::import_refusal`] says. Reports
+    /// [`Event::ImportProgress`] after each batch, then [`Event::RowsImported`].
+    ImportRows {
+        data_source: DataSourceId,
+        import: RowsImport,
+    },
     /// Runs the grid's generated `DELETE`s, `UPDATE`s and `INSERT`s on the console's
     /// connection, all or none: each must change exactly one row. Inside an open transaction
     /// they stay part of it (behind a savepoint); otherwise they commit together. Refused on a
@@ -389,6 +399,16 @@ pub enum Event {
         console: ConsoleId,
         results: Vec<(String, StatementCheck)>,
     },
+    /// How many rows [`Command::ImportRows`] has inserted so far, uncommitted until it ends.
+    ImportProgress {
+        data_source: DataSourceId,
+        rows: u64,
+    },
+    /// The answer to [`Command::ImportRows`]: how many rows were imported, or why none were.
+    RowsImported {
+        data_source: DataSourceId,
+        result: Result<u64, ImportFailure>,
+    },
     /// How many rows [`Command::ExportAllRows`] has written so far.
     ExportProgress {
         console: ConsoleId,
@@ -540,6 +560,29 @@ pub struct EditFailure {
     /// The index of the statement that failed, if one did (rather than starting or ending
     /// the transaction around them).
     pub statement: Option<usize>,
+    pub message: String,
+}
+
+/// A CSV file to insert into a table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RowsImport {
+    pub table: TableName,
+    pub file: PathBuf,
+    pub separator: Separator,
+    /// Whether the first record names the columns rather than holding a row.
+    pub header: bool,
+    /// Each table column given a value, and the field of the file that holds it, counting from
+    /// 0. An empty field is `NULL`. The columns not listed get their defaults.
+    pub mapping: Vec<(String, usize)>,
+}
+
+/// Why an import stopped. None of it stays: the rows were rolled back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportFailure {
+    /// The lines of the file the failure is on: one line, or the lines of a batch where the
+    /// database couldn't say which row it was. `None` when no row was to blame (the file or the
+    /// transaction).
+    pub lines: Option<(usize, usize)>,
     pub message: String,
 }
 

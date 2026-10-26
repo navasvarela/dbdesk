@@ -132,8 +132,8 @@ Names are quoted with the dialect's quoting, and values written as its string li
 
 ## W5e — Importing a CSV
 
-- **Import CSV…** on a table in the explorer (where the object helpers would be offered, and not
-  on a read-only data source) opens a dialog:
+- **Import CSV…** on a table in the explorer (where the object helpers are offered) asks for the
+  file, then opens a dialog:
   1. **The file**, chosen with the platform's dialog, with **First line is a header** (on) and
      the separator (comma, semicolon or tab).
   2. **A preview** of the first 20 records, and a **mapping** from each of the table's columns to
@@ -150,8 +150,13 @@ Names are quoted with the dialect's quoting, and values written as its string li
   of lines instead.
 - **Empty fields are `NULL`**, so a number column can be left empty. Every other field goes in as
   a string literal, which the database casts to the column's type.
-- **Careful data sources** ask before importing; **read-only** ones never offer it, and the
-  engine refuses it anyway.
+- **Careful data sources** ask before importing. On a **read-only** one, and on ClickHouse
+  (which has no transaction to undo a failed import), the dialog says so and Import stays
+  disabled; the engine refuses it anyway.
+- **DuckDB shares one database per file** between the explorer's connection and the consoles'
+  (a fix in the driver this layer needed): DuckDB keeps committed changes in the database the
+  process opened, so rows imported through the explorer would otherwise not show in an open
+  console.
 - **The CSV reader** is RFC 4180 (quoted fields, doubled quotes, line breaks inside quotes, CRLF
   or LF), the counterpart of the export's writer, in `dbdesk-store`. It counts lines, not
   records, so a reported line is where the record starts in the file. No new dependency.

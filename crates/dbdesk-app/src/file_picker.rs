@@ -10,6 +10,7 @@ const CA_TITLE: &str = "Choose a CA certificate (PEM)";
 const SSH_KEY_TITLE: &str = "Choose an SSH private key";
 const EXPORT_TITLE: &str = "Export data sources";
 const IMPORT_TITLE: &str = "Import data sources";
+const CSV_TITLE: &str = "Choose a CSV file to import";
 const EXPORT_FILE_NAME: &str = "dbdesk-data-sources.toml";
 
 /// An engine whose databases are files.
@@ -134,6 +135,17 @@ fn starting_directory(current: &str) -> Option<PathBuf> {
     path.parent()
         .filter(|parent| parent.is_dir())
         .map(Path::to_path_buf)
+}
+
+/// Shows the open-file dialog for a CSV file to import into a table, or `None` if it was
+/// cancelled. Files of any extension can be chosen: tab-separated files are often `.tsv` or
+/// `.txt`.
+pub fn pick_csv_file() -> Option<PathBuf> {
+    rfd::FileDialog::new()
+        .set_title(CSV_TITLE)
+        .add_filter("CSV", &["csv", "tsv", "txt"])
+        .add_filter("All files", &["*"])
+        .pick_file()
 }
 
 #[cfg(test)]
