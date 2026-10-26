@@ -95,3 +95,40 @@ fn a_failed_submit_names_the_new_row_and_keeps_every_change() {
     assert!(harness.query_by_label("Add row").is_some());
     assert!(harness.query_by_label_contains("new row").is_none());
 }
+
+/// From an order to its customer through the key's link, then from the customer back to their
+/// orders through Referencing rows: each opens in a new console.
+#[test]
+fn follows_a_foreign_key_to_its_row_and_back_to_the_rows_that_refer_to_it() {
+    let dir = tempfile::tempdir().unwrap();
+    save_shop(
+        dir.path(),
+        "CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT);
+         CREATE TABLE orders (id INTEGER PRIMARY KEY,
+             customer_id INTEGER REFERENCES customers (id));
+         INSERT INTO customers VALUES (7, 'ada'), (8, 'bob');
+         INSERT INTO orders VALUES (10, 8), (11, 7), (12, 8);",
+    );
+    let (_layer, feed) = log_console::pipeline();
+    let mut harness = start_app(dir.path(), feed);
+    open_orders(&mut harness, "3 rows");
+    // Add row shows once the table is described, and with it its keys.
+    step_until_visible(&mut harness, "Add row");
+
+    harness.get_by_label("7").click_secondary();
+    harness.run();
+    harness.get_by_label("Open customers row").click();
+    step_until_visible(&mut harness, "ada");
+    harness.get_by_label_contains("1 rows");
+    assert!(harness.query_by_label("bob").is_none());
+    step_until_visible(&mut harness, "Add row");
+
+    harness.get_by_label("ada").click_secondary();
+    harness.run();
+    harness.get_by_label_contains("Referencing rows").click();
+    harness.run();
+    harness.get_by_label("orders.customer_id").click();
+    step_until_visible(&mut harness, "11");
+    harness.get_by_label_contains("1 rows");
+    assert!(harness.query_by_label("10").is_none());
+}

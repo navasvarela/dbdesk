@@ -408,6 +408,18 @@ Each console has a mode, **Auto-commit** (the default) or **Manual commit**:
   added, the statement runs again, so the values the database chose for them show.
   Discarding unread rows is the price: the connection can't hold a cursor and run the
   changes.
+- **Following foreign keys** (W5b): `describe_table` also returns the table's foreign keys
+  (`foreign_keys`) and the keys of other tables that point at it (`referenced_by`), columns in
+  key order, from each database's catalog (`pg_constraint`, `pragma_foreign_key_list`,
+  `KEY_COLUMN_USAGE`, `sys.foreign_keys`, `duckdb_constraints()`; none on ClickHouse). A single
+  table's result is described even when it can't be edited (a read-only data source, no
+  primary key), for its keys. A value in a key's column, when the result holds all of the
+  key's columns and none is `NULL`, is underlined in the link colour: ⌘-click (Ctrl-click) or
+  **Open customers row** opens a new console with `SELECT * FROM <referenced table> WHERE
+  <its columns> = <the values>` and runs it. **Referencing rows ›** lists the keys pointing at
+  the table (`orders.customer_id`) and opens the rows of each that refer to this row; an entry
+  is disabled, saying which columns to select, when the result lacks the ones the key refers
+  to.
 - **Values are text**, as the grid holds them ([ADR-0004](../adr/0004-results-as-text.md)):
   each goes back as a string literal, which PostgreSQL converts to the column's type and
   SQLite stores by the column's affinity. So whatever displays can be edited as it displays

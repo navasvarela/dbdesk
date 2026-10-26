@@ -311,3 +311,33 @@ fn keeps_clickhouse_results_read_only_without_describing_the_table() {
         );
     }
 }
+
+/// A read-only data source's results are never editable, but their table is still described,
+/// so its foreign keys can be followed.
+#[test]
+fn describes_a_read_only_data_sources_tables_for_their_keys() {
+    let mut console = console_with("select n from t", Dialect::Postgres);
+    console.safety = SafetyLevel::ReadOnly;
+    console.data_source_name = "production".to_owned();
+    let statements = console.statements_to_run(RunScope::All);
+    let run = RunId(1);
+    console.begin_run(run, &statements);
+    console.apply(&Event::StatementStarted {
+        run,
+        statement: 0,
+        columns: vec![ColumnInfo {
+            name: "n".to_owned(),
+            type_name: None,
+        }],
+    });
+
+    let tables = console.tables_to_describe();
+
+    assert_eq!(tables.len(), 1);
+    let statement = &console.run.as_ref().unwrap().statements[0];
+    assert_eq!(
+        statement.edits.editability,
+        Editability::ReadOnly("\u{201c}production\u{201d} is read-only".to_owned())
+    );
+    assert_eq!(statement.describing.as_ref(), tables.first());
+}

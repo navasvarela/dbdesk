@@ -1,5 +1,6 @@
-//! The statements the grid writes to change a table's rows: one `UPDATE`, `INSERT` or `DELETE`
-//! per row, naming the row by its primary key as it was loaded.
+//! The statements the grid writes about a table's rows: one `UPDATE`, `INSERT` or `DELETE`
+//! per row, naming the row by its primary key as it was loaded, and the `SELECT` that follows a
+//! foreign key to the rows it names.
 //!
 //! Names are always quoted, so a statement means exactly that table and column whatever the
 //! names spell. Values are string literals or `NULL`: the engines turn a string literal into
@@ -7,7 +8,7 @@
 //! implicit conversion), which is how text from the grid (ADR-0004) goes back in without
 //! dbdesk knowing the types.
 
-use dbdesk_core::{Cell, Quoting, TableDescription};
+use dbdesk_core::{Cell, Quoting, TableDescription, TableName};
 
 use crate::Dialect;
 
@@ -20,6 +21,15 @@ pub struct Table<'a> {
 
 impl<'a> From<&'a TableDescription> for Table<'a> {
     fn from(table: &'a TableDescription) -> Self {
+        Self {
+            schema: &table.schema,
+            name: &table.name,
+        }
+    }
+}
+
+impl<'a> From<&'a TableName> for Table<'a> {
+    fn from(table: &'a TableName) -> Self {
         Self {
             schema: &table.schema,
             name: &table.name,
@@ -98,6 +108,16 @@ impl<'a> RowSql<'a> {
             "DELETE FROM {} WHERE {}",
             self.table_name(),
             self.condition(key)
+        )
+    }
+
+    /// `SELECT * … WHERE <each column equals its value>`: the rows a foreign key's values name,
+    /// or the rows whose key names a given row.
+    pub fn select(&self, filter: &[ColumnValue<'_>]) -> String {
+        format!(
+            "SELECT * FROM {} WHERE {}",
+            self.table_name(),
+            self.condition(filter)
         )
     }
 
@@ -212,6 +232,26 @@ mod tests {
                 r#"INSERT INTO "shop"."order ""items""" DEFAULT VALUES"#
             );
         }
+    }
+
+    #[test]
+    fn selects_the_rows_a_key_names() {
+        let (region, id) = (text("eu"), text("42"));
+        let filter = [
+            ColumnValue {
+                column: "region",
+                value: &region,
+            },
+            ColumnValue {
+                column: "id",
+                value: &id,
+            },
+        ];
+
+        assert_eq!(
+            RowSql::new(Dialect::SqlServer, TABLE).select(&filter),
+            r#"SELECT * FROM [shop].[order "items"] WHERE [region] = N'eu' AND [id] = N'42'"#
+        );
     }
 
     #[test]

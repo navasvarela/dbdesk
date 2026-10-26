@@ -11,7 +11,7 @@ use dbdesk_sql::{Dialect, FormatOptions};
 use dbdesk_store::{ConsoleKey, ConsoleName, ExportFormat};
 
 use crate::console::{
-    ConsoleAction, FormatScope, QueryConsole, RecentCompletions, RunScope, SubmittedRun,
+    ConsoleAction, FormatScope, QueryConsole, RecentCompletions, RowsToOpen, RunScope, SubmittedRun,
 };
 use crate::hazard_dialog::{
     self, HazardChoice, HazardConfirmation, Pending, Review, ReviewContext,
@@ -126,7 +126,26 @@ impl Consoles {
     ) -> Option<(ConsoleKey, Command)> {
         let quoting = Dialect::from(data_source.config.driver()).quoting();
         let name = path.qualified_name(quoting)?;
-        let key = self.open(data_source, format!("SELECT * FROM {name};\n"));
+        self.open_query(data_source, format!("SELECT * FROM {name};\n"))
+    }
+
+    /// Opens a console that selects the rows a foreign key leads to, and runs it.
+    pub fn open_rows(
+        &mut self,
+        data_source: &DataSource,
+        rows: &RowsToOpen,
+    ) -> Option<(ConsoleKey, Command)> {
+        let dialect = Dialect::from(data_source.config.driver());
+        self.open_query(data_source, format!("{};\n", rows.sql(dialect)))
+    }
+
+    /// Opens a console holding `text`, and runs all of it.
+    fn open_query(
+        &mut self,
+        data_source: &DataSource,
+        text: String,
+    ) -> Option<(ConsoleKey, Command)> {
+        let key = self.open(data_source, text);
         let statements = self.open.get(&key)?.statements_to_run(RunScope::All);
         let run = SubmittedRun {
             statements,
@@ -248,11 +267,13 @@ impl Consoles {
                 self.recent_completions.record(&candidate);
                 None
             }
-            // The app opens a window or a file dialog, or updates the catalog, for these.
+            // The app opens a window, a file dialog or a console, or updates the catalog, for
+            // these.
             ConsoleAction::ShowHistory
             | ConsoleAction::Export(_)
             | ConsoleAction::LoadCatalog(_)
-            | ConsoleAction::Format(_) => None,
+            | ConsoleAction::Format(_)
+            | ConsoleAction::OpenRows(_) => None,
         }
     }
 

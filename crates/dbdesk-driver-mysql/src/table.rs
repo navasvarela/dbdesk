@@ -3,9 +3,12 @@
 //! Through `SHOW` statements rather than `information_schema`: they resolve a name exactly as
 //! a statement on this connection would (whether table names match ignoring case depends on
 //! the server's `lower_case_table_names`), and they see temporary tables, which
-//! `information_schema` doesn't list.
+//! `information_schema` doesn't list. Foreign keys come from `information_schema` once the
+//! table's stored name is known: temporary tables can't have any.
 
-use dbdesk_core::{ColumnDescription, DriverError, RelationName, TableDescription};
+use dbdesk_core::{
+    ColumnDescription, DriverError, ForeignKey, RelationName, TableDescription, TableName,
+};
 use mysql_async::Conn;
 use mysql_async::prelude::Queryable;
 
@@ -53,12 +56,72 @@ pub(crate) async fn describe_table(
         "Column_name",
     )
     .await?;
-    Ok(Some(TableDescription {
+    let me = TableName {
         schema,
         name: stored_name,
+    };
+    let foreign_keys = keys_where(conn, OUTGOING, &me).await?;
+    let referenced_by = keys_where(conn, INCOMING, &me).await?;
+    Ok(Some(TableDescription {
+        schema: me.schema,
+        name: me.name,
         columns,
         primary_key,
+        foreign_keys,
+        referenced_by,
     }))
+}
+
+/// Key columns whose table is the one asked about: the table's own foreign keys.
+const OUTGOING: &str = "TABLE_SCHEMA = ? AND TABLE_NAME = ? AND REFERENCED_TABLE_NAME IS NOT NULL";
+/// Key columns that refer to the table asked about: other tables' keys to it.
+const INCOMING: &str = "REFERENCED_TABLE_SCHEMA = ? AND REFERENCED_TABLE_NAME = ?";
+
+/// The foreign keys `KEY_COLUMN_USAGE` lists where `condition` holds for `table`, each
+/// column list in key order.
+async fn keys_where(
+    conn: &mut Conn,
+    condition: &str,
+    table: &TableName,
+) -> Result<Vec<ForeignKey>, DriverError> {
+    type KeyColumn = (String, String, String, String, String, String, String);
+    let columns: Vec<KeyColumn> = conn
+        .exec(
+            format!(
+                "SELECT TABLE_SCHEMA, TABLE_NAME, CONSTRAINT_NAME, COLUMN_NAME, \
+                 REFERENCED_TABLE_SCHEMA, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME \
+                 FROM information_schema.KEY_COLUMN_USAGE WHERE {condition} \
+                 ORDER BY TABLE_SCHEMA, TABLE_NAME, CONSTRAINT_NAME, ORDINAL_POSITION"
+            ),
+            (&table.schema, &table.name),
+        )
+        .await
+        .map_err(connection_error)?;
+    let mut keys: Vec<(String, ForeignKey)> = Vec::new();
+    for (schema, name, constraint, column, referenced_schema, referenced_name, referenced) in
+        columns
+    {
+        let key_table = TableName { schema, name };
+        match keys.last_mut() {
+            Some((last, key)) if *last == constraint && key.table == key_table => {
+                key.columns.push(column);
+                key.referenced_columns.push(referenced);
+            }
+            _ => keys.push((
+                constraint,
+                ForeignKey {
+                    table: key_table,
+                    columns: vec![column],
+                    referenced: TableName {
+                        schema: referenced_schema,
+                        name: referenced_name,
+                    },
+                    referenced_columns: vec![referenced],
+                },
+            )),
+        }
+    }
+    Ok(keys.into_iter().map(|(_, key)| key).collect())
 }
 
 /// Runs a `SHOW` statement, or `None` if the table or its database doesn't exist.

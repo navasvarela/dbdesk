@@ -537,6 +537,8 @@ mod tests {
                 })
                 .collect(),
             primary_key: key.iter().map(|c| (*c).to_owned()).collect(),
+            foreign_keys: vec![],
+            referenced_by: vec![],
         }
     }
 
