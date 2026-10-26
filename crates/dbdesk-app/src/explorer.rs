@@ -7,7 +7,7 @@ use dbdesk_core::{
     CatalogNode, CatalogPath, DataSourceId, DriverKind, FolderKind, NodeKind, ProjectId, Quoting,
 };
 use dbdesk_engine::SessionState;
-use dbdesk_sql::Dialect;
+use dbdesk_sql::{Capabilities, Dialect, TableChange};
 use dbdesk_store::{ConsoleKey, Project};
 use egui::{
     Color32, CornerRadius, Id, Label, Rect, Response, RichText, ScrollArea, Sense, Shape, TextEdit,
@@ -59,19 +59,21 @@ pub enum ExplorerAction {
     MoveToProject(DataSourceId, Option<ProjectId>),
     /// Opens an object helper's dialog on the data source.
     Helper(DataSourceId, Helper),
+    /// Copies the `CREATE TABLE` statement of the table at the path.
+    CopyDdl(DataSourceId, CatalogPath),
 }
 
 /// An object helper, with the catalog node it was opened on.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[expect(
-    clippy::enum_variant_names,
-    reason = "only table helpers so far; the index helpers end it"
-)]
 pub enum Helper {
     /// On a schema, or its tables folder.
     NewTable(CatalogPath),
+    RenameTable(CatalogPath),
     TruncateTable(CatalogPath),
     DropTable(CatalogPath),
+    /// On a table, or its indexes folder.
+    NewIndex(CatalogPath),
+    DropIndex(CatalogPath),
 }
 
 /// The explorer's own view settings.
@@ -475,6 +477,7 @@ fn data_source_tree(
             id,
             catalog: &entry.catalog,
             quoting: dialect.quoting(),
+            capabilities: dialect.capabilities(),
             own_database: entry.data_source.config.database(),
         };
         ui.indent(Id::new(id), |ui| {
@@ -559,6 +562,8 @@ struct TreeView<'a> {
     catalog: &'a CatalogTree,
     /// For the names the context menu copies.
     quoting: Quoting,
+    /// Which object helpers the context menu offers.
+    capabilities: &'static Capabilities,
     /// The database the data source connects to, where its tree lists several. The helpers'
     /// statements run on that connection, so they are offered only inside it.
     own_database: Option<&'a str>,
@@ -770,13 +775,31 @@ fn helpers_menu(
     actions: &mut Vec<ExplorerAction>,
 ) {
     let path = &node.path;
+    let capabilities = tree.capabilities;
     let mut new: Vec<(&str, &str, Helper)> = Vec::new();
     let mut object: Vec<(&str, &str, Helper)> = Vec::new();
     match node.kind() {
         Some(NodeKind::Schema | NodeKind::Folder(FolderKind::Tables)) => {
             new.push((icons::TABLE, "Table…", Helper::NewTable(path.clone())));
         }
+        Some(NodeKind::Folder(FolderKind::Indexes)) if capabilities.indexes && on_table(path) => {
+            new.push((icons::LIST_DASHES, "Index…", Helper::NewIndex(path.clone())));
+        }
         Some(NodeKind::Table) => {
+            if capabilities.indexes {
+                object.push((
+                    icons::LIST_DASHES,
+                    "New index…",
+                    Helper::NewIndex(path.clone()),
+                ));
+            }
+            if capabilities.changes_in_place(TableChange::RenameTable) {
+                object.push((
+                    icons::PENCIL_SIMPLE,
+                    "Rename…",
+                    Helper::RenameTable(path.clone()),
+                ));
+            }
             object.push((
                 icons::ERASER,
                 "Truncate…",
@@ -784,7 +807,17 @@ fn helpers_menu(
             ));
             object.push((icons::TRASH, "Drop…", Helper::DropTable(path.clone())));
         }
+        Some(NodeKind::Index)
+            if capabilities.indexes && on_table(&path.parent().unwrap_or_default()) =>
+        {
+            object.push((icons::TRASH, "Drop index…", Helper::DropIndex(path.clone())));
+        }
         _ => {}
+    }
+    let copies_ddl = node.kind() == Some(NodeKind::Table)
+        && (node.has_definition || capabilities.rebuilds_table_ddl);
+    if copies_ddl && widgets::menu_item(ui, icons::COPY, "Copy DDL").clicked() {
+        actions.push(ExplorerAction::CopyDdl(tree.id, path.clone()));
     }
     if new.is_empty() && object.is_empty() {
         return;
@@ -796,6 +829,14 @@ fn helpers_menu(
         widgets::name(menu.response, WidgetType::Button, "New", true);
     }
     helper_items(ui, tree.id, object, actions);
+}
+
+/// Whether `folder` is a table's own, rather than a view's.
+fn on_table(folder: &CatalogPath) -> bool {
+    folder
+        .parent()
+        .and_then(|parent| parent.last().map(|segment| segment.kind))
+        == Some(NodeKind::Table)
 }
 
 fn helper_items(

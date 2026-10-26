@@ -66,6 +66,10 @@ pub struct DbDeskApp {
     delete_project_confirmation: Option<DeleteProjectConfirmation>,
     /// The object helper being used: New table, Drop…, and so on.
     object_dialog: Option<ObjectDialog>,
+    /// The table whose DDL Copy DDL is waiting for.
+    copying_ddl: Option<(DataSourceId, CatalogPath)>,
+    /// Text to put on the clipboard on the next frame, from an engine event.
+    clipboard: Option<String>,
     definition_window: Option<DefinitionWindow>,
     history_window: Option<HistoryWindow>,
     rollback_confirmation: Option<RollbackConfirmation>,
@@ -128,6 +132,8 @@ impl DbDeskApp {
             mcp_defaults: McpDefaultsEditor::new(&McpPermissions::default()),
             delete_project_confirmation: None,
             object_dialog: None,
+            copying_ddl: None,
+            clipboard: None,
             definition_window: None,
             history_window: None,
             rollback_confirmation: None,
@@ -219,6 +225,7 @@ impl DbDeskApp {
         {
             self.show_change(dialog.data_source(), changed);
         }
+        self.apply_to_copied_ddl(event);
         if let Some(window) = &mut self.definition_window {
             window.apply(event);
         }
@@ -255,6 +262,29 @@ impl DbDeskApp {
         }
         if matches!(event, Event::ConsolesLoaded(_)) {
             self.restore_console_tabs();
+        }
+    }
+
+    /// Puts the DDL Copy DDL asked for on the clipboard once it arrives.
+    fn apply_to_copied_ddl(&mut self, event: &Event) {
+        let Event::TableDdlLoaded {
+            data_source,
+            path,
+            result,
+        } = event
+        else {
+            return;
+        };
+        if self.copying_ddl.as_ref() != Some(&(*data_source, path.clone())) {
+            return;
+        }
+        self.copying_ddl = None;
+        match result {
+            Ok(ddl) => {
+                tracing::info!("copied the DDL of {path}");
+                self.clipboard = Some(ddl.clone());
+            }
+            Err(error) => tracing::error!("could not copy the DDL of {path}: {error}"),
         }
     }
 
@@ -515,6 +545,10 @@ impl DbDeskApp {
                     project,
                 });
             }
+            ExplorerAction::CopyDdl(data_source, path) => {
+                self.copying_ddl = Some((data_source, path.clone()));
+                self.send(Command::LoadTableDdl { data_source, path });
+            }
             ExplorerAction::Helper(id, helper) => {
                 if let Some(entry) = self.state.data_source(id) {
                     let target = Target::new(&entry.data_source);
@@ -561,13 +595,31 @@ impl DbDeskApp {
         }
     }
 
-    /// Shows what a helper changed: reloads the node whose children changed, and opens it.
+    /// Shows what a helper changed: reloads the node whose children changed, and opens it and
+    /// every node above it, loading those that never were (a new index's table may have been
+    /// closed).
     fn show_change(&mut self, id: DataSourceId, changed: CatalogPath) {
         let Some(catalog) = self.state.catalog_mut(id) else {
             return;
         };
-        let needs_loading = catalog.refresh(&changed) || catalog.expand(&changed);
-        self.load_children_if(needs_loading, id, changed);
+        let refreshed = catalog.refresh(&changed);
+        let mut ancestors = Vec::new();
+        let mut path = changed.parent();
+        while let Some(ancestor) = path {
+            path = ancestor.parent();
+            ancestors.push(ancestor);
+        }
+        let mut loads: Vec<CatalogPath> = ancestors
+            .into_iter()
+            .rev()
+            .filter(|ancestor| catalog.expand(ancestor))
+            .collect();
+        if catalog.expand(&changed) || refreshed {
+            loads.push(changed);
+        }
+        for path in loads {
+            self.send(Command::LoadChildren { id, path });
+        }
     }
 
     /// Loads catalog levels completion asked for, without expanding them in the explorer.
@@ -1079,6 +1131,9 @@ impl eframe::App for DbDeskApp {
                 },
             );
         let ctx = ui.ctx().clone();
+        if let Some(text) = self.clipboard.take() {
+            ctx.copy_text(text);
+        }
         for action in explorer_actions {
             self.handle_explorer_action(action, &ctx);
         }
@@ -2406,6 +2461,99 @@ mod tests {
             )
             .unwrap();
         assert_eq!(target, "customers");
+    }
+
+    /// Right-clicks the tree node labelled `node` and picks `item` from its menu.
+    fn node_menu(harness: &mut Harness<'_, DbDeskApp>, node: &str, item: &str) {
+        harness.get_by_label(node).click_secondary();
+        harness.run_steps(2);
+        harness.get_by_label(item).click();
+        harness.run_steps(2);
+    }
+
+    #[test]
+    fn indexes_a_table_drops_the_index_and_renames_the_table() {
+        let dir = tempfile::tempdir().unwrap();
+        save_shop(
+            dir.path(),
+            "CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT);",
+        );
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        expand_shop_tables(&mut harness, "orders");
+
+        node_menu(&mut harness, "orders", "New index…");
+        step_until(&mut harness, "the table's columns loading", |harness| {
+            harness.query_by_label("Index columns").is_some()
+        });
+        pick(&mut harness, "Index columns", "customer");
+        assert!(
+            harness
+                .query_all_by_value("CREATE INDEX main.orders_customer_idx ON orders (customer);\n")
+                .next()
+                .is_some()
+        );
+        harness.get_by_label("Execute").click();
+        step_until_visible(&mut harness, "orders_customer_idx");
+
+        node_menu(&mut harness, "orders_customer_idx", "Drop index…");
+        harness.get_by_label_contains("Drops the index main.orders_customer_idx on main.orders.");
+        harness.get_by_label("Execute").click();
+        step_until(&mut harness, "the index leaving the tree", |harness| {
+            harness.query_by_label("orders_customer_idx").is_none()
+                && harness.query_by_label("Execute").is_none()
+        });
+
+        node_menu(&mut harness, "orders", "Rename…");
+        harness
+            .get_by_role_and_label(Role::TextInput, "New name")
+            .focus();
+        harness.run_steps(2);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness
+            .get_by_role_and_label(Role::TextInput, "New name")
+            .type_text("old_orders");
+        harness.run_steps(2);
+        assert!(
+            harness
+                .query_all_by_value("ALTER TABLE main.orders RENAME TO old_orders;\n")
+                .next()
+                .is_some()
+        );
+        harness.get_by_label("Execute").click();
+        step_until_visible(&mut harness, "Expand old_orders");
+        assert_eq!(sqlite_tables(dir.path()), ["old_orders"]);
+    }
+
+    #[test]
+    fn copies_a_tables_ddl() {
+        let dir = tempfile::tempdir().unwrap();
+        save_shop(dir.path(), "CREATE TABLE orders (id INTEGER PRIMARY KEY)");
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        expand_shop_tables(&mut harness, "orders");
+
+        harness.get_by_label("orders").click_secondary();
+        harness.run_steps(2);
+        harness.get_by_label("Copy DDL").click();
+        let copied = |harness: &Harness<'_, DbDeskApp>| {
+            harness
+                .output()
+                .platform_output
+                .commands
+                .iter()
+                .find_map(|command| match command {
+                    egui::OutputCommand::CopyText(text) => Some(text.clone()),
+                    _ => None,
+                })
+        };
+        step_until(&mut harness, "the DDL being copied", |harness| {
+            copied(harness).is_some()
+        });
+        assert_eq!(
+            copied(&harness).as_deref(),
+            Some("CREATE TABLE orders (id INTEGER PRIMARY KEY);")
+        );
     }
 
     #[test]

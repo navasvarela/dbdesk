@@ -6,6 +6,8 @@
 //! confirmation a destructive change needs, the review panel, and waiting for the engine.
 
 mod confirm;
+mod fields;
+mod index;
 mod new_table;
 mod review;
 mod table;
@@ -16,8 +18,9 @@ use dbdesk_sql::{DdlError, DdlOperation, Dialect, ObjectName, ddl_statements};
 use egui::{Id, Ui, Window};
 
 pub use confirm::Destruction;
+use index::{DropIndex, NewIndex};
 use new_table::NewTable;
-use table::{DropTable, TableAt, TruncateTable};
+use table::{DropTable, RenameTable, TableAt, TruncateTable};
 
 use crate::catalog_tree::CatalogTree;
 use crate::explorer::Helper;
@@ -108,8 +111,11 @@ pub fn form(helper: Helper, dialect: Dialect) -> Option<Box<dyn ObjectForm>> {
     let first_type = dialect.capabilities().common_types.first().copied();
     Some(match helper {
         Helper::NewTable(path) => Box::new(NewTable::new(path, first_type.unwrap_or_default())?),
+        Helper::RenameTable(path) => Box::new(RenameTable::new(TableAt::new(path)?)),
         Helper::TruncateTable(path) => Box::new(TruncateTable::new(TableAt::new(path)?)),
         Helper::DropTable(path) => Box::new(DropTable::new(TableAt::new(path)?)),
+        Helper::NewIndex(path) => Box::new(NewIndex::new(&path)?),
+        Helper::DropIndex(path) => Box::new(DropIndex::new(&path)?),
     })
 }
 
