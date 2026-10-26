@@ -6,7 +6,10 @@
 //! new dialect is a new variant here, its rows in each method and, if its lexical rules are
 //! new, the lexer code that applies them.
 
+mod capabilities;
 mod functions;
+
+pub use capabilities::{Capabilities, TableChange};
 
 use dbdesk_core::{DriverKind, Quoting, ServerInfo};
 use sqlparser::dialect::{
@@ -133,6 +136,18 @@ impl Dialect {
         Self::DuckDb,
         Self::ClickHouse,
     ];
+
+    /// The dialect's name in messages.
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Postgres => "PostgreSQL",
+            Self::Sqlite => "SQLite",
+            Self::Mysql => "MySQL",
+            Self::SqlServer => "SQL Server",
+            Self::DuckDb => "DuckDB",
+            Self::ClickHouse => "ClickHouse",
+        }
+    }
 
     pub(crate) fn lexical_rules(self) -> LexicalRules {
         match self {
