@@ -7,6 +7,7 @@
 - [Moving data sources to another machine](sharing.md)
 - [The explorer](explorer.md)
 - [Creating and changing tables](objects.md)
+- [Views and schemas](views-schemas.md)
 - [Query consoles](consoles.md)
 - [Keyboard shortcuts](shortcuts.md)
 - [Connecting an AI assistant](mcp.md)

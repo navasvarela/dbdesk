@@ -292,6 +292,13 @@ const SCENES: &[Scene] = &[
         needs: &[],
     },
     Scene {
+        name: "new-view",
+        data_sources: FixtureSources::Shop,
+        play: new_view,
+        keeps_pointer: false,
+        needs: &[],
+    },
+    Scene {
         name: "explorer-projects",
         data_sources: FixtureSources::Projects,
         play: explorer_projects,
@@ -1003,6 +1010,30 @@ fn drop_table(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
     harness.get_by_label("events").click_secondary();
     harness.run_ok();
     harness.get_by_label("Drop…").click();
+    harness.run_ok();
+}
+
+/// New view, its query in the highlighted editor, and the SQL it will run.
+fn new_view(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    expand(harness, &["shop", "main"]);
+    step_until_visible(harness, "Expand views");
+    harness.get_by_label("views").click_secondary();
+    harness.run_ok();
+    harness.get_by_label("New").hover();
+    harness.run_ok();
+    harness.get_by_label("View…").click();
+    harness.run_ok();
+    retype(harness, "Name", "shipped_orders");
+    harness
+        .get_by_role_and_label(Role::MultilineTextInput, "Query")
+        .focus();
+    harness.run_ok();
+    harness
+        .get_by_role_and_label(Role::MultilineTextInput, "Query")
+        .type_text(
+            "SELECT o.id, c.name, o.placed_at\nFROM orders o\nJOIN customers c ON c.id = \
+             o.customer_id\nWHERE o.status = 'shipped'",
+        );
     harness.run_ok();
 }
 

@@ -432,6 +432,26 @@ and users, from a **New** submenu and object actions in the explorer. The full p
   rename and drop through the dialogs and wait for the tree to show it.
 - **E2 — Views and schemas:** New view and materialized view with the console's editor, Edit,
   Refresh, Rename, Drop; New schema and Drop schema.
+
+  **E2 demo note:** built. Right-click `main` → **New › View…**, name it `shipped_orders` and
+  type its query in an editor highlighted like a console's: the review panel shows
+  `CREATE VIEW main.shipped_orders AS …`, and **Execute** puts it in the reloaded **views**
+  folder. On the view, **Edit…** loads its definition and starts from the query in it, saved
+  with `CREATE OR REPLACE VIEW`, `ALTER VIEW` on SQL Server, or, on SQLite and for
+  materialized views, a drop and create in one transaction that the confirmation spells out;
+  **Rename…** (not on SQLite, which can't), **Drop…** (with `CASCADE` on PostgreSQL) and
+  **Copy DDL** do what they say. On PostgreSQL, **New › Materialized view…** can start `WITH
+  NO DATA`, and **Refresh…** offers `CONCURRENTLY` once the view has a unique index. **New ›
+  Schema…** sits on a PostgreSQL, SQL Server or DuckDB database (with an owner on the first
+  two), and on a MySQL or ClickHouse data source, where it writes `CREATE DATABASE`; **Drop
+  schema…** counts what the schema holds and drops it with `CASCADE` where the engine has it.
+  SQL Server tables now have **Copy DDL**, rebuilt from `describe_table` and the constraints,
+  whose definitions the driver writes from its catalog views. Covered by the builder's golden
+  tests and `view_query` against each engine's definitions, engine round trips that create,
+  edit (from the definition), rename and drop a view and create and drop a schema holding a
+  table on every engine with a test server (MySQL's test user can't create databases), a
+  PostgreSQL materialized view test, the copied DDL run again on PostgreSQL and SQL Server,
+  and kittest tests that create, edit and drop a view on SQLite and a schema on DuckDB.
 - **E3 — Users and roles (PostgreSQL):**
   - a Roles folder in the tree;
   - New user and New role, with passwords hashed into a SCRAM verifier and kept out of the

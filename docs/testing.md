@@ -114,7 +114,15 @@ against a real server, such as a cancel arriving after the last row.
   and recorded in the history. Its round trip builds a parent and a child table from one
   `TableSpec` on every engine with a test server, describes the child, and compares its
   columns, nullability, default and primary key with the spec, then drops both. Copy DDL on
-  PostgreSQL is checked by running what it copied after dropping the table.
+  PostgreSQL and SQL Server is checked by running what it copied after dropping the table.
+- The builder's golden tests also write every view and schema statement, and `view_query` is
+  checked against a definition as each engine shows it.
+- The engine's view round trip creates a view on every engine with a test server, edits its
+  query starting from what `view_query` finds in the loaded definition, copies its DDL,
+  renames it where the engine can and drops it. A schema holding a table is created, listed
+  and dropped (with `CASCADE`, `DROP DATABASE`, or the table first). MySQL's test user may
+  not create databases, so its schemas are only in the golden tests. PostgreSQL's
+  materialized views have a test of their own.
 
 ## MCP server
 
