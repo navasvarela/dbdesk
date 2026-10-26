@@ -5,6 +5,7 @@
 
 mod atomic;
 mod consoles;
+mod csv;
 mod data_sources;
 mod export;
 mod history;
@@ -18,6 +19,7 @@ mod settings;
 pub use consoles::{
     ConsoleFiles, ConsoleKey, ConsoleName, ConsoleStoreError, InvalidConsoleName, SavedConsole,
 };
+pub use csv::{CsvError, CsvReader, CsvRecord, Separator};
 pub use data_sources::{DataSourceFile, StoreError};
 pub use export::{ExportError, ExportFormat, ExportWriter, export_rows};
 pub use history::{

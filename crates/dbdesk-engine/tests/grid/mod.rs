@@ -593,3 +593,170 @@ fn cancels_fails_and_refuses_exports_without_leaving_a_file() {
     assert!(refused.unwrap_err().contains("read-only"));
     engine.shut_down();
 }
+
+/// Imports a CSV file into a table, as the import dialog asks, and returns the progress
+/// reported and the outcome.
+fn import_rows(
+    engine: &mut TestEngine,
+    data_source: DataSourceId,
+    import: dbdesk_engine::RowsImport,
+) -> (Vec<u64>, Result<u64, dbdesk_engine::ImportFailure>) {
+    engine.send(Command::ImportRows {
+        data_source,
+        import,
+    });
+    let mut progress = Vec::new();
+    loop {
+        match next_answer(engine) {
+            Event::ImportProgress { rows, .. } => progress.push(rows),
+            Event::RowsImported { result, .. } => return (progress, result),
+            Event::TransactionChanged { .. } => {}
+            other => panic!("expected the import's progress, got {other:?}"),
+        }
+    }
+}
+
+/// A CSV file with a header and `count` rows from `first` on, with one more row repeating the
+/// first id at `repeat_at` (a line of the file) if given.
+fn csv_file(path: &std::path::Path, first: u32, count: u32, repeat_at: Option<usize>) {
+    let mut text = "ID,Name,Qty\r\n".to_owned();
+    for id in first..first + count {
+        let line = text.lines().count() + 1;
+        if Some(line) == repeat_at {
+            text.push_str(&format!("{first},again,1\r\n"));
+        }
+        let qty = if id % 2 == 0 {
+            String::new()
+        } else {
+            id.to_string()
+        };
+        text.push_str(&format!("{id},\"name, {id}\",{qty}\r\n"));
+    }
+    std::fs::write(path, text).unwrap();
+}
+
+/// Rows from a CSV file in batches, all in one transaction: the columns mapped from the file,
+/// an empty field as NULL, an unmapped column at its default. A repeated key rolls the whole
+/// import back and names its line, found by retrying the batch a row at a time; DuckDB, with no
+/// savepoints, names the batch's lines.
+#[test]
+fn imports_a_csv_file_all_or_none_on_every_engine() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    engine.expect_started(vec![]);
+    let table = scratch_table("imported");
+    let (good, bad) = (dir.path().join("good.csv"), dir.path().join("bad.csv"));
+    csv_file(&good, 1, 1200, None);
+    csv_file(&bad, 2000, 1000, Some(703));
+    for source in test_sources(&mut engine, dir.path()) {
+        run_ok(
+            &mut engine,
+            &source,
+            1,
+            &[&format!(
+                "CREATE TABLE {table} (id int NOT NULL PRIMARY KEY, name varchar(40) NOT NULL, \
+                 qty int, note varchar(40) DEFAULT 'none')"
+            )],
+        );
+        let described = describe(&mut engine, &source, &table);
+        let import = |file: &std::path::Path| dbdesk_engine::RowsImport {
+            table: described.table_name(),
+            file: file.to_owned(),
+            separator: dbdesk_store::Separator::Comma,
+            header: true,
+            mapping: vec![
+                ("id".to_owned(), 0),
+                ("name".to_owned(), 1),
+                ("qty".to_owned(), 2),
+            ],
+        };
+
+        let (progress, imported) = import_rows(&mut engine, source.id, import(&good));
+        assert_eq!(imported, Ok(1200), "{}", source.name);
+        assert_eq!(progress, [500, 1000, 1200], "{}", source.name);
+        let summary = format!(
+            "SELECT count(*), count(qty), min(note), max(note) FROM {table} WHERE name LIKE 'name, %'"
+        );
+        let expected = vec![vec![
+            Some("1200".to_owned()),
+            Some("600".to_owned()),
+            Some("none".to_owned()),
+            Some("none".to_owned()),
+        ]];
+        assert_eq!(
+            query(&mut engine, &source, 2, &summary),
+            expected,
+            "{}",
+            source.name
+        );
+
+        let (_, failed) = import_rows(&mut engine, source.id, import(&bad));
+        let failure = failed.unwrap_err();
+        let lines = match source.dialect {
+            Dialect::DuckDb => Some((502, 1001)),
+            _ => Some((703, 703)),
+        };
+        assert_eq!(failure.lines, lines, "{}: {failure:?}", source.name);
+        let count = format!("SELECT count(*) FROM {table}");
+        assert_eq!(
+            query(&mut engine, &source, 3, &count),
+            [[Some("1200".to_owned())]],
+            "{}: nothing of the failed import stays",
+            source.name
+        );
+        run_ok(&mut engine, &source, 4, &[&format!("DROP TABLE {table}")]);
+    }
+    engine.shut_down();
+}
+
+/// A line with too few fields stops the import at that line; a read-only data source and
+/// ClickHouse refuse to import at all.
+#[test]
+fn refuses_imports_it_cant_undo_or_complete() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut engine, id) = engine_with_sqlite(dir.path());
+    let file = dir.path().join("short.csv");
+    std::fs::write(&file, "1,a\n2\n").unwrap();
+    let import = |table: dbdesk_core::TableName| dbdesk_engine::RowsImport {
+        table,
+        file: file.clone(),
+        separator: dbdesk_store::Separator::Comma,
+        header: false,
+        mapping: vec![("id".to_owned(), 0), ("name".to_owned(), 1)],
+    };
+    let people = dbdesk_core::TableName {
+        schema: "main".to_owned(),
+        name: "t".to_owned(),
+    };
+    let (_, short) = import_rows(&mut engine, id, import(people.clone()));
+    let failure = short.unwrap_err();
+    assert_eq!(failure.lines, Some((2, 2)), "{failure:?}");
+    assert!(failure.message.contains("1 fields"), "{failure:?}");
+
+    if let Some(clickhouse) = clickhouse_source(&mut engine) {
+        let (_, refused) = import_rows(&mut engine, clickhouse.id, import(people.clone()));
+        assert!(refused.unwrap_err().message.contains("no transactions"));
+    }
+    engine.shut_down();
+
+    let read_only_dir = tempfile::tempdir().unwrap();
+    let mut engine = TestEngine::start(
+        &read_only_dir.path().join("data_sources.toml"),
+        Arc::default(),
+    );
+    engine.expect_started(vec![]);
+    let data_source = DataSource {
+        safety: dbdesk_core::SafetyLevel::ReadOnly,
+        ..sqlite_data_source(sqlite_database(read_only_dir.path()))
+    };
+    let id = data_source.id;
+    engine.send(Command::SaveDataSource {
+        data_source,
+        password: PasswordUpdate::Keep,
+        ssh_secret: PasswordUpdate::Keep,
+    });
+    assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
+    let (_, refused) = import_rows(&mut engine, id, import(people));
+    assert!(refused.unwrap_err().message.contains("read-only"));
+    engine.shut_down();
+}

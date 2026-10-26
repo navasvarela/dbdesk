@@ -217,3 +217,100 @@ fn exports_every_row_not_only_those_loaded() {
         ("id,customer", "600,customer 600", "1,customer 1")
     );
 }
+
+/// Saves `shop` with an orders table at `safety`, starts the app, and opens Import CSV… on
+/// the table with `csv` as the file.
+fn import_csv_into_orders(
+    dir: &Path,
+    safety: dbdesk_core::SafetyLevel,
+    csv: &str,
+) -> Harness<'static, DbDeskApp> {
+    let shop = save_shop(
+        dir,
+        "CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT NOT NULL, qty INTEGER,
+             note TEXT DEFAULT 'none');
+         INSERT INTO orders VALUES (1, 'ada', 1, 'first');",
+    );
+    DataSourceFile::new(dir.join("data_sources.toml"))
+        .save(&[dbdesk_core::DataSource { safety, ..shop }])
+        .unwrap();
+    let file = dir.join("orders.csv");
+    std::fs::write(&file, csv).unwrap();
+    let (_layer, feed) = log_console::pipeline();
+    let mut harness = start_app(dir, feed);
+    harness.state_mut().pick_csv_file = Box::new(move || Some(file.clone()));
+    expand_shop_tables(&mut harness, "orders");
+    harness.get_by_label("orders").click_secondary();
+    harness.run();
+    harness.get_by_label("Import CSV…").click();
+    step_until_visible(&mut harness, "Source of customer");
+    // The dialog settles where it is centred before a pointer can find its buttons.
+    harness.run();
+    harness
+}
+
+/// The file's columns are matched to the table's by header name, a value that doesn't fit
+/// its column is flagged, and Import inserts the rows, the unmatched column at its default.
+#[test]
+fn imports_a_csv_file_matching_its_columns_by_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut harness = import_csv_into_orders(
+        dir.path(),
+        dbdesk_core::SafetyLevel::Normal,
+        "Customer,ID,Qty\r\nbob,2,3\r\n\"cy, jr\",3,lots\r\n",
+    );
+    harness.get_by_label("Import into main.orders");
+    harness.get_by(|node| {
+        node.role() == Role::ComboBox
+            && node.label().as_deref() == Some("Source of id")
+            && node.value().as_deref() == Some("ID")
+    });
+    harness.get_by_label_contains("Line 3, qty: \u{201c}lots\u{201d} isn't a whole number");
+
+    harness.get_by_label("Import").click();
+    step_until_visible(&mut harness, "Imported 2 rows into main.orders");
+    let connection = rusqlite::Connection::open(dir.path().join("shop.db")).unwrap();
+    let imported: Vec<(i64, String, String)> = connection
+        .prepare("SELECT id, customer, note FROM orders WHERE id > 1 ORDER BY id")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(
+        imported,
+        [
+            (2, "bob".to_owned(), "none".to_owned()),
+            (3, "cy, jr".to_owned(), "none".to_owned())
+        ]
+    );
+    // The dialog grew by the status line, and is centred again before Close can be clicked.
+    harness.run();
+    harness.get_by_label("Close").click();
+    harness.run();
+    assert!(harness.query_by_label("Import into main.orders").is_none());
+}
+
+/// A careful data source asks first; a row the database refuses rolls everything back, and
+/// the dialog names its line.
+#[test]
+fn a_failed_import_names_its_line_and_imports_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut harness = import_csv_into_orders(
+        dir.path(),
+        dbdesk_core::SafetyLevel::Careful,
+        "id,customer\n2,bob\n1,again\n",
+    );
+    harness.get_by_label("Import").click();
+    harness.run();
+    harness.get_by_label_contains("\u{201c}shop\u{201d} is careful: this inserts the file's rows");
+    harness.get_by_label("Import").click();
+
+    step_until_visible(&mut harness, "Line 3: UNIQUE constraint failed: orders.id");
+    harness.get_by_label_contains("Nothing was imported.");
+    let count: i64 = rusqlite::Connection::open(dir.path().join("shop.db"))
+        .unwrap()
+        .query_row("SELECT count(*) FROM orders", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(count, 1);
+}

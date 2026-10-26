@@ -12,6 +12,7 @@ use egui_dock::{DockArea, DockState};
 use crate::about_dialog;
 use crate::console::{ConsoleAction, ExportedRows, FormatScope, RowsToOpen};
 use crate::consoles::Consoles;
+use crate::csv_import::{CsvImportAction, CsvImportDialog};
 use crate::data_source_dialog::{DataSourceDialog, DialogAction};
 use crate::data_source_form::McpPasswordChange;
 use crate::definition_window::DefinitionWindow;
@@ -77,6 +78,7 @@ pub struct DbDeskApp {
     host_key_prompt: Option<HostKeyPrompt>,
     export_sources_dialog: Option<ExportSourcesDialog>,
     import_dialog: Option<ImportDialog>,
+    csv_import: Option<CsvImportDialog>,
     /// Ask where to export data sources to and which file to import. The platform's file
     /// dialogs, except in tests.
     pick_data_sources_export: Box<dyn Fn() -> Option<PathBuf>>,
@@ -92,6 +94,8 @@ pub struct DbDeskApp {
     updates: Updates,
     /// Asks where to export rows. The platform's save dialog, except in tests.
     pick_export_path: Box<dyn Fn(ExportFormat) -> Option<PathBuf>>,
+    /// Asks for a CSV file to import into a table. A field so tests can answer it.
+    pick_csv_file: Box<dyn Fn() -> Option<PathBuf>>,
     consoles: Consoles,
     /// Set on first launch until the window has been asked to maximize. After that, eframe
     /// restores whatever size the user left it at.
@@ -141,10 +145,12 @@ impl DbDeskApp {
             host_key_prompt: None,
             export_sources_dialog: None,
             import_dialog: None,
+            csv_import: None,
             pick_data_sources_export: Box::new(file_picker::pick_data_sources_export),
             pick_data_sources_import: Box::new(file_picker::pick_data_sources_import),
             quit_confirmed: false,
             pick_export_path: Box::new(export_dialog::pick_export_path),
+            pick_csv_file: Box::new(file_picker::pick_csv_file),
             keymap: Keymap::default(),
             keymap_path: None,
             keymap_window_open: false,
@@ -244,6 +250,9 @@ impl DbDeskApp {
             dialog.apply(event);
         }
         if let Some(dialog) = &mut self.import_dialog {
+            dialog.apply(event);
+        }
+        if let Some(dialog) = &mut self.csv_import {
             dialog.apply(event);
         }
         self.consoles.apply(event);
@@ -510,6 +519,7 @@ impl DbDeskApp {
                     self.send(command);
                 }
             }
+            ExplorerAction::ImportCsv(id, path) => self.open_csv_import(id, &path),
             ExplorerAction::NewProject { then_move } => {
                 self.project_dialog = Some(ProjectNameDialog::create(then_move));
             }
@@ -952,6 +962,42 @@ impl DbDeskApp {
         }
     }
 
+    /// Asks for a CSV file, then opens the dialog that imports it into the table at `path`.
+    fn open_csv_import(&mut self, id: DataSourceId, path: &CatalogPath) {
+        let Some(file) = (self.pick_csv_file)() else {
+            return;
+        };
+        let opened = self
+            .state
+            .data_source(id)
+            .and_then(|entry| CsvImportDialog::open(&entry.data_source, path, file));
+        if let Some((dialog, describe)) = opened {
+            self.csv_import = Some(dialog);
+            self.send(describe);
+        }
+    }
+
+    fn show_csv_import(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.csv_import else {
+            return;
+        };
+        match dialog.show(ctx) {
+            Some(CsvImportAction::ChooseFile) => {
+                if let Some(file) = (self.pick_csv_file)() {
+                    dialog.set_file(file);
+                }
+            }
+            Some(CsvImportAction::Import(data_source, import)) => {
+                self.send(Command::ImportRows {
+                    data_source,
+                    import,
+                });
+            }
+            Some(CsvImportAction::Close) => self.csv_import = None,
+            None => {}
+        }
+    }
+
     fn show_import_dialog(&mut self, ctx: &egui::Context) {
         match self
             .import_dialog
@@ -1190,6 +1236,7 @@ impl eframe::App for DbDeskApp {
         self.show_host_key_prompt(&ctx);
         self.show_export_sources_dialog(&ctx);
         self.show_import_dialog(&ctx);
+        self.show_csv_import(&ctx);
         if self
             .definition_window
             .as_ref()

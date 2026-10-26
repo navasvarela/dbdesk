@@ -6,6 +6,7 @@ mod brand;
 mod catalog_tree;
 mod console;
 mod consoles;
+mod csv_import;
 mod data_source_dialog;
 mod data_source_form;
 mod database_brand;

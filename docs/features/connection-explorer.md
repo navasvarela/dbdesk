@@ -123,6 +123,14 @@ Planned (M3):
 - Open table data → new console with `SELECT * FROM <table>` and run it
 - Open a definition in a query console instead of the read-only window
 
+Implemented (W5e): **Import CSV…** on a table, inside the data source's own database, asks for
+a file and opens a dialog that maps the file's columns onto the table's (by header name, else
+by position, each one changeable or left to its default), previews the first 20 records, and
+flags values that don't look like their column's type. **Import** sends
+`Command::ImportRows`: the engine reads the file again, streaming, and inserts it on the
+explorer's connection in multi-row `INSERT`s of 500 rows, all in one transaction, rolled back
+at the first failure, which names its line. See [Power in the grid](../grid-power.md).
+
 Later (H1 in [Hackability](../hackability.md)): custom actions from `actions.toml`, e.g.
 
 ```toml

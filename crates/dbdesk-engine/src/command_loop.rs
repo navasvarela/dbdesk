@@ -262,6 +262,10 @@ impl Engine {
             Command::LoadDdl { data_source, path } => {
                 self.request(data_source, SessionRequest::Ddl(path));
             }
+            Command::ImportRows {
+                data_source,
+                import,
+            } => self.request(data_source, SessionRequest::ImportRows(import)),
             Command::ApplyEdits {
                 console,
                 statements,

@@ -102,6 +102,25 @@ impl<'a> RowSql<'a> {
         )
     }
 
+    /// One `INSERT` of several rows, each with a value for every one of `columns`, in order.
+    /// The columns not named get their defaults.
+    pub fn insert_rows(&self, columns: &[&str], rows: &[Vec<Cell>]) -> String {
+        let names: Vec<String> = columns.iter().map(|column| self.name(column)).collect();
+        let values: Vec<String> = rows
+            .iter()
+            .map(|row| {
+                let literals: Vec<String> = row.iter().map(|value| self.literal(value)).collect();
+                format!("({})", literals.join(", "))
+            })
+            .collect();
+        format!(
+            "INSERT INTO {} ({}) VALUES\n{}",
+            self.table_name(),
+            names.join(", "),
+            values.join(",\n")
+        )
+    }
+
     /// `DELETE … WHERE <key>`.
     pub fn delete(&self, key: &[ColumnValue<'_>]) -> String {
         format!(
@@ -232,6 +251,16 @@ mod tests {
                 r#"INSERT INTO "shop"."order ""items""" DEFAULT VALUES"#
             );
         }
+    }
+
+    #[test]
+    fn inserts_several_rows_at_once() {
+        let rows = vec![vec![text("1"), None], vec![text("2"), text("it's")]];
+
+        assert_eq!(
+            RowSql::new(Dialect::Mysql, TABLE).insert_rows(&["id", "note"], &rows),
+            "INSERT INTO `shop`.`order \"items\"` (`id`, `note`) VALUES\n('1', NULL),\n('2', 'it''s')"
+        );
     }
 
     #[test]
