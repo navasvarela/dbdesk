@@ -2,7 +2,7 @@ use dbdesk_sql::{Dialect, Hazard, StatementKind, classify, commits_implicitly, h
 use dbdesk_store::ConsoleKey;
 use egui::{Align, Id, Layout, Modal};
 
-use crate::console::SubmittedRun;
+use crate::console::{ChangeCount, SubmittedRun};
 
 pub enum HazardChoice {
     RunAnyway,
@@ -71,18 +71,19 @@ pub fn review(console: ConsoleKey, run: SubmittedRun, context: ReviewContext<'_>
     })
 }
 
-/// Asks before applying `rows` edited rows to a careful data source.
-pub fn confirm_edits(console: ConsoleKey, data_source: &str, rows: usize) -> HazardConfirmation {
-    let rows = match rows {
-        1 => "1 edited row".to_owned(),
-        n => format!("{n} edited rows"),
-    };
+/// Asks before applying the grid's pending changes to a careful data source.
+pub fn confirm_edits(
+    console: ConsoleKey,
+    data_source: &str,
+    changes: ChangeCount,
+) -> HazardConfirmation {
     HazardConfirmation {
         console,
         pending: Pending::Edits,
         heading: format!("Apply edits to \u{201c}{data_source}\u{201d}?"),
         warnings: vec![format!(
-            "\u{201c}{data_source}\u{201d} is careful: this updates {rows}."
+            "\u{201c}{data_source}\u{201d} is careful: this {}.",
+            changes.describe()
         )],
     }
 }

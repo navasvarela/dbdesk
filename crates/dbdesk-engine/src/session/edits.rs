@@ -1,7 +1,11 @@
-//! Applying the grid's edits: generated `UPDATE`s, all or none.
+//! Applying the grid's changes: generated `DELETE`s, `UPDATE`s and `INSERT`s, all or none.
+
+use std::time::Instant;
 
 use dbdesk_core::{DriverError, TransactionStatus, describe_error};
 use dbdesk_sql::Savepoint;
+use dbdesk_store::{HistoryEntry, HistoryOutcome, HistorySource};
+use jiff::Timestamp;
 
 use super::{Disconnected, SessionOwner, Worker, transaction};
 use crate::{EditFailure, Event};
@@ -24,7 +28,8 @@ fn wrapping(worker: &Worker<'_>) -> Option<Savepoint> {
 }
 
 /// Runs `statements`, each of which must change exactly one row, and reports
-/// [`Event::EditsApplied`]. On any failure, everything they changed is undone.
+/// [`Event::EditsApplied`]. On any failure, everything they changed is undone. Each statement
+/// sent is recorded in the history, as it runs.
 pub(super) async fn apply(
     worker: &mut Worker<'_>,
     statements: &[String],
@@ -106,7 +111,11 @@ async fn run_wrapped(
     }
     for (index, sql) in statements.iter().enumerate() {
         tracing::info!(data_source = %worker.context.name(), "{sql}");
-        let failure = match transaction::run_counting(worker, sql, None).await? {
+        let started_at = Timestamp::now();
+        let started = Instant::now();
+        let result = transaction::run_counting(worker, sql, None).await?;
+        record(worker, sql, &result, (started_at, started));
+        let failure = match result {
             Ok(Some(1)) => continue,
             Ok(changed) => format!(
                 "changed {} rows instead of one; the row may have changed or gone since it was \
@@ -127,4 +136,27 @@ async fn run_wrapped(
         }
     }
     Ok(Ok(()))
+}
+
+/// Records a statement the grid sent, as it ran: one that later edits undid still reached the
+/// database, which is what the history holds.
+fn record(
+    worker: &Worker<'_>,
+    sql: &str,
+    result: &Result<Option<u64>, DriverError>,
+    (started_at, started): (Timestamp, Instant),
+) {
+    let (rows, outcome) = match result {
+        Ok(rows) => (*rows, HistoryOutcome::Ok),
+        Err(_) => (None, HistoryOutcome::Error),
+    };
+    worker.context.record(HistoryEntry {
+        data_source: worker.context.data_source.id,
+        executed_at: started_at,
+        sql: sql.to_owned(),
+        duration: Some(started.elapsed()),
+        rows,
+        outcome,
+        source: HistorySource::App,
+    });
 }

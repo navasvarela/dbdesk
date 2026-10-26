@@ -1243,6 +1243,8 @@ impl Repaint for EguiRepaint {
 
 #[cfg(test)]
 mod tests {
+    mod grid;
+
     use std::path::Path;
     use std::sync::Arc;
     use std::time::Duration;

@@ -8,7 +8,7 @@ use dbdesk_store::ExportFormat;
 use egui::{Align, Label, Layout, RichText, Sense, TextEdit, Ui};
 use egui_extras::{Column, TableBuilder};
 
-use super::edit::{CellEditor, EditSession, Editability};
+use super::edit::{CellEditor, EditSession, Editability, PendingEdits, RowRef};
 use super::grid::{CellPos, GridView, SortKey};
 use super::{ConsoleAction, QueryConsole, RunState, StatementView, ViewedCell};
 use crate::keymap::{Action, Keymap};
@@ -39,6 +39,7 @@ pub fn show(
             .into_iter()
             .map(ConsoleAction::DescribeTable),
     );
+    actions.extend(console.take_reload().map(ConsoleAction::Run));
     let Some(run) = console.run.as_mut() else {
         ui.weak("Run the statement at the cursor with ⌘↵, or the whole console with ⇧⌘↵.");
         return;
@@ -195,12 +196,16 @@ fn grid_toolbar(
             None => {}
         }
         ui.separator();
-        edit_status(ui, &mut statement.edits, actions);
+        edit_status(ui, statement, actions);
     });
 }
 
-/// Whether the rows can be edited, and the pending changes with Submit and Revert.
-fn edit_status(ui: &mut Ui, edits: &mut EditSession, actions: &mut Vec<ConsoleAction>) {
+/// Whether the rows can be edited, Add row and Delete rows, and the pending changes with
+/// Submit and Revert.
+fn edit_status(ui: &mut Ui, statement: &mut StatementView, actions: &mut Vec<ConsoleAction>) {
+    let StatementView {
+        edits, grid: view, ..
+    } = statement;
     if let Editability::ReadOnly(reason) = &edits.editability {
         ui.weak("Read-only").on_hover_text(reason);
         return;
@@ -210,18 +215,29 @@ fn edit_status(ui: &mut Ui, edits: &mut EditSession, actions: &mut Vec<ConsoleAc
         ui.weak("Saving…");
         return;
     }
-    let changed = edits.pending.len();
-    if changed > 0 {
-        ui.colored_label(
-            ui.visuals().warn_fg_color,
-            match changed {
-                1 => "1 changed cell".to_owned(),
-                n => format!("{n} changed cells"),
-            },
-        );
+    if edits.can_change_rows() {
+        if ui
+            .button("Add row")
+            .on_hover_text("Add a row, every column at its default until you type into it")
+            .clicked()
+        {
+            edits.add_row();
+        }
+        let selected = selected_rows(view, edits.pending.new_rows());
+        if ui
+            .add_enabled(!selected.is_empty(), egui::Button::new("Delete rows"))
+            .on_hover_text("Mark the selected cells' rows for deletion")
+            .on_disabled_hover_text("Select a cell in each row to delete")
+            .clicked()
+        {
+            edits.delete_rows(&selected);
+        }
+    }
+    if let Some(summary) = pending_summary(&edits.pending) {
+        ui.colored_label(ui.visuals().warn_fg_color, summary);
         if ui
             .button("Submit")
-            .on_hover_text("Write the changes with one UPDATE per row, all or none")
+            .on_hover_text("Write the changes, one statement per row, all or none")
             .clicked()
         {
             actions.push(ConsoleAction::SubmitEdits);
@@ -232,6 +248,46 @@ fn edit_status(ui: &mut Ui, edits: &mut EditSession, actions: &mut Vec<ConsoleAc
     }
     if let Some(error) = &edits.error {
         ui.colored_label(ui.visuals().error_fg_color, error);
+    }
+}
+
+/// "2 changed cells · 1 new row · 1 deleted row", leaving out what there is none of; `None`
+/// with nothing pending.
+fn pending_summary(pending: &PendingEdits) -> Option<String> {
+    let count = pending.count();
+    let plural = |count: usize, one: &str, many: &str| match count {
+        0 => None,
+        1 => Some(format!("1 {one}")),
+        n => Some(format!("{n} {many}")),
+    };
+    let parts: Vec<String> = [
+        plural(pending.changed_cells(), "changed cell", "changed cells"),
+        plural(count.inserted, "new row", "new rows"),
+        plural(count.deleted, "deleted row", "deleted rows"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    (!parts.is_empty()).then(|| parts.join(" · "))
+}
+
+/// The rows the selection covers.
+fn selected_rows(view: &GridView, new_rows: usize) -> Vec<RowRef> {
+    view.selected_rows()
+        .into_iter()
+        .flatten()
+        .filter_map(|position| row_at(view.order(), new_rows, position))
+        .collect()
+}
+
+/// The row at a display position: the loaded rows in display order, then the added ones.
+fn row_at(order: &[usize], new_rows: usize, position: usize) -> Option<RowRef> {
+    match order.get(position) {
+        Some(&loaded) => Some(RowRef::Loaded(loaded)),
+        None => {
+            let added = position - order.len();
+            (added < new_rows).then_some(RowRef::New(added))
+        }
     }
 }
 
@@ -250,17 +306,20 @@ enum CellInput {
     Extend(CellPos),
     StartDrag(CellPos),
     View(CellPos),
-    /// Start typing into the cell at this loaded row and column.
+    /// Start typing into this cell.
     Edit {
-        row: usize,
+        row: RowRef,
         column: usize,
     },
     SetNull {
-        row: usize,
+        row: RowRef,
         column: usize,
     },
     CommitEdit,
     CancelEdit,
+    Delete(RowRef),
+    /// Unmark a loaded row marked for deletion.
+    Restore(usize),
 }
 
 fn grid(ui: &mut Ui, run: RunId, statement: &mut StatementView, keymap: &Keymap) -> GridOutput {
@@ -293,6 +352,7 @@ fn grid(ui: &mut Ui, run: RunId, statement: &mut StatementView, keymap: &Keymap)
         );
     }
     let grid_view: &GridView = grid;
+    let defaults = new_row_defaults(columns, edits);
     table
         .header(row_height, |mut header| {
             header.col(|ui| {
@@ -310,38 +370,33 @@ fn grid(ui: &mut Ui, run: RunId, statement: &mut StatementView, keymap: &Keymap)
         })
         .body(|body| {
             let order = grid_view.order();
-            body.rows(row_height, order.len(), |mut table_row| {
+            let new_rows = edits.pending.new_rows();
+            body.rows(row_height, order.len() + new_rows, |mut table_row| {
                 let position = table_row.index();
-                let loaded_index = order[position];
-                let values = &rows[loaded_index];
-                table_row.col(|ui| {
-                    ui.label(
-                        RichText::new((loaded_index + 1).to_string())
-                            .monospace()
-                            .color(ui.visuals().weak_text_color()),
-                    );
-                });
-                for (column, value) in values.iter().enumerate() {
+                let Some(row) = row_at(order, new_rows, position) else {
+                    return;
+                };
+                table_row.col(|ui| row_number(ui, row));
+                for column in 0..columns.len() {
                     let cell_pos = CellPos {
                         row: position,
                         column,
                     };
                     table_row.col(|ui| {
                         let input = match &mut edits.editing {
-                            Some(editor)
-                                if editor.row == loaded_index && editor.column == column =>
-                            {
+                            Some(editor) if editor.row == row && editor.column == column => {
                                 cell_editor(ui, editor)
                             }
                             _ => {
                                 let context = CellContext {
                                     grid: grid_view,
                                     rows,
-                                    row: values,
-                                    loaded_index,
+                                    row,
                                     edits,
+                                    defaults: &defaults,
+                                    palette,
                                 };
-                                cell(ui, cell_pos, value, &context)
+                                cell(ui, cell_pos, &context)
                             }
                         };
                         inputs.extend(input);
@@ -375,15 +430,15 @@ fn grid(ui: &mut Ui, run: RunId, statement: &mut StatementView, keymap: &Keymap)
             CellInput::CommitEdit => {
                 editor_closed = true;
                 if let Some(editor) = edits.editing.take() {
-                    edits
-                        .pending
-                        .set(rows, editor.row, editor.column, Some(editor.text));
+                    commit_edit(edits, rows, editor);
                 }
             }
             CellInput::CancelEdit => {
                 editor_closed = true;
                 edits.editing = None;
             }
+            CellInput::Delete(row) => edits.delete_rows(&[row]),
+            CellInput::Restore(row) => edits.pending.restore(row),
         }
     }
     if let Some(cell) = grid.selected_cell()
@@ -393,8 +448,8 @@ fn grid(ui: &mut Ui, run: RunId, statement: &mut StatementView, keymap: &Keymap)
         && !ui
             .input_mut(|input| keymap.consume(input, &[Action::EditCell]))
             .is_empty()
-        && let Some(&row) = grid.order().get(cell.row)
-        && edits.is_editable(cell.column)
+        && let Some(row) = row_at(grid.order(), edits.pending.new_rows(), cell.row)
+        && edits.is_editable(row, cell.column)
     {
         start_editing(edits, rows, row, cell.column);
     }
@@ -445,17 +500,30 @@ fn sort_arrow(sort: Option<SortKey>, column: usize) -> &'static str {
     }
 }
 
-fn start_editing(edits: &mut EditSession, rows: &[Row], row: usize, column: usize) {
-    let current = edits
-        .pending
-        .get(row, column)
-        .or_else(|| rows.get(row).and_then(|loaded| loaded.get(column)));
+fn start_editing(edits: &mut EditSession, rows: &[Row], row: RowRef, column: usize) {
+    let current = edits.pending.get(row, column).or_else(|| match row {
+        RowRef::Loaded(loaded) => rows.get(loaded).and_then(|values| values.get(column)),
+        RowRef::New(_) => None,
+    });
     edits.editing = Some(CellEditor {
         row,
         column,
         text: current.cloned().flatten().unwrap_or_default(),
         focused: false,
     });
+}
+
+/// Keeps the editor's text as a pending change. Closing an added row's cell left at its
+/// default without typing anything keeps the default, rather than setting it to empty text.
+fn commit_edit(edits: &mut EditSession, rows: &[Row], editor: CellEditor) {
+    let untouched_default = matches!(editor.row, RowRef::New(_))
+        && editor.text.is_empty()
+        && edits.pending.get(editor.row, editor.column).is_none();
+    if !untouched_default {
+        edits
+            .pending
+            .set(rows, editor.row, editor.column, Some(editor.text));
+    }
 }
 
 /// The text field a cell turns into while edited. Enter or clicking away keeps the text as a
@@ -477,88 +545,133 @@ fn cell_editor(ui: &mut Ui, editor: &mut CellEditor) -> Option<CellInput> {
     }
 }
 
-/// What a cell needs to know besides its own value.
+/// What an added row's cell holds until something is typed into it.
+enum NewCell {
+    /// The column's default, as the database keeps its expression.
+    Default(String),
+    /// No default: `NULL`, unless the column refuses it.
+    Null,
+    /// Not a column of the table, so not part of the row.
+    Absent,
+}
+
+/// What each result column of an added row starts as.
+fn new_row_defaults(columns: &[ColumnInfo], edits: &EditSession) -> Vec<NewCell> {
+    let Some(target) = edits.target() else {
+        return Vec::new();
+    };
+    columns
+        .iter()
+        .enumerate()
+        .map(|(index, column)| {
+            let described = target
+                .table
+                .columns
+                .iter()
+                .find(|described| described.name == column.name);
+            match described {
+                Some(_) if !target.is_editable(index) => NewCell::Absent,
+                Some(described) => match &described.default {
+                    Some(default) => NewCell::Default(default.clone()),
+                    None => NewCell::Null,
+                },
+                None => NewCell::Absent,
+            }
+        })
+        .collect()
+}
+
+/// The row number, or `+` for an added row.
+fn row_number(ui: &mut Ui, row: RowRef) {
+    let text = match row {
+        RowRef::Loaded(loaded) => (loaded + 1).to_string(),
+        RowRef::New(_) => "+".to_owned(),
+    };
+    ui.label(
+        RichText::new(text)
+            .monospace()
+            .color(ui.visuals().weak_text_color()),
+    );
+}
+
+/// What a cell needs to know besides its own position.
 struct CellContext<'a> {
     grid: &'a GridView,
     rows: &'a [Row],
-    row: &'a Row,
-    /// The row's place among the loaded rows, which edits are keyed by.
-    loaded_index: usize,
+    row: RowRef,
     edits: &'a EditSession,
+    /// What an added row's cells start as, by column.
+    defaults: &'a [NewCell],
+    palette: &'a Palette,
+}
+
+impl CellContext<'_> {
+    /// The loaded value of a cell of this row; `NULL` for an added row, which has none.
+    fn loaded(&self, column: usize) -> &Cell {
+        const NONE: &Cell = &None;
+        match self.row {
+            RowRef::Loaded(row) => self
+                .rows
+                .get(row)
+                .and_then(|values| values.get(column))
+                .unwrap_or(NONE),
+            RowRef::New(_) => NONE,
+        }
+    }
+}
+
+/// What the user picked from a cell's context menu.
+#[derive(Default)]
+struct MenuChoice {
+    view: bool,
+    edit: bool,
+    set_null: bool,
+    delete: bool,
+    restore: bool,
 }
 
 /// Draws a cell, highlighted if selected, and its pending value if it was edited: click
 /// selects it, shift-click or dragging extends the selection, double-click edits an editable
-/// cell and opens any other in the viewer (as Space does).
-fn cell(ui: &mut Ui, pos: CellPos, loaded: &Cell, context: &CellContext<'_>) -> Option<CellInput> {
-    let (row, column) = (context.loaded_index, pos.column);
+/// cell and opens any other in the viewer (as Space does). A row marked for deletion is struck
+/// through, and an added row's untouched cells show what the database will put there.
+fn cell(ui: &mut Ui, pos: CellPos, context: &CellContext<'_>) -> Option<CellInput> {
+    let (row, column) = (context.row, pos.column);
     let pending = context.edits.pending.get(row, column);
-    let value = pending.unwrap_or(loaded);
+    let deleted = context.edits.pending.is_deleted(row);
+    let tint = if deleted {
+        Some(context.palette.error)
+    } else if matches!(row, RowRef::New(_)) {
+        Some(context.palette.success)
+    } else {
+        pending.map(|_| ui.visuals().warn_fg_color)
+    };
     if context.grid.is_selected(pos) {
         ui.painter()
             .rect_filled(ui.max_rect(), 0.0, ui.visuals().selection.bg_fill);
-    } else if pending.is_some() {
-        ui.painter().rect_filled(
-            ui.max_rect(),
-            0.0,
-            ui.visuals().warn_fg_color.gamma_multiply(PENDING_TINT),
-        );
+    } else if let Some(tint) = tint {
+        ui.painter()
+            .rect_filled(ui.max_rect(), 0.0, tint.gamma_multiply(PENDING_TINT));
     }
-    let editable = context.edits.is_editable(column);
-    let sense = Sense::click_and_drag();
-    let response = match value {
-        None => ui.add(
-            Label::new(RichText::new("NULL").monospace().italics().weak())
-                .selectable(false)
-                .sense(sense),
-        ),
-        Some(text) if looks_numeric(text) => {
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.add(
-                    Label::new(RichText::new(text).monospace())
-                        .selectable(false)
-                        .truncate()
-                        .sense(sense),
-                )
-            })
-            .inner
-        }
-        Some(text) => ui.add(
-            Label::new(RichText::new(text).monospace())
-                .selectable(false)
-                .truncate()
-                .sense(sense),
-        ),
+    let value = match (pending, row) {
+        (Some(value), _) => Some(value),
+        (None, RowRef::Loaded(_)) => Some(context.loaded(column)),
+        (None, RowRef::New(_)) => None,
     };
-    let (mut view, mut edit, mut set_null) = (false, false, false);
-    response.context_menu(|ui| {
-        if let Some(tsv) = context.grid.selection_as_tsv(context.rows)
-            && ui.button("Copy selection").clicked()
-        {
-            ui.ctx().copy_text(tsv);
-        }
-        if ui.button("Copy value").clicked() {
-            ui.ctx().copy_text(value.clone().unwrap_or_default());
-        }
-        if ui.button("Copy row").clicked() {
-            ui.ctx().copy_text(row_as_tsv(context.row));
-        }
-        view = ui.button("View value").clicked();
-        if editable {
-            ui.separator();
-            if ui.button("Edit value").clicked() {
-                edit = true;
-            }
-            if ui.button("Set NULL").clicked() {
-                set_null = true;
-            }
-        }
-    });
-    if edit || (editable && response.double_clicked()) {
+    let response = match value {
+        Some(value) => value_label(ui, value, deleted),
+        None => new_cell_label(ui, context.defaults.get(column)),
+    };
+    let editable = context.edits.is_editable(row, column);
+    let choice = cell_menu(&response, context, value, editable);
+    if choice.edit || (editable && response.double_clicked()) {
         Some(CellInput::Edit { row, column })
-    } else if set_null {
+    } else if choice.set_null {
         Some(CellInput::SetNull { row, column })
-    } else if view || response.double_clicked() {
+    } else if choice.delete {
+        Some(CellInput::Delete(row))
+    } else if let (true, RowRef::Loaded(loaded)) = (choice.restore, row) {
+        Some(CellInput::Restore(loaded))
+    } else if choice.view || response.double_clicked() {
         Some(CellInput::View(pos))
     } else if response.drag_started() {
         Some(CellInput::StartDrag(pos))
@@ -571,6 +684,101 @@ fn cell(ui: &mut Ui, pos: CellPos, loaded: &Cell, context: &CellContext<'_>) -> 
     } else {
         None
     }
+}
+
+/// The cell's context menu: copying, viewing, editing the value, and deleting or restoring
+/// its row.
+fn cell_menu(
+    response: &egui::Response,
+    context: &CellContext<'_>,
+    value: Option<&Cell>,
+    editable: bool,
+) -> MenuChoice {
+    let mut choice = MenuChoice::default();
+    response.context_menu(|ui| {
+        if let Some(tsv) = context.grid.selection_as_tsv(context.rows)
+            && ui.button("Copy selection").clicked()
+        {
+            ui.ctx().copy_text(tsv);
+        }
+        if ui.button("Copy value").clicked() {
+            ui.ctx()
+                .copy_text(value.cloned().flatten().unwrap_or_default());
+        }
+        if let RowRef::Loaded(loaded) = context.row
+            && let Some(values) = context.rows.get(loaded)
+            && ui.button("Copy row").clicked()
+        {
+            ui.ctx().copy_text(row_as_tsv(values));
+        }
+        choice.view = ui.button("View value").clicked();
+        if editable {
+            ui.separator();
+            choice.edit = ui.button("Edit value").clicked();
+            choice.set_null = ui.button("Set NULL").clicked();
+        }
+        if context.edits.can_change_rows() {
+            ui.separator();
+            match context.row {
+                RowRef::Loaded(_) if context.edits.pending.is_deleted(context.row) => {
+                    choice.restore = ui.button("Restore row").clicked();
+                }
+                RowRef::Loaded(_) => choice.delete = ui.button("Delete row").clicked(),
+                RowRef::New(_) => choice.delete = ui.button("Remove row").clicked(),
+            }
+        }
+    });
+    choice
+}
+
+/// A value: `NULL` in italics, numbers right-aligned, and struck through in a row marked for
+/// deletion.
+fn value_label(ui: &mut Ui, value: &Cell, deleted: bool) -> egui::Response {
+    let sense = Sense::click_and_drag();
+    let styled = |text: RichText| if deleted { text.strikethrough() } else { text };
+    match value {
+        None => ui.add(
+            Label::new(styled(RichText::new("NULL").monospace().italics().weak()))
+                .selectable(false)
+                .sense(sense),
+        ),
+        Some(text) if looks_numeric(text) => {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.add(
+                    Label::new(styled(RichText::new(text).monospace()))
+                        .selectable(false)
+                        .truncate()
+                        .sense(sense),
+                )
+            })
+            .inner
+        }
+        Some(text) => ui.add(
+            Label::new(styled(RichText::new(text).monospace()))
+                .selectable(false)
+                .truncate()
+                .sense(sense),
+        ),
+    }
+}
+
+/// An added row's cell nothing was typed into: the column's default, `NULL`, or nothing for a
+/// result column that isn't the table's.
+fn new_cell_label(ui: &mut Ui, new: Option<&NewCell>) -> egui::Response {
+    let (text, hover) = match new {
+        Some(NewCell::Default(expression)) => ("DEFAULT", format!("The default: {expression}")),
+        Some(NewCell::Null) => (
+            "NULL",
+            "No default, so NULL unless you type a value".to_owned(),
+        ),
+        Some(NewCell::Absent) | None => ("", "Not a column of the table".to_owned()),
+    };
+    ui.add(
+        Label::new(RichText::new(text).monospace().italics().weak())
+            .selectable(false)
+            .sense(Sense::click_and_drag()),
+    )
+    .on_hover_text(hover)
 }
 
 fn viewed_cell(

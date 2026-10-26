@@ -1,10 +1,11 @@
-//! Editing result rows: which results can be edited, the changes waiting to be submitted, and
-//! the `UPDATE`s that submit them. Pure; the grid draws it and the engine runs the SQL.
+//! Editing result rows: which results can be edited, the changes waiting to be submitted
+//! (cells typed over, rows added, rows marked for deletion), and the statements that submit
+//! them. Pure; the grid draws it and the engine runs the SQL.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use dbdesk_core::{Cell, ColumnInfo, Identifier, Quoting, RelationName, Row, TableDescription};
-use dbdesk_sql::{Dialect, Token, TokenKind, first_word, tokenize};
+use dbdesk_core::{Cell, ColumnInfo, Identifier, RelationName, Row, TableDescription};
+use dbdesk_sql::{ColumnValue, Dialect, RowSql, Token, TokenKind, first_word, tokenize};
 
 /// Words that make a `SELECT` combine, group or deduplicate rows, so a result row no longer
 /// stands for one table row.
@@ -181,6 +182,9 @@ pub struct EditSession {
     pub submitting: bool,
     /// Why the last submit failed; the changes stay pending.
     pub error: Option<String>,
+    /// Rows were added, so the statement should run again to show what the database put in
+    /// the columns left to their defaults.
+    pub reload: bool,
 }
 
 impl Default for EditSession {
@@ -191,6 +195,7 @@ impl Default for EditSession {
             editing: None,
             submitting: false,
             error: None,
+            reload: false,
         }
     }
 }
@@ -203,6 +208,11 @@ impl EditSession {
         }
     }
 
+    /// Whether rows can be added and deleted right now.
+    pub fn can_change_rows(&self) -> bool {
+        !self.submitting && self.target().is_some()
+    }
+
     /// Drops every pending change.
     pub fn revert(&mut self) {
         self.pending.clear();
@@ -210,46 +220,165 @@ impl EditSession {
         self.error = None;
     }
 
-    pub fn is_editable(&self, column: usize) -> bool {
-        !self.submitting
+    /// Whether `column` of `row` can be typed into: never in a row marked for deletion.
+    pub fn is_editable(&self, row: RowRef, column: usize) -> bool {
+        self.can_change_rows()
+            && !self.pending.is_deleted(row)
             && self
                 .target()
                 .is_some_and(|target| target.is_editable(column))
     }
+
+    /// Adds an empty row, every column at its default.
+    pub fn add_row(&mut self) {
+        if self.can_change_rows() {
+            self.pending.add_row();
+        }
+    }
+
+    /// Marks rows for deletion, or drops added ones. The cell being typed into goes too, since
+    /// its row may be gone or have moved.
+    pub fn delete_rows(&mut self, rows: &[RowRef]) {
+        if !self.can_change_rows() {
+            return;
+        }
+        self.editing = None;
+        self.pending.delete(rows);
+    }
 }
 
-/// A cell being typed into, by loaded row and column.
+/// A row of the grid: one of the loaded rows, by its index among them, or one added and not
+/// submitted yet, by its index among those.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum RowRef {
+    Loaded(usize),
+    New(usize),
+}
+
+impl RowRef {
+    /// How errors name the row, counting from 1 as the grid's row numbers do.
+    pub fn describe(self) -> String {
+        match self {
+            Self::Loaded(row) => format!("Row {}", row + 1),
+            Self::New(row) => format!("New row {}", row + 1),
+        }
+    }
+}
+
+/// A cell being typed into.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CellEditor {
-    pub row: usize,
+    pub row: RowRef,
     pub column: usize,
     pub text: String,
     /// Whether the text field has been given focus yet; it asks once, when it appears.
     pub focused: bool,
 }
 
-/// Changes typed into the grid and not submitted yet, keyed by loaded row and column.
+/// How many rows the pending changes add, change and delete.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ChangeCount {
+    pub inserted: usize,
+    pub updated: usize,
+    pub deleted: usize,
+}
+
+impl ChangeCount {
+    pub fn is_empty(self) -> bool {
+        self == Self::default()
+    }
+
+    /// What submitting does, for a confirmation: "inserts 1 row, updates 2 edited rows and
+    /// deletes 1 row".
+    pub fn describe(self) -> String {
+        let plural = |count: usize, one: &str, many: &str| match count {
+            1 => format!("1 {one}"),
+            n => format!("{n} {many}"),
+        };
+        let parts: Vec<String> = [
+            (
+                self.inserted,
+                "inserts",
+                plural(self.inserted, "row", "rows"),
+            ),
+            (
+                self.updated,
+                "updates",
+                plural(self.updated, "edited row", "edited rows"),
+            ),
+            (self.deleted, "deletes", plural(self.deleted, "row", "rows")),
+        ]
+        .into_iter()
+        .filter(|(count, _, _)| *count > 0)
+        .map(|(_, verb, rows)| format!("{verb} {rows}"))
+        .collect();
+        match parts.split_last() {
+            Some((last, [])) => last.clone(),
+            Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+            None => "changes nothing".to_owned(),
+        }
+    }
+}
+
+/// Changes made in the grid and not submitted yet: values typed over loaded cells, rows
+/// added, and loaded rows marked for deletion.
 #[derive(Debug, Default)]
 pub struct PendingEdits {
+    /// By loaded row, then column.
     changes: BTreeMap<usize, BTreeMap<usize, Cell>>,
+    /// Added rows, each with the values typed into it by column; a column not set gets its
+    /// default.
+    inserted: Vec<BTreeMap<usize, Cell>>,
+    /// Loaded rows to delete.
+    deleted: BTreeSet<usize>,
 }
 
 impl PendingEdits {
     pub fn is_empty(&self) -> bool {
-        self.changes.is_empty()
+        self.changes.is_empty() && self.inserted.is_empty() && self.deleted.is_empty()
     }
 
-    /// How many cells have changed.
-    pub fn len(&self) -> usize {
+    /// How many loaded cells have changed.
+    pub fn changed_cells(&self) -> usize {
         self.changes.values().map(BTreeMap::len).sum()
     }
 
-    pub fn get(&self, row: usize, column: usize) -> Option<&Cell> {
-        self.changes.get(&row)?.get(&column)
+    pub fn count(&self) -> ChangeCount {
+        ChangeCount {
+            inserted: self.inserted.len(),
+            updated: self.changes.len(),
+            deleted: self.deleted.len(),
+        }
     }
 
-    /// Records a new value; setting a cell back to what was loaded drops the change.
-    pub fn set(&mut self, rows: &[Row], row: usize, column: usize, value: Cell) {
+    /// How many rows have been added.
+    pub fn new_rows(&self) -> usize {
+        self.inserted.len()
+    }
+
+    /// The value typed into a cell, if one was.
+    pub fn get(&self, row: RowRef, column: usize) -> Option<&Cell> {
+        match row {
+            RowRef::Loaded(row) => self.changes.get(&row)?.get(&column),
+            RowRef::New(row) => self.inserted.get(row)?.get(&column),
+        }
+    }
+
+    pub fn is_deleted(&self, row: RowRef) -> bool {
+        matches!(row, RowRef::Loaded(row) if self.deleted.contains(&row))
+    }
+
+    /// Records a new value; setting a loaded cell back to what was loaded drops the change.
+    pub fn set(&mut self, rows: &[Row], row: RowRef, column: usize, value: Cell) {
+        let row = match row {
+            RowRef::New(row) => {
+                if let Some(added) = self.inserted.get_mut(row) {
+                    added.insert(column, value);
+                }
+                return;
+            }
+            RowRef::Loaded(row) => row,
+        };
         let original = rows.get(row).and_then(|loaded| loaded.get(column));
         let changes = self.changes.entry(row).or_default();
         if original == Some(&value) {
@@ -262,35 +391,99 @@ impl PendingEdits {
         }
     }
 
+    pub fn add_row(&mut self) {
+        self.inserted.push(BTreeMap::new());
+    }
+
+    /// Marks loaded rows for deletion, dropping what was typed into them, and drops added
+    /// rows.
+    pub fn delete(&mut self, rows: &[RowRef]) {
+        let mut added = Vec::new();
+        for &row in rows {
+            match row {
+                RowRef::Loaded(row) => {
+                    self.changes.remove(&row);
+                    self.deleted.insert(row);
+                }
+                RowRef::New(row) => added.push(row),
+            }
+        }
+        // From the last, so the indices still to remove stay valid.
+        added.sort_unstable();
+        added.dedup();
+        for row in added.into_iter().rev() {
+            if row < self.inserted.len() {
+                self.inserted.remove(row);
+            }
+        }
+    }
+
+    /// Unmarks a loaded row marked for deletion.
+    pub fn restore(&mut self, row: usize) {
+        self.deleted.remove(&row);
+    }
+
     pub fn clear(&mut self) {
         self.changes.clear();
+        self.inserted.clear();
+        self.deleted.clear();
     }
 
-    /// The changed rows' indices, in the order [`PendingEdits::statements`] lists them.
-    pub fn rows(&self) -> Vec<usize> {
-        self.changes.keys().copied().collect()
-    }
-
-    /// One `UPDATE` per changed row, identifying it by its primary key as loaded.
+    /// One statement per changed row, with the row it is for: the `DELETE`s, then the
+    /// `UPDATE`s, then the `INSERT`s, so that a key a deleted row frees can be taken by an
+    /// edited or added row. Loaded rows are named by their primary key as loaded.
     pub fn statements(
         &self,
         target: &EditTarget,
         columns: &[ColumnInfo],
         rows: &[Row],
-        quoting: Quoting,
-    ) -> Vec<String> {
-        self.changes
-            .iter()
-            .filter_map(|(&row, changes)| {
-                let loaded = rows.get(row)?;
-                let row = RowChange { loaded, changes };
-                Some(update_statement(target, columns, row, quoting))
-            })
-            .collect()
+        dialect: Dialect,
+    ) -> Vec<(RowRef, String)> {
+        let sql = RowSql::new(dialect, &target.table);
+        let named = |values: &BTreeMap<usize, Cell>| -> Vec<(String, Cell)> {
+            values
+                .iter()
+                .filter_map(|(&column, value)| {
+                    Some((columns.get(column)?.name.clone(), value.clone()))
+                })
+                .collect()
+        };
+        let key_of = |row: usize| -> Option<Vec<(String, Cell)>> {
+            let loaded = rows.get(row)?;
+            target
+                .key
+                .iter()
+                .map(|&column| {
+                    Some((
+                        columns.get(column)?.name.clone(),
+                        loaded.get(column)?.clone(),
+                    ))
+                })
+                .collect()
+        };
+        let deletes = self.deleted.iter().filter_map(|&row| {
+            let key = key_of(row)?;
+            Some((RowRef::Loaded(row), sql.delete(&column_values(&key))))
+        });
+        let updates = self.changes.iter().filter_map(|(&row, changes)| {
+            let key = key_of(row)?;
+            let set = named(changes);
+            Some((
+                RowRef::Loaded(row),
+                sql.update(&column_values(&set), &column_values(&key)),
+            ))
+        });
+        let inserts = self.inserted.iter().enumerate().map(|(row, values)| {
+            let values = named(values);
+            (RowRef::New(row), sql.insert(&column_values(&values)))
+        });
+        deletes.chain(updates).chain(inserts).collect()
     }
 
-    /// Writes submitted values into the loaded rows, once the database has them.
-    pub fn apply_to(&mut self, rows: &mut [Row]) {
+    /// Brings the loaded rows up to date once the database has the changes: edited values
+    /// written in, deleted rows removed. Added rows aren't loaded rows yet; the statement runs
+    /// again to show them as the database has them.
+    pub fn apply_to(&mut self, rows: &mut Vec<Row>) {
         for (row, changes) in std::mem::take(&mut self.changes) {
             if let Some(loaded) = rows.get_mut(row) {
                 for (column, value) in changes {
@@ -300,56 +493,21 @@ impl PendingEdits {
                 }
             }
         }
+        // From the last, so the indices still to remove stay valid.
+        for row in std::mem::take(&mut self.deleted).into_iter().rev() {
+            if row < rows.len() {
+                rows.remove(row);
+            }
+        }
+        self.inserted.clear();
     }
 }
 
-/// One loaded row and the values typed over it, by column.
-struct RowChange<'a> {
-    loaded: &'a Row,
-    changes: &'a BTreeMap<usize, Cell>,
-}
-
-fn update_statement(
-    target: &EditTarget,
-    columns: &[ColumnInfo],
-    row: RowChange<'_>,
-    quoting: Quoting,
-) -> String {
-    let assignments: Vec<String> = row
-        .changes
+fn column_values(values: &[(String, Cell)]) -> Vec<ColumnValue<'_>> {
+    values
         .iter()
-        .filter_map(|(&column, value)| {
-            let name = quoting.identifier(&columns.get(column)?.name);
-            Some(format!("{name} = {}", literal(value, quoting)))
-        })
-        .collect();
-    let conditions: Vec<String> = target
-        .key
-        .iter()
-        .filter_map(|&column| {
-            let name = quoting.identifier(&columns.get(column)?.name);
-            Some(match row.loaded.get(column)? {
-                None => format!("{name} IS NULL"),
-                value => format!("{name} = {}", literal(value, quoting)),
-            })
-        })
-        .collect();
-    format!(
-        "UPDATE {} SET {} WHERE {}",
-        target.table.qualified_name(quoting),
-        assignments.join(", "),
-        conditions.join(" AND ")
-    )
-}
-
-/// A value as a string literal, or `NULL`. The engines turn a string literal into the
-/// column's type (PostgreSQL from an untyped literal, SQLite by type affinity), which is how
-/// text from the grid (ADR-0004) goes back in without dbdesk knowing the types.
-fn literal(value: &Cell, quoting: Quoting) -> String {
-    match value {
-        None => "NULL".to_owned(),
-        Some(text) => quoting.string_literal(text),
-    }
+        .map(|(column, value)| ColumnValue { column, value })
+        .collect()
 }
 
 #[cfg(test)]
@@ -459,19 +617,27 @@ mod tests {
         ));
     }
 
+    fn editable(table: TableDescription, columns: &[ColumnInfo]) -> EditTarget {
+        let Editability::Editable(target) = edit_target(table, columns) else {
+            panic!("expected the result to be editable");
+        };
+        target
+    }
+
+    fn sql(statements: Vec<(RowRef, String)>) -> Vec<String> {
+        statements.into_iter().map(|(_, sql)| sql).collect()
+    }
+
     #[test]
     fn writes_mysql_updates_with_backticks_and_doubled_backslashes() {
         let columns = [column("id"), column("name")];
-        let Editability::Editable(target) = edit_target(table(&["id", "name"], &["id"]), &columns)
-        else {
-            panic!("expected the result to be editable");
-        };
+        let target = editable(table(&["id", "name"], &["id"]), &columns);
         let rows = vec![cells(&[Some("1"), Some("ada")])];
         let mut pending = PendingEdits::default();
-        pending.set(&rows, 0, 1, Some(r"C:\ada's".to_owned()));
+        pending.set(&rows, RowRef::Loaded(0), 1, Some(r"C:\ada's".to_owned()));
 
         assert_eq!(
-            pending.statements(&target, &columns, &rows, Dialect::Mysql.quoting()),
+            sql(pending.statements(&target, &columns, &rows, Dialect::Mysql)),
             [r"UPDATE `public`.`people` SET `name` = 'C:\\ada''s' WHERE `id` = '1'"]
         );
     }
@@ -479,16 +645,13 @@ mod tests {
     #[test]
     fn writes_sql_server_updates_with_brackets_and_unicode_literals() {
         let columns = [column("id"), column("name")];
-        let Editability::Editable(target) = edit_target(table(&["id", "name"], &["id"]), &columns)
-        else {
-            panic!("expected the result to be editable");
-        };
+        let target = editable(table(&["id", "name"], &["id"]), &columns);
         let rows = vec![cells(&[Some("1"), Some("ada")])];
         let mut pending = PendingEdits::default();
-        pending.set(&rows, 0, 1, Some("Zoë's]".to_owned()));
+        pending.set(&rows, RowRef::Loaded(0), 1, Some("Zoë's]".to_owned()));
 
         assert_eq!(
-            pending.statements(&target, &columns, &rows, Dialect::SqlServer.quoting()),
+            sql(pending.statements(&target, &columns, &rows, Dialect::SqlServer)),
             ["UPDATE [public].[people] SET [name] = N'Zoë''s]' WHERE [id] = N'1'"]
         );
     }
@@ -496,28 +659,132 @@ mod tests {
     #[test]
     fn writes_one_update_per_changed_row_keyed_by_the_loaded_key() {
         let columns = [column("id"), column("name"), column("note")];
-        let Editability::Editable(target) =
-            edit_target(table(&["id", "name", "note"], &["id"]), &columns)
-        else {
-            panic!("expected the result to be editable");
-        };
+        let target = editable(table(&["id", "name", "note"], &["id"]), &columns);
         let mut rows = vec![
             cells(&[Some("1"), Some("ada"), None]),
             cells(&[Some("2"), Some("bob"), Some("x")]),
         ];
         let mut pending = PendingEdits::default();
-        pending.set(&rows, 1, 2, None);
-        pending.set(&rows, 1, 1, Some("Bob's".to_owned()));
-        pending.set(&rows, 0, 1, Some("changed".to_owned()));
-        pending.set(&rows, 0, 1, Some("ada".to_owned()));
-        assert_eq!(pending.len(), 2, "setting a value back drops the change");
+        pending.set(&rows, RowRef::Loaded(1), 2, None);
+        pending.set(&rows, RowRef::Loaded(1), 1, Some("Bob's".to_owned()));
+        pending.set(&rows, RowRef::Loaded(0), 1, Some("changed".to_owned()));
+        pending.set(&rows, RowRef::Loaded(0), 1, Some("ada".to_owned()));
+        assert_eq!(
+            pending.changed_cells(),
+            2,
+            "setting a value back drops the change"
+        );
 
         assert_eq!(
-            pending.statements(&target, &columns, &rows, Quoting::STANDARD),
+            sql(pending.statements(&target, &columns, &rows, Dialect::Postgres)),
             [r#"UPDATE "public"."people" SET "name" = 'Bob''s', "note" = NULL WHERE "id" = '2'"#]
         );
         pending.apply_to(&mut rows);
         assert!(pending.is_empty());
         assert_eq!(rows[1], cells(&[Some("2"), Some("Bob's"), None]));
+    }
+
+    /// Deletes first, then updates, then inserts, so a key a deleted row frees can be taken.
+    /// A deleted row's edits are dropped, and an added row with nothing typed in gets every
+    /// default.
+    #[test]
+    fn deletes_then_updates_then_inserts() {
+        let columns = [column("id"), column("name")];
+        let target = editable(table(&["id", "name"], &["id"]), &columns);
+        let mut rows = vec![
+            cells(&[Some("1"), Some("ada")]),
+            cells(&[Some("2"), Some("bob")]),
+            cells(&[Some("3"), Some("cy")]),
+        ];
+        let mut pending = PendingEdits::default();
+        pending.add_row();
+        pending.set(&rows, RowRef::New(0), 0, Some("2".to_owned()));
+        pending.set(&rows, RowRef::New(0), 1, Some("Bo".to_owned()));
+        pending.add_row();
+        pending.set(&rows, RowRef::Loaded(0), 1, Some("Ada".to_owned()));
+        pending.set(&rows, RowRef::Loaded(1), 1, Some("dropped".to_owned()));
+        pending.delete(&[RowRef::Loaded(1)]);
+        assert!(pending.is_deleted(RowRef::Loaded(1)));
+        assert_eq!(
+            pending.count(),
+            ChangeCount {
+                inserted: 2,
+                updated: 1,
+                deleted: 1
+            }
+        );
+
+        let statements = pending.statements(&target, &columns, &rows, Dialect::Sqlite);
+        assert_eq!(
+            statements,
+            [
+                (
+                    RowRef::Loaded(1),
+                    r#"DELETE FROM "public"."people" WHERE "id" = '2'"#.to_owned()
+                ),
+                (
+                    RowRef::Loaded(0),
+                    r#"UPDATE "public"."people" SET "name" = 'Ada' WHERE "id" = '1'"#.to_owned()
+                ),
+                (
+                    RowRef::New(0),
+                    r#"INSERT INTO "public"."people" ("id", "name") VALUES ('2', 'Bo')"#.to_owned()
+                ),
+                (
+                    RowRef::New(1),
+                    r#"INSERT INTO "public"."people" DEFAULT VALUES"#.to_owned()
+                ),
+            ]
+        );
+
+        pending.apply_to(&mut rows);
+        assert!(pending.is_empty());
+        assert_eq!(
+            rows,
+            [
+                cells(&[Some("1"), Some("Ada")]),
+                cells(&[Some("3"), Some("cy")])
+            ]
+        );
+    }
+
+    #[test]
+    fn drops_added_rows_and_restores_deleted_ones() {
+        let rows = vec![cells(&[Some("1")])];
+        let mut pending = PendingEdits::default();
+        for _ in 0..3 {
+            pending.add_row();
+        }
+        pending.set(&rows, RowRef::New(2), 0, Some("last".to_owned()));
+        pending.delete(&[RowRef::New(0), RowRef::New(1), RowRef::Loaded(0)]);
+        assert_eq!(pending.new_rows(), 1);
+        assert_eq!(
+            pending.get(RowRef::New(0), 0),
+            Some(&Some("last".to_owned()))
+        );
+
+        pending.restore(0);
+        assert!(!pending.is_deleted(RowRef::Loaded(0)));
+    }
+
+    #[test]
+    fn describes_what_a_submit_does() {
+        let count = |inserted, updated, deleted| ChangeCount {
+            inserted,
+            updated,
+            deleted,
+        };
+        let cases = [
+            (count(0, 1, 0), "updates 1 edited row"),
+            (count(0, 2, 0), "updates 2 edited rows"),
+            (count(1, 0, 3), "inserts 1 row and deletes 3 rows"),
+            (
+                count(1, 2, 1),
+                "inserts 1 row, updates 2 edited rows and deletes 1 row",
+            ),
+        ];
+        for (count, expected) in cases {
+            assert_eq!(count.describe(), expected);
+        }
     }
 }

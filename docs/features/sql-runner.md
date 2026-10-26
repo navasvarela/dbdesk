@@ -390,19 +390,30 @@ Each console has a mode, **Auto-commit** (the default) or **Manual commit**:
   the text, Escape drops it. **Set NULL** sets `NULL` (an emptied cell is an empty string).
   Changed cells are tinted and show their new value; "N changed cells" offers **Submit** and
   **Revert**.
-- **Submitting** runs one `UPDATE … SET … WHERE <key> = <value as loaded>` per changed row on
-  the console's own connection, all or none: in a transaction of their own, or behind a
-  savepoint inside the console's open transaction (so in manual commit mode they stay pending
-  with the rest). Each must change exactly one row; otherwise (the row changed or went since
-  it was read, or a value doesn't fit the column) everything is rolled back, the changes stay
-  pending, and the error names the row. Discarding unread rows is the price: the connection
-  can't hold a cursor and run the updates.
+- **Adding and deleting rows** (W5a): **Add row** adds an empty row under the loaded ones,
+  tinted, each cell showing `DEFAULT` (the column's default on hover) or `NULL` until typed
+  into. **Delete row** in a cell's context menu, or **Delete rows** in the toolbar for the
+  selected cells' rows, marks rows for deletion: struck through and tinted, with **Restore
+  row**. The toolbar counts it all: "1 changed cell · 1 new row · 1 deleted row".
+- **Submitting** runs, on the console's own connection, one `DELETE … WHERE <key>` per deleted
+  row, then one `UPDATE … SET … WHERE <key> = <value as loaded>` per changed row, then one
+  `INSERT` per added row (with only the columns typed into; `DEFAULT VALUES`, or
+  `() VALUES ()` on MySQL, for a row left at its defaults), so a key a deleted row frees can be
+  reused. They are built by `dbdesk_sql::RowSql`. All or none: in a transaction of their own,
+  or behind a savepoint inside the console's open transaction (so in manual commit mode they
+  stay pending with the rest). Each must change exactly one row; otherwise (the row changed or
+  went since it was read, or a value doesn't fit the column) everything is rolled back, the
+  changes stay pending, and the error names the row ("Row 12: …", "New row 2: …"). Each
+  statement sent is recorded in the history. Deleted rows then leave the grid; if rows were
+  added, the statement runs again, so the values the database chose for them show.
+  Discarding unread rows is the price: the connection can't hold a cursor and run the
+  changes.
 - **Values are text**, as the grid holds them ([ADR-0004](../adr/0004-results-as-text.md)):
   each goes back as a string literal, which PostgreSQL converts to the column's type and
   SQLite stores by the column's affinity. So whatever displays can be edited as it displays
   (`t` for a boolean, `{1,2}` for an array). SQLite blobs shown as `x'…'` would be stored as
   that text; don't edit them.
-- *Planned*: inserting and deleting rows, a key binding for Submit.
+- *Planned*: a key binding for Submit.
 
 ## Open questions
 

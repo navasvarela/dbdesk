@@ -279,14 +279,14 @@ impl Consoles {
     /// Applies the grid's edits, asking first on a careful data source.
     fn submit_edits(&mut self, key: &ConsoleKey) -> Option<Command> {
         let console = self.open.get_mut(key)?;
-        let rows = console.pending_edit_rows();
-        if console.safety() != SafetyLevel::Careful || rows == 0 {
+        let changes = console.pending_changes();
+        if console.safety() != SafetyLevel::Careful || changes.is_empty() {
             return console.submit_edits();
         }
         self.hazard = Some(hazard_dialog::confirm_edits(
             key.clone(),
             console.data_source_name(),
-            rows,
+            changes,
         ));
         None
     }
