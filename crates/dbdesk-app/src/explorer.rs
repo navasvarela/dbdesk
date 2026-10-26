@@ -57,6 +57,15 @@ pub enum ExplorerAction {
     DeleteProject(ProjectId),
     /// Puts the data source in the project, or in no project.
     MoveToProject(DataSourceId, Option<ProjectId>),
+    /// Opens an object helper's dialog on the data source.
+    Helper(DataSourceId, Helper),
+}
+
+/// An object helper, with the catalog node it was opened on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Helper {
+    TruncateTable(CatalogPath),
+    DropTable(CatalogPath),
 }
 
 /// The explorer's own view settings.
@@ -455,10 +464,12 @@ fn data_source_tree(
     }
     response.context_menu(|ui| data_source_menu(ui, entry, tree, actions));
     if expanded {
+        let dialect = Dialect::from(entry.data_source.config.driver());
         let tree = TreeView {
             id,
             catalog: &entry.catalog,
-            quoting: Dialect::from(entry.data_source.config.driver()).quoting(),
+            quoting: dialect.quoting(),
+            own_database: entry.data_source.config.database(),
         };
         ui.indent(Id::new(id), |ui| {
             children(ui, &tree, &root, filter, actions)
@@ -542,6 +553,19 @@ struct TreeView<'a> {
     catalog: &'a CatalogTree,
     /// For the names the context menu copies.
     quoting: Quoting,
+    /// The database the data source connects to, where its tree lists several. The helpers'
+    /// statements run on that connection, so they are offered only inside it.
+    own_database: Option<&'a str>,
+}
+
+impl TreeView<'_> {
+    /// Whether the helpers' statements would reach the object at `path`.
+    fn can_change(&self, path: &CatalogPath) -> bool {
+        match path.name_of(NodeKind::Database) {
+            Some(database) => self.own_database == Some(database),
+            None => true,
+        }
+    }
 }
 
 /// Which loaded nodes to draw.
@@ -725,6 +749,36 @@ fn node_menu(
     }
     if node.has_children && widgets::menu_item(ui, icons::ARROWS_CLOCKWISE, "Refresh").clicked() {
         actions.push(ExplorerAction::Refresh(id, node.path.clone()));
+    }
+    if tree.can_change(&node.path) {
+        helpers_menu(ui, tree, node, actions);
+    }
+}
+
+/// The object helpers for `node`, after the browsing items.
+fn helpers_menu(
+    ui: &mut Ui,
+    tree: &TreeView<'_>,
+    node: &CatalogNode,
+    actions: &mut Vec<ExplorerAction>,
+) {
+    let mut helpers: Vec<(&str, &str, Helper)> = Vec::new();
+    if node.kind() == Some(NodeKind::Table) {
+        helpers.push((
+            icons::ERASER,
+            "Truncate…",
+            Helper::TruncateTable(node.path.clone()),
+        ));
+        helpers.push((icons::TRASH, "Drop…", Helper::DropTable(node.path.clone())));
+    }
+    if helpers.is_empty() {
+        return;
+    }
+    ui.separator();
+    for (glyph, label, helper) in helpers {
+        if widgets::menu_item(ui, glyph, label).clicked() {
+            actions.push(ExplorerAction::Helper(tree.id, helper));
+        }
     }
 }
 

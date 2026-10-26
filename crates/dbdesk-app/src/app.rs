@@ -27,6 +27,7 @@ use crate::keymap::{self, Keymap};
 use crate::keymap_window::{self, KeymapWindowAction};
 use crate::log_console::{LogConsole, LogFeed};
 use crate::mcp_settings::McpDefaultsEditor;
+use crate::object_dialog::{self, ObjectDialog, ObjectDialogAction, Target};
 use crate::password_prompt::{PasswordPrompt, PromptAction};
 use crate::project_dialog::{
     DeleteProjectChoice, DeleteProjectConfirmation, ProjectDialogAction, ProjectNameDialog,
@@ -63,6 +64,8 @@ pub struct DbDeskApp {
     /// View › Settings › MCP's draft, kept while the window is closed.
     mcp_defaults: McpDefaultsEditor,
     delete_project_confirmation: Option<DeleteProjectConfirmation>,
+    /// The object helper being used: New table, Drop…, and so on.
+    object_dialog: Option<ObjectDialog>,
     definition_window: Option<DefinitionWindow>,
     history_window: Option<HistoryWindow>,
     rollback_confirmation: Option<RollbackConfirmation>,
@@ -124,6 +127,7 @@ impl DbDeskApp {
             project_settings: None,
             mcp_defaults: McpDefaultsEditor::new(&McpPermissions::default()),
             delete_project_confirmation: None,
+            object_dialog: None,
             definition_window: None,
             history_window: None,
             rollback_confirmation: None,
@@ -206,6 +210,14 @@ impl DbDeskApp {
             .is_some_and(|dialog| dialog.apply(event))
         {
             self.project_settings = None;
+        }
+        if let Some(changed) = self
+            .object_dialog
+            .as_mut()
+            .and_then(|dialog| dialog.apply(event))
+            && let Some(dialog) = self.object_dialog.take()
+        {
+            self.show_change(dialog.data_source(), changed);
         }
         if let Some(window) = &mut self.definition_window {
             window.apply(event);
@@ -503,7 +515,51 @@ impl DbDeskApp {
                     project,
                 });
             }
+            ExplorerAction::Helper(id, helper) => {
+                if let Some(entry) = self.state.data_source(id)
+                    && let Some(form) = object_dialog::form(helper)
+                {
+                    let target = Target::new(&entry.data_source);
+                    self.object_dialog = Some(ObjectDialog::new(target, form));
+                }
+            }
         }
+    }
+
+    fn show_object_dialog(&mut self, ctx: &egui::Context) {
+        let Some(action) = self
+            .object_dialog
+            .as_mut()
+            .and_then(|dialog| dialog.show(ctx))
+        else {
+            return;
+        };
+        match action {
+            ObjectDialogAction::Execute {
+                data_source,
+                statements,
+            } => self.send(Command::ApplyDdl {
+                data_source,
+                statements,
+            }),
+            ObjectDialogAction::OpenInConsole { data_source, text } => {
+                self.object_dialog = None;
+                if let Some(entry) = self.state.data_source(data_source) {
+                    let console = self.consoles.open(&entry.data_source, text);
+                    workspace::open_console_tab(&mut self.dock, console);
+                }
+            }
+            ObjectDialogAction::Close => self.object_dialog = None,
+        }
+    }
+
+    /// Shows what a helper changed: reloads the node whose children changed, and opens it.
+    fn show_change(&mut self, id: DataSourceId, changed: CatalogPath) {
+        let Some(catalog) = self.state.catalog_mut(id) else {
+            return;
+        };
+        let needs_loading = catalog.refresh(&changed) || catalog.expand(&changed);
+        self.load_children_if(needs_loading, id, changed);
     }
 
     /// Loads catalog levels completion asked for, without expanding them in the explorer.
@@ -1047,6 +1103,7 @@ impl eframe::App for DbDeskApp {
         self.show_project_dialog(&ctx);
         self.show_project_settings(&ctx);
         self.show_delete_project_confirmation(&ctx);
+        self.show_object_dialog(&ctx);
         self.show_password_prompt(&ctx);
         self.show_host_key_prompt(&ctx);
         self.show_export_sources_dialog(&ctx);
@@ -2193,6 +2250,70 @@ mod tests {
         }
         harness.get_by_label("text, not null");
         step_until_visible(&mut harness, "1 connected");
+    }
+
+    /// Expands the `shop` data source down to its tables folder, and waits until `table` shows.
+    fn expand_shop_tables(harness: &mut Harness<'_, DbDeskApp>, table: &str) {
+        for (expand, appears) in [
+            ("Expand shop", "Expand main"),
+            ("Expand main", "Expand tables"),
+        ] {
+            step_until_visible(harness, expand);
+            harness.get_by_label(expand).click();
+            step_until_visible(harness, appears);
+        }
+        harness.get_by_label("Expand tables").click();
+        step_until_visible(harness, &format!("Expand {table}"));
+    }
+
+    fn sqlite_tables(dir: &Path) -> Vec<String> {
+        let connection = rusqlite::Connection::open(dir.join("shop.db")).unwrap();
+        let mut statement = connection
+            .prepare("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name")
+            .unwrap();
+        statement
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    }
+
+    #[test]
+    fn drops_a_table_from_the_explorer_and_refreshes_the_tree() {
+        let dir = tempfile::tempdir().unwrap();
+        save_shop(
+            dir.path(),
+            "CREATE TABLE customers (id INTEGER PRIMARY KEY);
+             CREATE TABLE orders (id INTEGER PRIMARY KEY);",
+        );
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        expand_shop_tables(&mut harness, "orders");
+
+        harness.get_by_label("orders").click_secondary();
+        harness.run_steps(2);
+        harness.get_by_label("Drop…").click();
+        harness.run_steps(2);
+        harness.get_by_label(
+            "Drops the table main.orders, with every row in it and its indexes, keys and \
+             triggers.",
+        );
+        assert!(
+            harness
+                .query_all_by_value("DROP TABLE main.orders;\n")
+                .next()
+                .is_some()
+        );
+        harness.get_by_label("Execute").click();
+        step_until(&mut harness, "orders leaving the tree", |harness| {
+            harness.query_by_label("Expand orders").is_none()
+                && harness.query_by_label("Expand customers").is_some()
+        });
+        assert_eq!(sqlite_tables(dir.path()), ["customers"]);
+        assert!(
+            harness.query_by_label("Execute").is_none(),
+            "the dialog closed"
+        );
     }
 
     #[test]
