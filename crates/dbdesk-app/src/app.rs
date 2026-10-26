@@ -2670,6 +2670,64 @@ mod tests {
     }
 
     #[test]
+    fn creates_and_drops_a_schema_through_the_dialogs() {
+        let dir = tempfile::tempdir().unwrap();
+        let warehouse = dbdesk_core::DataSource {
+            id: DataSourceId::generate(),
+            name: "warehouse".to_owned(),
+            color: None,
+            safety: dbdesk_core::SafetyLevel::Normal,
+            project: None,
+            mcp_login: None,
+            config: dbdesk_core::ConnectionConfig::DuckDb(dbdesk_core::DuckDbConfig {
+                database: dbdesk_core::DuckDbDatabase::InMemory,
+            }),
+        };
+        DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .save(std::slice::from_ref(&warehouse))
+            .unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "Expand warehouse");
+        harness.get_by_label("Expand warehouse").click();
+        step_until_visible(&mut harness, "Expand memory");
+
+        harness.get_by_label("memory").click_secondary();
+        harness.run_steps(2);
+        harness.get_by_label("New").hover();
+        harness.run_steps(2);
+        harness.get_by_label("Schema…").click();
+        harness.run_steps(2);
+        fill(&mut harness, "Name", "sales");
+        assert!(
+            harness
+                .query_all_by_value("CREATE SCHEMA sales;\n")
+                .next()
+                .is_some()
+        );
+        harness.get_by_label("Execute").click();
+        step_until_visible(&mut harness, "Expand sales");
+
+        node_menu(&mut harness, "sales", "Drop schema…");
+        harness
+            .get_by_label("Also drop everything in it (CASCADE)")
+            .click();
+        harness.run_steps(2);
+        harness.get_by_label("Drops the schema sales and everything in it.");
+        assert!(
+            harness
+                .query_all_by_value("DROP SCHEMA sales CASCADE;\n")
+                .next()
+                .is_some()
+        );
+        harness.get_by_label("Execute").click();
+        step_until(&mut harness, "the schema leaving the tree", |harness| {
+            harness.query_by_label("Expand sales").is_none()
+                && harness.query_by_label("Execute").is_none()
+        });
+    }
+
+    #[test]
     fn opens_table_data_in_a_console_and_loads_more_rows() {
         let dir = tempfile::tempdir().unwrap();
         save_shop(

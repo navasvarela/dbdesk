@@ -10,6 +10,7 @@ mod fields;
 mod index;
 mod new_table;
 mod review;
+mod schema;
 mod table;
 mod view;
 
@@ -21,6 +22,7 @@ use egui::{Id, Ui, Window};
 pub use confirm::Destruction;
 use index::{DropIndex, NewIndex};
 use new_table::NewTable;
+use schema::{DropSchema, NewSchema};
 use table::{DropTable, RenameTable, TableAt, TruncateTable};
 use view::{DropView, EditView, NewView, RefreshView, RenameView, ViewAt};
 
@@ -133,6 +135,8 @@ pub fn form(helper: Helper, dialect: Dialect) -> Option<Box<dyn ObjectForm>> {
         Helper::RenameView(path) => Box::new(RenameView::new(ViewAt::new(path)?)),
         Helper::RefreshView(path) => Box::new(RefreshView::new(ViewAt::new(path)?)?),
         Helper::DropView(path) => Box::new(DropView::new(ViewAt::new(path)?)),
+        Helper::NewSchema(path) => Box::new(NewSchema::new(path)?),
+        Helper::DropSchema(path) => Box::new(DropSchema::new(path)?),
     })
 }
 

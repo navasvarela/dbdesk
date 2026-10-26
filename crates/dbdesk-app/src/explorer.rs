@@ -7,7 +7,7 @@ use dbdesk_core::{
     CatalogNode, CatalogPath, DataSourceId, DriverKind, FolderKind, NodeKind, ProjectId, Quoting,
 };
 use dbdesk_engine::SessionState;
-use dbdesk_sql::{Capabilities, Dialect, TableChange};
+use dbdesk_sql::{Capabilities, Dialect, SchemaCreation, TableChange};
 use dbdesk_store::{ConsoleKey, Project};
 use egui::{
     Color32, CornerRadius, Id, Label, Rect, Response, RichText, ScrollArea, Sense, Shape, TextEdit,
@@ -84,6 +84,9 @@ pub enum Helper {
     DropView(CatalogPath),
     /// On a materialized view.
     RefreshView(CatalogPath),
+    /// On a database, or on the data source (the root) where its schemas are databases.
+    NewSchema(CatalogPath),
+    DropSchema(CatalogPath),
 }
 
 /// The explorer's own view settings.
@@ -521,6 +524,21 @@ fn data_source_menu(
         actions.push(ExplorerAction::NewConsole(id));
     }
     saved_consoles_menu(ui, id, tree.saved_consoles, actions);
+    let dialect = Dialect::from(entry.data_source.config.driver());
+    if dialect.capabilities().schema_creation == SchemaCreation::CreateDatabase {
+        ui.separator();
+        let label = widgets::icon_text(ui, icons::PLUS, Color32::PLACEHOLDER, "New");
+        let helper = Helper::NewSchema(CatalogPath::root());
+        let menu = ui.menu_button(label, |ui| {
+            helper_items(
+                ui,
+                id,
+                vec![(icons::TREE_STRUCTURE, "Schema…", helper)],
+                actions,
+            );
+        });
+        widgets::name(menu.response, WidgetType::Button, "New", true);
+    }
     ui.separator();
     if widgets::menu_item(ui, icons::PENCIL_SIMPLE, "Edit…").clicked() {
         actions.push(ExplorerAction::Edit(id));
@@ -789,9 +807,25 @@ fn helpers_menu(
     let mut new: Vec<(&str, &str, Helper)> = Vec::new();
     let mut object: Vec<(&str, &str, Helper)> = Vec::new();
     match node.kind() {
+        Some(NodeKind::Database)
+            if capabilities.schema_creation == SchemaCreation::CreateSchema =>
+        {
+            new.push((
+                icons::TREE_STRUCTURE,
+                "Schema…",
+                Helper::NewSchema(path.clone()),
+            ));
+        }
         Some(NodeKind::Schema) => {
             new.push((icons::TABLE, "Table…", Helper::NewTable(path.clone())));
             new.extend(new_views(path, capabilities));
+            if capabilities.schema_creation != SchemaCreation::Unsupported && !node.system {
+                object.push((
+                    icons::TRASH,
+                    "Drop schema…",
+                    Helper::DropSchema(path.clone()),
+                ));
+            }
         }
         Some(NodeKind::Folder(FolderKind::Tables)) => {
             new.push((icons::TABLE, "Table…", Helper::NewTable(path.clone())));
