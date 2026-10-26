@@ -385,8 +385,8 @@ and read-only results.
 
 ## Object helpers track
 
-Dialogs that write, show and run the SQL to create and change tables, views and users, from a
-**New** submenu and object actions in the explorer. The full plan is in
+Dialogs that write, show and run the SQL to create and change tables, indexes, views, schemas
+and users, from a **New** submenu and object actions in the explorer. The full plan is in
 [Creating and changing database objects](entity-helpers.md).
 
 - **E0 — Groundwork:**
@@ -395,10 +395,11 @@ Dialogs that write, show and run the SQL to create and change tables, views and 
   - a review-and-run panel that shows the SQL before anything runs;
   - `ApplyDdl` in one transaction where the engine allows it;
   - confirmations for destructive actions.
-- **E1 — Tables:** New table (columns, keys, checks), Rename, Truncate, Drop, and Copy DDL,
-  which also gives PostgreSQL tables their missing `CREATE TABLE`.
-- **E2 — Views:** New view and materialized view with the console's editor, Edit, Refresh,
-  Rename, Drop.
+- **E1 — Tables and indexes:** New table (columns, keys, checks), Rename, Truncate, Drop, and
+  Copy DDL, which also gives PostgreSQL tables their missing `CREATE TABLE`; New index and
+  Drop index.
+- **E2 — Views and schemas:** New view and materialized view with the console's editor, Edit,
+  Refresh, Rename, Drop; New schema and Drop schema.
 - **E3 — Users and roles (PostgreSQL):**
   - a Roles folder in the tree;
   - New user and New role, with passwords hashed into a SCRAM verifier and kept out of the
