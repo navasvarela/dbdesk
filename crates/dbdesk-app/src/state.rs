@@ -169,6 +169,8 @@ impl AppState {
             | Event::ExportFinished { .. }
             | Event::TableDescribed { .. }
             | Event::EditsApplied { .. }
+            | Event::DdlApplied { .. }
+            | Event::TableDdlLoaded { .. }
             | Event::TransactionChanged { .. }
             | Event::TransactionEnded { .. }
             | Event::ConsoleSaveFailed { .. }

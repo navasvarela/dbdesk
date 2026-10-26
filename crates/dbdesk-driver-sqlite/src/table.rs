@@ -1,6 +1,6 @@
 //! Describing a table for editing its rows.
 
-use dbdesk_core::{DriverError, RelationName, TableDescription};
+use dbdesk_core::{ColumnDescription, DriverError, RelationName, TableDescription};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::connection_error;
@@ -27,21 +27,36 @@ pub(crate) fn describe_table(
         return Ok(None);
     };
     let mut statement = connection
-        .prepare("SELECT name, pk FROM pragma_table_info(?1, ?2) ORDER BY cid")
+        .prepare(
+            "SELECT name, type, \"notnull\", dflt_value, pk \
+             FROM pragma_table_info(?1, ?2) ORDER BY cid",
+        )
         .map_err(connection_error)?;
-    let mut columns: Vec<(String, i64)> = statement
-        .query_map(params![name, schema], |row| Ok((row.get(0)?, row.get(1)?)))
+    let columns: Vec<(ColumnDescription, i64)> = statement
+        .query_map(params![name, schema], |row| {
+            let not_null: bool = row.get(2)?;
+            let column = ColumnDescription {
+                name: row.get(0)?,
+                data_type: row.get(1)?,
+                nullable: !not_null,
+                default: row.get(3)?,
+            };
+            Ok((column, row.get(4)?))
+        })
         .map_err(connection_error)?
         .collect::<Result<_, _>>()
         .map_err(connection_error)?;
-    let names = columns.iter().map(|(name, _)| name.clone()).collect();
     // `pk` is the column's 1-based position in the key, 0 outside it.
-    columns.retain(|(_, position)| *position > 0);
-    columns.sort_by_key(|(_, position)| *position);
+    let mut key: Vec<(i64, String)> = columns
+        .iter()
+        .filter(|(_, position)| *position > 0)
+        .map(|(column, position)| (*position, column.name.clone()))
+        .collect();
+    key.sort();
     Ok(Some(TableDescription {
         schema,
         name,
-        columns: names,
-        primary_key: columns.into_iter().map(|(name, _)| name).collect(),
+        columns: columns.into_iter().map(|(column, _)| column).collect(),
+        primary_key: key.into_iter().map(|(_, name)| name).collect(),
     }))
 }

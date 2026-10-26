@@ -1,6 +1,6 @@
 //! Describing a table for editing its rows.
 
-use dbdesk_core::{DriverError, Quoting, RelationName, TableDescription};
+use dbdesk_core::{ColumnDescription, DriverError, Quoting, RelationName, TableDescription};
 use tokio_postgres::Client;
 
 use crate::connection_error;
@@ -9,7 +9,7 @@ use crate::connection_error;
 const PLAIN_TABLE_KINDS: [&str; 2] = ["r", "p"];
 
 /// Resolves `table` with `to_regclass`, which applies the search path and folds unquoted
-/// names to lowercase exactly as a statement would, then reads its columns and primary key.
+/// names to lowercase exactly as a statement would, then reads its columns (with their types, nullability and defaults) and primary key.
 pub(crate) async fn describe_table(
     client: &Client,
     table: &RelationName,
@@ -33,9 +33,12 @@ pub(crate) async fn describe_table(
     }
     let columns = client
         .query(
-            "SELECT a.attname, array_position(i.indkey::int2[], a.attnum) \
+            "SELECT a.attname, array_position(i.indkey::int2[], a.attnum), \
+             format_type(a.atttypid, a.atttypmod), NOT a.attnotnull, \
+             pg_get_expr(d.adbin, d.adrelid) \
              FROM pg_attribute a \
              LEFT JOIN pg_index i ON i.indrelid = a.attrelid AND i.indisprimary \
+             LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum \
              WHERE a.attrelid = to_regclass($1) AND a.attnum > 0 AND NOT a.attisdropped \
              ORDER BY a.attnum",
             &[&written],
@@ -55,7 +58,12 @@ pub(crate) async fn describe_table(
         if let Some(position) = key_position {
             key.push((position, name.clone()));
         }
-        description.columns.push(name);
+        description.columns.push(ColumnDescription {
+            name,
+            data_type: column.try_get(2).map_err(connection_error)?,
+            nullable: column.try_get(3).map_err(connection_error)?,
+            default: column.try_get(4).map_err(connection_error)?,
+        });
     }
     key.sort();
     description.primary_key = key.into_iter().map(|(_, name)| name).collect();

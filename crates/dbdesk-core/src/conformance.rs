@@ -456,7 +456,17 @@ pub async fn check_describe_table(
         .expect("the table exists");
     assert_eq!(described.name, spelling.temporary("dbdesk_describe"));
     assert!(!described.schema.is_empty());
-    assert_eq!(described.columns, ["id", "part", "note"]);
+    let column_names: Vec<&str> = described.column_names().collect();
+    assert_eq!(column_names, ["id", "part", "note"]);
+    assert!(
+        described
+            .columns
+            .iter()
+            .all(|column| !column.data_type.is_empty()),
+        "every column has a type: {:?}",
+        described.columns
+    );
+    assert!(described.columns[2].nullable, "note is nullable");
     assert_eq!(described.primary_key, ["part", "id"]);
     if names == UnquotedNames::ExactCase {
         let other_case = connection

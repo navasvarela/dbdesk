@@ -305,7 +305,8 @@ async fn keeps_the_session_between_statements() {
         .await
         .expect("describe");
     let described = described.expect("the temporary table is found");
-    assert_eq!(described.columns, ["n"]);
+    let names: Vec<&str> = described.column_names().collect();
+    assert_eq!(names, ["n"]);
     assert!(described.primary_key.is_empty());
 }
 

@@ -5,7 +5,7 @@
 //! the server's `lower_case_table_names`), and they see temporary tables, which
 //! `information_schema` doesn't list.
 
-use dbdesk_core::{DriverError, RelationName, TableDescription};
+use dbdesk_core::{ColumnDescription, DriverError, RelationName, TableDescription};
 use mysql_async::Conn;
 use mysql_async::prelude::Queryable;
 
@@ -46,7 +46,7 @@ pub(crate) async fn describe_table(
     let (Some(schema), Some(stored_name)) = (schema, stored_name) else {
         return Ok(None);
     };
-    let columns = field_values(conn, &format!("SHOW COLUMNS FROM {name}"), "Field").await?;
+    let columns = columns(conn, &format!("SHOW COLUMNS FROM {name}")).await?;
     let primary_key = field_values(
         conn,
         &format!("SHOW KEYS FROM {name} WHERE Key_name = 'PRIMARY'"),
@@ -74,8 +74,30 @@ async fn show(conn: &mut Conn, sql: &str) -> Result<Option<Vec<mysql_async::Row>
     }
 }
 
-/// One column of a `SHOW` result, in the order the server lists the rows: `SHOW COLUMNS`
-/// in table order, `SHOW KEYS` in key order.
+/// `SHOW COLUMNS`'s rows, in table order. Its `Default` is the default's value, or for an
+/// expression (MySQL 8.0.13 and later) the expression.
+async fn columns(conn: &mut Conn, sql: &str) -> Result<Vec<ColumnDescription>, DriverError> {
+    let rows = show(conn, sql).await?.unwrap_or_default();
+    rows.iter()
+        .map(|row| {
+            let text = |column: &str| -> Option<String> {
+                row.get_opt::<Option<String>, _>(column)
+                    .and_then(Result::ok)
+                    .flatten()
+            };
+            let missing = |column: &str| connection_error(format!("{sql} returned no {column}"));
+            Ok(ColumnDescription {
+                name: text("Field").ok_or_else(|| missing("Field"))?,
+                data_type: text("Type").ok_or_else(|| missing("Type"))?,
+                nullable: text("Null").as_deref() == Some("YES"),
+                default: text("Default"),
+            })
+        })
+        .collect()
+}
+
+/// One column of a `SHOW` result, in the order the server lists the rows: `SHOW KEYS` lists
+/// them in key order.
 async fn field_values(
     conn: &mut Conn,
     sql: &str,

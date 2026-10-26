@@ -182,6 +182,24 @@ pub enum Command {
         data_source: DataSourceId,
         table: RelationName,
     },
+    /// Runs statements that create or change database objects (the object helpers' DDL), in
+    /// order, on the explorer's connection to the data source, connecting first if needed.
+    /// Where the dialect's DDL is transactional they run in one transaction, so a failure
+    /// undoes the ones before it; elsewhere each commits as it runs, and a failure stops at
+    /// that statement. Refused on a read-only data source. Each statement sent is recorded in
+    /// the history. Answered by [`Event::DdlApplied`].
+    ApplyDdl {
+        data_source: DataSourceId,
+        statements: Vec<String>,
+    },
+    /// Loads the `CREATE TABLE` statement of the table at `path`, on the explorer's connection:
+    /// the catalog's definition where the database keeps one, or rebuilt from the table's
+    /// description and its constraints where it doesn't (PostgreSQL). Answered by
+    /// [`Event::TableDdlLoaded`].
+    LoadTableDdl {
+        data_source: DataSourceId,
+        path: CatalogPath,
+    },
     /// Runs generated `UPDATE`s on the console's connection, all or none: each must change
     /// exactly one row. Inside an open transaction they stay part of it (behind a savepoint);
     /// otherwise they commit together. Answered by [`Event::EditsApplied`].
@@ -335,6 +353,17 @@ pub enum Event {
         data_source: DataSourceId,
         table: RelationName,
         result: Result<Option<TableDescription>, String>,
+    },
+    /// The answer to [`Command::ApplyDdl`].
+    DdlApplied {
+        data_source: DataSourceId,
+        result: Result<(), DdlFailure>,
+    },
+    /// The answer to [`Command::LoadTableDdl`].
+    TableDdlLoaded {
+        data_source: DataSourceId,
+        path: CatalogPath,
+        result: Result<String, String>,
     },
     /// The answer to [`Command::ApplyEdits`].
     EditsApplied {
@@ -493,6 +522,18 @@ pub struct EditFailure {
     /// the transaction around them).
     pub statement: Option<usize>,
     pub message: String,
+}
+
+/// Why DDL stopped, and what of it stays applied.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DdlFailure {
+    /// The index of the statement that failed, or `None` if none was sent: the data source is
+    /// read-only, or the transaction around them couldn't be started or ended.
+    pub statement: Option<usize>,
+    pub message: String,
+    /// How many statements stay applied: none when they ran in one transaction, otherwise the
+    /// ones before the failure, which committed as they ran.
+    pub applied: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -4,6 +4,7 @@
 //! query never holds up browsing or another console.
 
 mod catalog;
+mod ddl;
 mod edits;
 mod guard;
 mod loss;
@@ -45,6 +46,8 @@ pub(crate) enum SessionRequest {
     EndTransaction(TransactionEnd),
     DescribeTable(RelationName),
     ApplyEdits(Vec<String>),
+    ApplyDdl(Vec<String>),
+    TableDdl(CatalogPath),
     /// Prepares statements without running them; see [`crate::Command::ValidateStatements`].
     Validate(Vec<String>),
 }
@@ -115,9 +118,9 @@ impl Session {
             read_only,
             owner,
             events,
-            // Only what the user runs in a console belongs in the history, not the
-            // explorer's catalog queries.
-            history: matches!(owner, SessionOwner::Console(_)).then_some(history),
+            // What the user runs belongs in the history: a console's statements and the
+            // explorer's DDL, never its catalog queries, which don't record anything.
+            history,
         };
         let signals = Signals {
             disconnect: disconnect_signal,
@@ -178,7 +181,7 @@ struct SessionContext {
     read_only: Option<ReadOnly>,
     owner: SessionOwner,
     events: EventSink,
-    history: Option<HistoryLog>,
+    history: HistoryLog,
 }
 
 impl SessionContext {
@@ -191,9 +194,7 @@ impl SessionContext {
     }
 
     fn record(&self, entry: HistoryEntry) {
-        if let Some(history) = &self.history {
-            history.record(entry);
-        }
+        self.history.record(entry);
     }
 
     /// The dialect of the SQL this session runs, for reading statements' first words.
@@ -571,6 +572,11 @@ impl Worker<'_> {
                 self.signals.guard(work, None, self.cancel_handle).await
             }
             SessionRequest::ApplyEdits(statements) => edits::apply(self, &statements).await,
+            SessionRequest::ApplyDdl(statements) => ddl::apply(self, &statements).await,
+            SessionRequest::TableDdl(path) => {
+                let work = ddl::table_ddl(self.context, &mut *self.connection, path);
+                self.signals.guard(work, None, self.cancel_handle).await
+            }
             SessionRequest::FetchMore(_) | SessionRequest::Validate(_) => Ok(()),
         }
     }

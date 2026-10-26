@@ -35,9 +35,9 @@ pub use handle::{EngineConfig, EngineError, EngineHandle, IDLE_PING_AFTER};
 pub use open::{OpenError, open_data_source, open_data_source_for_mcp};
 pub use passwords::PasswordNeeded;
 pub use protocol::{
-    Command, ConsoleId, DatabaseFile, EditFailure, Event, PasswordKept, PasswordUpdate, RunId,
-    RunOutcome, RunPurpose, SessionState, StatementCheck, StatementFailure, StatementSummary,
-    TransactionEnd, TransactionMode,
+    Command, ConsoleId, DatabaseFile, DdlFailure, EditFailure, Event, PasswordKept, PasswordUpdate,
+    RunId, RunOutcome, RunPurpose, SessionState, StatementCheck, StatementFailure,
+    StatementSummary, TransactionEnd, TransactionMode,
 };
 pub use releases::{GithubReleases, Release, ReleaseError, ReleaseFeed};
 pub use repaint::Repaint;

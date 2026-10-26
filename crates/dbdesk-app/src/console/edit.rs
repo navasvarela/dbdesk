@@ -145,7 +145,7 @@ pub fn edit_target(table: TableDescription, columns: &[ColumnInfo]) -> Editabili
     let named_once = |name: &str| columns.iter().filter(|column| column.name == name).count() == 1;
     let editable: Vec<bool> = columns
         .iter()
-        .map(|column| table.columns.contains(&column.name) && named_once(&column.name))
+        .map(|column| table.has_column(&column.name) && named_once(&column.name))
         .collect();
     let key: Option<Vec<usize>> = table
         .primary_key
@@ -354,6 +354,8 @@ fn literal(value: &Cell, quoting: Quoting) -> String {
 
 #[cfg(test)]
 mod tests {
+    use dbdesk_core::ColumnDescription;
+
     use super::*;
 
     fn column(name: &str) -> ColumnInfo {
@@ -367,7 +369,15 @@ mod tests {
         TableDescription {
             schema: "public".to_owned(),
             name: "people".to_owned(),
-            columns: columns.iter().map(|c| (*c).to_owned()).collect(),
+            columns: columns
+                .iter()
+                .map(|name| ColumnDescription {
+                    name: (*name).to_owned(),
+                    data_type: "text".to_owned(),
+                    nullable: true,
+                    default: None,
+                })
+                .collect(),
             primary_key: key.iter().map(|c| (*c).to_owned()).collect(),
         }
     }

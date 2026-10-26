@@ -255,6 +255,13 @@ impl Engine {
             Command::DescribeTable { data_source, table } => {
                 self.request(data_source, SessionRequest::DescribeTable(table));
             }
+            Command::ApplyDdl {
+                data_source,
+                statements,
+            } => self.request(data_source, SessionRequest::ApplyDdl(statements)),
+            Command::LoadTableDdl { data_source, path } => {
+                self.request(data_source, SessionRequest::TableDdl(path));
+            }
             Command::ApplyEdits {
                 console,
                 statements,
