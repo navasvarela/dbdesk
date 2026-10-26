@@ -31,8 +31,8 @@ Implemented:
   carry their position, and no transaction is left open.
 
 - `check_describe_table` (M5): an unquoted name resolves ignoring case, columns come in table
-  order and the primary key in key order, a keyless table has an empty key, and views and
-  missing tables are `None`.
+  order, each with a type and whether it is nullable, and the primary key in key order, a
+  keyless table has an empty key, and views and missing tables are `None`.
 
 Races hide in cancellation, so after changing it, run the cancel tests in a loop. A one-off
 pass proved nothing in M3: the console's cancel test hung 2 runs in 5 before its fix.
@@ -103,6 +103,18 @@ directory for `data_sources.toml`, console files, `history.sqlite` and exports, 
 in-memory `SecretStore`. Tests that need PostgreSQL (a commit of a failed transaction, say)
 skip without `DBDESK_TEST_POSTGRES_URL`, like the driver tests. Planned: a fake driver (in-memory, scripted responses) covers ordering cases that are hard to trigger
 against a real server, such as a cancel arriving after the last row.
+
+### Object helpers' DDL
+
+- `dbdesk_sql`'s DDL builder has golden tests per dialect (`ddl/tests.rs`): a table with every
+  kind of constraint and names that need quoting, renames, truncates, drops and indexes, written
+  out in full for each of the six dialects, and what each dialect refuses.
+- `dbdesk-engine/tests/ddl.rs` applies DDL through the engine: all or none on SQLite, the
+  statements before a failure kept (and counted) on MySQL, refused on a read-only data source,
+  and recorded in the history. Its round trip builds a parent and a child table from one
+  `TableSpec` on every engine with a test server, describes the child, and compares its
+  columns, nullability, default and primary key with the spec, then drops both. Copy DDL on
+  PostgreSQL is checked by running what it copied after dropping the table.
 
 ## MCP server
 

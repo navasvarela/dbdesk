@@ -25,7 +25,7 @@ use dbdesk_store::{
 };
 use egui::accesskit::Role;
 use egui::{Theme, Vec2};
-use egui_kittest::kittest::{By, Queryable};
+use egui_kittest::kittest::{By, NodeT, Queryable};
 use egui_kittest::{Harness, HarnessBuilder};
 use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::{Layer as _, reload};
@@ -274,6 +274,20 @@ const SCENES: &[Scene] = &[
         name: "explorer-menu",
         data_sources: FixtureSources::Shop,
         play: explorer_menu,
+        keeps_pointer: false,
+        needs: &[],
+    },
+    Scene {
+        name: "new-table",
+        data_sources: FixtureSources::Shop,
+        play: new_table,
+        keeps_pointer: false,
+        needs: &[],
+    },
+    Scene {
+        name: "drop-table",
+        data_sources: FixtureSources::Shop,
+        play: drop_table,
         keeps_pointer: false,
         needs: &[],
     },
@@ -914,6 +928,81 @@ fn explorer_menu(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
     expand(harness, &["shop", "main", "tables", "orders", "columns"]);
     step_until_visible(harness, "customer_id");
     harness.get_by_label("orders").click_secondary();
+    harness.run_ok();
+}
+
+/// Opens a menu button and ticks or picks `item` in it, then closes the menu.
+fn pick(harness: &mut Harness<'static, DbDeskApp>, menu: &str, item: &str) {
+    harness.get_by_label(menu).click();
+    harness.run_ok();
+    harness.get_by_label(item).click();
+    harness.run_ok();
+    harness.key_press(egui::Key::Escape);
+    harness.run_ok();
+}
+
+/// New table with a few columns and a foreign key to `orders`, and the SQL it will run.
+fn new_table(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    expand(harness, &["shop", "main", "tables"]);
+    step_until_visible(harness, "Expand orders");
+    harness.get_by_label("tables").click_secondary();
+    harness.run_ok();
+    harness.get_by_label("New").hover();
+    harness.run_ok();
+    harness.get_by_label("Table…").click();
+    harness.run_ok();
+    retype(harness, "Name", "shipments");
+    for (row, name, data_type) in [
+        (2, "order_id", "integer"),
+        (3, "carrier", "text"),
+        (4, "shipped_at", "text"),
+    ] {
+        harness.get_by_label("Add column").click();
+        harness.run_ok();
+        retype(harness, &format!("Column {row} name"), name);
+        retype(harness, &format!("Column {row} type"), data_type);
+    }
+    for row in [2, 3] {
+        harness
+            .get_by_label(&format!("Column {row} nullable"))
+            .click();
+        harness.run_ok();
+    }
+    harness.get_by_label("Foreign keys").click();
+    harness.run_ok();
+    harness.get_by_label("Add foreign key").click();
+    harness.run_ok();
+    pick(harness, "Foreign key 1 columns", "order_id");
+    harness.get_by_label("Foreign key 1 references").click();
+    harness.run_ok();
+    harness.get_by_label("main.orders").click();
+    step_until_visible(harness, "Foreign key 1 referenced columns");
+    pick(harness, "Foreign key 1 referenced columns", "id");
+    // The foreign key's own "Columns" row label is there too; the tab is the one to click.
+    harness
+        .get_all_by_label("Columns")
+        .find(|node| node.accesskit_node().role() != Role::Label)
+        .unwrap()
+        .click();
+    harness.run_ok();
+}
+
+/// Drop… on a data source coloured red, which wants the table's name typed.
+fn drop_table(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    edit_shop(harness);
+    harness.get_by_label("Red").click();
+    harness.run_ok();
+    harness
+        .get_by_role_and_label(Role::RadioButton, "Normal")
+        .click();
+    harness.run_ok();
+    harness.get_by_label("Save").click();
+    harness.run_ok();
+    expand(harness, &["shop", "main", "tables"]);
+    step_until_visible(harness, "Expand events");
+    harness.get_by_label("events").click_secondary();
+    harness.run_ok();
+    harness.get_by_label("Drop…").click();
     harness.run_ok();
 }
 
