@@ -21,7 +21,7 @@ impl ObjectForm for Fixed {
         "Drop table orders".to_owned()
     }
 
-    fn show(&mut self, ui: &mut Ui, _target: &Target) {
+    fn show(&mut self, ui: &mut Ui, _context: &FormContext<'_>) {
         ui.label("the form's fields");
     }
 
@@ -86,7 +86,7 @@ fn harness(data_source: &DataSource, form: Fixed) -> Harness<'static, Open> {
                 fonts_installed = true;
                 return;
             }
-            if let Some(action) = open.dialog.show(ui.ctx()) {
+            if let Some(action) = open.dialog.show(ui.ctx(), &CatalogTree::default()) {
                 open.actions.push(action);
             }
         },

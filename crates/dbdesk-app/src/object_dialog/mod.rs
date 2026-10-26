@@ -6,6 +6,7 @@
 //! confirmation a destructive change needs, the review panel, and waiting for the engine.
 
 mod confirm;
+mod new_table;
 mod review;
 mod table;
 
@@ -15,8 +16,10 @@ use dbdesk_sql::{DdlError, DdlOperation, Dialect, ObjectName, ddl_statements};
 use egui::{Id, Ui, Window};
 
 pub use confirm::Destruction;
+use new_table::NewTable;
 use table::{DropTable, TableAt, TruncateTable};
 
+use crate::catalog_tree::CatalogTree;
 use crate::explorer::Helper;
 use review::{Review, ReviewAction};
 
@@ -53,7 +56,13 @@ pub trait ObjectForm {
     fn title(&self) -> String;
 
     /// Draws the fields.
-    fn show(&mut self, ui: &mut Ui, target: &Target);
+    fn show(&mut self, ui: &mut Ui, context: &FormContext<'_>);
+
+    /// Catalog levels the form wants loaded, such as a foreign key target's columns: asked
+    /// for after every frame, and loaded once.
+    fn catalog_requests(&self) -> Vec<CatalogPath> {
+        Vec::new()
+    }
 
     /// What the form asks for, or why it can't be written as SQL yet.
     fn operations(&self) -> Result<Vec<DdlOperation>, DdlError>;
@@ -66,6 +75,15 @@ pub trait ObjectForm {
     fn destruction(&self, _dialect: Dialect) -> Option<Destruction> {
         None
     }
+}
+
+/// What a form may read while it draws.
+pub struct FormContext<'a> {
+    pub target: &'a Target,
+    /// The data source's catalog as loaded so far, the same one the explorer and completion
+    /// use. A form only reads it, and asks for more with
+    /// [`ObjectForm::catalog_requests`].
+    pub catalog: &'a CatalogTree,
 }
 
 /// What the app does for an open dialog.
@@ -86,8 +104,10 @@ pub enum ObjectDialogAction {
 
 /// The form for a helper the explorer asked for. `None` if its node isn't the kind the
 /// helper works on, which the explorer's menus never offer.
-pub fn form(helper: Helper) -> Option<Box<dyn ObjectForm>> {
+pub fn form(helper: Helper, dialect: Dialect) -> Option<Box<dyn ObjectForm>> {
+    let first_type = dialect.capabilities().common_types.first().copied();
     Some(match helper {
+        Helper::NewTable(path) => Box::new(NewTable::new(path, first_type.unwrap_or_default())?),
         Helper::TruncateTable(path) => Box::new(TruncateTable::new(TableAt::new(path)?)),
         Helper::DropTable(path) => Box::new(DropTable::new(TableAt::new(path)?)),
     })
@@ -112,6 +132,11 @@ impl ObjectDialog {
 
     pub fn data_source(&self) -> DataSourceId {
         self.target.data_source
+    }
+
+    /// See [`ObjectForm::catalog_requests`].
+    pub fn catalog_requests(&self) -> Vec<CatalogPath> {
+        self.form.catalog_requests()
     }
 
     /// Follows the engine's answer to Execute. Returns the node to refresh once the change
@@ -139,7 +164,11 @@ impl ObjectDialog {
         None
     }
 
-    pub fn show(&mut self, ctx: &egui::Context) -> Option<ObjectDialogAction> {
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        catalog: &CatalogTree,
+    ) -> Option<ObjectDialogAction> {
         let mut open = true;
         let mut action = None;
         Window::new(self.form.title())
@@ -147,15 +176,19 @@ impl ObjectDialog {
             .open(&mut open)
             .collapsible(false)
             .default_width(DEFAULT_WIDTH)
-            .show(ctx, |ui| action = self.contents(ui));
+            .show(ctx, |ui| action = self.contents(ui, catalog));
         if !open && !self.review.is_running() {
             return Some(ObjectDialogAction::Close);
         }
         action
     }
 
-    fn contents(&mut self, ui: &mut Ui) -> Option<ObjectDialogAction> {
-        self.form.show(ui, &self.target);
+    fn contents(&mut self, ui: &mut Ui, catalog: &CatalogTree) -> Option<ObjectDialogAction> {
+        let context = FormContext {
+            target: &self.target,
+            catalog,
+        };
+        self.form.show(ui, &context);
         let destruction = self.form.destruction(self.target.dialect);
         let confirmed = match &destruction {
             Some(destruction) => self.confirmation.show(ui, destruction, &self.target),

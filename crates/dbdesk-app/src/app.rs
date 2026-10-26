@@ -516,10 +516,11 @@ impl DbDeskApp {
                 });
             }
             ExplorerAction::Helper(id, helper) => {
-                if let Some(entry) = self.state.data_source(id)
-                    && let Some(form) = object_dialog::form(helper)
-                {
+                if let Some(entry) = self.state.data_source(id) {
                     let target = Target::new(&entry.data_source);
+                    let Some(form) = object_dialog::form(helper, target.dialect) else {
+                        return;
+                    };
                     self.object_dialog = Some(ObjectDialog::new(target, form));
                 }
             }
@@ -527,11 +528,18 @@ impl DbDeskApp {
     }
 
     fn show_object_dialog(&mut self, ctx: &egui::Context) {
-        let Some(action) = self
-            .object_dialog
-            .as_mut()
-            .and_then(|dialog| dialog.show(ctx))
-        else {
+        let Some(dialog) = &mut self.object_dialog else {
+            return;
+        };
+        let id = dialog.data_source();
+        let Some(entry) = self.state.data_source(id) else {
+            self.object_dialog = None;
+            return;
+        };
+        let action = dialog.show(ctx, &entry.catalog);
+        let requests = dialog.catalog_requests();
+        self.load_catalog(id, requests);
+        let Some(action) = action else {
             return;
         };
         match action {
@@ -2314,6 +2322,90 @@ mod tests {
             harness.query_by_label("Execute").is_none(),
             "the dialog closed"
         );
+    }
+
+    /// Types into a text field found by its accessible label, waiting a frame for focus.
+    fn fill(harness: &mut Harness<'_, DbDeskApp>, label: &str, text: &str) {
+        harness
+            .get_by_role_and_label(Role::TextInput, label)
+            .focus();
+        harness.run_steps(2);
+        harness
+            .get_by_role_and_label(Role::TextInput, label)
+            .type_text(text);
+        harness.run_steps(2);
+    }
+
+    /// Opens a menu button and ticks or picks `item` in it.
+    fn pick(harness: &mut Harness<'_, DbDeskApp>, menu: &str, item: &str) {
+        harness.get_by_label(menu).click();
+        harness.run_steps(2);
+        harness.get_by_label(item).click();
+        harness.run_steps(2);
+        harness.key_press(egui::Key::Escape);
+        harness.run_steps(2);
+    }
+
+    #[test]
+    fn creates_a_table_with_a_foreign_key_through_the_dialog() {
+        let dir = tempfile::tempdir().unwrap();
+        save_shop(
+            dir.path(),
+            "CREATE TABLE customers (id INTEGER PRIMARY KEY);",
+        );
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        expand_shop_tables(&mut harness, "customers");
+
+        harness.get_by_label("tables").click_secondary();
+        harness.run_steps(2);
+        harness.get_by_label("New").hover();
+        harness.run_steps(2);
+        harness.get_by_label("Table…").click();
+        harness.run_steps(2);
+        fill(&mut harness, "Name", "orders");
+        harness.get_by_label("Add column").click();
+        harness.run_steps(2);
+        fill(&mut harness, "Column 2 name", "customer");
+        fill(&mut harness, "Column 2 type", "integer");
+
+        harness.get_by_label("Foreign keys").click();
+        harness.run_steps(2);
+        harness.get_by_label("Add foreign key").click();
+        harness.run_steps(2);
+        pick(&mut harness, "Foreign key 1 columns", "customer");
+        harness.get_by_label("Foreign key 1 references").click();
+        harness.run_steps(2);
+        harness.get_by_label("main.customers").click();
+        step_until_visible(&mut harness, "Foreign key 1 referenced columns");
+        pick(&mut harness, "Foreign key 1 referenced columns", "id");
+
+        let expected = "CREATE TABLE main.orders (
+    id integer NOT NULL,
+    customer integer,
+    PRIMARY KEY (id),
+    FOREIGN KEY (customer) REFERENCES customers (id)
+);\n";
+        assert!(
+            harness.query_all_by_value(expected).next().is_some(),
+            "the review panel shows the statement"
+        );
+        harness.get_by_label("Execute").click();
+        step_until_visible(&mut harness, "Expand orders");
+        assert!(
+            harness.query_by_label("Execute").is_none(),
+            "the dialog closed"
+        );
+
+        let connection = rusqlite::Connection::open(dir.path().join("shop.db")).unwrap();
+        let target: String = connection
+            .query_row(
+                "SELECT \"table\" FROM pragma_foreign_key_list('orders')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(target, "customers");
     }
 
     #[test]
