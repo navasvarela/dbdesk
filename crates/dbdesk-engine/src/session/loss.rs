@@ -162,6 +162,11 @@ pub(super) fn refuse(context: &SessionContext, request: SessionRequest, reason: 
                 message,
             }),
         },
+        (SessionRequest::ExportAll(export), Some(console)) => Event::ExportFinished {
+            console,
+            path: export.path,
+            result: Err(message),
+        },
         (SessionRequest::Validate(statements), Some(console)) => Event::StatementsValidated {
             console,
             results: statements
@@ -203,7 +208,8 @@ pub(super) fn refuse(context: &SessionContext, request: SessionRequest, reason: 
             SessionRequest::FetchMore(_)
             | SessionRequest::EndTransaction(_)
             | SessionRequest::ApplyEdits(_)
-            | SessionRequest::Validate(_),
+            | SessionRequest::Validate(_)
+            | SessionRequest::ExportAll(_),
             _,
         ) => return,
     };

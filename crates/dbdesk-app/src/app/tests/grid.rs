@@ -178,3 +178,42 @@ fn sorts_and_filters_every_row_in_the_database() {
     step_until_visible(&mut harness, "500 rows, more available");
     harness.get_by_label("customer 1");
 }
+
+/// Export › All rows runs the statement again and writes every row, not only the 500 loaded;
+/// sorted in the database, the file is in the grid's order.
+#[test]
+fn exports_every_row_not_only_those_loaded() {
+    let dir = tempfile::tempdir().unwrap();
+    save_shop(
+        dir.path(),
+        "CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT);
+         WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 600)
+         INSERT INTO orders SELECT i, 'customer ' || i FROM n;",
+    );
+    let export_path = dir.path().join("orders.csv");
+    let (_layer, feed) = log_console::pipeline();
+    let mut harness = start_app(dir.path(), feed);
+    let picked = export_path.clone();
+    harness.state_mut().pick_export_path = Box::new(move |_| Some(picked.clone()));
+    open_orders(&mut harness, "500 rows, more available");
+    step_until_visible(&mut harness, "Add row");
+    harness.get_by_label("In the database").click();
+    harness.run();
+    harness.get_by_label("id").click();
+    step_until_visible(&mut harness, "id ▲");
+    harness.get_by_label("id ▲").click();
+    step_until_visible(&mut harness, "customer 600");
+
+    harness.get_by_label("Export").click();
+    harness.run();
+    harness.get_by_label("All rows as CSV…").click();
+    step_until_visible(&mut harness, "Exported 600 rows");
+
+    let text = std::fs::read_to_string(&export_path).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 601);
+    assert_eq!(
+        (lines[0], lines[1], lines[600]),
+        ("id,customer", "600,customer 600", "1,customer 1")
+    );
+}

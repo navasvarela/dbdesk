@@ -6,6 +6,7 @@
 mod catalog;
 mod ddl;
 mod edits;
+mod export;
 mod guard;
 mod loss;
 mod query;
@@ -32,7 +33,9 @@ use crate::open::{Connector, OpenError, TypedSecrets, open};
 use crate::passwords::{Prompting, SessionPasswords};
 use crate::read_only;
 use crate::tunnels::Tunnels;
-use crate::{ConsoleId, Event, RunId, RunPurpose, SessionState, TransactionEnd, TransactionMode};
+use crate::{
+    ConsoleId, Event, ExportAll, RunId, RunPurpose, SessionState, TransactionEnd, TransactionMode,
+};
 use guard::ReadOnly;
 use loss::{Loss, Watched};
 
@@ -50,6 +53,7 @@ pub(crate) enum SessionRequest {
     Ddl(CatalogPath),
     /// Prepares statements without running them; see [`crate::Command::ValidateStatements`].
     Validate(Vec<String>),
+    ExportAll(ExportAll),
 }
 
 /// Statements to run in a console, in order.
@@ -573,6 +577,7 @@ impl Worker<'_> {
             }
             SessionRequest::ApplyEdits(statements) => edits::apply(self, &statements).await,
             SessionRequest::ApplyDdl(statements) => ddl::apply(self, &statements).await,
+            SessionRequest::ExportAll(export) => export::write_all(self, export).await,
             SessionRequest::Ddl(path) => {
                 let work = ddl::load(self.context, &mut *self.connection, path);
                 self.signals.guard(work, None, self.cancel_handle).await

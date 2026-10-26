@@ -10,7 +10,7 @@ use dbdesk_store::{
     McpOverrides, McpPermissions, Project, Projects, SavedConsole, Secret, Settings,
 };
 
-use crate::{Export, HostKey, PasswordNeeded, Release};
+use crate::{Export, ExportAll, HostKey, PasswordNeeded, Release};
 
 /// Identifies a query console. Chosen by the UI, unique for the app's lifetime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -234,6 +234,17 @@ pub enum Command {
         console: ConsoleId,
         export: Export,
     },
+    /// Runs a statement again on the console's connection and writes every row it returns to
+    /// a file, a page at a time, so they are never all in memory. Unread rows of the console's
+    /// last run are discarded first, as for any statement. On a read-only data source it runs
+    /// as statements do there: checked, and in the database's read-only mode. Cancelled like a
+    /// run, by [`Command::Cancel`] with the export's run, which removes the partial file.
+    /// Recorded in the history. Reports [`Event::ExportProgress`] after each page, then
+    /// [`Event::ExportFinished`].
+    ExportAllRows {
+        console: ConsoleId,
+        export: ExportAll,
+    },
     /// Looks up past statements, newest first. Answered by [`Event::HistoryFound`].
     SearchHistory(HistoryQuery),
     /// Asks the release feed for the newest published release. Answered by
@@ -378,7 +389,13 @@ pub enum Event {
         console: ConsoleId,
         results: Vec<(String, StatementCheck)>,
     },
-    /// The answer to [`Command::ExportRows`]: how many rows were written, or why none were.
+    /// How many rows [`Command::ExportAllRows`] has written so far.
+    ExportProgress {
+        console: ConsoleId,
+        rows: usize,
+    },
+    /// The answer to [`Command::ExportRows`] and [`Command::ExportAllRows`]: how many rows were
+    /// written, or why the file wasn't.
     ExportFinished {
         console: ConsoleId,
         path: PathBuf,

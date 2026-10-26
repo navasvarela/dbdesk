@@ -21,7 +21,7 @@ use crate::{
 
 /// Rows per page. Plenty to look at, few enough to arrive at once; other database tools
 /// default to between 200 and 1,000.
-const PAGE_SIZE: usize = 500;
+pub(super) const PAGE_SIZE: usize = 500;
 /// How much of a statement the log console shows.
 const LOG_PREVIEW_CHARS: usize = 80;
 

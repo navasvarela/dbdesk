@@ -11,7 +11,7 @@ use egui_extras::{Column, TableBuilder};
 use super::edit::{CellEditor, EditSession, Editability, PendingEdits, RowRef};
 use super::grid::{CellPos, GridView, SortKey};
 use super::keys::{KeyLinks, RowsToOpen};
-use super::{ConsoleAction, QueryConsole, RunState, StatementView, ViewedCell};
+use super::{ConsoleAction, ExportedRows, QueryConsole, RunState, StatementView, ViewedCell};
 use crate::keymap::{Action, Keymap};
 use crate::theme::{GRID_HEADER_TINT, Palette};
 
@@ -59,6 +59,7 @@ pub fn show(
         let toolbar = Toolbar {
             dialect,
             export_status: console.export_status.as_ref(),
+            exporting: console.exporting,
         };
         let rearrange = grid_toolbar(ui, statement, &toolbar, actions);
         grid_output = grid(ui, run_id, statement, keymap);
@@ -169,6 +170,8 @@ struct Toolbar<'a> {
     dialect: dbdesk_sql::Dialect,
     /// How the last export went.
     export_status: Option<&'a Result<String, String>>,
+    /// An export of every row in progress: its run and the rows written so far.
+    exporting: Option<(RunId, usize)>,
 }
 
 /// The filter, where it applies, a note when the rows are rearranged, the export menu, and
@@ -198,7 +201,7 @@ fn grid_toolbar(
         rearrange |= database_switch(ui, statement, toolbar.dialect);
         statement.grid.refresh(&statement.rows);
         arrangement_note(ui, statement);
-        export_menu(ui, toolbar.export_status, actions);
+        export_menu(ui, toolbar, actions);
         ui.separator();
         edit_status(ui, statement, actions);
         rearrange
@@ -256,21 +259,44 @@ fn arrangement_note(ui: &mut Ui, statement: &StatementView) {
     }
 }
 
-fn export_menu(
-    ui: &mut Ui,
-    export_status: Option<&Result<String, String>>,
-    actions: &mut Vec<ConsoleAction>,
-) {
+/// The Export menu and how the last export went, or, while every row is being exported, its
+/// progress and Cancel.
+fn export_menu(ui: &mut Ui, toolbar: &Toolbar<'_>, actions: &mut Vec<ConsoleAction>) {
+    if let Some((run, rows)) = toolbar.exporting {
+        ui.weak(format!("Exporting… {rows} rows"));
+        if ui.button("Cancel export").clicked() {
+            actions.push(ConsoleAction::Cancel(run));
+        }
+        return;
+    }
     ui.menu_button("Export", |ui| {
-        for (label, format) in [("CSV…", ExportFormat::Csv), ("JSON…", ExportFormat::Json)] {
-            if ui.button(label).clicked() {
-                actions.push(ConsoleAction::Export(format));
+        let choices = [
+            (
+                "Loaded rows as CSV…",
+                ExportedRows::Loaded,
+                ExportFormat::Csv,
+            ),
+            (
+                "Loaded rows as JSON…",
+                ExportedRows::Loaded,
+                ExportFormat::Json,
+            ),
+            ("All rows as CSV…", ExportedRows::All, ExportFormat::Csv),
+            ("All rows as JSON…", ExportedRows::All, ExportFormat::Json),
+        ];
+        for (label, rows, format) in choices {
+            let hover = match rows {
+                ExportedRows::Loaded => "The rows loaded so far, as sorted and filtered here",
+                ExportedRows::All => {
+                    "Runs the statement again and writes every row it returns, a page at a time"
+                }
+            };
+            if ui.button(label).on_hover_text(hover).clicked() {
+                actions.push(ConsoleAction::Export(rows, format));
             }
         }
-    })
-    .response
-    .on_hover_text("Save the rows shown, as sorted and filtered, to a file");
-    match export_status {
+    });
+    match toolbar.export_status {
         Some(Ok(done)) => {
             ui.weak(done);
         }

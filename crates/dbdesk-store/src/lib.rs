@@ -19,7 +19,7 @@ pub use consoles::{
     ConsoleFiles, ConsoleKey, ConsoleName, ConsoleStoreError, InvalidConsoleName, SavedConsole,
 };
 pub use data_sources::{DataSourceFile, StoreError};
-pub use export::{ExportError, ExportFormat, export_rows};
+pub use export::{ExportError, ExportFormat, ExportWriter, export_rows};
 pub use history::{
     History, HistoryEntry, HistoryError, HistoryFile, HistoryOutcome, HistoryQuery, HistorySource,
 };

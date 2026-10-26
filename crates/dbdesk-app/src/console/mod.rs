@@ -25,8 +25,8 @@ use dbdesk_core::{
     TransactionStatus,
 };
 use dbdesk_engine::{
-    Command, ConsoleId, EditFailure, Event, Export, RunId, RunOutcome, RunPurpose, SessionState,
-    StatementFailure, StatementSummary, TransactionEnd, TransactionMode,
+    Command, ConsoleId, EditFailure, Event, Export, ExportAll, RunId, RunOutcome, RunPurpose,
+    SessionState, StatementFailure, StatementSummary, TransactionEnd, TransactionMode,
 };
 use dbdesk_sql::{Dialect, FormatOptions, format_ranges, split_statements, statement_at, tokenize};
 use dbdesk_store::{ConsoleKey, ExportFormat};
@@ -68,6 +68,15 @@ pub struct InDatabase {
 pub struct SubmittedRun {
     pub statements: Vec<SubmittedStatement>,
     pub purpose: RunPurpose,
+}
+
+/// Which rows an export writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportedRows {
+    /// The rows the grid has loaded, as it shows them.
+    Loaded,
+    /// Every row the statement returns, by running it again.
+    All,
 }
 
 /// What a format covers.
@@ -129,6 +138,9 @@ pub struct QueryConsole {
     accepted_completion: Option<completion::Candidate>,
     /// How the last export went: where the rows went, or why they didn't.
     export_status: Option<Result<String, String>>,
+    /// An export of every row in progress: its run, to cancel it, and how many rows it has
+    /// written.
+    exporting: Option<(RunId, usize)>,
     file: FileState,
     /// The data source's name and safety level, kept up to date as it is edited.
     data_source_name: String,
@@ -291,6 +303,7 @@ impl QueryConsole {
             completion: None,
             accepted_completion: None,
             export_status: None,
+            exporting: None,
             file: FileState::default(),
             data_source_name: String::new(),
             safety: SafetyLevel::Normal,
@@ -536,6 +549,34 @@ impl QueryConsole {
                     .map(|column| column.name.clone())
                     .collect(),
                 rows: statement.grid.shown_rows(&statement.rows),
+            },
+        })
+    }
+
+    /// The export of every row of the selected statement: it runs again, as the grid shows it
+    /// (wrapped, if the database sorts and filters it), and the engine writes its rows as they
+    /// come. `None` if the statement returns no rows.
+    pub fn export_all(
+        &mut self,
+        run: RunId,
+        format: ExportFormat,
+        path: PathBuf,
+    ) -> Option<Command> {
+        let shown = self.run.as_ref()?;
+        let statement = shown.statements.get(shown.selected)?;
+        if statement.columns.is_empty() {
+            return None;
+        }
+        let sql = statement.resubmission(self.dialect).ok()?.sql;
+        self.exporting = Some((run, 0));
+        self.export_status = None;
+        Some(Command::ExportAllRows {
+            console: self.id,
+            export: ExportAll {
+                run,
+                sql,
+                path,
+                format,
             },
         })
     }
@@ -989,11 +1030,17 @@ impl QueryConsole {
             Event::TransactionEnded { console, result } if *console == self.id => {
                 self.transaction_ended = Some(result.clone());
             }
+            Event::ExportProgress { console, rows } if *console == self.id => {
+                if let Some((_, written)) = &mut self.exporting {
+                    *written = *rows;
+                }
+            }
             Event::ExportFinished {
                 console,
                 path,
                 result,
             } if *console == self.id => {
+                self.exporting = None;
                 self.export_status = Some(
                     result
                         .as_ref()
