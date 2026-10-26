@@ -398,6 +398,27 @@ const SCENES: &[Scene] = &[
         needs: &[],
     },
     Scene {
+        name: "grid-changes",
+        data_sources: FixtureSources::Shop,
+        play: grid_changes,
+        keeps_pointer: false,
+        needs: &[],
+    },
+    Scene {
+        name: "follow-key",
+        data_sources: FixtureSources::Shop,
+        play: follow_key,
+        keeps_pointer: true,
+        needs: &[],
+    },
+    Scene {
+        name: "csv-import",
+        data_sources: FixtureSources::Shop,
+        play: csv_import,
+        keeps_pointer: false,
+        needs: &[],
+    },
+    Scene {
         name: "console-reconnect",
         data_sources: FixtureSources::Shop,
         play: console_reconnect,
@@ -1159,6 +1180,116 @@ fn workspace(harness: &mut Harness<'static, DbDeskApp>, fixture: &Fixture) {
     }
     open_console(harness, "shop", BEST_CUSTOMERS);
     run_all(harness, "8 rows");
+}
+
+/// The label showing `value` in the grid's `column`, among other labels with the same text
+/// (row numbers, other columns).
+fn grid_cell<'a>(
+    harness: &'a Harness<'static, DbDeskApp>,
+    column: &str,
+    value: &'a str,
+) -> egui_kittest::Node<'a> {
+    let header = harness.get_by_label(column).rect();
+    harness
+        .get_all_by_label(value)
+        .find(|node| {
+            let x = node.rect().center().x;
+            x > header.min.x && x < header.min.x + 140.0
+        })
+        .unwrap_or_else(|| panic!("no {value:?} under {column:?}"))
+}
+
+/// Opens the cell editor on the selected cell, once the table is described and F2 edits.
+fn edit_selected_cell(harness: &mut Harness<'static, DbDeskApp>, text: &str) {
+    let editing = |harness: &Harness<'static, DbDeskApp>| {
+        harness
+            .query_by(|node| node.role() == Role::TextInput && node.is_focused())
+            .is_some()
+    };
+    while !editing(harness) {
+        harness.key_press(egui::Key::F2);
+        harness.step();
+    }
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    harness
+        .get_by(|node| node.role() == Role::TextInput && node.is_focused())
+        .type_text(text);
+    harness.key_press(egui::Key::Enter);
+    harness.run_ok();
+}
+
+/// A changed cell, a row marked for deletion and a new row, waiting for Submit.
+fn grid_changes(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    open_console(harness, "shop", "SELECT * FROM customers WHERE id <= 4;\n");
+    run_all(harness, "4 rows");
+    step_until_visible(harness, "Add row");
+    harness.get_by_label("grace@example.com").click();
+    harness.run_ok();
+    edit_selected_cell(harness, "grace.hopper@example.com");
+    harness.get_by_label("Edsger Dijkstra").click_secondary();
+    harness.run_ok();
+    harness.get_by_label("Delete row").click();
+    harness.run_ok();
+    harness.get_by_label("Add row").click();
+    harness.run_ok();
+    new_row_cell(harness, 1).click();
+    harness.run_ok();
+    edit_selected_cell(harness, "Alan Turing");
+    step_until_visible(harness, "1 changed cell · 1 new row · 1 deleted row");
+}
+
+/// The cell of the added row (the grid's last) in result column `column`, for a table
+/// without defaults: until typed into, each of its cells shows `NULL`.
+fn new_row_cell<'a>(
+    harness: &'a Harness<'static, DbDeskApp>,
+    column: usize,
+) -> egui_kittest::Node<'a> {
+    let bottom = harness
+        .get_all_by_label("NULL")
+        .map(|node| node.rect().center().y)
+        .fold(f32::MIN, f32::max);
+    let mut row: Vec<_> = harness
+        .get_all_by_label("NULL")
+        .filter(|node| (node.rect().center().y - bottom).abs() < 1.0)
+        .collect();
+    row.sort_by(|a, b| a.rect().min.x.total_cmp(&b.rect().min.x));
+    row.into_iter().nth(column).expect("the new row's cell")
+}
+
+/// An order's customer, a link, with its menu open on Referencing rows.
+fn follow_key(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    open_console(harness, "shop", "SELECT * FROM orders;\n");
+    run_all(harness, "60 rows");
+    step_until_visible(harness, "Add row");
+    grid_cell(harness, "customer_id", "6").click_secondary();
+    harness.run_ok();
+    harness.get_by_label_contains("Referencing rows").click();
+    harness.run_ok();
+    step_until_visible(harness, "order_items.order_id");
+    harness.get_by_label("order_items.order_id").hover();
+    harness.run_ok();
+}
+
+/// Import CSV… on customers: the columns matched by name, the first rows, and a warning.
+fn csv_import(harness: &mut Harness<'static, DbDeskApp>, fixture: &Fixture) {
+    let file = fixture.dir.path().join("new-customers.csv");
+    std::fs::write(
+        &file,
+        "id,name,email,country\n\
+         9,Alan Turing,alan@example.com,GB\n\
+         10,Katherine Johnson,,US\n\
+         A-11,Linus Torvalds,linus@example.com,FI\n\
+         12,Ada Yonath,ada.yonath@example.com,IL\n",
+    )
+    .unwrap();
+    harness.state_mut().pick_csv_file = Box::new(move || Some(file.clone()));
+    expand(harness, &["shop", "main", "tables"]);
+    step_until_visible(harness, "Expand customers");
+    harness.get_by_label("customers").click_secondary();
+    harness.run_ok();
+    harness.get_by_label("Import CSV…").click();
+    step_until_visible(harness, "Source of name");
+    harness.run_ok();
 }
 
 fn results_paging(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {

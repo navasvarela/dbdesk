@@ -154,6 +154,7 @@ Right-click an object for what you can do with it:
 | Menu item | Shown for | What it does |
 | --- | --- | --- |
 | **Open data** | Tables, views, materialized views | Opens a new console with `SELECT * FROM` the object and runs it. |
+| **Import CSV…** | Tables | Asks for a CSV file and imports it into the table; see [Importing a CSV file](table-data.md#importing-a-csv-file). |
 | **Copy name** | Objects inside a schema | Copies the name to use in SQL: schema-qualified for tables, views, sequences, indexes and functions (`main."Order Items"`), bare for columns, constraints and triggers. Quoted where needed. |
 | **Show definition** | Objects whose source the database keeps (see below) | Opens the source in a window. |
 | **Refresh** | Anything with children | Reloads the node's children and collapses everything below it. |
