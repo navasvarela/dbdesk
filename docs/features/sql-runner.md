@@ -381,10 +381,20 @@ Each console has a mode, **Auto-commit** (the default) or **Manual commit**:
   be wrapped (SQL Server can't select from a `WITH`); elsewhere the switch is disabled and
   says why, and so it is while changes are pending, which running again would drop. Turning
   it off runs the statement as typed again.
-- **Export**: **Export → CSV…/JSON…** asks where (the platform's save dialog, via `rfd`) and
-  the engine writes the rows as shown (sorted and filtered). CSV is RFC 4180 with a header and
-  `NULL` as an empty field; JSON is an array of objects with keys in column order (repeated
-  names get `_2`, `_3`), values as strings or `null`, since cells are text.
+- **Export**: **Export → Loaded rows as CSV…/JSON…** asks where (the platform's save dialog,
+  via `rfd`) and the engine writes the rows as shown (sorted and filtered). **All rows as
+  CSV…/JSON…** (W5d) runs the statement again on the console's own connection (so it sees its
+  open transaction and temporary tables; unread rows of the last run are discarded first, as
+  for any statement), wrapped if the database sorts and filters it, and writes each page of
+  500 rows as it arrives, through `dbdesk_store::ExportWriter`: the rows are never all in
+  memory. The toolbar shows "Exporting… N rows" with **Cancel export**, which stops the
+  statement. Both write to `<name>.partial` and rename it when complete, so a failed or
+  cancelled export leaves no half file and doesn't replace one. On a read-only data source
+  the statement is checked and runs read-only, as statements do there; it is recorded in the
+  history. CSV is RFC 4180 with a header and `NULL` as an empty field; JSON is an array of
+  objects with keys in column order (repeated names get `_2`, `_3`), values as strings or
+  `null`, since cells are text; page by page, the files are byte for byte what writing them
+  at once gives.
 - The editor and the grid are split by a line that can be dragged; each keeps at least a fifth
   of the console's height.
 ## Editing data

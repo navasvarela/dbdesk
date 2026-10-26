@@ -10,7 +10,7 @@ use egui::{Frame, Margin, RichText, ThemePreference};
 use egui_dock::{DockArea, DockState};
 
 use crate::about_dialog;
-use crate::console::{ConsoleAction, FormatScope, RowsToOpen};
+use crate::console::{ConsoleAction, ExportedRows, FormatScope, RowsToOpen};
 use crate::consoles::Consoles;
 use crate::data_source_dialog::{DataSourceDialog, DialogAction};
 use crate::data_source_form::McpPasswordChange;
@@ -832,9 +832,10 @@ impl DbDeskApp {
         }
     }
 
-    fn export(&self, console: &ConsoleKey, format: ExportFormat) {
+    fn export(&mut self, console: &ConsoleKey, rows: ExportedRows, format: ExportFormat) {
         if let Some(path) = (self.pick_export_path)(format) {
-            self.send_if(self.consoles.export(console, format, path));
+            let command = self.consoles.export(console, rows, format, path);
+            self.send_if(command);
         }
     }
 
@@ -1157,7 +1158,7 @@ impl eframe::App for DbDeskApp {
         for (console, action) in console_actions {
             match action {
                 ConsoleAction::ShowHistory => self.open_history(console),
-                ConsoleAction::Export(format) => self.export(&console, format),
+                ConsoleAction::Export(rows, format) => self.export(&console, rows, format),
                 ConsoleAction::OpenRows(rows) => self.open_rows(&console, &rows),
                 ConsoleAction::LoadCatalog(paths) => self.load_catalog(console.data_source, paths),
                 ConsoleAction::Format(scope) => {
@@ -3008,7 +3009,7 @@ mod tests {
 
         harness.get_by_label("Export").click();
         harness.run();
-        harness.get_by_label("CSV…").click();
+        harness.get_by_label("Loaded rows as CSV…").click();
         step_until_visible(&mut harness, "Exported 3 rows");
         assert_eq!(
             std::fs::read_to_string(&export_path).unwrap(),

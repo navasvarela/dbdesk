@@ -9,8 +9,9 @@ use egui::{Id, Margin, ScrollArea, TextEdit, Ui, vec2};
 
 use super::highlight::Marks;
 use super::{
-    Candidate, FormatScope, LintOptions, QueryConsole, RecentCompletions, RowsToOpen, RunScope,
-    RunState, SubmittedRun, TreeCatalog, cell_viewer, completion_popup, highlight, results,
+    Candidate, ExportedRows, FormatScope, LintOptions, QueryConsole, RecentCompletions, RowsToOpen,
+    RunScope, RunState, SubmittedRun, TreeCatalog, cell_viewer, completion_popup, highlight,
+    results,
 };
 use crate::icons::{self, Role};
 use crate::keymap::{Action, Keymap};
@@ -52,8 +53,8 @@ pub enum ConsoleAction {
     FetchMore(RunId),
     Cancel(RunId),
     EndTransaction(TransactionEnd),
-    /// Saves the rows the grid shows; the app asks where.
-    Export(ExportFormat),
+    /// Saves the rows the grid has loaded, or every row; the app asks where.
+    Export(ExportedRows, ExportFormat),
     /// Opens the data source's query history, to insert a past statement here.
     ShowHistory,
     /// Loads these catalog levels into the explorer's cache, for completion.

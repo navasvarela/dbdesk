@@ -417,3 +417,179 @@ fn sorts_and_filters_rows_in_the_database_on_every_engine() {
     }
     engine.shut_down();
 }
+
+/// Exports every row of a statement and returns the progress reported and the outcome.
+fn export_all(
+    engine: &mut TestEngine,
+    run: u64,
+    sql: &str,
+    target: (&std::path::Path, dbdesk_store::ExportFormat),
+) -> (Vec<usize>, Result<usize, String>) {
+    let (path, format) = target;
+    engine.send(Command::ExportAllRows {
+        console: CONSOLE,
+        export: dbdesk_engine::ExportAll {
+            run: RunId(run),
+            sql: sql.to_owned(),
+            path: path.to_owned(),
+            format,
+        },
+    });
+    let mut progress = Vec::new();
+    loop {
+        match next_run_event(engine) {
+            Event::ExportProgress { rows, .. } => progress.push(rows),
+            Event::ExportFinished { result, .. } => return (progress, result),
+            _ => {}
+        }
+    }
+}
+
+/// Every row of a statement that returns more rows than a page, written as they come, in both
+/// formats.
+#[test]
+fn exports_every_row_on_every_engine() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    engine.expect_started(vec![]);
+    let digits = scratch_table("digits");
+    let mut sources = test_sources(&mut engine, dir.path());
+    sources.extend(clickhouse_source(&mut engine));
+    for source in sources {
+        let create = match source.dialect {
+            Dialect::ClickHouse => format!("CREATE TABLE {digits} (d Int32) ENGINE = Memory"),
+            _ => format!("CREATE TABLE {digits} (d int)"),
+        };
+        run_ok(
+            &mut engine,
+            &source,
+            1,
+            &[
+                &create,
+                &format!(
+                    "INSERT INTO {digits} (d) VALUES (0), (1), (2), (3), (4), (5), (6), (7), (8), (9)"
+                ),
+            ],
+        );
+        let n = "a.d + 10 * b.d + 100 * c.d + 1000 * e.d";
+        let sql = format!(
+            "SELECT {n} AS n FROM {digits} a, {digits} b, {digits} c, {digits} e \
+             WHERE {n} < 1200 ORDER BY n"
+        );
+        let csv = dir.path().join(format!("{}.csv", source.name));
+        let (progress, result) = export_all(
+            &mut engine,
+            2,
+            &sql,
+            (&csv, dbdesk_store::ExportFormat::Csv),
+        );
+        assert_eq!(result, Ok(1200), "{}", source.name);
+        assert_eq!(progress, [500, 1000, 1200], "{}", source.name);
+        let text = std::fs::read_to_string(&csv).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 1201, "{}", source.name);
+        assert_eq!(
+            (lines[0], lines[1], lines[1200]),
+            ("n", "0", "1199"),
+            "{}",
+            source.name
+        );
+
+        let json = dir.path().join(format!("{}.json", source.name));
+        let (_, result) = export_all(
+            &mut engine,
+            3,
+            &sql,
+            (&json, dbdesk_store::ExportFormat::Json),
+        );
+        assert_eq!(result, Ok(1200), "{}", source.name);
+        let parsed: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&json).unwrap()).unwrap();
+        assert_eq!(parsed[1199]["n"], "1199", "{}", source.name);
+
+        run_ok(&mut engine, &source, 4, &[&format!("DROP TABLE {digits}")]);
+    }
+    engine.shut_down();
+}
+
+/// Cancelling stops the statement and removes the partial file; a failing statement leaves no
+/// file either; and a read-only data source refuses to export a statement that writes.
+#[test]
+fn cancels_fails_and_refuses_exports_without_leaving_a_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut engine, id) = engine_with_sqlite(dir.path());
+    execute(&engine, id, 1, &["SELECT 1"]);
+    finish_run(&mut engine, 1);
+    let path = dir.path().join("rows.csv");
+
+    engine.send(Command::ExportAllRows {
+        console: CONSOLE,
+        export: dbdesk_engine::ExportAll {
+            run: RunId(2),
+            sql: "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r) SELECT n FROM r"
+                .to_owned(),
+            path: path.clone(),
+            format: dbdesk_store::ExportFormat::Csv,
+        },
+    });
+    match next_run_event(&mut engine) {
+        Event::ExportProgress { .. } => {}
+        other => panic!("expected progress, got {other:?}"),
+    }
+    engine.send(Command::Cancel {
+        console: CONSOLE,
+        run: RunId(2),
+    });
+    loop {
+        match next_run_event(&mut engine) {
+            Event::ExportProgress { .. } => {}
+            Event::ExportFinished { result, .. } => {
+                assert_eq!(result, Err("Export cancelled".to_owned()));
+                break;
+            }
+            other => panic!("expected the export to end, got {other:?}"),
+        }
+    }
+    let (_, failed) = export_all(
+        &mut engine,
+        3,
+        "SELECT * FROM no_such_table",
+        (&path, dbdesk_store::ExportFormat::Csv),
+    );
+    assert!(failed.unwrap_err().contains("no_such_table"));
+    let files: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .filter(|name| name.to_string_lossy().starts_with("rows"))
+        .collect();
+    assert!(files.is_empty(), "{files:?}");
+    engine.shut_down();
+
+    let read_only_dir = tempfile::tempdir().unwrap();
+    let mut engine = TestEngine::start(
+        &read_only_dir.path().join("data_sources.toml"),
+        Arc::default(),
+    );
+    engine.expect_started(vec![]);
+    let data_source = DataSource {
+        safety: dbdesk_core::SafetyLevel::ReadOnly,
+        ..sqlite_data_source(sqlite_database(read_only_dir.path()))
+    };
+    let id = data_source.id;
+    engine.send(Command::SaveDataSource {
+        data_source,
+        password: PasswordUpdate::Keep,
+        ssh_secret: PasswordUpdate::Keep,
+    });
+    assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
+    execute(&engine, id, 1, &["SELECT 1"]);
+    finish_run(&mut engine, 1);
+    let (_, refused) = export_all(
+        &mut engine,
+        2,
+        "DELETE FROM t RETURNING id",
+        (&path, dbdesk_store::ExportFormat::Csv),
+    );
+    assert!(refused.unwrap_err().contains("read-only"));
+    engine.shut_down();
+}

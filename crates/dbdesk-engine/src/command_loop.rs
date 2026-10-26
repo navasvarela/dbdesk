@@ -307,6 +307,14 @@ impl Engine {
             Command::ExportRows { console, export } => {
                 tokio::spawn(export::run(console, export, self.events.clone()));
             }
+            Command::ExportAllRows { console, export } => match self.consoles.get(&console) {
+                Some(session) => session.session.request(SessionRequest::ExportAll(export)),
+                None => self.events.send(Event::ExportFinished {
+                    console,
+                    path: export.path,
+                    result: Err("the console isn't connected; run its query again".to_owned()),
+                }),
+            },
             Command::SearchHistory(query) => self.history.search(query),
             Command::CheckForUpdates => {
                 tokio::spawn(releases::check(

@@ -11,7 +11,8 @@ use dbdesk_sql::{Dialect, FormatOptions};
 use dbdesk_store::{ConsoleKey, ConsoleName, ExportFormat};
 
 use crate::console::{
-    ConsoleAction, FormatScope, QueryConsole, RecentCompletions, RowsToOpen, RunScope, SubmittedRun,
+    ConsoleAction, ExportedRows, FormatScope, QueryConsole, RecentCompletions, RowsToOpen,
+    RunScope, SubmittedRun,
 };
 use crate::hazard_dialog::{
     self, HazardChoice, HazardConfirmation, Pending, Review, ReviewContext,
@@ -203,8 +204,21 @@ impl Consoles {
     }
 
     /// Writes the rows the console's grid shows to `path`.
-    pub fn export(&self, key: &ConsoleKey, format: ExportFormat, path: PathBuf) -> Option<Command> {
-        self.open.get(key)?.export(format, path)
+    pub fn export(
+        &mut self,
+        key: &ConsoleKey,
+        rows: ExportedRows,
+        format: ExportFormat,
+        path: PathBuf,
+    ) -> Option<Command> {
+        match rows {
+            ExportedRows::Loaded => self.open.get(key)?.export(format, path),
+            ExportedRows::All => {
+                let console = self.open.get_mut(key)?;
+                self.next_run += 1;
+                console.export_all(RunId(self.next_run), format, path)
+            }
+        }
     }
 
     /// Formats SQL in the console, if it is still open.
@@ -270,7 +284,7 @@ impl Consoles {
             // The app opens a window, a file dialog or a console, or updates the catalog, for
             // these.
             ConsoleAction::ShowHistory
-            | ConsoleAction::Export(_)
+            | ConsoleAction::Export(..)
             | ConsoleAction::LoadCatalog(_)
             | ConsoleAction::Format(_)
             | ConsoleAction::OpenRows(_) => None,
