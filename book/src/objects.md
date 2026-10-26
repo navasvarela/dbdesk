@@ -23,7 +23,9 @@ database can do:
 - **ClickHouse** has no index helpers: its data-skipping indexes need a type and a granularity,
   which a later version will ask for.
 - **Copy DDL** is offered where there is a `CREATE TABLE` statement to copy (see
-  [Copy DDL](#copy-ddl)). SQL Server doesn't have it yet.
+  [Copy DDL](#copy-ddl)).
+- Views, materialized views and schemas have helpers of their own: see
+  [Views and schemas](views-schemas.md).
 - On PostgreSQL, SQL Server and DuckDB, the helpers appear only inside the database the data
   source connects to, which is where their statements run. Browse another database's objects
   freely, but change them from a data source that connects to it.
@@ -148,9 +150,10 @@ says so.
 
 - **SQLite**, **MySQL**, **MariaDB**, **DuckDB** and **ClickHouse** keep the statement, so
   dbdesk copies theirs, the same one **Show definition** shows.
-- **PostgreSQL** keeps no such statement, so dbdesk writes one from the table's columns (their
-  types, defaults and `NOT NULL`) and primary key, the same way New table does, followed by
-  an `ALTER TABLE … ADD CONSTRAINT …` for each of its unique keys, foreign keys, checks and
-  exclusion constraints, as PostgreSQL defines them. Running it recreates the table. What it
-  leaves out: indexes that aren't constraints, comments, storage parameters, partitioning,
-  and the `GENERATED … AS IDENTITY` of an identity column, which is written as a plain column.
+- **PostgreSQL** and **SQL Server** keep no such statement, so dbdesk writes one from the
+  table's columns (their types, defaults and `NOT NULL`) and primary key, the same way New
+  table does, followed by an `ALTER TABLE … ADD CONSTRAINT …` for each of its unique keys,
+  foreign keys, checks and (on PostgreSQL) exclusion constraints, as the database defines
+  them. Running it recreates the table. What it leaves out: indexes that aren't constraints,
+  comments, storage parameters, partitioning, and an identity column's identity (PostgreSQL's
+  `GENERATED … AS IDENTITY`, SQL Server's `IDENTITY`), which is written as a plain column.

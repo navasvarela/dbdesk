@@ -1,6 +1,6 @@
 # Creating and changing database objects
 
-Status: **E0 and E1 built** (2026-10-26); E2 to E4 planned. Proposed on 2026-10-23; on
+Status: **E0, E1 and E2 built** (2026-10-26); E3 and E4 planned. Proposed on 2026-10-23; on
 2026-10-26 indexes moved from Later into E1 and schemas into E2.
 
 Today the explorer only reads: it browses the catalog, opens a table's data and shows
@@ -135,6 +135,20 @@ engines are covered by the engine's round trip.
 **Exit:** I create a view from a query, edit its query, and drop it, on both engines. On
 PostgreSQL I also create and refresh a materialized view, and create a schema, put a table in
 it, and drop it with `CASCADE`.
+
+**As built:**
+- The query is typed in an editor highlighted like the console's, without its completion and
+  problems, which belong to the console's own state; sharing them is a follow-up.
+- Edit view finds the query in the definition **Show definition** loads (`view_query`), so
+  options before `AS` (SQL Server's `WITH SCHEMABINDING`, MySQL's `DEFINER`) are not kept.
+  MySQL, DuckDB and ClickHouse use `CREATE OR REPLACE` like PostgreSQL; SQL Server uses
+  `ALTER VIEW`. A materialized view has no `OR REPLACE`, so editing one drops and creates it
+  in one transaction, losing its indexes, which the confirmation says.
+- Schemas are offered on SQL Server and DuckDB too, and on ClickHouse, whose databases are
+  the tree's schemas as MySQL's are. ClickHouse's materialized views (insert triggers into a
+  table) get no helpers.
+- E1's gap closed: SQL Server tables get Copy DDL, rebuilt like PostgreSQL's; the driver now
+  writes each constraint's definition from its catalog view.
 
 ## E3 — Users and roles (PostgreSQL)
 
