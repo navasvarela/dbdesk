@@ -61,6 +61,9 @@ pub(crate) async fn describe_table(
         name: name.to_owned(),
         columns,
         primary_key: Vec::new(),
+        // ClickHouse has no foreign keys.
+        foreign_keys: Vec::new(),
+        referenced_by: Vec::new(),
     }))
 }
 

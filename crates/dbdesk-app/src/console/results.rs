@@ -10,6 +10,7 @@ use egui_extras::{Column, TableBuilder};
 
 use super::edit::{CellEditor, EditSession, Editability, PendingEdits, RowRef};
 use super::grid::{CellPos, GridView, SortKey};
+use super::keys::{KeyLinks, RowsToOpen};
 use super::{ConsoleAction, QueryConsole, RunState, StatementView, ViewedCell};
 use crate::keymap::{Action, Keymap};
 use crate::theme::{GRID_HEADER_TINT, Palette};
@@ -61,6 +62,7 @@ pub fn show(
     if let Some(viewed) = grid_output.viewed {
         console.viewed_cell = Some(viewed);
     }
+    actions.extend(grid_output.open.map(ConsoleAction::OpenRows));
     if (load_clicked || grid_output.last_row_shown)
         && let Some(run) = console.request_more()
     {
@@ -298,6 +300,8 @@ struct GridOutput {
     last_row_shown: bool,
     /// A cell the user asked to see in full.
     viewed: Option<ViewedCell>,
+    /// Rows a foreign key leads to, to open in a new console.
+    open: Option<RowsToOpen>,
 }
 
 /// What the user did to a cell this frame, applied once the table is drawn.
@@ -320,6 +324,7 @@ enum CellInput {
     Delete(RowRef),
     /// Unmark a loaded row marked for deletion.
     Restore(usize),
+    Open(RowsToOpen),
 }
 
 fn grid(ui: &mut Ui, run: RunId, statement: &mut StatementView, keymap: &Keymap) -> GridOutput {
@@ -329,6 +334,7 @@ fn grid(ui: &mut Ui, run: RunId, statement: &mut StatementView, keymap: &Keymap)
         grid,
         range,
         edits,
+        links,
         ..
     } = statement;
     let row_height = ui.spacing().interact_size.y;
@@ -394,6 +400,7 @@ fn grid(ui: &mut Ui, run: RunId, statement: &mut StatementView, keymap: &Keymap)
                                     row,
                                     edits,
                                     defaults: &defaults,
+                                    links,
                                     palette,
                                 };
                                 cell(ui, cell_pos, &context)
@@ -439,6 +446,7 @@ fn grid(ui: &mut Ui, run: RunId, statement: &mut StatementView, keymap: &Keymap)
             }
             CellInput::Delete(row) => edits.delete_rows(&[row]),
             CellInput::Restore(row) => edits.pending.restore(row),
+            CellInput::Open(rows) => output.open = Some(rows),
         }
     }
     if let Some(cell) = grid.selected_cell()
@@ -602,10 +610,19 @@ struct CellContext<'a> {
     edits: &'a EditSession,
     /// What an added row's cells start as, by column.
     defaults: &'a [NewCell],
+    links: &'a KeyLinks,
     palette: &'a Palette,
 }
 
 impl CellContext<'_> {
+    /// The row's values as loaded; `None` for an added row.
+    fn loaded_row(&self) -> Option<&Row> {
+        match self.row {
+            RowRef::Loaded(row) => self.rows.get(row),
+            RowRef::New(_) => None,
+        }
+    }
+
     /// The loaded value of a cell of this row; `NULL` for an added row, which has none.
     fn loaded(&self, column: usize) -> &Cell {
         const NONE: &Cell = &None;
@@ -628,6 +645,7 @@ struct MenuChoice {
     set_null: bool,
     delete: bool,
     restore: bool,
+    open: Option<RowsToOpen>,
 }
 
 /// Draws a cell, highlighted if selected, and its pending value if it was edited: click
@@ -657,13 +675,45 @@ fn cell(ui: &mut Ui, pos: CellPos, context: &CellContext<'_>) -> Option<CellInpu
         (None, RowRef::Loaded(_)) => Some(context.loaded(column)),
         (None, RowRef::New(_)) => None,
     };
-    let response = match value {
-        Some(value) => value_label(ui, value, deleted),
+    // A link follows the value the database has, not one typed over it.
+    let referenced = context
+        .loaded_row()
+        .and_then(|values| context.links.referenced(column, values));
+    let look = Look {
+        struck: deleted,
+        link: referenced
+            .as_ref()
+            .map(|_| context.palette.secondary)
+            .filter(|_| pending.is_none()),
+    };
+    let mut response = match value {
+        Some(value) => value_label(ui, value, look),
         None => new_cell_label(ui, context.defaults.get(column)),
     };
+    if let Some(rows) = &referenced {
+        response = response.on_hover_text(format!(
+            "{} to open the {} row",
+            command_click(ui),
+            rows.table.name
+        ));
+    }
     let editable = context.edits.is_editable(row, column);
-    let choice = cell_menu(&response, context, value, editable);
-    if choice.edit || (editable && response.double_clicked()) {
+    let choice = cell_menu(
+        &response,
+        context,
+        MenuCell {
+            value,
+            editable,
+            referenced: referenced.as_ref(),
+        },
+    );
+    let command_clicked = response.clicked() && ui.input(|input| input.modifiers.command);
+    if let Some(rows) = choice
+        .open
+        .or_else(|| referenced.filter(|_| command_clicked))
+    {
+        Some(CellInput::Open(rows))
+    } else if choice.edit || (editable && response.double_clicked()) {
         Some(CellInput::Edit { row, column })
     } else if choice.set_null {
         Some(CellInput::SetNull { row, column })
@@ -686,14 +736,27 @@ fn cell(ui: &mut Ui, pos: CellPos, context: &CellContext<'_>) -> Option<CellInpu
     }
 }
 
-/// The cell's context menu: copying, viewing, editing the value, and deleting or restoring
-/// its row.
+/// What a cell's context menu offers besides what its row does.
+struct MenuCell<'a> {
+    /// `None` for an added row's cell left at its default.
+    value: Option<&'a Cell>,
+    editable: bool,
+    /// The row the value refers to, if it is a foreign key's.
+    referenced: Option<&'a RowsToOpen>,
+}
+
+/// The cell's context menu: copying, viewing, following keys, editing the value, and
+/// deleting or restoring its row.
 fn cell_menu(
     response: &egui::Response,
     context: &CellContext<'_>,
-    value: Option<&Cell>,
-    editable: bool,
+    cell: MenuCell<'_>,
 ) -> MenuChoice {
+    let MenuCell {
+        value,
+        editable,
+        referenced,
+    } = cell;
     let mut choice = MenuChoice::default();
     response.context_menu(|ui| {
         if let Some(tsv) = context.grid.selection_as_tsv(context.rows)
@@ -712,6 +775,7 @@ fn cell_menu(
             ui.ctx().copy_text(row_as_tsv(values));
         }
         choice.view = ui.button("View value").clicked();
+        follow_keys_menu(ui, context, referenced, &mut choice);
         if editable {
             ui.separator();
             choice.edit = ui.button("Edit value").clicked();
@@ -731,11 +795,69 @@ fn cell_menu(
     choice
 }
 
-/// A value: `NULL` in italics, numbers right-aligned, and struck through in a row marked for
-/// deletion.
-fn value_label(ui: &mut Ui, value: &Cell, deleted: bool) -> egui::Response {
+/// Opening the row a cell's value refers to, and the rows of other tables that refer to this
+/// row.
+fn follow_keys_menu(
+    ui: &mut Ui,
+    context: &CellContext<'_>,
+    referenced: Option<&RowsToOpen>,
+    choice: &mut MenuChoice,
+) {
+    let Some(values) = context.loaded_row() else {
+        return;
+    };
+    let referencing = context.links.referencing(values);
+    if referenced.is_none() && referencing.is_empty() {
+        return;
+    }
+    ui.separator();
+    if let Some(rows) = referenced
+        && ui.button(format!("Open {} row", rows.table.name)).clicked()
+    {
+        choice.open = Some(rows.clone());
+    }
+    if referencing.is_empty() {
+        return;
+    }
+    ui.menu_button("Referencing rows", |ui| {
+        for table in referencing {
+            match table.rows {
+                Ok(rows) => {
+                    if ui.button(&table.label).clicked() {
+                        choice.open = Some(rows);
+                    }
+                }
+                Err(reason) => {
+                    ui.add_enabled(false, egui::Button::new(&table.label))
+                        .on_disabled_hover_text(reason);
+                }
+            }
+        }
+    });
+}
+
+/// How a value is drawn besides its text.
+#[derive(Clone, Copy)]
+struct Look {
+    /// Its row is marked for deletion.
+    struck: bool,
+    /// It refers to a row, and is drawn as a link in this colour.
+    link: Option<egui::Color32>,
+}
+
+/// A value: `NULL` in italics, numbers right-aligned, struck through in a row marked for
+/// deletion, and underlined in a foreign key's column.
+fn value_label(ui: &mut Ui, value: &Cell, look: Look) -> egui::Response {
     let sense = Sense::click_and_drag();
-    let styled = |text: RichText| if deleted { text.strikethrough() } else { text };
+    let styled = |mut text: RichText| {
+        if look.struck {
+            text = text.strikethrough();
+        }
+        if let Some(color) = look.link {
+            text = text.underline().color(color);
+        }
+        text
+    };
     match value {
         None => ui.add(
             Label::new(styled(RichText::new("NULL").monospace().italics().weak()))
@@ -759,6 +881,15 @@ fn value_label(ui: &mut Ui, value: &Cell, deleted: bool) -> egui::Response {
                 .truncate()
                 .sense(sense),
         ),
+    }
+}
+
+/// How the platform spells a click with the command key held: ⌘ on macOS, Ctrl elsewhere.
+fn command_click(ui: &Ui) -> &'static str {
+    if ui.ctx().os() == egui::os::OperatingSystem::Mac {
+        "⌘-click"
+    } else {
+        "Ctrl-click"
     }
 }
 

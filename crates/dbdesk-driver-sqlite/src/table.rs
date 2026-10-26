@@ -1,13 +1,15 @@
 //! Describing a table for editing its rows.
 
-use dbdesk_core::{ColumnDescription, DriverError, RelationName, TableDescription};
+use dbdesk_core::{
+    ColumnDescription, DriverError, ForeignKey, RelationName, TableDescription, TableName,
+};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::connection_error;
 
 /// Finds the table the way SQLite resolves an unqualified name (`temp` first, then `main`,
-/// then attached databases), ignoring case as SQLite does, then reads its columns and
-/// primary key. Views, virtual and shadow tables aren't plain tables.
+/// then attached databases), ignoring case as SQLite does, then reads its columns, primary
+/// key and foreign keys both ways. Views, virtual and shadow tables aren't plain tables.
 pub(crate) fn describe_table(
     connection: &Connection,
     table: &RelationName,
@@ -53,10 +55,157 @@ pub(crate) fn describe_table(
         .map(|(column, position)| (*position, column.name.clone()))
         .collect();
     key.sort();
+    let primary_key: Vec<String> = key.into_iter().map(|(_, name)| name).collect();
+    let me = TableName {
+        schema: schema.clone(),
+        name: name.clone(),
+    };
+    let foreign_keys = outgoing_keys(connection, &me)?;
+    let referenced_by = incoming_keys(connection, &me, &primary_key)?;
     Ok(Some(TableDescription {
         schema,
         name,
         columns: columns.into_iter().map(|(column, _)| column).collect(),
-        primary_key: key.into_iter().map(|(_, name)| name).collect(),
+        primary_key,
+        foreign_keys,
+        referenced_by,
     }))
+}
+
+/// One row of `pragma_foreign_key_list`, with the table it belongs to: a column of key `id`.
+/// `to` is `None` where the key names no columns and so refers to the parent's primary key.
+struct KeyColumn {
+    table: String,
+    id: i64,
+    parent: String,
+    from: String,
+    to: Option<String>,
+}
+
+/// The table's own foreign keys. SQLite keeps a key's parent table as the `REFERENCES` clause
+/// wrote it, in the same schema; it is looked up to report it as stored.
+fn outgoing_keys(connection: &Connection, me: &TableName) -> Result<Vec<ForeignKey>, DriverError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT ?1, id, \"table\", \"from\", \"to\" FROM pragma_foreign_key_list(?1, ?2) \
+             ORDER BY id, seq",
+        )
+        .map_err(connection_error)?;
+    let columns = key_columns(&mut statement, params![me.name, me.schema])?;
+    let mut keys = Vec::new();
+    for group in group_by_key(columns) {
+        let parent = TableName {
+            schema: me.schema.clone(),
+            name: stored_name(connection, &me.schema, &group[0].parent)?,
+        };
+        let parent_key = primary_key(connection, &parent)?;
+        keys.push(foreign_key(me.clone(), parent, &group, &parent_key));
+    }
+    Ok(keys)
+}
+
+/// Other tables' foreign keys to this one, in its schema.
+fn incoming_keys(
+    connection: &Connection,
+    me: &TableName,
+    primary_key: &[String],
+) -> Result<Vec<ForeignKey>, DriverError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT t.name, k.id, k.\"table\", k.\"from\", k.\"to\" \
+             FROM pragma_table_list t JOIN pragma_foreign_key_list(t.name, t.schema) k \
+             WHERE t.schema = ?1 AND t.type = 'table' AND k.\"table\" = ?2 COLLATE NOCASE \
+             ORDER BY t.name, k.id, k.seq",
+        )
+        .map_err(connection_error)?;
+    let columns = key_columns(&mut statement, params![me.schema, me.name])?;
+    Ok(group_by_key(columns)
+        .into_iter()
+        .map(|group| {
+            let child = TableName {
+                schema: me.schema.clone(),
+                name: group[0].table.clone(),
+            };
+            foreign_key(child, me.clone(), &group, primary_key)
+        })
+        .collect())
+}
+
+fn key_columns(
+    statement: &mut rusqlite::Statement<'_>,
+    params: impl rusqlite::Params,
+) -> Result<Vec<KeyColumn>, DriverError> {
+    statement
+        .query_map(params, |row| {
+            Ok(KeyColumn {
+                table: row.get(0)?,
+                id: row.get(1)?,
+                parent: row.get(2)?,
+                from: row.get(3)?,
+                to: row.get(4)?,
+            })
+        })
+        .map_err(connection_error)?
+        .collect::<Result<_, _>>()
+        .map_err(connection_error)
+}
+
+/// Splits key columns, listed key by key, into one group per key.
+fn group_by_key(columns: Vec<KeyColumn>) -> Vec<Vec<KeyColumn>> {
+    let mut groups: Vec<Vec<KeyColumn>> = Vec::new();
+    for column in columns {
+        match groups.last_mut() {
+            Some(group) if group[0].table == column.table && group[0].id == column.id => {
+                group.push(column);
+            }
+            _ => groups.push(vec![column]),
+        }
+    }
+    groups
+}
+
+/// A key from its columns; a key that names no parent columns refers to the parent's
+/// primary key.
+fn foreign_key(
+    table: TableName,
+    referenced: TableName,
+    columns: &[KeyColumn],
+    parent_key: &[String],
+) -> ForeignKey {
+    let named: Option<Vec<String>> = columns.iter().map(|column| column.to.clone()).collect();
+    ForeignKey {
+        table,
+        columns: columns.iter().map(|column| column.from.clone()).collect(),
+        referenced,
+        referenced_columns: named.unwrap_or_else(|| parent_key.to_vec()),
+    }
+}
+
+/// The table's name as stored, for a name written in any case; as written if there is no
+/// such table, which SQLite allows a key to name.
+fn stored_name(
+    connection: &Connection,
+    schema: &str,
+    written: &str,
+) -> Result<String, DriverError> {
+    let stored: Option<String> = connection
+        .query_row(
+            "SELECT name FROM pragma_table_list WHERE schema = ?1 AND name = ?2 COLLATE NOCASE",
+            params![schema, written],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(connection_error)?;
+    Ok(stored.unwrap_or_else(|| written.to_owned()))
+}
+
+fn primary_key(connection: &Connection, table: &TableName) -> Result<Vec<String>, DriverError> {
+    let mut statement = connection
+        .prepare("SELECT name FROM pragma_table_info(?1, ?2) WHERE pk > 0 ORDER BY pk")
+        .map_err(connection_error)?;
+    statement
+        .query_map(params![table.name, table.schema], |row| row.get(0))
+        .map_err(connection_error)?
+        .collect::<Result<_, _>>()
+        .map_err(connection_error)
 }

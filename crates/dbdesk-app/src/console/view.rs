@@ -9,8 +9,8 @@ use egui::{Id, Margin, ScrollArea, TextEdit, Ui, vec2};
 
 use super::highlight::Marks;
 use super::{
-    Candidate, FormatScope, LintOptions, QueryConsole, RecentCompletions, RunScope, RunState,
-    SubmittedRun, TreeCatalog, cell_viewer, completion_popup, highlight, results,
+    Candidate, FormatScope, LintOptions, QueryConsole, RecentCompletions, RowsToOpen, RunScope,
+    RunState, SubmittedRun, TreeCatalog, cell_viewer, completion_popup, highlight, results,
 };
 use crate::icons::{self, Role};
 use crate::keymap::{Action, Keymap};
@@ -70,6 +70,8 @@ pub enum ConsoleAction {
     CompletionAccepted(Candidate),
     /// Connects again after the connection was lost, as a new session.
     Reconnect,
+    /// Opens rows a foreign key leads to, in a new console on the same data source.
+    OpenRows(RowsToOpen),
 }
 
 /// What a console draws with besides its own state.

@@ -257,3 +257,59 @@ fn inserts_updates_and_deletes_rows_all_or_none_on_every_engine() {
     }
     engine.shut_down();
 }
+
+/// A table's foreign key, in both tables' descriptions: as the child's own key, and as a key
+/// pointing at the parent. Column names are listed in key order, and tables by their stored
+/// names.
+#[test]
+fn describes_foreign_keys_both_ways_on_every_engine() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    engine.expect_started(vec![]);
+    let (parent, child) = (scratch_table("customers"), scratch_table("orders"));
+    for source in test_sources(&mut engine, dir.path()) {
+        run_ok(
+            &mut engine,
+            &source,
+            1,
+            &[
+                &format!(
+                    "CREATE TABLE {parent} (id int NOT NULL, region int NOT NULL, \
+                     name varchar(40), PRIMARY KEY (region, id))"
+                ),
+                &format!(
+                    "CREATE TABLE {child} (id int NOT NULL PRIMARY KEY, customer int, \
+                     customer_region int, \
+                     FOREIGN KEY (customer_region, customer) REFERENCES {parent} (region, id))"
+                ),
+            ],
+        );
+        let described_parent = describe(&mut engine, &source, &parent);
+        let described_child = describe(&mut engine, &source, &child);
+        let key = dbdesk_core::ForeignKey {
+            table: described_child.table_name(),
+            columns: vec!["customer_region".to_owned(), "customer".to_owned()],
+            referenced: described_parent.table_name(),
+            referenced_columns: vec!["region".to_owned(), "id".to_owned()],
+        };
+        assert_eq!(
+            described_child.foreign_keys,
+            std::slice::from_ref(&key),
+            "{}",
+            source.name
+        );
+        assert!(described_child.referenced_by.is_empty(), "{}", source.name);
+        assert_eq!(described_parent.referenced_by, [key], "{}", source.name);
+        assert!(described_parent.foreign_keys.is_empty(), "{}", source.name);
+        run_ok(
+            &mut engine,
+            &source,
+            2,
+            &[
+                &format!("DROP TABLE {child}"),
+                &format!("DROP TABLE {parent}"),
+            ],
+        );
+    }
+    engine.shut_down();
+}

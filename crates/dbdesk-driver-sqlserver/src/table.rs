@@ -5,7 +5,9 @@
 //! lives in `tempdb` under a name padded with underscores and a suffix that tells sessions'
 //! tables apart, so it is looked up there and reported under the name statements use.
 
-use dbdesk_core::{ColumnDescription, DriverError, RelationName, TableDescription};
+use dbdesk_core::{
+    ColumnDescription, DriverError, ForeignKey, RelationName, TableDescription, TableName,
+};
 
 use crate::{SQL_SERVER_QUOTING, SqlClient, column, connection_error};
 
@@ -59,12 +61,92 @@ pub(crate) async fn describe_table(
         &object,
     )
     .await?;
-    Ok(Some(TableDescription {
+    let me = TableName {
         schema,
         name: statement_name(&stored_name),
+    };
+    let mut foreign_keys = Vec::new();
+    let mut referenced_by = Vec::new();
+    for key in keys(client, catalog, &object).await? {
+        if key.table == me {
+            foreign_keys.push(key.clone());
+        }
+        if key.referenced == me {
+            referenced_by.push(key);
+        }
+    }
+    Ok(Some(TableDescription {
+        schema: me.schema,
+        name: me.name,
         columns,
         primary_key,
+        foreign_keys,
+        referenced_by,
     }))
+}
+
+/// The foreign keys from or to the table, each column list in key order.
+async fn keys(
+    client: &mut SqlClient,
+    catalog: &str,
+    object: &str,
+) -> Result<Vec<ForeignKey>, DriverError> {
+    let sql = format!(
+        "SELECT fk.object_id, ts.name, t.name, tc.name, rs.name, r.name, rc.name \
+         FROM {catalog}.foreign_keys fk \
+         JOIN {catalog}.foreign_key_columns k ON k.constraint_object_id = fk.object_id \
+         JOIN {catalog}.tables t ON t.object_id = fk.parent_object_id \
+         JOIN {catalog}.schemas ts ON ts.schema_id = t.schema_id \
+         JOIN {catalog}.columns tc \
+           ON tc.object_id = k.parent_object_id AND tc.column_id = k.parent_column_id \
+         JOIN {catalog}.tables r ON r.object_id = fk.referenced_object_id \
+         JOIN {catalog}.schemas rs ON rs.schema_id = r.schema_id \
+         JOIN {catalog}.columns rc \
+           ON rc.object_id = k.referenced_object_id AND rc.column_id = k.referenced_column_id \
+         WHERE fk.parent_object_id = OBJECT_ID(@P1, N'U') \
+           OR fk.referenced_object_id = OBJECT_ID(@P1, N'U') \
+         ORDER BY fk.object_id, k.constraint_column_id"
+    );
+    let rows = client
+        .query(sql.as_str(), &[&object])
+        .await
+        .map_err(connection_error)?
+        .into_first_result()
+        .await
+        .map_err(connection_error)?;
+    let mut keys: Vec<(i32, ForeignKey)> = Vec::new();
+    for row in &rows {
+        let text = |index| {
+            column::<&str>(row, index)
+                .map(str::to_owned)
+                .ok_or_else(|| connection_error("a foreign key column without a name"))
+        };
+        let id =
+            column::<i32>(row, 0).ok_or_else(|| connection_error("a foreign key without an id"))?;
+        let (from, to) = (text(3)?, text(6)?);
+        match keys.last_mut() {
+            Some((last, key)) if *last == id => {
+                key.columns.push(from);
+                key.referenced_columns.push(to);
+            }
+            _ => keys.push((
+                id,
+                ForeignKey {
+                    table: TableName {
+                        schema: text(1)?,
+                        name: text(2)?,
+                    },
+                    columns: vec![from],
+                    referenced: TableName {
+                        schema: text(4)?,
+                        name: text(5)?,
+                    },
+                    referenced_columns: vec![to],
+                },
+            )),
+        }
+    }
+    Ok(keys.into_iter().map(|(_, key)| key).collect())
 }
 
 /// The name statements use for a table: what `tempdb` stores for a local temporary table,

@@ -37,7 +37,8 @@ impl RelationName {
     }
 }
 
-/// A table resolved by the database: where it really lives, its columns, and its primary key.
+/// A table resolved by the database: where it really lives, its columns, its primary key,
+/// and the foreign keys that tie it to other tables.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableDescription {
     pub schema: String,
@@ -46,6 +47,38 @@ pub struct TableDescription {
     pub columns: Vec<ColumnDescription>,
     /// In key order. Empty if the table has none.
     pub primary_key: Vec<String>,
+    /// The table's own foreign keys, pointing at other tables (or itself).
+    pub foreign_keys: Vec<ForeignKey>,
+    /// Other tables' foreign keys that point at this one, including its own that point at
+    /// itself.
+    pub referenced_by: Vec<ForeignKey>,
+}
+
+/// A table's name as the database resolved it.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TableName {
+    pub schema: String,
+    pub name: String,
+}
+
+/// A foreign key: each row's values in `columns` of `table` are those of a row of
+/// `referenced` in `referenced_columns`, column for column, unless one of them is `NULL`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForeignKey {
+    pub table: TableName,
+    pub columns: Vec<String>,
+    pub referenced: TableName,
+    pub referenced_columns: Vec<String>,
+}
+
+impl ForeignKey {
+    /// The columns paired with the ones they refer to, in key order.
+    pub fn column_pairs(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.columns
+            .iter()
+            .map(String::as_str)
+            .zip(self.referenced_columns.iter().map(String::as_str))
+    }
 }
 
 /// One column of a described table, as the database reports it.
@@ -67,6 +100,13 @@ impl TableDescription {
 
     pub fn column_names(&self) -> impl Iterator<Item = &str> {
         self.columns.iter().map(|column| column.name.as_str())
+    }
+
+    pub fn table_name(&self) -> TableName {
+        TableName {
+            schema: self.schema.clone(),
+            name: self.name.clone(),
+        }
     }
 
     /// The table's name for generated SQL: schema-qualified and always quoted, so it means
@@ -105,6 +145,8 @@ mod tests {
             name: "order".to_owned(),
             columns: vec![],
             primary_key: vec![],
+            foreign_keys: vec![],
+            referenced_by: vec![],
         };
         assert_eq!(
             described.qualified_name(Quoting::STANDARD),

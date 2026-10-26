@@ -4,7 +4,10 @@
 //! Without a schema, a name means the session's temporary table of that name if there is one,
 //! and otherwise the table in the current schema of the current database.
 
-use dbdesk_core::{ColumnDescription, DriverError, Identifier, RelationName, TableDescription};
+use dbdesk_core::{
+    ColumnDescription, DriverError, ForeignKey, Identifier, RelationName, TableDescription,
+    TableName,
+};
 
 use crate::connection_error;
 
@@ -58,13 +61,82 @@ pub(crate) fn describe_table(
          AND constraint_type = 'PRIMARY KEY'",
         &names,
     )?;
+    let foreign_keys = keys_where(connection, OUTGOING, &names)?;
+    let referenced_by = keys_where(connection, INCOMING, &names)?;
     let [_, schema, name] = found;
     Ok(Some(TableDescription {
         schema,
         name,
         columns,
         primary_key,
+        foreign_keys,
+        referenced_by,
     }))
+}
+
+/// Keys whose table is the one asked about: the table's own foreign keys.
+const OUTGOING: &str = "c.table_name = ?";
+/// Keys that refer to the table asked about. DuckDB keeps the referenced table's name as the
+/// `REFERENCES` clause wrote it, and matches names ignoring case.
+const INCOMING: &str = "lower(c.referenced_table) = lower(?)";
+
+/// The foreign keys `duckdb_constraints()` lists in the table's schema where `condition`
+/// holds, each column list in key order. A key refers to a table in its own schema, which is
+/// reported by its stored name.
+fn keys_where(
+    connection: &duckdb::Connection,
+    condition: &str,
+    names: &[&str],
+) -> Result<Vec<ForeignKey>, DriverError> {
+    let sql = format!(
+        "SELECT c.table_name, c.constraint_index, c.constraint_column_names[i], \
+         coalesce(t.table_name, c.referenced_table), c.referenced_column_names[i] \
+         FROM duckdb_constraints() c \
+         LEFT JOIN duckdb_tables() t ON t.database_name = c.database_name \
+           AND t.schema_name = c.schema_name AND lower(t.table_name) = lower(c.referenced_table) \
+         CROSS JOIN range(1, len(c.constraint_column_names) + 1) r(i) \
+         WHERE c.database_name = ? AND c.schema_name = ? AND {condition} \
+           AND c.constraint_type = 'FOREIGN KEY' \
+         ORDER BY c.table_name, c.constraint_index, i"
+    );
+    let mut statement = connection.prepare(&sql).map_err(connection_error)?;
+    let rows = statement
+        .query_map(duckdb::params_from_iter(names), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+            ))
+        })
+        .map_err(connection_error)?;
+    let schema = names.get(1).copied().unwrap_or_default();
+    let table_name = |name: String| TableName {
+        schema: schema.to_owned(),
+        name,
+    };
+    let mut keys: Vec<(i64, ForeignKey)> = Vec::new();
+    for row in rows {
+        let (table, index, column, referenced, referenced_column) =
+            row.map_err(connection_error)?;
+        match keys.last_mut() {
+            Some((last, key)) if *last == index && key.table.name == table => {
+                key.columns.push(column);
+                key.referenced_columns.push(referenced_column);
+            }
+            _ => keys.push((
+                index,
+                ForeignKey {
+                    table: table_name(table),
+                    columns: vec![column],
+                    referenced: table_name(referenced),
+                    referenced_columns: vec![referenced_column],
+                },
+            )),
+        }
+    }
+    Ok(keys.into_iter().map(|(_, key)| key).collect())
 }
 
 fn names_of(

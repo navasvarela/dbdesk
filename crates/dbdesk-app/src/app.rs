@@ -10,7 +10,7 @@ use egui::{Frame, Margin, RichText, ThemePreference};
 use egui_dock::{DockArea, DockState};
 
 use crate::about_dialog;
-use crate::console::{ConsoleAction, FormatScope};
+use crate::console::{ConsoleAction, FormatScope, RowsToOpen};
 use crate::consoles::Consoles;
 use crate::data_source_dialog::{DataSourceDialog, DialogAction};
 use crate::data_source_form::McpPasswordChange;
@@ -838,6 +838,19 @@ impl DbDeskApp {
         }
     }
 
+    /// Opens the rows a foreign key leads to from `console`'s grid, in a new console on the
+    /// same data source.
+    fn open_rows(&mut self, console: &ConsoleKey, rows: &RowsToOpen) {
+        let opened = self
+            .state
+            .data_source(console.data_source)
+            .and_then(|entry| self.consoles.open_rows(&entry.data_source, rows));
+        if let Some((key, command)) = opened {
+            workspace::open_console_tab(&mut self.dock, key);
+            self.send(command);
+        }
+    }
+
     fn open_history(&mut self, console: ConsoleKey) {
         let Some(entry) = self.state.data_source(console.data_source) else {
             return;
@@ -1145,6 +1158,7 @@ impl eframe::App for DbDeskApp {
             match action {
                 ConsoleAction::ShowHistory => self.open_history(console),
                 ConsoleAction::Export(format) => self.export(&console, format),
+                ConsoleAction::OpenRows(rows) => self.open_rows(&console, &rows),
                 ConsoleAction::LoadCatalog(paths) => self.load_catalog(console.data_source, paths),
                 ConsoleAction::Format(scope) => {
                     self.consoles

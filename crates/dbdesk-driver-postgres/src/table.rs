@@ -1,6 +1,8 @@
 //! Describing a table for editing its rows.
 
-use dbdesk_core::{ColumnDescription, DriverError, Quoting, RelationName, TableDescription};
+use dbdesk_core::{
+    ColumnDescription, DriverError, ForeignKey, Quoting, RelationName, TableDescription, TableName,
+};
 use tokio_postgres::Client;
 
 use crate::connection_error;
@@ -9,7 +11,8 @@ use crate::connection_error;
 const PLAIN_TABLE_KINDS: [&str; 2] = ["r", "p"];
 
 /// Resolves `table` with `to_regclass`, which applies the search path and folds unquoted
-/// names to lowercase exactly as a statement would, then reads its columns (with their types, nullability and defaults) and primary key.
+/// names to lowercase exactly as a statement would, then reads its columns (with their types,
+/// nullability and defaults), primary key and foreign keys both ways.
 pub(crate) async fn describe_table(
     client: &Client,
     table: &RelationName,
@@ -50,6 +53,8 @@ pub(crate) async fn describe_table(
         name: row.try_get(1).map_err(connection_error)?,
         columns: Vec::new(),
         primary_key: Vec::new(),
+        foreign_keys: Vec::new(),
+        referenced_by: Vec::new(),
     };
     let mut key = Vec::new();
     for column in &columns {
@@ -67,5 +72,64 @@ pub(crate) async fn describe_table(
     }
     key.sort();
     description.primary_key = key.into_iter().map(|(_, name)| name).collect();
+    let me = description.table_name();
+    for key in foreign_keys(client, &written).await? {
+        if key.table == me {
+            description.foreign_keys.push(key.clone());
+        }
+        if key.referenced == me {
+            description.referenced_by.push(key);
+        }
+    }
     Ok(Some(description))
+}
+
+/// The foreign keys from or to the table, each column list in key order.
+///
+/// A key of or to a partitioned table is copied onto its partitions, each copy naming its
+/// parent in `conparentid`. A copy on a partition of the table's own is a key that partition
+/// has; a copy that only points at a partition of the referenced table repeats a key the
+/// table already lists, and is left out.
+async fn foreign_keys(client: &Client, written: &str) -> Result<Vec<ForeignKey>, DriverError> {
+    let rows = client
+        .query(
+            "SELECT tn.nspname, t.relname, \
+             ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY k(attnum, i) \
+               JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum \
+               ORDER BY k.i), \
+             rn.nspname, r.relname, \
+             ARRAY(SELECT a.attname::text FROM unnest(c.confkey) WITH ORDINALITY k(attnum, i) \
+               JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = k.attnum \
+               ORDER BY k.i) \
+             FROM pg_constraint c \
+             JOIN pg_class t ON t.oid = c.conrelid \
+             JOIN pg_namespace tn ON tn.oid = t.relnamespace \
+             JOIN pg_class r ON r.oid = c.confrelid \
+             JOIN pg_namespace rn ON rn.oid = r.relnamespace \
+             WHERE c.contype = 'f' \
+             AND (c.conrelid = to_regclass($1) OR c.confrelid = to_regclass($1)) \
+             AND NOT EXISTS (SELECT 1 FROM pg_constraint p \
+               WHERE p.oid = c.conparentid AND p.conrelid = c.conrelid) \
+             ORDER BY c.conname",
+            &[&written],
+        )
+        .await
+        .map_err(connection_error)?;
+    rows.iter()
+        .map(|row| {
+            let get = |index| row.try_get::<_, String>(index).map_err(connection_error);
+            Ok(ForeignKey {
+                table: TableName {
+                    schema: get(0)?,
+                    name: get(1)?,
+                },
+                columns: row.try_get(2).map_err(connection_error)?,
+                referenced: TableName {
+                    schema: get(3)?,
+                    name: get(4)?,
+                },
+                referenced_columns: row.try_get(5).map_err(connection_error)?,
+            })
+        })
+        .collect()
 }

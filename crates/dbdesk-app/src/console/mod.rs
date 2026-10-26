@@ -11,6 +11,7 @@ mod completion_popup;
 mod edit;
 mod grid;
 pub(crate) mod highlight;
+mod keys;
 mod problems;
 mod results;
 mod view;
@@ -33,6 +34,7 @@ use dbdesk_store::{ConsoleKey, ExportFormat};
 use edit::Editability;
 
 pub use edit::ChangeCount;
+pub use keys::RowsToOpen;
 
 pub use catalog_source::TreeCatalog;
 pub use completion::{Candidate, RecentCompletions};
@@ -164,6 +166,10 @@ pub struct StatementView {
     result: Option<Result<StatementSummary, StatementFailure>>,
     grid: grid::GridView,
     edits: edit::EditSession,
+    /// The table the rows come from, while it is being described.
+    describing: Option<RelationName>,
+    /// The table's foreign keys, once described, for following them from the rows.
+    links: keys::KeyLinks,
 }
 
 /// The completion list at the cursor.
@@ -283,22 +289,19 @@ impl QueryConsole {
     }
 
     /// Decides, for each result that hasn't been looked at, whether it may be editable, and
-    /// returns the tables to describe for those that may.
+    /// returns the tables to describe: those a result's rows come from, which tell whether it
+    /// is editable and which foreign keys can be followed from it. A read-only data source's
+    /// tables are described too, for their keys.
     pub fn tables_to_describe(&mut self) -> Vec<RelationName> {
         let dialect = self.dialect;
+        let read_only = (self.safety == SafetyLevel::ReadOnly)
+            .then(|| format!("\u{201c}{}\u{201d} is read-only", self.data_source_name));
         let Some(run) = self.run.as_mut() else {
             return Vec::new();
         };
         let mut tables = Vec::new();
         for statement in &mut run.statements {
             if statement.columns.is_empty() || statement.edits.editability != Editability::Unknown {
-                continue;
-            }
-            if self.safety == SafetyLevel::ReadOnly {
-                statement.edits.editability = Editability::ReadOnly(format!(
-                    "\u{201c}{}\u{201d} is read-only",
-                    self.data_source_name
-                ));
                 continue;
             }
             if let Some(reason) = dialect.read_only_results() {
@@ -308,9 +311,13 @@ impl QueryConsole {
             statement.edits.editability = match edit::editable_source(&statement.sql, dialect) {
                 Ok(table) => {
                     tables.push(table.clone());
-                    Editability::Describing(table)
+                    statement.describing = Some(table.clone());
+                    match &read_only {
+                        Some(reason) => Editability::ReadOnly(reason.clone()),
+                        None => Editability::Describing(table),
+                    }
                 }
-                Err(reason) => Editability::ReadOnly(reason),
+                Err(reason) => Editability::ReadOnly(read_only.clone().unwrap_or(reason)),
             };
         }
         tables
@@ -325,6 +332,13 @@ impl QueryConsole {
             return;
         };
         for statement in &mut run.statements {
+            if statement.describing.as_ref() != Some(table) {
+                continue;
+            }
+            statement.describing = None;
+            if let Ok(Some(description)) = result {
+                statement.links = keys::KeyLinks::new(description, &statement.columns);
+            }
             if statement.edits.editability != Editability::Describing(table.clone()) {
                 continue;
             }
@@ -841,6 +855,8 @@ impl QueryConsole {
                     result: None,
                     grid: grid::GridView::default(),
                     edits: edit::EditSession::default(),
+                    describing: None,
+                    links: keys::KeyLinks::default(),
                 })
                 .collect(),
             state: RunState::Running,
