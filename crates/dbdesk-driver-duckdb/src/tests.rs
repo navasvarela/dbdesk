@@ -334,3 +334,30 @@ async fn walks_the_catalog_and_shows_definitions() {
 
     Box::new(connection).close().await.unwrap();
 }
+
+/// The explorer and a console connect to one file: each sees what the other commits, and the
+/// file lets go once both have closed.
+#[tokio::test]
+async fn connections_to_one_file_share_its_database() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("shared.duckdb");
+    create_database(&path).await.unwrap();
+    let mut explorer = connect(&file(&path, false)).await.unwrap();
+    let mut console = connect(&file(&path, false)).await.unwrap();
+
+    run(&mut explorer, "CREATE TABLE t (n integer)").await;
+    run(&mut explorer, "INSERT INTO t VALUES (1)").await;
+    assert_eq!(
+        rows(&mut console, "SELECT n FROM t").await,
+        [text(&[Some("1")])]
+    );
+    Box::new(explorer).close().await.unwrap();
+    run(&mut console, "INSERT INTO t VALUES (2)").await;
+    Box::new(console).close().await.unwrap();
+
+    let mut reopened = connect(&file(&path, true)).await.unwrap();
+    assert_eq!(
+        rows(&mut reopened, "SELECT count(*) FROM t").await,
+        [text(&[Some("2")])]
+    );
+}
