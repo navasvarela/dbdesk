@@ -6,6 +6,7 @@
 //! tokio runtime.
 
 mod catalog;
+mod constraint;
 mod errors;
 mod execution;
 mod table;
