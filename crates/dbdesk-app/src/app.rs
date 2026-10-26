@@ -555,7 +555,11 @@ impl DbDeskApp {
                     let Some(form) = object_dialog::form(helper, target.dialect) else {
                         return;
                     };
-                    self.object_dialog = Some(ObjectDialog::new(target, form));
+                    let dialog = ObjectDialog::new(target, form);
+                    if let Some(path) = dialog.definition_request() {
+                        self.send(Command::LoadDefinition { id, path });
+                    }
+                    self.object_dialog = Some(dialog);
                 }
             }
         }
@@ -2554,6 +2558,115 @@ mod tests {
             copied(&harness).as_deref(),
             Some("CREATE TABLE orders (id INTEGER PRIMARY KEY);")
         );
+    }
+
+    fn sqlite_view(dir: &Path, name: &str) -> Option<String> {
+        let connection = rusqlite::Connection::open(dir.join("shop.db")).unwrap();
+        connection
+            .query_row(
+                "SELECT sql FROM sqlite_schema WHERE type = 'view' AND name = ?1",
+                [name],
+                |row| row.get(0),
+            )
+            .ok()
+    }
+
+    /// Replaces the text of the multi-line field labelled `label`.
+    fn replace_text(harness: &mut Harness<'_, DbDeskApp>, label: &str, text: &str) {
+        harness
+            .get_by_role_and_label(Role::MultilineTextInput, label)
+            .focus();
+        harness.run_steps(2);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness
+            .get_by_role_and_label(Role::MultilineTextInput, label)
+            .type_text(text);
+        harness.run_steps(2);
+    }
+
+    #[test]
+    fn creates_edits_and_drops_a_view_through_the_dialogs() {
+        let dir = tempfile::tempdir().unwrap();
+        save_shop(
+            dir.path(),
+            "CREATE TABLE orders (id INTEGER PRIMARY KEY, total REAL);",
+        );
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        for (expand, appears) in [
+            ("Expand shop", "Expand main"),
+            ("Expand main", "Expand views"),
+        ] {
+            step_until_visible(&mut harness, expand);
+            harness.get_by_label(expand).click();
+            step_until_visible(&mut harness, appears);
+        }
+
+        harness.get_by_label("views").click_secondary();
+        harness.run_steps(2);
+        harness.get_by_label("New").hover();
+        harness.run_steps(2);
+        harness.get_by_label("View…").click();
+        harness.run_steps(2);
+        fill(&mut harness, "Name", "big_orders");
+        replace_text(
+            &mut harness,
+            "Query",
+            "SELECT id FROM orders WHERE total > 100",
+        );
+        assert!(
+            harness
+                .query_all_by_value(
+                    "CREATE VIEW main.big_orders AS\nSELECT id FROM orders WHERE total > 100;\n"
+                )
+                .next()
+                .is_some(),
+            "the review panel shows the statement"
+        );
+        harness.get_by_label("Execute").click();
+        step_until_visible(&mut harness, "Expand big_orders");
+
+        node_menu(&mut harness, "big_orders", "Edit…");
+        step_until(&mut harness, "the view's query loading", |harness| {
+            harness
+                .query_all_by_value("SELECT id FROM orders WHERE total > 100")
+                .next()
+                .is_some()
+        });
+        replace_text(
+            &mut harness,
+            "Query",
+            "SELECT id, total FROM orders WHERE total > 500",
+        );
+        harness.get_by_label_contains("Drops the view main.big_orders and creates it again");
+        assert!(
+            harness
+                .query_all_by_value(
+                    "DROP VIEW main.big_orders;\n\nCREATE VIEW main.big_orders AS\nSELECT id, \
+                     total FROM orders WHERE total > 500;\n"
+                )
+                .next()
+                .is_some(),
+            "SQLite drops and creates the view"
+        );
+        harness.get_by_label("Execute").click();
+        step_until(&mut harness, "the edit applying", |harness| {
+            harness.query_by_label("Execute").is_none()
+        });
+        assert!(
+            sqlite_view(dir.path(), "big_orders").is_some_and(|sql| sql.contains("total > 500"))
+        );
+        // The views folder reloads after the edit.
+        step_until_visible(&mut harness, "Expand big_orders");
+
+        node_menu(&mut harness, "big_orders", "Drop…");
+        harness.get_by_label_contains("Drops the view main.big_orders.");
+        harness.get_by_label("Execute").click();
+        step_until(&mut harness, "the view leaving the tree", |harness| {
+            harness.query_by_label("Expand big_orders").is_none()
+                && harness.query_by_label("Execute").is_none()
+        });
+        assert_eq!(sqlite_view(dir.path(), "big_orders"), None);
     }
 
     #[test]

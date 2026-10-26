@@ -1,10 +1,17 @@
 //! Fields the helpers' forms share.
 
 use dbdesk_core::{CatalogPath, FolderKind, NodeKind};
-use egui::{Ui, WidgetType};
+use dbdesk_sql::Dialect;
+use egui::{Response, ScrollArea, TextEdit, Ui, WidgetType};
 
 use crate::catalog_tree::CatalogTree;
+use crate::console::highlight::{self, Marks};
 use crate::widgets;
+
+/// Lines of SQL an editor shows before it scrolls: a query of a few joins.
+const EDITOR_ROWS: usize = 10;
+/// The editor's height once it scrolls, about `EDITOR_ROWS` lines.
+const EDITOR_MAX_HEIGHT: f32 = 200.0;
 
 /// The columns of a key or index, in the order they were ticked, which is its order.
 pub(super) fn column_picker(
@@ -53,4 +60,25 @@ pub(super) fn loaded_columns(catalog: &CatalogTree, table: &CatalogPath) -> Opti
             .map(|column| column.label.clone())
             .collect(),
     )
+}
+
+/// An editable field of SQL, highlighted as the console highlights it.
+pub(super) fn sql_editor(ui: &mut Ui, text: &mut String, dialect: Dialect, id: &str) -> Response {
+    let marks = Marks::default();
+    let mut layouter = highlight::layouter(dialect, &marks);
+    ScrollArea::vertical()
+        .id_salt((id, "scroll"))
+        .max_height(EDITOR_MAX_HEIGHT)
+        .show(ui, |ui| {
+            ui.add(
+                TextEdit::multiline(text)
+                    .id_salt(id)
+                    .code_editor()
+                    .hint_text("SELECT …")
+                    .desired_rows(EDITOR_ROWS)
+                    .desired_width(f32::INFINITY)
+                    .layouter(&mut layouter),
+            )
+        })
+        .inner
 }

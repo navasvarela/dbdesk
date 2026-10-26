@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use egui::text::{CCursor, CCursorRange};
 use egui::text_edit::TextEditState;
-use egui::{Id, Margin, ScrollArea, TextBuffer, TextEdit, Ui, vec2};
+use egui::{Id, Margin, ScrollArea, TextEdit, Ui, vec2};
 
 use super::highlight::Marks;
 use super::{
@@ -561,16 +561,11 @@ fn editor(
     if !checked.ask_database.is_empty() {
         actions.push(ConsoleAction::Validate(checked.ask_database));
     }
-    let dialect = console.dialect;
     let marks = Marks {
         error: console.error_marker.clone(),
         current_statement: console.current_statement(),
     };
-    let mut layouter = |ui: &Ui, text: &dyn TextBuffer, wrap_width: f32| {
-        let mut job = highlight::layout_job(text.as_str(), dialect, &marks, ui.style());
-        job.wrap.max_width = wrap_width;
-        ui.fonts_mut(|fonts| fonts.layout_job(job))
-    };
+    let mut layouter = highlight::layouter(console.dialect, &marks);
     let gutter_width = gutter_width(ui, &console.text);
     ScrollArea::vertical()
         .id_salt(("console_editor_scroll", console.id.0))

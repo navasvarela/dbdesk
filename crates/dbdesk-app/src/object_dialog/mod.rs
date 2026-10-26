@@ -11,16 +11,18 @@ mod index;
 mod new_table;
 mod review;
 mod table;
+mod view;
 
 use dbdesk_core::{CatalogPath, DataSource, DataSourceId, NodeKind, SafetyLevel, SourceColor};
 use dbdesk_engine::{Event, SessionState};
-use dbdesk_sql::{DdlError, DdlOperation, Dialect, ObjectName, ddl_statements};
+use dbdesk_sql::{DdlError, DdlOperation, Dialect, ObjectName, ViewKind, ddl_statements};
 use egui::{Id, Ui, Window};
 
 pub use confirm::Destruction;
 use index::{DropIndex, NewIndex};
 use new_table::NewTable;
 use table::{DropTable, RenameTable, TableAt, TruncateTable};
+use view::{DropView, EditView, NewView, RefreshView, RenameView, ViewAt};
 
 use crate::catalog_tree::CatalogTree;
 use crate::explorer::Helper;
@@ -66,6 +68,15 @@ pub trait ObjectForm {
     fn catalog_requests(&self) -> Vec<CatalogPath> {
         Vec::new()
     }
+
+    /// The catalog node whose definition the form starts from, such as the view Edit view
+    /// changes: loaded once, when the dialog opens.
+    fn definition_request(&self) -> Option<CatalogPath> {
+        None
+    }
+
+    /// The answer to [`ObjectForm::definition_request`].
+    fn definition_loaded(&mut self, _result: &Result<String, String>, _dialect: Dialect) {}
 
     /// What the form asks for, or why it can't be written as SQL yet.
     fn operations(&self) -> Result<Vec<DdlOperation>, DdlError>;
@@ -116,6 +127,12 @@ pub fn form(helper: Helper, dialect: Dialect) -> Option<Box<dyn ObjectForm>> {
         Helper::DropTable(path) => Box::new(DropTable::new(TableAt::new(path)?)),
         Helper::NewIndex(path) => Box::new(NewIndex::new(&path)?),
         Helper::DropIndex(path) => Box::new(DropIndex::new(&path)?),
+        Helper::NewView(path) => Box::new(NewView::new(path, ViewKind::View)?),
+        Helper::NewMaterializedView(path) => Box::new(NewView::new(path, ViewKind::Materialized)?),
+        Helper::EditView(path) => Box::new(EditView::new(ViewAt::new(path)?)),
+        Helper::RenameView(path) => Box::new(RenameView::new(ViewAt::new(path)?)),
+        Helper::RefreshView(path) => Box::new(RefreshView::new(ViewAt::new(path)?)?),
+        Helper::DropView(path) => Box::new(DropView::new(ViewAt::new(path)?)),
     })
 }
 
@@ -145,6 +162,11 @@ impl ObjectDialog {
         self.form.catalog_requests()
     }
 
+    /// See [`ObjectForm::definition_request`].
+    pub fn definition_request(&self) -> Option<CatalogPath> {
+        self.form.definition_request()
+    }
+
     /// Follows the engine's answer to Execute. Returns the node to refresh once the change
     /// has been applied, which means the dialog is done.
     pub fn apply(&mut self, event: &Event) -> Option<CatalogPath> {
@@ -157,6 +179,11 @@ impl ObjectDialog {
                 Ok(()) => return Some(self.form.changed()),
                 Err(failure) => self.review.failed(failure),
             },
+            Event::DefinitionLoaded { id, path, result }
+                if *id == data_source && Some(path) == self.form.definition_request().as_ref() =>
+            {
+                self.form.definition_loaded(result, self.target.dialect);
+            }
             // A request sent while connecting is never answered if the connection fails.
             Event::SessionChanged { id, state } if *id == data_source => match state {
                 SessionState::Failed(error) | SessionState::Lost(error) => {
