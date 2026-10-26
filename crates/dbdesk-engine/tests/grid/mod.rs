@@ -89,6 +89,33 @@ pub fn test_sources(engine: &mut TestEngine, dir: &std::path::Path) -> Vec<TestS
         .collect()
 }
 
+/// The ClickHouse server, when `DBDESK_TEST_CLICKHOUSE_URL` is set, for the tests that don't
+/// change rows.
+pub fn clickhouse_source(engine: &mut TestEngine) -> Option<TestSource> {
+    let (config, password) = clickhouse_test_server()?;
+    let data_source = DataSource {
+        id: DataSourceId::generate(),
+        name: "clickhouse".to_owned(),
+        color: None,
+        safety: dbdesk_core::SafetyLevel::Normal,
+        project: None,
+        mcp_login: None,
+        config: ConnectionConfig::ClickHouse(config),
+    };
+    let id = data_source.id;
+    engine.send(Command::SaveDataSource {
+        data_source,
+        password: PasswordUpdate::Set(password),
+        ssh_secret: PasswordUpdate::Keep,
+    });
+    assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
+    Some(TestSource {
+        id,
+        dialect: Dialect::ClickHouse,
+        name: "clickhouse",
+    })
+}
+
 /// A table name no other test, or another run sharing the test servers, uses at the same time.
 pub fn scratch_table(purpose: &str) -> String {
     format!("w5_{purpose}_{}", std::process::id())
@@ -310,6 +337,83 @@ fn describes_foreign_keys_both_ways_on_every_engine() {
                 &format!("DROP TABLE {parent}"),
             ],
         );
+    }
+    engine.shut_down();
+}
+
+/// The query the grid runs to sort and filter in the database: rows where any value contains
+/// the text ignoring case, `%` and `'` taken literally, `NULL` matching nothing, sorted by
+/// position.
+#[test]
+fn sorts_and_filters_rows_in_the_database_on_every_engine() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    engine.expect_started(vec![]);
+    let table = scratch_table("arranged");
+    let mut sources = test_sources(&mut engine, dir.path());
+    sources.extend(clickhouse_source(&mut engine));
+    for source in sources {
+        let create = match source.dialect {
+            Dialect::ClickHouse => {
+                format!("CREATE TABLE {table} (id Int32, note Nullable(String)) ENGINE = Memory")
+            }
+            _ => format!("CREATE TABLE {table} (id int, note varchar(40))"),
+        };
+        run_ok(
+            &mut engine,
+            &source,
+            1,
+            &[
+                &create,
+                &format!(
+                    "INSERT INTO {table} (id, note) VALUES (1, 'Ada'), (2, 'bob'), (3, 'ADAM'), \
+                     (4, NULL), (5, '100% it''s')"
+                ),
+            ],
+        );
+        let typed = format!("SELECT id, note FROM {table};");
+        let columns = ["id".to_owned(), "note".to_owned()];
+        let ids = |engine: &mut TestEngine, run, filter, sort| -> Vec<String> {
+            let arranged = dbdesk_sql::arrange(
+                &typed,
+                source.dialect,
+                &dbdesk_sql::Arrangement {
+                    columns: &columns,
+                    sort,
+                    filter,
+                },
+            )
+            .unwrap();
+            query(engine, &source, run, &arranged.sql)
+                .into_iter()
+                .map(|row| row[0].clone().unwrap_or_default())
+                .collect()
+        };
+        let by_id_descending = Some(dbdesk_sql::SortOrder {
+            column: 0,
+            descending: true,
+        });
+        assert_eq!(
+            ids(&mut engine, 2, "aD", by_id_descending),
+            ["3", "1"],
+            "{}",
+            source.name
+        );
+        assert_eq!(
+            ids(&mut engine, 3, "0% IT'", None),
+            ["5"],
+            "{}",
+            source.name
+        );
+        assert_eq!(
+            ids(&mut engine, 4, "4", None),
+            ["4"],
+            "{}: an id matches",
+            source.name
+        );
+        let all = ids(&mut engine, 5, "", by_id_descending);
+        assert_eq!(all, ["5", "4", "3", "2", "1"], "{}", source.name);
+        run_ok(&mut engine, &source, 6, &[&format!("DROP TABLE {table}")]);
     }
     engine.shut_down();
 }

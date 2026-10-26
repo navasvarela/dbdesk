@@ -50,6 +50,17 @@ pub struct SubmittedStatement {
     /// How many bytes at the start of `sql` aren't in the console's text, such as an
     /// `EXPLAIN` prefix. Error positions are shifted back by this much.
     pub prefix_len: usize,
+    /// Set when `sql` wraps the statement to sort and filter its rows in the database.
+    pub in_database: Option<InDatabase>,
+}
+
+/// A statement whose rows the database sorts and filters, by running it wrapped: the
+/// statement as typed, which decides what can be edited, and the sort and filter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InDatabase {
+    pub typed: String,
+    pub sort: Option<grid::SortKey>,
+    pub filter: String,
 }
 
 /// A run as a console asks for it: its statements, and what running them is for.
@@ -154,6 +165,7 @@ pub enum RunState {
 }
 
 pub struct StatementView {
+    /// As typed, even when the database sorts and filters its rows by running it wrapped.
     sql: String,
     range: Range<usize>,
     prefix_len: usize,
@@ -170,6 +182,62 @@ pub struct StatementView {
     describing: Option<RelationName>,
     /// The table's foreign keys, once described, for following them from the rows.
     links: keys::KeyLinks,
+    /// The rows came from the statement wrapped to sort and filter them in the database.
+    wrapped: bool,
+}
+
+impl StatementView {
+    /// The statement to run to show this result again, sorted and filtered as the grid now
+    /// asks: wrapped if the database is to sort and filter it, as typed otherwise.
+    fn resubmission(&self, dialect: Dialect) -> Result<SubmittedStatement, String> {
+        let as_typed = SubmittedStatement {
+            sql: self.sql.clone(),
+            range: self.range.clone(),
+            prefix_len: self.prefix_len,
+            in_database: None,
+        };
+        if !self.grid.is_in_database() || !self.grid.has_sort_or_filter() {
+            return Ok(as_typed);
+        }
+        let columns: Vec<String> = self
+            .columns
+            .iter()
+            .map(|column| column.name.clone())
+            .collect();
+        let sort = self.grid.sort();
+        let arranged = dbdesk_sql::arrange(
+            &self.sql,
+            dialect,
+            &dbdesk_sql::Arrangement {
+                columns: &columns,
+                sort: sort.map(|sort| dbdesk_sql::SortOrder {
+                    column: sort.column,
+                    descending: sort.descending,
+                }),
+                filter: self.grid.filter(),
+            },
+        )?;
+        Ok(SubmittedStatement {
+            sql: arranged.sql,
+            prefix_len: arranged.prefix_len,
+            in_database: Some(InDatabase {
+                typed: self.sql.clone(),
+                sort,
+                filter: self.grid.filter().to_owned(),
+            }),
+            ..as_typed
+        })
+    }
+
+    /// Whether the database can sort and filter these rows; `Err` says why not.
+    fn can_arrange(&self, dialect: Dialect) -> Result<(), String> {
+        let columns: Vec<String> = self
+            .columns
+            .iter()
+            .map(|column| column.name.clone())
+            .collect();
+        dbdesk_sql::can_arrange(&self.sql, dialect, &columns)
+    }
 }
 
 /// The completion list at the cursor.
@@ -427,12 +495,24 @@ impl QueryConsole {
             .iter_mut()
             .find(|statement| statement.edits.reload)?;
         statement.edits.reload = false;
+        let statement = statement.resubmission(self.dialect).ok()?;
         Some(SubmittedRun {
-            statements: vec![SubmittedStatement {
-                sql: statement.sql.clone(),
-                range: statement.range.clone(),
-                prefix_len: statement.prefix_len,
-            }],
+            statements: vec![statement],
+            purpose: RunPurpose::Run,
+        })
+    }
+
+    /// Runs the shown statement again so that the database sorts and filters its rows as the
+    /// grid now asks, or, when the grid no longer asks, as typed. `Err` says why it can't be.
+    pub fn rearrange(&mut self) -> Result<SubmittedRun, String> {
+        let dialect = self.dialect;
+        let statement = self
+            .run
+            .as_ref()
+            .and_then(|run| run.statements.get(run.selected))
+            .ok_or_else(|| "There is no result to sort and filter".to_owned())?;
+        Ok(SubmittedRun {
+            statements: vec![statement.resubmission(dialect)?],
             purpose: RunPurpose::Run,
         })
     }
@@ -804,6 +884,7 @@ impl QueryConsole {
                     sql: source[range.clone()].to_owned(),
                     range: range.start + offset..range.end + offset,
                     prefix_len: 0,
+                    in_database: None,
                 })
                 .collect::<Vec<_>>()
         };
@@ -844,19 +925,29 @@ impl QueryConsole {
             id: run,
             statements: statements
                 .iter()
-                .map(|statement| StatementView {
-                    sql: statement.sql.clone(),
-                    range: statement.range.clone(),
-                    prefix_len: statement.prefix_len,
-                    columns: Vec::new(),
-                    rows: Vec::new(),
-                    more: false,
-                    fetching: false,
-                    result: None,
-                    grid: grid::GridView::default(),
-                    edits: edit::EditSession::default(),
-                    describing: None,
-                    links: keys::KeyLinks::default(),
+                .map(|statement| {
+                    let (sql, grid) = match &statement.in_database {
+                        Some(arranged) => (
+                            arranged.typed.clone(),
+                            grid::GridView::in_database(arranged.sort, arranged.filter.clone()),
+                        ),
+                        None => (statement.sql.clone(), grid::GridView::default()),
+                    };
+                    StatementView {
+                        sql,
+                        range: statement.range.clone(),
+                        prefix_len: statement.prefix_len,
+                        columns: Vec::new(),
+                        rows: Vec::new(),
+                        more: false,
+                        fetching: false,
+                        result: None,
+                        grid,
+                        edits: edit::EditSession::default(),
+                        describing: None,
+                        links: keys::KeyLinks::default(),
+                        wrapped: statement.in_database.is_some(),
+                    }
                 })
                 .collect(),
             state: RunState::Running,
@@ -1004,8 +1095,10 @@ impl QueryConsole {
         }) = result
         {
             // A position inside an added prefix points at no text; mark the statement's start.
-            let offset =
-                statement_view.range.start + position.saturating_sub(statement_view.prefix_len);
+            // One past the statement, in what a wrapper added after it, marks its end.
+            let offset = (statement_view.range.start
+                + position.saturating_sub(statement_view.prefix_len))
+            .min(statement_view.range.end);
             self.error_marker = Some(highlight::error_marker(&self.text, self.dialect, offset));
         }
         if result.is_err() {

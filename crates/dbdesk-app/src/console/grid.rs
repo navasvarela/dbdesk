@@ -1,6 +1,7 @@
 //! What the result grid shows of a statement's loaded rows: a client-side sort and filter,
 //! and the selected cells. Rows are never re-fetched for either; both work on what has been
-//! loaded so far, and the grid says so.
+//! loaded so far, and the grid says so. Sorted and filtered in the database instead, the rows
+//! arrive in order, and the grid shows them as they are.
 
 use std::cmp::Ordering;
 use std::ops::RangeInclusive;
@@ -54,9 +55,35 @@ pub struct GridView {
     selection: Option<Selection>,
     /// A drag selection is in progress.
     dragging: bool,
+    /// The sort and filter are the database's to apply, by running the statement again.
+    in_database: bool,
 }
 
 impl GridView {
+    /// A grid whose rows the database sorts and filters as `sort` and `filter` say.
+    pub fn in_database(sort: Option<SortKey>, filter: String) -> Self {
+        Self {
+            sort,
+            filter,
+            in_database: true,
+            ..Self::default()
+        }
+    }
+
+    pub fn is_in_database(&self) -> bool {
+        self.in_database
+    }
+
+    /// Switches between sorting and filtering here and in the database.
+    pub fn set_in_database(&mut self, in_database: bool) {
+        self.in_database = in_database;
+        self.computed_for = None;
+    }
+
+    pub fn filter(&self) -> &str {
+        &self.filter
+    }
+
     pub fn sort(&self) -> Option<SortKey> {
         self.sort
     }
@@ -67,6 +94,10 @@ impl GridView {
 
     /// Whether the rows are shown in a different order or number than loaded.
     pub fn is_rearranged(&self) -> bool {
+        !self.in_database && self.has_sort_or_filter()
+    }
+
+    pub fn has_sort_or_filter(&self) -> bool {
         self.sort.is_some() || !self.filter.trim().is_empty()
     }
 
@@ -109,8 +140,18 @@ impl GridView {
             // Positions on screen now hold other rows: rows were rearranged, or deleted.
             self.selection = None;
         }
-        self.order = display_order(rows, self.sort, &self.filter);
+        self.order = self.arranged(rows);
         self.computed_for = Some(key);
+    }
+
+    /// The loaded rows' indices in display order: as loaded when the database sorted and
+    /// filtered them.
+    fn arranged(&self, rows: &[Row]) -> Vec<usize> {
+        if self.in_database {
+            (0..rows.len()).collect()
+        } else {
+            display_order(rows, self.sort, &self.filter)
+        }
     }
 
     /// Indices into the loaded rows, in display order, as of the last [`GridView::refresh`].
@@ -174,7 +215,7 @@ impl GridView {
 
     /// The rows as shown, in display order, for exporting.
     pub fn shown_rows(&self, rows: &[Row]) -> Vec<Row> {
-        display_order(rows, self.sort, &self.filter)
+        self.arranged(rows)
             .into_iter()
             .filter_map(|index| rows.get(index).cloned())
             .collect()
@@ -289,6 +330,29 @@ mod tests {
 
     fn cell(row: usize, column: usize) -> CellPos {
         CellPos { row, column }
+    }
+
+    #[test]
+    fn shows_rows_as_loaded_when_the_database_sorts_and_filters_them() {
+        let rows = vec![vec![Some("2".to_owned())], vec![Some("1".to_owned())]];
+        let mut view = GridView::in_database(
+            Some(SortKey {
+                column: 0,
+                descending: false,
+            }),
+            "2".to_owned(),
+        );
+        view.refresh(&rows);
+        assert_eq!(view.order(), [0, 1]);
+        assert!(!view.is_rearranged());
+
+        view.set_in_database(false);
+        view.refresh(&rows);
+        assert_eq!(
+            view.order(),
+            [0],
+            "here, the filter and sort apply to the loaded rows"
+        );
     }
 
     #[test]

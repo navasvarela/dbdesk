@@ -56,13 +56,24 @@ pub fn show(
     let load_clicked = summary(ui, statement, running, dialect);
     let mut grid_output = GridOutput::default();
     if !statement.columns.is_empty() {
-        grid_toolbar(ui, statement, console.export_status.as_ref(), actions);
+        let toolbar = Toolbar {
+            dialect,
+            export_status: console.export_status.as_ref(),
+        };
+        let rearrange = grid_toolbar(ui, statement, &toolbar, actions);
         grid_output = grid(ui, run_id, statement, keymap);
+        grid_output.rearrange |= rearrange;
     }
     if let Some(viewed) = grid_output.viewed {
         console.viewed_cell = Some(viewed);
     }
     actions.extend(grid_output.open.map(ConsoleAction::OpenRows));
+    if grid_output.rearrange {
+        match console.rearrange() {
+            Ok(run) => actions.push(ConsoleAction::Run(run)),
+            Err(reason) => tracing::warn!("couldn't sort and filter in the database: {reason}"),
+        }
+    }
     if (load_clicked || grid_output.last_row_shown)
         && let Some(run) = console.request_more()
     {
@@ -153,53 +164,121 @@ fn row_count(statement: &StatementView, summary: Option<&StatementSummary>) -> S
     format!("{rows} rows{note}{elapsed}")
 }
 
-/// The filter, a note when the rows are rearranged, and the export menu.
+/// What the toolbar shows besides the statement's own state.
+struct Toolbar<'a> {
+    dialect: dbdesk_sql::Dialect,
+    /// How the last export went.
+    export_status: Option<&'a Result<String, String>>,
+}
+
+/// The filter, where it applies, a note when the rows are rearranged, the export menu, and
+/// editing. Returns whether the statement should run again, for the database to sort and
+/// filter its rows or, switched back, to run as typed.
 fn grid_toolbar(
     ui: &mut Ui,
     statement: &mut StatementView,
+    toolbar: &Toolbar<'_>,
+    actions: &mut Vec<ConsoleAction>,
+) -> bool {
+    ui.horizontal(|ui| {
+        let in_database = statement.grid.is_in_database();
+        let hint = if in_database {
+            "Filter every row, then Enter"
+        } else {
+            "Filter loaded rows"
+        };
+        let filter = ui.add(
+            TextEdit::singleline(statement.grid.filter_mut())
+                .hint_text(hint)
+                .desired_width(FILTER_WIDTH),
+        );
+        let filter_entered =
+            filter.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+        let mut rearrange = in_database && filter_entered;
+        rearrange |= database_switch(ui, statement, toolbar.dialect);
+        statement.grid.refresh(&statement.rows);
+        arrangement_note(ui, statement);
+        export_menu(ui, toolbar.export_status, actions);
+        ui.separator();
+        edit_status(ui, statement, actions);
+        rearrange
+    })
+    .inner
+}
+
+/// The switch between sorting and filtering the loaded rows here and every row in the
+/// database. Returns whether the statement should run again: switched on with a sort or
+/// filter to apply, or switched off from rows the database arranged.
+fn database_switch(
+    ui: &mut Ui,
+    statement: &mut StatementView,
+    dialect: dbdesk_sql::Dialect,
+) -> bool {
+    let allowed = match statement.can_arrange(dialect) {
+        Ok(()) if !statement.edits.pending.is_empty() => Err(
+            "Submit or revert the changes first: running the statement again drops them".to_owned(),
+        ),
+        allowed => allowed,
+    };
+    let mut on = statement.grid.is_in_database();
+    let switch = ui
+        .add_enabled(
+            allowed.is_ok(),
+            egui::Checkbox::new(&mut on, "In the database"),
+        )
+        .on_hover_text("Sort and filter every row in the database, by running the statement again")
+        .on_disabled_hover_text(allowed.err().unwrap_or_default());
+    if !switch.changed() {
+        return false;
+    }
+    statement.grid.set_in_database(on);
+    if on {
+        statement.grid.has_sort_or_filter()
+    } else {
+        statement.wrapped
+    }
+}
+
+/// Says where the rows shown were sorted and filtered, when they were.
+fn arrangement_note(ui: &mut Ui, statement: &StatementView) {
+    if statement.grid.is_rearranged() {
+        ui.colored_label(
+            ui.visuals().warn_fg_color,
+            format!(
+                "Sorted and filtered here, not by the database: {} of {} loaded rows",
+                statement.grid.order().len(),
+                statement.rows.len()
+            ),
+        )
+        .on_hover_text("Rows not loaded yet aren't included until you load them");
+    } else if statement.wrapped {
+        ui.weak("Sorted and filtered by the database");
+    }
+}
+
+fn export_menu(
+    ui: &mut Ui,
     export_status: Option<&Result<String, String>>,
     actions: &mut Vec<ConsoleAction>,
 ) {
-    ui.horizontal(|ui| {
-        ui.add(
-            TextEdit::singleline(statement.grid.filter_mut())
-                .hint_text("Filter loaded rows")
-                .desired_width(FILTER_WIDTH),
-        );
-        statement.grid.refresh(&statement.rows);
-        if statement.grid.is_rearranged() {
-            ui.colored_label(
-                ui.visuals().warn_fg_color,
-                format!(
-                    "Sorted and filtered here, not by the database: {} of {} loaded rows",
-                    statement.grid.order().len(),
-                    statement.rows.len()
-                ),
-            )
-            .on_hover_text("Rows not loaded yet aren't included until you load them");
+    ui.menu_button("Export", |ui| {
+        for (label, format) in [("CSV…", ExportFormat::Csv), ("JSON…", ExportFormat::Json)] {
+            if ui.button(label).clicked() {
+                actions.push(ConsoleAction::Export(format));
+            }
         }
-        ui.menu_button("Export", |ui| {
-            for (label, format) in [("CSV…", ExportFormat::Csv), ("JSON…", ExportFormat::Json)]
-            {
-                if ui.button(label).clicked() {
-                    actions.push(ConsoleAction::Export(format));
-                }
-            }
-        })
-        .response
-        .on_hover_text("Save the rows shown, as sorted and filtered, to a file");
-        match export_status {
-            Some(Ok(done)) => {
-                ui.weak(done);
-            }
-            Some(Err(error)) => {
-                ui.colored_label(ui.visuals().error_fg_color, error);
-            }
-            None => {}
+    })
+    .response
+    .on_hover_text("Save the rows shown, as sorted and filtered, to a file");
+    match export_status {
+        Some(Ok(done)) => {
+            ui.weak(done);
         }
-        ui.separator();
-        edit_status(ui, statement, actions);
-    });
+        Some(Err(error)) => {
+            ui.colored_label(ui.visuals().error_fg_color, error);
+        }
+        None => {}
+    }
 }
 
 /// Whether the rows can be edited, Add row and Delete rows, and the pending changes with
@@ -302,6 +381,8 @@ struct GridOutput {
     viewed: Option<ViewedCell>,
     /// Rows a foreign key leads to, to open in a new console.
     open: Option<RowsToOpen>,
+    /// The sort changed, for the database to apply by running the statement again.
+    rearrange: bool,
 }
 
 /// What the user did to a cell this frame, applied once the table is drawn.
@@ -368,7 +449,8 @@ fn grid(ui: &mut Ui, run: RunId, statement: &mut StatementView, keymap: &Keymap)
             for (index, column) in columns.iter().enumerate() {
                 header.col(|ui| {
                     fill_header_cell(ui, header_fill);
-                    if column_header(ui, column, sort_arrow(grid_view.sort(), index)) {
+                    let arrow = sort_arrow(grid_view.sort(), index);
+                    if column_header(ui, column, arrow, grid_view.is_in_database()) {
                         sort_clicked = Some(index);
                     }
                 });
@@ -415,8 +497,12 @@ fn grid(ui: &mut Ui, run: RunId, statement: &mut StatementView, keymap: &Keymap)
             });
         });
 
-    if let Some(column) = sort_clicked {
+    // In the database, sorting runs the statement again, which would drop pending changes.
+    if let Some(column) = sort_clicked
+        && !(grid.is_in_database() && !edits.pending.is_empty())
+    {
         grid.toggle_sort(column);
+        output.rearrange = grid.is_in_database();
     }
     if ui.input(|input| input.pointer.any_released()) {
         grid.stop_drag();
@@ -478,10 +564,15 @@ fn no_text_field_focused(ui: &Ui) -> bool {
     ui.memory(|memory| memory.focused().is_none())
 }
 
-fn column_header(ui: &mut Ui, column: &ColumnInfo, arrow: &str) -> bool {
+fn column_header(ui: &mut Ui, column: &ColumnInfo, arrow: &str, in_database: bool) -> bool {
+    let action = if in_database {
+        "Click to sort every row in the database"
+    } else {
+        "Click to sort the loaded rows"
+    };
     let hover = match &column.type_name {
-        Some(type_name) => format!("{type_name}\nClick to sort the loaded rows"),
-        None => "Click to sort the loaded rows".to_owned(),
+        Some(type_name) => format!("{type_name}\n{action}"),
+        None => action.to_owned(),
     };
     ui.add(
         Label::new(RichText::new(format!("{}{arrow}", column.name)).strong())
