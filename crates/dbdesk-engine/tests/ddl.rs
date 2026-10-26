@@ -1,7 +1,7 @@
 //! The object helpers' DDL: applied on the explorer's connection, all or none where the
 //! engine's DDL is transactional, refused on read-only data sources, recorded in the history;
-//! and a table built from a spec described back as the spec says, on every engine with a test
-//! server.
+//! a table built from a spec described back as the spec says, and views and schemas created,
+//! changed and dropped, on every engine with a test server.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -14,13 +14,15 @@ use common::{
     sqlite_data_source, sqlite_database, sqlserver_test_server,
 };
 use dbdesk_core::{
-    CatalogPath, ConnectionConfig, DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase,
-    FolderKind, Identifier, NodeKind, Password, RelationName, SafetyLevel, TableDescription,
+    CatalogNode, CatalogPath, ConnectionConfig, DataSource, DataSourceId, DuckDbConfig,
+    DuckDbDatabase, FolderKind, Identifier, NodeKind, Password, RelationName, SafetyLevel,
+    TableDescription,
 };
 use dbdesk_engine::{Command, DdlFailure, Event, PasswordUpdate, SessionState};
 use dbdesk_sql::{
-    Check, ColumnSpec, DdlOperation, Dialect, ForeignKey, ObjectName, ReferentialAction, TableSpec,
-    UniqueKey, ddl_statements, split_statements,
+    Check, ColumnSpec, DdlOperation, Dialect, ForeignKey, ObjectName, ReferentialAction,
+    SchemaCreation, SchemaSpec, TableSpec, UniqueKey, ViewKind, ViewSpec, ddl_statements,
+    split_statements, view_query,
 };
 use dbdesk_store::{HistoryOutcome, HistoryQuery};
 
@@ -352,20 +354,20 @@ fn a_table_built_from_a_spec_is_described_as_the_spec_says_on_every_engine() {
     engine.shut_down();
 }
 
-fn load_table_ddl(engine: &mut TestEngine, data_source: DataSourceId, path: CatalogPath) -> String {
-    engine.send(Command::LoadTableDdl {
+fn load_ddl(engine: &mut TestEngine, data_source: DataSourceId, path: CatalogPath) -> String {
+    engine.send(Command::LoadDdl {
         data_source,
         path: path.clone(),
     });
     loop {
         match engine.next_event() {
-            Event::TableDdlLoaded {
+            Event::DdlLoaded {
                 path: loaded,
                 result,
                 ..
             } if loaded == path => return result.expect("the table's DDL"),
             Event::SessionChanged { .. } => {}
-            other => panic!("expected TableDdlLoaded, got {other:?}"),
+            other => panic!("expected DdlLoaded, got {other:?}"),
         }
     }
 }
@@ -380,7 +382,7 @@ fn copies_a_sqlite_tables_ddl_from_the_catalog() {
         .child(NodeKind::Schema, "main")
         .child(NodeKind::Folder(FolderKind::Tables), "tables")
         .child(NodeKind::Table, "t");
-    let ddl = load_table_ddl(&mut engine, app.id, path);
+    let ddl = load_ddl(&mut engine, app.id, path);
     assert!(
         ddl.contains("CREATE TABLE t (id INTEGER PRIMARY KEY)"),
         "{ddl}"
@@ -427,7 +429,7 @@ fn rebuilds_a_postgres_tables_ddl_that_recreates_it() {
         .child(NodeKind::Schema, schema.clone())
         .child(NodeKind::Folder(FolderKind::Tables), "tables")
         .child(NodeKind::Table, child.name.name.clone());
-    let ddl = load_table_ddl(&mut engine, postgres.id, path);
+    let ddl = load_ddl(&mut engine, postgres.id, path);
     assert!(
         ddl.starts_with(&format!("CREATE TABLE {schema}.{} (", child.name.name)),
         "{ddl}"
@@ -508,6 +510,384 @@ fn the_history_keeps_ddl_apart_from_catalog_queries() {
     match engine.next_event() {
         Event::HistoryFound { result, .. } => assert_eq!(result.unwrap(), vec![]),
         other => panic!("expected the history, got {other:?}"),
+    }
+    engine.shut_down();
+}
+
+/// Every data source the round trips run on: SQLite and an in-memory DuckDB, and each test
+/// server that is set, with its password.
+fn every_engine() -> Vec<(DataSource, Option<Password>)> {
+    let mut sources = vec![(
+        data_source(
+            "duckdb",
+            ConnectionConfig::DuckDb(DuckDbConfig {
+                database: DuckDbDatabase::InMemory,
+            }),
+        ),
+        None,
+    )];
+    if let Some(server) = postgres_test_server() {
+        sources.push((
+            data_source("postgres", ConnectionConfig::Postgres(server.config)),
+            Some(server.password),
+        ));
+    }
+    for (config, password) in mysql_test_servers() {
+        sources.push((
+            data_source("mysql", ConnectionConfig::Mysql(config)),
+            Some(password),
+        ));
+    }
+    if let Some((config, password)) = sqlserver_test_server() {
+        sources.push((
+            data_source("sqlserver", ConnectionConfig::SqlServer(config)),
+            Some(password),
+        ));
+    }
+    if let Some((config, password)) = clickhouse_test_server() {
+        sources.push((
+            data_source("clickhouse", ConnectionConfig::ClickHouse(config)),
+            Some(password),
+        ));
+    }
+    sources
+}
+
+/// A name no other test run uses, from the data source's id.
+fn unique(prefix: &str, data_source: &DataSource) -> String {
+    let id = data_source.id.to_string().replace('-', "");
+    format!("{prefix}_{}", &id[..8])
+}
+
+/// Where unqualified names go: the connection's default schema, under its database where
+/// the tree lists databases.
+fn default_schema(data_source: &DataSource) -> CatalogPath {
+    let root = match data_source.config.database() {
+        Some(database) => CatalogPath::root().child(NodeKind::Database, database),
+        None => CatalogPath::root(),
+    };
+    root.child(NodeKind::Schema, data_source.config.default_schema())
+}
+
+fn view_path(data_source: &DataSource, kind: ViewKind, name: &str) -> CatalogPath {
+    let (folder, node) = match kind {
+        ViewKind::View => (FolderKind::Views, NodeKind::View),
+        ViewKind::Materialized => (FolderKind::MaterializedViews, NodeKind::MaterializedView),
+    };
+    default_schema(data_source)
+        .child(NodeKind::Folder(folder), folder.label())
+        .child(node, name)
+}
+
+fn load_definition(
+    engine: &mut TestEngine,
+    data_source: DataSourceId,
+    path: CatalogPath,
+) -> String {
+    engine.send(Command::LoadDefinition {
+        id: data_source,
+        path: path.clone(),
+    });
+    loop {
+        match engine.next_event() {
+            Event::DefinitionLoaded {
+                path: loaded,
+                result,
+                ..
+            } if loaded == path => return result.expect("the definition"),
+            Event::SessionChanged { .. } => {}
+            other => panic!("expected DefinitionLoaded, got {other:?}"),
+        }
+    }
+}
+
+fn load_children(
+    engine: &mut TestEngine,
+    data_source: DataSourceId,
+    path: CatalogPath,
+) -> Vec<CatalogNode> {
+    engine.send(Command::LoadChildren {
+        id: data_source,
+        path: path.clone(),
+    });
+    loop {
+        match engine.next_event() {
+            Event::ChildrenLoaded {
+                path: loaded,
+                result,
+                ..
+            } if loaded == path => return result.expect("the children"),
+            Event::SessionChanged { .. } => {}
+            other => panic!("expected ChildrenLoaded, got {other:?}"),
+        }
+    }
+}
+
+/// Applies one operation, built for the data source's dialect.
+fn apply_operation(
+    engine: &mut TestEngine,
+    data_source: &DataSource,
+    operation: DdlOperation,
+) -> Result<(), DdlFailure> {
+    let dialect = Dialect::from(data_source.config.driver());
+    let statements = operation.statements(dialect).expect("the operation's SQL");
+    apply(engine, data_source.id, statements)
+}
+
+/// The query the catalog shows for the view at `path`, as Edit view starts from it.
+fn shown_query(engine: &mut TestEngine, data_source: &DataSource, path: CatalogPath) -> String {
+    let dialect = Dialect::from(data_source.config.driver());
+    let definition = load_definition(engine, data_source.id, path);
+    view_query(&definition, dialect)
+        .unwrap_or_else(|| panic!("{dialect:?}: no query in {definition:?}"))
+}
+
+/// Creates a view, edits its query starting from the one its definition shows, copies its
+/// DDL, renames it where the engine can, and drops it.
+fn check_view_round_trip(
+    engine: &mut TestEngine,
+    data_source: &DataSource,
+    password: Option<Password>,
+) {
+    save(engine, data_source, password);
+    let dialect = Dialect::from(data_source.config.driver());
+    let name = unique("dbdesk_view", data_source);
+    let view = ViewSpec {
+        name: ObjectName::new(None, &name),
+        kind: ViewKind::View,
+        query: "SELECT 1 AS one".to_owned(),
+        with_data: true,
+    };
+    let path = view_path(data_source, ViewKind::View, &name);
+    let created = apply_operation(engine, data_source, DdlOperation::CreateView(view.clone()));
+    assert_eq!(created, Ok(()), "{dialect:?}");
+    let shown = shown_query(engine, data_source, path.clone());
+    assert!(shown.contains('1'), "{dialect:?}: {shown}");
+
+    // The same column with another value: PostgreSQL's `CREATE OR REPLACE VIEW` refuses to
+    // rename or drop a view's columns.
+    let edited = ViewSpec {
+        query: shown.replace('1', "2"),
+        ..view.clone()
+    };
+    let replaced = apply_operation(engine, data_source, DdlOperation::ReplaceView(edited));
+    assert_eq!(replaced, Ok(()), "{dialect:?}");
+    let shown = shown_query(engine, data_source, path.clone());
+    assert!(shown.contains('2'), "{dialect:?}: {shown}");
+    let copied = load_ddl(engine, data_source.id, path);
+    assert!(copied.contains(&name), "{dialect:?}: {copied}");
+
+    let mut dropped = view.name.clone();
+    if dialect.capabilities().renames_views {
+        let new_name = format!("{name}_renamed");
+        let renamed = apply_operation(
+            engine,
+            data_source,
+            DdlOperation::RenameView {
+                view: view.name.clone(),
+                kind: ViewKind::View,
+                new_name: new_name.clone(),
+            },
+        );
+        assert_eq!(renamed, Ok(()), "{dialect:?}");
+        dropped.name = new_name;
+    }
+    let views = load_children(
+        engine,
+        data_source.id,
+        path_parent(&view_path(data_source, ViewKind::View, &dropped.name)),
+    );
+    assert!(
+        views.iter().any(|node| node.label == dropped.name),
+        "{dialect:?} lists {}",
+        dropped.name
+    );
+    let drop = DdlOperation::DropView {
+        view: dropped,
+        kind: ViewKind::View,
+        cascade: false,
+    };
+    assert_eq!(
+        apply_operation(engine, data_source, drop),
+        Ok(()),
+        "{dialect:?}"
+    );
+}
+
+fn path_parent(path: &CatalogPath) -> CatalogPath {
+    path.parent().expect("a view has a folder")
+}
+
+#[test]
+fn creates_edits_renames_and_drops_a_view_on_every_engine() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = start(dir.path());
+    let sqlite = sqlite_data_source(sqlite_database(dir.path()));
+    check_view_round_trip(&mut engine, &sqlite, None);
+    for (data_source, password) in every_engine() {
+        check_view_round_trip(&mut engine, &data_source, password);
+    }
+    engine.shut_down();
+}
+
+#[test]
+fn creates_refreshes_edits_and_drops_a_postgres_materialized_view() {
+    let Some(server) = postgres_test_server() else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = start(dir.path());
+    let postgres = data_source("postgres", ConnectionConfig::Postgres(server.config));
+    save(&mut engine, &postgres, Some(server.password));
+    let name = unique("dbdesk_matview", &postgres);
+    let view = ViewSpec {
+        name: ObjectName::new(None, &name),
+        kind: ViewKind::Materialized,
+        query: "SELECT 1 AS one".to_owned(),
+        with_data: false,
+    };
+    let path = view_path(&postgres, ViewKind::Materialized, &name);
+    let steps = [
+        DdlOperation::CreateView(view.clone()),
+        DdlOperation::RefreshMaterializedView {
+            view: view.name.clone(),
+            concurrently: false,
+        },
+        DdlOperation::ReplaceView(ViewSpec {
+            query: "SELECT 2 AS two".to_owned(),
+            with_data: true,
+            ..view.clone()
+        }),
+    ];
+    for step in steps {
+        assert_eq!(
+            apply_operation(&mut engine, &postgres, step.clone()),
+            Ok(()),
+            "{step:?}"
+        );
+    }
+    let copied = load_ddl(&mut engine, postgres.id, path);
+    assert!(
+        copied.starts_with(&format!("CREATE MATERIALIZED VIEW public.{name} AS")),
+        "{copied}"
+    );
+    assert!(copied.contains("2 AS two"), "{copied}");
+
+    let renamed = format!("{name}_renamed");
+    let steps = [
+        DdlOperation::RenameView {
+            view: view.name.clone(),
+            kind: ViewKind::Materialized,
+            new_name: renamed.clone(),
+        },
+        DdlOperation::DropView {
+            view: ObjectName::new(None, &renamed),
+            kind: ViewKind::Materialized,
+            cascade: true,
+        },
+    ];
+    for step in steps {
+        assert_eq!(
+            apply_operation(&mut engine, &postgres, step.clone()),
+            Ok(()),
+            "{step:?}"
+        );
+    }
+    engine.shut_down();
+}
+
+/// The node schemas are listed under: the data source's database, or the data source itself
+/// where its schemas are databases.
+fn schemas_parent(data_source: &DataSource) -> CatalogPath {
+    default_schema(data_source)
+        .parent()
+        .expect("a schema has a parent")
+}
+
+/// Creates a schema and a table in it, sees the schema listed, then drops it with what it
+/// holds: with `CASCADE` where the engine has it, as `DROP DATABASE` always does, and
+/// otherwise by dropping the table first, after the schema's drop was refused.
+fn check_schema_round_trip(
+    engine: &mut TestEngine,
+    data_source: &DataSource,
+    password: Option<Password>,
+) {
+    save(engine, data_source, password);
+    let dialect = Dialect::from(data_source.config.driver());
+    let capabilities = dialect.capabilities();
+    let schema = unique("dbdesk_schema", data_source);
+    let table = TableSpec {
+        name: ObjectName::new(Some(&schema), "items"),
+        columns: vec![ColumnSpec {
+            name: "id".to_owned(),
+            data_type: capabilities.common_types[0].to_owned(),
+            nullable: false,
+            default: None,
+        }],
+        primary_key: vec!["id".to_owned()],
+        unique_keys: vec![],
+        foreign_keys: vec![],
+        checks: vec![],
+    };
+    let created = apply(
+        engine,
+        data_source.id,
+        ddl_statements(
+            &[
+                DdlOperation::CreateSchema(SchemaSpec {
+                    name: schema.clone(),
+                    owner: None,
+                }),
+                DdlOperation::CreateTable(table.clone()),
+            ],
+            dialect,
+        )
+        .unwrap(),
+    );
+    assert_eq!(created, Ok(()), "{dialect:?}");
+    let listed = |engine: &mut TestEngine| {
+        load_children(engine, data_source.id, schemas_parent(data_source))
+            .iter()
+            .any(|node| node.label == schema)
+    };
+    assert!(listed(engine), "{dialect:?} lists {schema}");
+
+    let drop = |cascade| DdlOperation::DropSchema {
+        schema: schema.clone(),
+        cascade,
+    };
+    let empties_itself = capabilities.drop_schema_cascade
+        || capabilities.schema_creation == SchemaCreation::CreateDatabase;
+    if !empties_itself {
+        assert!(
+            apply_operation(engine, data_source, drop(false)).is_err(),
+            "{dialect:?} refuses to drop a schema holding a table"
+        );
+        let dropped = apply_operation(
+            engine,
+            data_source,
+            DdlOperation::DropTable {
+                table: table.name,
+                cascade: false,
+            },
+        );
+        assert_eq!(dropped, Ok(()), "{dialect:?}");
+    }
+    let dropped = apply_operation(engine, data_source, drop(capabilities.drop_schema_cascade));
+    assert_eq!(dropped, Ok(()), "{dialect:?}");
+    assert!(!listed(engine), "{dialect:?} no longer lists {schema}");
+}
+
+/// MySQL's and MariaDB's test user may only use its own database, so it can't create
+/// another; their `CREATE DATABASE` is covered by the builder's golden tests.
+#[test]
+fn creates_lists_and_drops_a_schema_with_what_it_holds() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = start(dir.path());
+    for (data_source, password) in every_engine() {
+        if !matches!(data_source.config, ConnectionConfig::Mysql(_)) {
+            check_schema_round_trip(&mut engine, &data_source, password);
+        }
     }
     engine.shut_down();
 }

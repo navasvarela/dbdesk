@@ -192,11 +192,11 @@ pub enum Command {
         data_source: DataSourceId,
         statements: Vec<String>,
     },
-    /// Loads the `CREATE TABLE` statement of the table at `path`, on the explorer's connection:
-    /// the catalog's definition where the database keeps one, or rebuilt from the table's
-    /// description and its constraints where it doesn't (PostgreSQL). Answered by
-    /// [`Event::TableDdlLoaded`].
-    LoadTableDdl {
+    /// Loads the statement that creates the table or view at `path`, for Copy DDL, on the
+    /// explorer's connection: the catalog's definition where the database keeps one, or for a
+    /// table where it doesn't (PostgreSQL), one rebuilt from the table's description and its
+    /// constraints. Answered by [`Event::DdlLoaded`].
+    LoadDdl {
         data_source: DataSourceId,
         path: CatalogPath,
     },
@@ -359,8 +359,8 @@ pub enum Event {
         data_source: DataSourceId,
         result: Result<(), DdlFailure>,
     },
-    /// The answer to [`Command::LoadTableDdl`].
-    TableDdlLoaded {
+    /// The answer to [`Command::LoadDdl`].
+    DdlLoaded {
         data_source: DataSourceId,
         path: CatalogPath,
         result: Result<String, String>,
