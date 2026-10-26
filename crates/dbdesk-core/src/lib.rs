@@ -30,4 +30,4 @@ pub use placeholder::{
     ExpandError, PlaceholderError, Setting, Variables, expand, expand_path, has_placeholder,
 };
 pub use quoting::Quoting;
-pub use table::{Identifier, RelationName, TableDescription};
+pub use table::{ColumnDescription, Identifier, RelationName, TableDescription};

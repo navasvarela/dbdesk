@@ -11,7 +11,7 @@ use dbdesk_core::{
 };
 
 use super::{SessionContext, SessionOwner, SessionRequest};
-use crate::{EditFailure, Event, RunOutcome, StatementCheck, StatementFailure};
+use crate::{DdlFailure, EditFailure, Event, RunOutcome, StatementCheck, StatementFailure};
 
 /// Why the connection was lost, once a call has reported [`DriverError::Lost`]. Shared with
 /// the cursors the connection hands out, since a cursor may be what finds out.
@@ -182,6 +182,19 @@ pub(super) fn refuse(context: &SessionContext, request: SessionRequest, reason: 
         (SessionRequest::DescribeTable(table), _) => Event::TableDescribed {
             data_source: id,
             table,
+            result: Err(message),
+        },
+        (SessionRequest::ApplyDdl(_), _) => Event::DdlApplied {
+            data_source: id,
+            result: Err(DdlFailure {
+                statement: None,
+                message,
+                applied: 0,
+            }),
+        },
+        (SessionRequest::TableDdl(path), _) => Event::TableDdlLoaded {
+            data_source: id,
+            path,
             result: Err(message),
         },
         // Rows to fetch were the lost connection's; the explorer never edits or ends a

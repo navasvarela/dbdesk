@@ -5,7 +5,7 @@
 //! table's rows read-only.
 
 use clickhouse::Client;
-use dbdesk_core::{DriverError, RelationName, TableDescription};
+use dbdesk_core::{ColumnDescription, DriverError, RelationName, TableDescription};
 
 use crate::CLICKHOUSE_QUOTING;
 use crate::execution::rows;
@@ -54,7 +54,7 @@ pub(crate) async fn describe_table(
     let columns = rows(session, &format!("DESCRIBE TABLE {quoted}"), &[])
         .await?
         .into_iter()
-        .filter_map(|row| row.into_iter().next().flatten())
+        .filter_map(described_column)
         .collect();
     Ok(Some(TableDescription {
         schema: database,
@@ -62,4 +62,27 @@ pub(crate) async fn describe_table(
         columns,
         primary_key: Vec::new(),
     }))
+}
+
+/// A row of `DESCRIBE TABLE`: the name, type, kind of default (`DEFAULT`, `MATERIALIZED`,
+/// `ALIAS` or empty) and its expression, then comments and codecs. A column computed by
+/// `MATERIALIZED` or `ALIAS` has no default to report.
+fn described_column(row: Vec<Option<String>>) -> Option<ColumnDescription> {
+    let mut fields = row.into_iter();
+    let name = fields.next().flatten()?;
+    let data_type = fields.next().flatten().unwrap_or_default();
+    let default_kind = fields.next().flatten();
+    let expression = fields.next().flatten();
+    Some(ColumnDescription {
+        nullable: is_nullable(&data_type),
+        default: expression.filter(|_| default_kind.as_deref() == Some("DEFAULT")),
+        name,
+        data_type,
+    })
+}
+
+/// ClickHouse's types hold NULL only when wrapped in `Nullable`, which `LowCardinality` may
+/// wrap in turn.
+fn is_nullable(data_type: &str) -> bool {
+    data_type.starts_with("Nullable(") || data_type.starts_with("LowCardinality(Nullable(")
 }

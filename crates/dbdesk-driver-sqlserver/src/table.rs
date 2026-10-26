@@ -5,7 +5,7 @@
 //! lives in `tempdb` under a name padded with underscores and a suffix that tells sessions'
 //! tables apart, so it is looked up there and reported under the name statements use.
 
-use dbdesk_core::{DriverError, RelationName, TableDescription};
+use dbdesk_core::{ColumnDescription, DriverError, RelationName, TableDescription};
 
 use crate::{SQL_SERVER_QUOTING, SqlClient, column, connection_error};
 
@@ -45,15 +45,7 @@ pub(crate) async fn describe_table(
     let Some((schema, stored_name)) = names else {
         return Ok(None);
     };
-    let columns = names_of(
-        client,
-        &format!(
-            "SELECT name FROM {catalog}.columns \
-             WHERE object_id = OBJECT_ID(@P1, N'U') ORDER BY column_id"
-        ),
-        &object,
-    )
-    .await?;
+    let columns = columns(client, catalog, &object).await?;
     let primary_key = names_of(
         client,
         &format!(
@@ -84,6 +76,53 @@ fn statement_name(stored: &str) -> String {
         }
         _ => stored.to_owned(),
     }
+}
+
+/// Each column's type is written as a declaration would: a length for character and binary
+/// types (half the bytes for `nchar` and `nvarchar`, which store two per character, and `max`
+/// for `-1`), precision and scale for `decimal` and `numeric`.
+async fn columns(
+    client: &mut SqlClient,
+    catalog: &str,
+    object: &str,
+) -> Result<Vec<ColumnDescription>, DriverError> {
+    let sql = format!(
+        "SELECT c.name, TYPE_NAME(c.user_type_id) + CASE \
+           WHEN TYPE_NAME(c.system_type_id) IN ('varchar', 'char', 'varbinary', 'binary') \
+             THEN '(' + IIF(c.max_length = -1, 'max', CAST(c.max_length AS varchar(5))) + ')' \
+           WHEN TYPE_NAME(c.system_type_id) IN ('nvarchar', 'nchar') \
+             THEN '(' + IIF(c.max_length = -1, 'max', CAST(c.max_length / 2 AS varchar(5))) + ')' \
+           WHEN TYPE_NAME(c.system_type_id) IN ('decimal', 'numeric') \
+             THEN '(' + CAST(c.precision AS varchar(3)) + ', ' + CAST(c.scale AS varchar(3)) + ')' \
+           ELSE '' END, \
+         CAST(c.is_nullable AS int), d.definition \
+         FROM {catalog}.columns c \
+         LEFT JOIN {catalog}.default_constraints d \
+           ON d.parent_object_id = c.object_id AND d.parent_column_id = c.column_id \
+         WHERE c.object_id = OBJECT_ID(@P1, N'U') ORDER BY c.column_id"
+    );
+    let rows = client
+        .query(sql.as_str(), &[&object])
+        .await
+        .map_err(connection_error)?
+        .into_first_result()
+        .await
+        .map_err(connection_error)?;
+    rows.iter()
+        .map(|row| {
+            let missing = |what: &str| connection_error(format!("a column without {what}"));
+            Ok(ColumnDescription {
+                name: column::<&str>(row, 0)
+                    .ok_or_else(|| missing("a name"))?
+                    .to_owned(),
+                data_type: column::<&str>(row, 1)
+                    .ok_or_else(|| missing("a type"))?
+                    .to_owned(),
+                nullable: column::<i32>(row, 2) == Some(1),
+                default: column::<&str>(row, 3).map(str::to_owned),
+            })
+        })
+        .collect()
 }
 
 async fn names_of(

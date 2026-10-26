@@ -4,7 +4,7 @@
 //! Without a schema, a name means the session's temporary table of that name if there is one,
 //! and otherwise the table in the current schema of the current database.
 
-use dbdesk_core::{DriverError, Identifier, RelationName, TableDescription};
+use dbdesk_core::{ColumnDescription, DriverError, Identifier, RelationName, TableDescription};
 
 use crate::connection_error;
 
@@ -50,12 +50,7 @@ pub(crate) fn describe_table(
         row.get(2).map_err(connection_error)?,
     ];
     let names: Vec<&str> = found.iter().map(String::as_str).collect();
-    let columns = names_of(
-        connection,
-        "SELECT column_name FROM duckdb_columns() \
-         WHERE database_name = ? AND schema_name = ? AND table_name = ? ORDER BY column_index",
-        &names,
-    )?;
+    let columns = columns(connection, &names)?;
     let primary_key = names_of(
         connection,
         "SELECT unnest(constraint_column_names) FROM duckdb_constraints() \
@@ -80,6 +75,30 @@ fn names_of(
     let mut statement = connection.prepare(sql).map_err(connection_error)?;
     let rows = statement
         .query_map(duckdb::params_from_iter(names), |row| row.get(0))
+        .map_err(connection_error)?;
+    rows.collect::<Result<_, _>>().map_err(connection_error)
+}
+
+fn columns(
+    connection: &duckdb::Connection,
+    names: &[&str],
+) -> Result<Vec<ColumnDescription>, DriverError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT column_name, data_type, is_nullable, column_default FROM duckdb_columns() \
+             WHERE database_name = ? AND schema_name = ? AND table_name = ? \
+             ORDER BY column_index",
+        )
+        .map_err(connection_error)?;
+    let rows = statement
+        .query_map(duckdb::params_from_iter(names), |row| {
+            Ok(ColumnDescription {
+                name: row.get(0)?,
+                data_type: row.get(1)?,
+                nullable: row.get(2)?,
+                default: row.get(3)?,
+            })
+        })
         .map_err(connection_error)?;
     rows.collect::<Result<_, _>>().map_err(connection_error)
 }

@@ -43,12 +43,32 @@ pub struct TableDescription {
     pub schema: String,
     pub name: String,
     /// In table order.
-    pub columns: Vec<String>,
+    pub columns: Vec<ColumnDescription>,
     /// In key order. Empty if the table has none.
     pub primary_key: Vec<String>,
 }
 
+/// One column of a described table, as the database reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ColumnDescription {
+    pub name: String,
+    /// As the database spells the type, which may differ from how it was written:
+    /// `character varying(20)` for `varchar(20)` on PostgreSQL, `int` for `integer` on MySQL.
+    pub data_type: String,
+    pub nullable: bool,
+    /// The default's expression as the database keeps it, e.g. `nextval('orders_id_seq'::regclass)`.
+    pub default: Option<String>,
+}
+
 impl TableDescription {
+    pub fn has_column(&self, name: &str) -> bool {
+        self.columns.iter().any(|column| column.name == name)
+    }
+
+    pub fn column_names(&self) -> impl Iterator<Item = &str> {
+        self.columns.iter().map(|column| column.name.as_str())
+    }
+
     /// The table's name for generated SQL: schema-qualified and always quoted, so it means
     /// exactly this table whatever the search path and whatever the names spell.
     pub fn qualified_name(&self, quoting: Quoting) -> String {
