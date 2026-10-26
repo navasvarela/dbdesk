@@ -30,9 +30,12 @@ pub use classify::{
 };
 pub use ddl::{
     Check, ColumnSpec, DdlError, DdlOperation, ForeignKey, IndexMethod, IndexSpec, ObjectName,
-    ReferentialAction, TableSpec, UniqueKey, ddl_statements, quote_name,
+    ReferentialAction, SchemaSpec, TableSpec, UniqueKey, ViewKind, ViewSpec, ddl_statements,
+    quote_name, view_query,
 };
-pub use dialect::{Capabilities, Dialect, ExplainSetting, Savepoint, TableChange};
+pub use dialect::{
+    Capabilities, Dialect, ExplainSetting, Savepoint, SchemaCreation, TableChange, ViewReplacement,
+};
 pub use format::{FormatError, FormatOptions, Formatted, KeywordCase, format_ranges, same_meaning};
 pub use keywords::{is_keyword, keywords};
 pub use lexer::{Token, TokenKind, first_word, tokenize};

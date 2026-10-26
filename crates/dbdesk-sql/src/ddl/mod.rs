@@ -8,9 +8,13 @@
 
 mod index;
 mod reserved;
+mod schema;
 mod table;
 #[cfg(test)]
 mod tests;
+mod view;
+
+pub use view::view_query;
 
 use crate::Dialect;
 
@@ -175,6 +179,54 @@ impl IndexMethod {
     }
 }
 
+/// A new view, or an existing view's new query.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ViewSpec {
+    pub name: ObjectName,
+    pub kind: ViewKind,
+    /// The `SELECT`, as typed; a `;` ending it is left out.
+    pub query: String,
+    /// For a materialized view, whether creating it also runs the query to fill it (the
+    /// default), or leaves it empty until it is refreshed (`WITH NO DATA`). A plain view
+    /// stores no rows, so this changes nothing for it.
+    pub with_data: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ViewKind {
+    /// A saved query, run whenever the view is read.
+    View,
+    /// A query whose rows are stored, and run again only when the view is refreshed; see
+    /// [`Capabilities::materialized_views`](crate::Capabilities::materialized_views).
+    Materialized,
+}
+
+impl ViewKind {
+    /// How DDL names this kind of object: `VIEW` or `MATERIALIZED VIEW`.
+    fn keyword(self) -> &'static str {
+        match self {
+            Self::View => "VIEW",
+            Self::Materialized => "MATERIALIZED VIEW",
+        }
+    }
+
+    fn noun(self) -> &'static str {
+        match self {
+            Self::View => "view",
+            Self::Materialized => "materialized view",
+        }
+    }
+}
+
+/// A new schema; see [`Capabilities::schema_creation`](crate::Capabilities::schema_creation).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchemaSpec {
+    pub name: String,
+    /// The role that owns it, where the dialect has one; `None` leaves it to the user who
+    /// creates it.
+    pub owner: Option<String>,
+}
+
 /// One change to the database, which may take several statements.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DdlOperation {
@@ -197,6 +249,36 @@ pub enum DdlOperation {
         table: ObjectName,
         /// In the table's schema.
         index: String,
+    },
+    CreateView(ViewSpec),
+    /// Gives an existing view the spec's query; see
+    /// [`Capabilities::view_replacement`](crate::Capabilities::view_replacement).
+    ReplaceView(ViewSpec),
+    RenameView {
+        view: ObjectName,
+        kind: ViewKind,
+        /// The view stays in its schema.
+        new_name: String,
+    },
+    /// Runs a materialized view's query again and stores its rows. `concurrently` keeps the
+    /// old rows readable meanwhile, which PostgreSQL allows only for a view with a unique
+    /// index.
+    RefreshMaterializedView {
+        view: ObjectName,
+        concurrently: bool,
+    },
+    DropView {
+        view: ObjectName,
+        kind: ViewKind,
+        /// Also drop what depends on the view, where the dialect can.
+        cascade: bool,
+    },
+    CreateSchema(SchemaSpec),
+    DropSchema {
+        schema: String,
+        /// Also drop what the schema holds, where the dialect can; it refuses a schema that
+        /// isn't empty otherwise.
+        cascade: bool,
     },
 }
 
@@ -225,6 +307,8 @@ pub enum DdlError {
     ForeignKeyColumnCount,
     #[error("A check needs a condition.")]
     EmptyCheck,
+    #[error("The {0} needs a query.")]
+    EmptyQuery(&'static str),
     #[error("{dialect} has no {what}.", dialect = .dialect.display_name())]
     Unsupported {
         what: &'static str,
@@ -253,6 +337,25 @@ impl DdlOperation {
             Self::CreateIndex(spec) => index::create(spec, dialect).map(|sql| vec![sql]),
             Self::DropIndex { table, index } => {
                 index::drop(table, index, dialect).map(|sql| vec![sql])
+            }
+            Self::CreateView(spec) => view::create(spec, dialect).map(|sql| vec![sql]),
+            Self::ReplaceView(spec) => view::replace(spec, dialect),
+            Self::RenameView {
+                view,
+                kind,
+                new_name,
+            } => view::rename_view(view, *kind, new_name, dialect).map(|sql| vec![sql]),
+            Self::RefreshMaterializedView { view, concurrently } => {
+                view::refresh(view, *concurrently, dialect).map(|sql| vec![sql])
+            }
+            Self::DropView {
+                view,
+                kind,
+                cascade,
+            } => view::drop(view, *kind, *cascade, dialect).map(|sql| vec![sql]),
+            Self::CreateSchema(spec) => schema::create(spec, dialect).map(|sql| vec![sql]),
+            Self::DropSchema { schema, cascade } => {
+                schema::drop(schema, *cascade, dialect).map(|sql| vec![sql])
             }
         }
     }
@@ -284,6 +387,32 @@ pub fn quote_name(dialect: Dialect, name: &str) -> String {
         bare
     } else {
         quoting.identifier(name)
+    }
+}
+
+/// Renames a table or view in its schema. `object` is how `ALTER` names the kind of object
+/// (`TABLE`, `VIEW`), on the dialects that rename with `ALTER … RENAME TO`.
+fn rename(object: &str, old: &ObjectName, new_name: &str, dialect: Dialect) -> String {
+    let old_sql = old.to_sql(dialect);
+    match dialect {
+        Dialect::Postgres | Dialect::Sqlite | Dialect::DuckDb => format!(
+            "ALTER {object} {old_sql} RENAME TO {}",
+            quote_name(dialect, new_name)
+        ),
+        Dialect::Mysql | Dialect::ClickHouse => format!(
+            "RENAME TABLE {old_sql} TO {}",
+            old.sibling(new_name).to_sql(dialect)
+        ),
+        // `sp_rename` reads its first argument as a (possibly quoted) name, and takes the
+        // second literally: brackets there would become part of the name.
+        Dialect::SqlServer => {
+            let quoting = dialect.quoting();
+            format!(
+                "EXEC sp_rename {}, {}",
+                quoting.string_literal(&old_sql),
+                quoting.string_literal(new_name)
+            )
+        }
     }
 }
 
