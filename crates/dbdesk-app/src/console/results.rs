@@ -183,7 +183,8 @@ fn grid_toolbar(
     toolbar: &Toolbar<'_>,
     actions: &mut Vec<ConsoleAction>,
 ) -> bool {
-    ui.horizontal(|ui| {
+    // Wrapped: with editing's buttons and counts, it outgrows a narrow console.
+    ui.horizontal_wrapped(|ui| {
         let in_database = statement.grid.is_in_database();
         let hint = if in_database {
             "Filter every row, then Enter"

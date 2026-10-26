@@ -215,7 +215,12 @@ impl CsvImportDialog {
         let choosing = matches!(self.state, State::Choosing);
         let mut action = None;
         ui.horizontal(|ui| {
-            ui.label(RichText::new(self.file.display().to_string()).color(palette.text_weak));
+            let name = self.file.file_name().map_or_else(
+                || self.file.display().to_string(),
+                |name| name.to_string_lossy().into_owned(),
+            );
+            ui.label(RichText::new(name).color(palette.text_weak))
+                .on_hover_text(self.file.display().to_string());
             if ui
                 .add_enabled(choosing, Button::new("Choose file…"))
                 .clicked()
