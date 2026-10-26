@@ -47,7 +47,7 @@ pub(crate) enum SessionRequest {
     DescribeTable(RelationName),
     ApplyEdits(Vec<String>),
     ApplyDdl(Vec<String>),
-    TableDdl(CatalogPath),
+    Ddl(CatalogPath),
     /// Prepares statements without running them; see [`crate::Command::ValidateStatements`].
     Validate(Vec<String>),
 }
@@ -573,8 +573,8 @@ impl Worker<'_> {
             }
             SessionRequest::ApplyEdits(statements) => edits::apply(self, &statements).await,
             SessionRequest::ApplyDdl(statements) => ddl::apply(self, &statements).await,
-            SessionRequest::TableDdl(path) => {
-                let work = ddl::table_ddl(self.context, &mut *self.connection, path);
+            SessionRequest::Ddl(path) => {
+                let work = ddl::load(self.context, &mut *self.connection, path);
                 self.signals.guard(work, None, self.cancel_handle).await
             }
             SessionRequest::FetchMore(_) | SessionRequest::Validate(_) => Ok(()),

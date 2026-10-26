@@ -267,7 +267,7 @@ impl DbDeskApp {
 
     /// Puts the DDL Copy DDL asked for on the clipboard once it arrives.
     fn apply_to_copied_ddl(&mut self, event: &Event) {
-        let Event::TableDdlLoaded {
+        let Event::DdlLoaded {
             data_source,
             path,
             result,
@@ -547,7 +547,7 @@ impl DbDeskApp {
             }
             ExplorerAction::CopyDdl(data_source, path) => {
                 self.copying_ddl = Some((data_source, path.clone()));
-                self.send(Command::LoadTableDdl { data_source, path });
+                self.send(Command::LoadDdl { data_source, path });
             }
             ExplorerAction::Helper(id, helper) => {
                 if let Some(entry) = self.state.data_source(id) {

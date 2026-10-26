@@ -259,8 +259,8 @@ impl Engine {
                 data_source,
                 statements,
             } => self.request(data_source, SessionRequest::ApplyDdl(statements)),
-            Command::LoadTableDdl { data_source, path } => {
-                self.request(data_source, SessionRequest::TableDdl(path));
+            Command::LoadDdl { data_source, path } => {
+                self.request(data_source, SessionRequest::Ddl(path));
             }
             Command::ApplyEdits {
                 console,

@@ -170,7 +170,7 @@ impl AppState {
             | Event::TableDescribed { .. }
             | Event::EditsApplied { .. }
             | Event::DdlApplied { .. }
-            | Event::TableDdlLoaded { .. }
+            | Event::DdlLoaded { .. }
             | Event::TransactionChanged { .. }
             | Event::TransactionEnded { .. }
             | Event::ConsoleSaveFailed { .. }

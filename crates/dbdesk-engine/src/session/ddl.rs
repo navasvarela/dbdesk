@@ -1,5 +1,5 @@
 //! The object helpers' DDL on the explorer's connection: applying generated statements, and
-//! loading a table's `CREATE TABLE` for Copy DDL.
+//! loading a table's or view's `CREATE` statement for Copy DDL.
 
 use std::time::Instant;
 
@@ -136,13 +136,14 @@ async fn run_each(
 /// (PostgreSQL 18 lists those as constraints too) in its columns.
 const COPIED_CONSTRAINTS: &[&str] = &["foreign key", "unique", "check", "exclusion"];
 
-/// Reports [`Event::TableDdlLoaded`] for the table at `path`.
-pub(super) async fn table_ddl(
+/// Reports [`Event::DdlLoaded`] for the table or view at `path`.
+pub(super) async fn load(
     context: &SessionContext,
     connection: &mut dyn Connection,
     path: CatalogPath,
 ) {
-    let result = if context.dialect().capabilities().rebuilds_table_ddl {
+    let is_table = path.last().map(|segment| segment.kind) == Some(NodeKind::Table);
+    let result = if is_table && context.dialect().capabilities().rebuilds_table_ddl {
         rebuild(context, connection, &path).await
     } else {
         connection
@@ -153,7 +154,7 @@ pub(super) async fn table_ddl(
     if let Err(error) = &result {
         tracing::warn!(data_source = %context.name(), "could not load the DDL of {path}: {error}");
     }
-    context.send(Event::TableDdlLoaded {
+    context.send(Event::DdlLoaded {
         data_source: context.data_source.id,
         path,
         result,

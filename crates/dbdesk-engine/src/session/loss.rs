@@ -192,7 +192,7 @@ pub(super) fn refuse(context: &SessionContext, request: SessionRequest, reason: 
                 applied: 0,
             }),
         },
-        (SessionRequest::TableDdl(path), _) => Event::TableDdlLoaded {
+        (SessionRequest::Ddl(path), _) => Event::DdlLoaded {
             data_source: id,
             path,
             result: Err(message),
