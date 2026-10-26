@@ -156,9 +156,25 @@ impl HistoryFile {
         let mut connection = rusqlite::Connection::open(&self.path).map_err(open_error)?;
         connection.busy_timeout(BUSY_TIMEOUT).map_err(open_error)?;
         switch_to_wal(&connection).map_err(open_error)?;
+        commit_without_syncing(&connection).map_err(open_error)?;
         migrate(&mut connection).map_err(open_error)?;
         Ok(History { connection })
     }
+}
+
+/// Commits append to the WAL and return without waiting for the disk (`synchronous =
+/// NORMAL`); only checkpoints sync. If the app or `dbdesk mcp` crashes, nothing is lost; a
+/// power cut may lose the last few statements recorded; the file is never corrupted.
+///
+/// With the default (`FULL`) every commit holds the write lock through a sync, which takes
+/// several milliseconds on Windows. SQLite's busy handler polls instead of queueing, so while
+/// one process records statements back to back (a script, or the test's 200 rows), the other
+/// never gets in between two commits and waits out the whole run. The wait was in `migrate`,
+/// and once the run lasted longer than [`BUSY_TIMEOUT`], `open` failed with `SQLITE_BUSY`. That
+/// was `tests::two_processes_write_at_once` failing on Windows CI. Without the sync a commit
+/// takes microseconds, and so does the wait.
+fn commit_without_syncing(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
+    connection.pragma_update(None, "synchronous", "NORMAL")
 }
 
 /// Puts the file in WAL mode. Persistent: once one process switches the file, every later
