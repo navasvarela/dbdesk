@@ -4,7 +4,7 @@
 use dbdesk_core::SafetyLevel;
 use dbdesk_engine::DdlFailure;
 use dbdesk_sql::DdlError;
-use egui::{Align, Id, Layout, Modal, ScrollArea, TextBuffer, TextEdit, Ui};
+use egui::{Align, Id, Layout, Modal, ScrollArea, TextEdit, Ui};
 
 use super::Target;
 use crate::console::highlight::{self, Marks};
@@ -227,13 +227,8 @@ fn execute_disabled_reason(target: &Target, confirmed: bool, running: bool) -> S
 
 /// The SQL, highlighted as the console highlights it, selectable but not editable.
 fn sql(ui: &mut Ui, target: &Target, text: &str) {
-    let dialect = target.dialect;
     let marks = Marks::default();
-    let mut layouter = |ui: &Ui, text: &dyn TextBuffer, wrap_width: f32| {
-        let mut job = highlight::layout_job(text.as_str(), dialect, &marks, ui.style());
-        job.wrap.max_width = wrap_width;
-        ui.fonts_mut(|fonts| fonts.layout_job(job))
-    };
+    let mut layouter = highlight::layouter(target.dialect, &marks);
     ScrollArea::vertical()
         .id_salt("object_dialog_sql")
         .max_height(SQL_HEIGHT)

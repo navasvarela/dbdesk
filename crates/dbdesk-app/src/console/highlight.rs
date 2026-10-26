@@ -2,10 +2,11 @@
 //! what looks like a string is exactly what the splitter treats as one.
 
 use std::ops::Range;
+use std::sync::Arc;
 
 use dbdesk_sql::{Dialect, TokenKind, is_keyword, tokenize};
 use egui::text::LayoutJob;
-use egui::{FontId, Stroke, Style, TextFormat, TextStyle};
+use egui::{FontId, Galley, Stroke, Style, TextBuffer, TextFormat, TextStyle, Ui};
 
 use crate::theme::SyntaxColors;
 
@@ -21,6 +22,19 @@ pub struct Marks {
     pub error: Option<Range<usize>>,
     /// Shaded: the statement the cursor is in.
     pub current_statement: Option<Range<usize>>,
+}
+
+/// A `TextEdit` layouter that highlights SQL as [`layout_job`] does, wrapping at the
+/// editor's width.
+pub fn layouter(
+    dialect: Dialect,
+    marks: &Marks,
+) -> impl FnMut(&Ui, &dyn TextBuffer, f32) -> Arc<Galley> + '_ {
+    move |ui, text, wrap_width| {
+        let mut job = layout_job(text.as_str(), dialect, marks, ui.style());
+        job.wrap.max_width = wrap_width;
+        ui.fonts_mut(|fonts| fonts.layout_job(job))
+    }
 }
 
 /// Lays out `text` with SQL colours and the `marks`.

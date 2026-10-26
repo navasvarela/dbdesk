@@ -59,7 +59,7 @@ pub enum ExplorerAction {
     MoveToProject(DataSourceId, Option<ProjectId>),
     /// Opens an object helper's dialog on the data source.
     Helper(DataSourceId, Helper),
-    /// Copies the `CREATE TABLE` statement of the table at the path.
+    /// Copies the statement that creates the table or view at the path.
     CopyDdl(DataSourceId, CatalogPath),
 }
 
@@ -74,6 +74,16 @@ pub enum Helper {
     /// On a table, or its indexes folder.
     NewIndex(CatalogPath),
     DropIndex(CatalogPath),
+    /// On a schema, or its views folder.
+    NewView(CatalogPath),
+    /// On a schema, or its views or materialized views folder.
+    NewMaterializedView(CatalogPath),
+    /// On a view or a materialized view, as are the next two.
+    EditView(CatalogPath),
+    RenameView(CatalogPath),
+    DropView(CatalogPath),
+    /// On a materialized view.
+    RefreshView(CatalogPath),
 }
 
 /// The explorer's own view settings.
@@ -779,8 +789,22 @@ fn helpers_menu(
     let mut new: Vec<(&str, &str, Helper)> = Vec::new();
     let mut object: Vec<(&str, &str, Helper)> = Vec::new();
     match node.kind() {
-        Some(NodeKind::Schema | NodeKind::Folder(FolderKind::Tables)) => {
+        Some(NodeKind::Schema) => {
             new.push((icons::TABLE, "Table…", Helper::NewTable(path.clone())));
+            new.extend(new_views(path, capabilities));
+        }
+        Some(NodeKind::Folder(FolderKind::Tables)) => {
+            new.push((icons::TABLE, "Table…", Helper::NewTable(path.clone())));
+        }
+        Some(NodeKind::Folder(FolderKind::Views)) => new.extend(new_views(path, capabilities)),
+        Some(NodeKind::Folder(FolderKind::MaterializedViews))
+            if capabilities.materialized_views =>
+        {
+            new.push((
+                icons::STACK,
+                "Materialized view…",
+                Helper::NewMaterializedView(path.clone()),
+            ));
         }
         Some(NodeKind::Folder(FolderKind::Indexes)) if capabilities.indexes && on_table(path) => {
             new.push((icons::LIST_DASHES, "Index…", Helper::NewIndex(path.clone())));
@@ -812,10 +836,22 @@ fn helpers_menu(
         {
             object.push((icons::TRASH, "Drop index…", Helper::DropIndex(path.clone())));
         }
+        Some(NodeKind::View) => object.extend(view_actions(path, capabilities)),
+        Some(NodeKind::MaterializedView) if capabilities.materialized_views => {
+            object.push((
+                icons::ARROWS_CLOCKWISE,
+                "Refresh…",
+                Helper::RefreshView(path.clone()),
+            ));
+            object.extend(view_actions(path, capabilities));
+        }
         _ => {}
     }
-    let copies_ddl = node.kind() == Some(NodeKind::Table)
-        && (node.has_definition || capabilities.rebuilds_table_ddl);
+    let copies_ddl = match node.kind() {
+        Some(NodeKind::Table) => node.has_definition || capabilities.rebuilds_table_ddl,
+        Some(NodeKind::View | NodeKind::MaterializedView) => node.has_definition,
+        _ => false,
+    };
     if copies_ddl && widgets::menu_item(ui, icons::COPY, "Copy DDL").clicked() {
         actions.push(ExplorerAction::CopyDdl(tree.id, path.clone()));
     }
@@ -829,6 +865,44 @@ fn helpers_menu(
         widgets::name(menu.response, WidgetType::Button, "New", true);
     }
     helper_items(ui, tree.id, object, actions);
+}
+
+/// New view, and New materialized view where the dialect has them, in the schema at `path`
+/// or the schema whose views folder that is.
+fn new_views(
+    path: &CatalogPath,
+    capabilities: &Capabilities,
+) -> Vec<(&'static str, &'static str, Helper)> {
+    let mut items = vec![(icons::EYE, "View…", Helper::NewView(path.clone()))];
+    if capabilities.materialized_views {
+        items.push((
+            icons::STACK,
+            "Materialized view…",
+            Helper::NewMaterializedView(path.clone()),
+        ));
+    }
+    items
+}
+
+/// What can be done to the view or materialized view at `path`.
+fn view_actions(
+    path: &CatalogPath,
+    capabilities: &Capabilities,
+) -> Vec<(&'static str, &'static str, Helper)> {
+    let mut items = vec![(
+        icons::PENCIL_SIMPLE,
+        "Edit…",
+        Helper::EditView(path.clone()),
+    )];
+    if capabilities.renames_views {
+        items.push((
+            icons::PENCIL_SIMPLE,
+            "Rename…",
+            Helper::RenameView(path.clone()),
+        ));
+    }
+    items.push((icons::TRASH, "Drop…", Helper::DropView(path.clone())));
+    items
 }
 
 /// Whether `folder` is a table's own, rather than a view's.
