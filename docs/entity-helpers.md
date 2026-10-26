@@ -1,12 +1,14 @@
 # Creating and changing database objects
 
-Status: **planned**, nothing built yet. Proposed on 2026-10-23.
+Status: **planned**, nothing built yet. Proposed on 2026-10-23; on 2026-10-26 indexes moved
+from Later into E1 and schemas into E2.
 
 Today the explorer only reads: it browses the catalog, opens a table's data and shows
 definitions. Creating or changing anything means writing the SQL by hand in a console. This
 plan adds helpers like those in desktop database tools (pgAdmin, DBeaver, DataGrip,
-TablePlus) for the three kinds of object people manage most: **tables**, **views** and
-**users**. Each one is a dialog that writes the SQL, shows it, and runs it.
+TablePlus) for the kinds of object people manage most: **tables** and their **indexes**,
+**views**, **schemas** and **users**. Each one is a dialog that writes the SQL, shows it, and
+runs it.
 
 ## What the user sees
 
@@ -15,9 +17,13 @@ was clicked and what the database supports:
 
 | Clicked on | New | Object actions |
 | --- | --- | --- |
-| A schema, or its tables folder | Table | — |
-| A schema, or its views folder | View, Materialized view (PostgreSQL) | — |
-| A table | — | Modify table…, Rename…, Truncate…, Drop…, Copy DDL |
+| A database, or the data source where schemas are its top level | Schema | — |
+| A schema | Table, View, Materialized view (PostgreSQL) | Drop schema… |
+| A schema's tables folder | Table | — |
+| A schema's views folder | View, Materialized view (PostgreSQL) | — |
+| A table | — | Modify table…, Rename…, Truncate…, Drop…, Copy DDL, New index… |
+| A table's indexes folder | Index | — |
+| An index | — | Drop index… |
 | A view | — | Edit view…, Rename…, Drop…, Copy DDL |
 | A materialized view | — | Refresh, Edit…, Rename…, Drop…, Copy DDL |
 | The data source, or its roles folder (PostgreSQL) | User, Role | — |
@@ -33,12 +39,12 @@ object. A failure shows the database's error in the dialog, which stays open to 
 
 ## Shared groundwork (E0)
 
-Everything the three kinds of object have in common, built once.
+Everything the helpers have in common, built once.
 
 - **Object specs and a DDL builder in `dbdesk-sql`.** Plain data types describe what the user
-  asked for: `TableSpec` (columns, primary key, unique and foreign keys, checks), `ViewSpec`
-  and `RoleSpec`. Pure functions turn a spec into statements for a dialect, so the builder is
-  tested without a database.
+  asked for: `TableSpec` (columns, primary key, unique and foreign keys, checks) and
+  `IndexSpec` in E1, `ViewSpec` and `SchemaSpec` in E2, `RoleSpec` in E3. Pure functions turn
+  a spec into statements for a dialect, so the builder is tested without a database.
   - Identifiers are quoted by the dialect's rules, which DB0 gathered in one place.
   - Each change is described as an operation (`AddColumn`, `RenameTable`, `DropView`, …), so
     one dialog can produce several statements in a known order.
@@ -78,6 +84,14 @@ table appear in the refreshed tree, on both engines.
 - **Rename…**: `ALTER TABLE … RENAME TO …`.
 - **Truncate…**, and **Drop…** with an optional `CASCADE` (PostgreSQL), both behind the
   confirmations above.
+- **New index…** on a table, or on its indexes folder:
+  - name, columns in order, and **Unique**;
+  - the method where the dialect has one (PostgreSQL's `btree`, `hash`, `gin`, `gist`, `brin`;
+    MySQL's `BTREE` and `HASH`), from the capabilities;
+  - ClickHouse's data-skipping indexes need a type and granularity, so it gets no New index
+    until a later milestone.
+- **Drop index…**, behind the confirmations above. MySQL and SQL Server name the table in
+  `DROP INDEX … ON …`, which the builder writes from the index's place in the tree.
 - **Copy DDL**: the `CREATE TABLE` statement for an existing table.
   - SQLite stores it, so it comes straight from the catalog.
   - PostgreSQL has no `pg_get_tabledef`, which is an open question in the explorer doc. The
@@ -85,11 +99,11 @@ table appear in the refreshed tree, on both engines.
     loads, through the same builder. This settles that M2 follow-up.
 
 **Exit:**
-- I create a table with a foreign key to another one, rename it, and drop it, on PostgreSQL
-  and SQLite.
+- I create a table with a foreign key to another one, add an index on it, rename it, and drop
+  it, on PostgreSQL and SQLite.
 - A conformance check builds a table from a spec, then compares `describe_table` with the spec.
 
-## E2 — Views
+## E2 — Views and schemas
 
 - **New view**: name, schema, and the query in the console's own editor (highlighting,
   completion, problems while typing). The dialog writes `CREATE VIEW`; it offers
@@ -102,9 +116,17 @@ table appear in the refreshed tree, on both engines.
 - **Refresh** for materialized views: `REFRESH MATERIALIZED VIEW`, with `CONCURRENTLY` offered
   when the view has a unique index.
 - **Rename…** and **Drop…** as for tables.
+- **New schema…** on a database, or on the data source where schemas are its top level: the
+  name, and the owner where the dialect has one (PostgreSQL's `AUTHORIZATION`).
+  - SQLite has no `CREATE SCHEMA`: its schemas are attached files, so it gets none.
+  - MySQL's schemas are its databases, so New schema writes `CREATE DATABASE` and sits on the
+    data source.
+- **Drop schema…**, with an optional `CASCADE` where the dialect has it, behind the
+  confirmations above; the confirmation counts what the schema holds, from the loaded tree.
 
 **Exit:** I create a view from a query, edit its query, and drop it, on both engines. On
-PostgreSQL I also create and refresh a materialized view.
+PostgreSQL I also create and refresh a materialized view, and create a schema, put a table in
+it, and drop it with `CASCADE`.
 
 ## E3 — Users and roles (PostgreSQL)
 
@@ -172,8 +194,6 @@ and nothing is lost.
 
 ## Later
 
-- **New schema** and **Drop schema**, with the same panel.
-- **Indexes:** New index… on a table, and Drop index.
 - **A privileges editor** for PostgreSQL.
 - **Users** for MySQL (DB1) and SQL Server (DB2).
 - **Virtual views** (a saved query shown as if it were a view, never created on the
