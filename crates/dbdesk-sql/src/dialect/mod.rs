@@ -377,6 +377,25 @@ impl Dialect {
         }
     }
 
+    /// A condition that holds when `value`, written as text in lowercase, contains `needle`
+    /// (a string literal, already lowercase). Each dialect has its own way to make any value
+    /// text and to find text in text; finding rather than `LIKE` means no character in the
+    /// needle is a wildcard.
+    pub fn contains_text(self, value: &str, needle: &str) -> String {
+        match self {
+            Self::Postgres => format!("strpos(lower(CAST({value} AS text)), {needle}) > 0"),
+            Self::Sqlite => format!("instr(lower(CAST({value} AS TEXT)), {needle}) > 0"),
+            Self::Mysql => format!("LOCATE({needle}, LOWER(CAST({value} AS CHAR))) > 0"),
+            Self::SqlServer => {
+                format!("CHARINDEX({needle}, LOWER(CAST({value} AS NVARCHAR(MAX)))) > 0")
+            }
+            Self::DuckDb => format!("strpos(lower(CAST({value} AS VARCHAR)), {needle}) > 0"),
+            Self::ClickHouse => {
+                format!("positionUTF8(lowerUTF8(toString({value})), {needle}) > 0")
+            }
+        }
+    }
+
     /// What follows `INSERT INTO table` to add a row with every column at its default. MySQL
     /// and MariaDB have no `DEFAULT VALUES`, but read an empty column list as all defaults.
     /// ClickHouse is grouped with them, though the grid never inserts there (see

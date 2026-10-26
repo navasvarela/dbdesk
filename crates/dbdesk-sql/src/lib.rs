@@ -1,7 +1,8 @@
 //! SQL text utilities for the query console: a forgiving lexer, statement splitting,
 //! statement-under-cursor, a check for destructive statements, a formatter, a syntax
 //! checker and linter, a classifier of what a statement may change, the DDL the object
-//! helpers write, and the statements that change a table's rows from the grid.
+//! helpers write, the statements that change a table's rows from the grid, and the query that
+//! sorts and filters a statement's rows in the database.
 //!
 //! Everything works on text as typed, which is usually half-finished: nothing here fails on
 //! invalid input. Unterminated strings and comments run to the end of the text. All
@@ -12,6 +13,7 @@
 //! input and reports line/column positions, while the editor needs byte ranges for any text,
 //! and the same tokens also drive syntax highlighting.
 
+mod arrange;
 mod check;
 mod classify;
 mod ddl;
@@ -25,6 +27,7 @@ mod safety;
 mod split;
 mod transaction;
 
+pub use arrange::{Arranged, Arrangement, SortOrder, arrange, can_arrange};
 pub use check::{LintRule, Problem, ProblemSource, Severity, check_statement, is_checkable};
 pub use classify::{
     Analysis, NamePart, NamedSchemas, StatementKind, Unclassified, analyze, classify,

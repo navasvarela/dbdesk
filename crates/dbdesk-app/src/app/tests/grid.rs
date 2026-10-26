@@ -15,6 +15,13 @@ fn orders(dir: &Path) -> Vec<(i64, String)> {
         .collect()
 }
 
+/// The grid's filter field, by its hint, while the database sorts and filters.
+fn grid_filter<'a>(harness: &'a Harness<'_, DbDeskApp>) -> egui_kittest::Node<'a> {
+    harness.get_by(|node| {
+        node.role() == Role::TextInput && node.placeholder() == Some("Filter every row, then Enter")
+    })
+}
+
 /// Waits until a submit has been answered: the pending changes and "Saving…" are gone.
 fn wait_for_submit(harness: &mut Harness<'_, DbDeskApp>) {
     step_until(harness, "the changes being saved", |harness| {
@@ -131,4 +138,43 @@ fn follows_a_foreign_key_to_its_row_and_back_to_the_rows_that_refer_to_it() {
     step_until_visible(&mut harness, "11");
     harness.get_by_label_contains("1 rows");
     assert!(harness.query_by_label("10").is_none());
+}
+
+/// With In the database ticked, sorting and filtering run the statement again wrapped, so
+/// they cover rows that weren't loaded, and the rows stay editable.
+#[test]
+fn sorts_and_filters_every_row_in_the_database() {
+    let dir = tempfile::tempdir().unwrap();
+    save_shop(
+        dir.path(),
+        "CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT);
+         WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 600)
+         INSERT INTO orders SELECT i, 'customer ' || i FROM n;",
+    );
+    let (_layer, feed) = log_console::pipeline();
+    let mut harness = start_app(dir.path(), feed);
+    open_orders(&mut harness, "500 rows, more available");
+    step_until_visible(&mut harness, "Add row");
+
+    harness.get_by_label("In the database").click();
+    harness.run();
+    harness.get_by_label("id").click();
+    step_until_visible(&mut harness, "id ▲");
+    step_until_visible(&mut harness, "Sorted and filtered by the database");
+    harness.get_by_label("id ▲").click();
+    step_until_visible(&mut harness, "customer 600");
+
+    grid_filter(&harness).focus();
+    harness.run();
+    grid_filter(&harness).type_text("ER 59");
+    harness.key_press(egui::Key::Enter);
+    // customer 59 and customer 590 to 599, sorted by id descending.
+    step_until_visible(&mut harness, "11 rows");
+    harness.get_by_label("customer 599");
+    assert!(harness.query_by_label("customer 600").is_none());
+    step_until_visible(&mut harness, "Add row");
+
+    harness.get_by_label("In the database").click();
+    step_until_visible(&mut harness, "500 rows, more available");
+    harness.get_by_label("customer 1");
 }

@@ -368,6 +368,19 @@ Each console has a mode, **Auto-commit** (the default) or **Manual commit**:
   filtered here, not by the database: N of M loaded rows". Numbers sort by value when both
   cells look numeric (the same guess that right-aligns them), `NULL` first. The `#` column keeps
   each row's position in the result.
+- **Sort and filter in the database** (W5c): **In the database**, beside the filter, off by
+  default, hands both to the database. A header click, or Enter in **Filter every row**, runs
+  the shown statement again wrapped by `dbdesk_sql::arrange`: `SELECT * FROM (<statement>) AS
+  dbdesk_rows WHERE <any column contains the text> ORDER BY <position> ASC|DESC`. The filter
+  keeps its meaning, with each dialect's own "contains" (`strpos`, `instr`, `LOCATE`,
+  `CHARINDEX`, `positionUTF8` on the lowercased value cast to text), so no character in it is
+  a wildcard; the sort is by position, so any column name works. The rows then arrive in that
+  order and the grid shows them as they come ("Sorted and filtered by the database"); they
+  stay editable, since the statement as typed, not the wrapper, decides that. Only statements
+  that start with `SELECT`, `WITH` or `VALUES`, and whose columns have different names, can
+  be wrapped (SQL Server can't select from a `WITH`); elsewhere the switch is disabled and
+  says why, and so it is while changes are pending, which running again would drop. Turning
+  it off runs the statement as typed again.
 - **Export**: **Export → CSV…/JSON…** asks where (the platform's save dialog, via `rfd`) and
   the engine writes the rows as shown (sorted and filtered). CSV is RFC 4180 with a header and
   `NULL` as an empty field; JSON is an array of objects with keys in column order (repeated

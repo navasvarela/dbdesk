@@ -341,3 +341,47 @@ fn describes_a_read_only_data_sources_tables_for_their_keys() {
     );
     assert_eq!(statement.describing.as_ref(), tables.first());
 }
+
+/// Sorting in the database runs the shown statement again, wrapped; its new result keeps the
+/// statement as typed (which decides what can be edited) and the sort, and switching back
+/// runs it as typed.
+#[test]
+fn runs_a_statement_again_wrapped_and_keeps_it_as_typed() {
+    let mut console = console_with("select id, note from t;", Dialect::Postgres);
+    let statements = console.statements_to_run(RunScope::All);
+    console.begin_run(RunId(1), &statements);
+    console.apply(&Event::StatementStarted {
+        run: RunId(1),
+        statement: 0,
+        columns: ["id", "note"]
+            .into_iter()
+            .map(|name| ColumnInfo {
+                name: name.to_owned(),
+                type_name: None,
+            })
+            .collect(),
+    });
+    let grid = &mut console.run.as_mut().unwrap().statements[0].grid;
+    grid.set_in_database(true);
+    grid.toggle_sort(1);
+
+    let wrapped = console.rearrange().unwrap();
+    let statement = &wrapped.statements[0];
+    assert_eq!(
+        statement.sql,
+        "SELECT * FROM (\nselect id, note from t\n) AS dbdesk_rows\nORDER BY 2 ASC"
+    );
+    assert_eq!(&statement.sql[statement.prefix_len..][..6], "select");
+    console.begin_run(RunId(2), &wrapped.statements);
+    let view = &console.run.as_ref().unwrap().statements[0];
+    assert_eq!(view.sql, "select id, note from t");
+    assert!(view.wrapped && view.grid.is_in_database());
+    assert_eq!(view.grid.sort().map(|sort| sort.column), Some(1));
+
+    console.run.as_mut().unwrap().statements[0]
+        .grid
+        .set_in_database(false);
+    let as_typed = console.rearrange().unwrap();
+    assert_eq!(as_typed.statements[0].sql, "select id, note from t");
+    assert_eq!(as_typed.statements[0].in_database, None);
+}
