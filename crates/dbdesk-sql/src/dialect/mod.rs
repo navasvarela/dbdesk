@@ -377,6 +377,17 @@ impl Dialect {
         }
     }
 
+    /// What follows `INSERT INTO table` to add a row with every column at its default. MySQL
+    /// and MariaDB have no `DEFAULT VALUES`, but read an empty column list as all defaults.
+    /// ClickHouse is grouped with them, though the grid never inserts there (see
+    /// [`read_only_results`](Self::read_only_results)).
+    pub fn default_row(self) -> &'static str {
+        match self {
+            Self::Postgres | Self::Sqlite | Self::SqlServer | Self::DuckDb => "DEFAULT VALUES",
+            Self::Mysql | Self::ClickHouse => "() VALUES ()",
+        }
+    }
+
     /// Why the grid never edits this database's rows, or `None` where it may. A ClickHouse
     /// table has no key that tells its rows apart (its `PRIMARY KEY` is its sort order and
     /// may repeat), and its `UPDATE` rewrites data in the background rather than change a row

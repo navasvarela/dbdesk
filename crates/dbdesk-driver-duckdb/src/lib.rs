@@ -9,8 +9,10 @@ mod execution;
 mod table;
 mod values;
 
-use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock, Mutex, Weak};
 
 use async_trait::async_trait;
 use dbdesk_core::{
@@ -33,13 +35,14 @@ const PRODUCT: &str = "DuckDB";
 /// process holds it open for writing.
 pub async fn connect(config: &DuckDbConfig) -> Result<DuckDbConnection, DriverError> {
     let database = config.database.clone();
-    let (connection, version) = tokio::task::spawn_blocking(move || open(&database))
+    let (connection, shared, version) = tokio::task::spawn_blocking(move || open(&database))
         .await
         .map_err(connect_error)??;
 
     Ok(DuckDbConnection {
         cancel: Arc::new(execution::DuckDbCancel::new(connection.interrupt_handle())),
         connection: Arc::new(Mutex::new(connection)),
+        _database: shared,
         server_info: ServerInfo {
             product: PRODUCT.to_owned(),
             version,
@@ -47,31 +50,77 @@ pub async fn connect(config: &DuckDbConfig) -> Result<DuckDbConnection, DriverEr
     })
 }
 
-fn open(database: &DuckDbDatabase) -> Result<(duckdb::Connection, String), DriverError> {
-    let connection = match database {
+/// A connection, the file's shared database it belongs to (`None` in memory), and DuckDB's
+/// version.
+type Opened = (duckdb::Connection, Option<Arc<SharedDatabase>>, String);
+
+fn open(database: &DuckDbDatabase) -> Result<Opened, DriverError> {
+    let (connection, shared) = match database {
         DuckDbDatabase::File { path, read_only } => {
-            if !path.is_file() {
-                return Err(connect_error(format!("{} doesn't exist", path.display())));
-            }
-            let access = if *read_only {
-                AccessMode::ReadOnly
-            } else {
-                AccessMode::ReadWrite
-            };
-            let config = duckdb::Config::default()
-                .access_mode(access)
-                .map_err(connect_error)?;
-            duckdb::Connection::open_with_flags(path, config)
+            let (connection, shared) = open_file(path, *read_only)?;
+            (connection, Some(shared))
         }
-        DuckDbDatabase::InMemory => duckdb::Connection::open_in_memory(),
-    }
-    .map_err(connect_error)?;
+        DuckDbDatabase::InMemory => (
+            duckdb::Connection::open_in_memory().map_err(connect_error)?,
+            None,
+        ),
+    };
     // `v1.5.6`, as `PRAGMA version` and the command-line client show it.
     let version: String = connection
         .query_row("SELECT version()", [], |row| row.get(0))
         .map_err(connect_error)?;
     let version = version.strip_prefix('v').unwrap_or(&version).to_owned();
-    Ok((connection, version))
+    Ok((connection, shared, version))
+}
+
+/// A database file this process has open, held by a connection kept only to open more
+/// connections to it. Every [`DuckDbConnection`] to the file holds it, so the database closes,
+/// and lets go of the file, with the last of them.
+///
+/// Why one database per file: DuckDB keeps a database's data, and its log of committed
+/// changes, in the process that opened it. Two databases opened on one file each see only
+/// their own changes (and can overwrite each other's), so the explorer's connection and a
+/// console's must share one: rows imported through the explorer then show in the console.
+struct SharedDatabase(Mutex<duckdb::Connection>);
+
+/// The databases open in this process, by file and whether opened read-only. Entries whose
+/// last connection has closed are dead, and replaced when the file is opened again.
+type OpenDatabases = HashMap<(PathBuf, bool), Weak<SharedDatabase>>;
+
+static OPEN_DATABASES: LazyLock<Mutex<OpenDatabases>> = LazyLock::new(Mutex::default);
+
+/// A new connection to the file's database, opening the database if this process hasn't.
+fn open_file(
+    path: &Path,
+    read_only: bool,
+) -> Result<(duckdb::Connection, Arc<SharedDatabase>), DriverError> {
+    if !path.is_file() {
+        return Err(connect_error(format!("{} doesn't exist", path.display())));
+    }
+    let key = (fs::canonicalize(path).map_err(connect_error)?, read_only);
+    let mut databases = OPEN_DATABASES.lock().map_err(|_| poisoned())?;
+    if let Some(shared) = databases.get(&key).and_then(Weak::upgrade) {
+        let connection = shared
+            .0
+            .lock()
+            .map_err(|_| poisoned())?
+            .try_clone()
+            .map_err(connect_error)?;
+        return Ok((connection, shared));
+    }
+    let access = if read_only {
+        AccessMode::ReadOnly
+    } else {
+        AccessMode::ReadWrite
+    };
+    let config = duckdb::Config::default()
+        .access_mode(access)
+        .map_err(connect_error)?;
+    let first = duckdb::Connection::open_with_flags(path, config).map_err(connect_error)?;
+    let connection = first.try_clone().map_err(connect_error)?;
+    let shared = Arc::new(SharedDatabase(Mutex::new(first)));
+    databases.insert(key, Arc::downgrade(&shared));
+    Ok((connection, shared))
 }
 
 /// Creates a new, empty database file at `path`, which must not exist yet.
@@ -128,6 +177,9 @@ pub struct DuckDbConnection {
     connection: Arc<Mutex<duckdb::Connection>>,
     /// Works without the lock, which is the point: the statement being cancelled holds it.
     cancel: Arc<execution::DuckDbCancel>,
+    /// Keeps the file's database open for the other connections to it; see
+    /// [`SharedDatabase`].
+    _database: Option<Arc<SharedDatabase>>,
     server_info: ServerInfo,
 }
 

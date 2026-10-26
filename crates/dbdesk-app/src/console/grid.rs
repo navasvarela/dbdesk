@@ -48,7 +48,8 @@ pub struct GridView {
     /// Indices into the loaded rows, in display order.
     order: Vec<usize>,
     /// What `order` was computed from: the number of rows, the sort and the filter. Rows
-    /// are only ever appended, so their count tells whether they changed.
+    /// are appended as pages load, and only removed by deleting them from the grid, so their
+    /// count tells whether they changed.
     computed_for: Option<(usize, Option<SortKey>, String)>,
     selection: Option<Selection>,
     /// A drag selection is in progress.
@@ -100,8 +101,12 @@ impl GridView {
             .computed_for
             .as_ref()
             .is_some_and(|(_, sort, filter)| *sort != self.sort || *filter != self.filter);
-        if rearranged {
-            // Positions on screen now hold other rows.
+        let fewer = self
+            .computed_for
+            .as_ref()
+            .is_some_and(|(count, _, _)| *count > rows.len());
+        if rearranged || fewer {
+            // Positions on screen now hold other rows: rows were rearranged, or deleted.
             self.selection = None;
         }
         self.order = display_order(rows, self.sort, &self.filter);
@@ -173,6 +178,11 @@ impl GridView {
             .into_iter()
             .filter_map(|index| rows.get(index).cloned())
             .collect()
+    }
+
+    /// The display positions of the selected rows, top to bottom.
+    pub fn selected_rows(&self) -> Option<RangeInclusive<usize>> {
+        self.selection.map(|selection| selection.rows())
     }
 
     /// The single selected cell, for the cell viewer.

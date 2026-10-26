@@ -1,7 +1,7 @@
 //! SQL text utilities for the query console: a forgiving lexer, statement splitting,
 //! statement-under-cursor, a check for destructive statements, a formatter, a syntax
-//! checker and linter, a classifier of what a statement may change, and the DDL the object
-//! helpers write.
+//! checker and linter, a classifier of what a statement may change, the DDL the object
+//! helpers write, and the statements that change a table's rows from the grid.
 //!
 //! Everything works on text as typed, which is usually half-finished: nothing here fails on
 //! invalid input. Unterminated strings and comments run to the end of the text. All
@@ -16,6 +16,7 @@ mod check;
 mod classify;
 mod ddl;
 mod dialect;
+mod dml;
 mod format;
 mod keywords;
 mod lexer;
@@ -36,6 +37,7 @@ pub use ddl::{
 pub use dialect::{
     Capabilities, Dialect, ExplainSetting, Savepoint, SchemaCreation, TableChange, ViewReplacement,
 };
+pub use dml::{ColumnValue, RowSql, Table};
 pub use format::{FormatError, FormatOptions, Formatted, KeywordCase, format_ranges, same_meaning};
 pub use keywords::{is_keyword, keywords};
 pub use lexer::{Token, TokenKind, first_word, tokenize};

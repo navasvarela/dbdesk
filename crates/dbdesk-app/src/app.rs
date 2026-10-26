@@ -1243,6 +1243,8 @@ impl Repaint for EguiRepaint {
 
 #[cfg(test)]
 mod tests {
+    mod grid;
+
     use std::path::Path;
     use std::sync::Arc;
     use std::time::Duration;
@@ -2395,10 +2397,17 @@ mod tests {
         harness.run_steps(2);
     }
 
-    /// Opens a menu button and ticks or picks `item` in it.
+    /// Opens a menu button and ticks or picks `item` in it. A menu's items may come from the
+    /// catalog, which loads in the background (a referenced table's columns), so the item is
+    /// waited for: picking it at once lost that race when the app tests ran together.
     fn pick(harness: &mut Harness<'_, DbDeskApp>, menu: &str, item: &str) {
         harness.get_by_label(menu).click();
         harness.run_steps(2);
+        step_until(
+            harness,
+            &format!("{item:?} in the {menu:?} menu"),
+            |harness| harness.query_by_label(item).is_some(),
+        );
         harness.get_by_label(item).click();
         harness.run_steps(2);
         harness.key_press(egui::Key::Escape);

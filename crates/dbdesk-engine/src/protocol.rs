@@ -200,9 +200,11 @@ pub enum Command {
         data_source: DataSourceId,
         path: CatalogPath,
     },
-    /// Runs generated `UPDATE`s on the console's connection, all or none: each must change
-    /// exactly one row. Inside an open transaction they stay part of it (behind a savepoint);
-    /// otherwise they commit together. Answered by [`Event::EditsApplied`].
+    /// Runs the grid's generated `DELETE`s, `UPDATE`s and `INSERT`s on the console's
+    /// connection, all or none: each must change exactly one row. Inside an open transaction
+    /// they stay part of it (behind a savepoint); otherwise they commit together. Refused on a
+    /// read-only data source. Each statement sent is recorded in the history. Answered by
+    /// [`Event::EditsApplied`].
     ApplyEdits {
         console: ConsoleId,
         statements: Vec<String>,
@@ -515,7 +517,7 @@ pub enum StatementCheck {
     Skipped,
 }
 
-/// Why edits weren't applied. Nothing was: the changes were rolled back.
+/// Why the grid's changes weren't applied. None were: they were rolled back.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditFailure {
     /// The index of the statement that failed, if one did (rather than starting or ending

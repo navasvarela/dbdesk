@@ -32,6 +32,8 @@ use dbdesk_store::{ConsoleKey, ExportFormat};
 
 use edit::Editability;
 
+pub use edit::ChangeCount;
+
 pub use catalog_source::TreeCatalog;
 pub use completion::{Candidate, RecentCompletions};
 pub use problems::LintOptions;
@@ -246,12 +248,14 @@ impl QueryConsole {
         &self.data_source_name
     }
 
-    /// How many rows the shown statement's pending edits change.
-    pub fn pending_edit_rows(&self) -> usize {
+    /// How many rows the shown statement's pending edits add, change and delete.
+    pub fn pending_changes(&self) -> ChangeCount {
         self.run
             .as_ref()
             .and_then(|run| run.statements.get(run.selected))
-            .map_or(0, |statement| statement.edits.pending.rows().len())
+            .map_or_else(ChangeCount::default, |statement| {
+                statement.edits.pending.count()
+            })
     }
 
     /// A console reopened from its file, which closing it again must keep.
@@ -335,7 +339,7 @@ impl QueryConsole {
         }
     }
 
-    /// The `UPDATE`s for the shown statement's pending edits, marking them as submitted.
+    /// The statements for the shown statement's pending changes, marking them as submitted.
     /// `None` if there is nothing to submit.
     pub fn submit_edits(&mut self) -> Option<Command> {
         let run = self.run.as_mut()?;
@@ -344,14 +348,16 @@ impl QueryConsole {
         if statement.edits.pending.is_empty() || statement.edits.submitting {
             return None;
         }
-        let statements = statement.edits.pending.statements(
-            target,
-            &statement.columns,
-            &statement.rows,
-            self.dialect.quoting(),
-        );
+        let statements = statement
+            .edits
+            .pending
+            .statements(target, &statement.columns, &statement.rows, self.dialect)
+            .into_iter()
+            .map(|(_, sql)| sql)
+            .collect();
         statement.edits.submitting = true;
         statement.edits.error = None;
+        statement.edits.editing = None;
         Some(Command::ApplyEdits {
             console: self.id,
             statements,
@@ -359,6 +365,7 @@ impl QueryConsole {
     }
 
     fn edits_applied(&mut self, result: &Result<(), EditFailure>) {
+        let dialect = self.dialect;
         let Some(run) = self.run.as_mut() else {
             return;
         };
@@ -373,19 +380,47 @@ impl QueryConsole {
         edits.submitting = false;
         match result {
             Ok(()) => {
+                edits.reload = edits.pending.new_rows() > 0;
                 edits.pending.apply_to(&mut statement.rows);
                 edits.error = None;
             }
             Err(failure) => {
-                let row = failure
-                    .statement
-                    .and_then(|index| edits.pending.rows().get(index).copied());
+                // The same statements, in the same order, as were submitted.
+                let row = edits.target().and_then(|target| {
+                    let index = failure.statement?;
+                    let statements = edits.pending.statements(
+                        target,
+                        &statement.columns,
+                        &statement.rows,
+                        dialect,
+                    );
+                    statements.get(index).map(|(row, _)| *row)
+                });
                 edits.error = Some(match row {
-                    Some(row) => format!("Row {}: {}", row + 1, failure.message),
+                    Some(row) => format!("{}: {}", row.describe(), failure.message),
                     None => failure.message.clone(),
                 });
             }
         }
+    }
+
+    /// Running the shown statement again, once rows were added to its result, so they show
+    /// with what the database put in the columns left to their defaults.
+    pub fn take_reload(&mut self) -> Option<SubmittedRun> {
+        let run = self.run.as_mut()?;
+        let statement = run
+            .statements
+            .iter_mut()
+            .find(|statement| statement.edits.reload)?;
+        statement.edits.reload = false;
+        Some(SubmittedRun {
+            statements: vec![SubmittedStatement {
+                sql: statement.sql.clone(),
+                range: statement.range.clone(),
+                prefix_len: statement.prefix_len,
+            }],
+            purpose: RunPurpose::Run,
+        })
     }
 
     /// The export of the rows the grid shows for the selected statement, in the order and
