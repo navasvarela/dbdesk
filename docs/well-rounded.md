@@ -1,7 +1,7 @@
 # A well-rounded app
 
-Status: **W1 to W3 built** (see the [roadmap](roadmap.md#well-rounded-track)); W5 designed in
-[Power in the grid](grid-power.md); W4 and W6 planned.
+Status: **W1 to W3 and W5 built** (see the [roadmap](roadmap.md#well-rounded-track); W5's
+design is in [Power in the grid](grid-power.md)); W4 and W6 planned.
 Proposed on 2026-10-24.
 
 dbdesk browses, queries and edits PostgreSQL, SQLite, MySQL and MariaDB, and ships as a

@@ -260,8 +260,11 @@ doesn't, yet).
 - **Sorting and filtering.** Click a column header to sort by it (ascending, descending, off),
   and type in **Filter loaded rows** to keep the rows with a cell containing the text. Both
   work on the rows loaded so far, without asking the database again, and the grid says so.
-- **Exporting.** **Export → CSV…** or **JSON…** saves the rows as shown, sorted and filtered, to
-  a file you pick. Only loaded rows are exported.
+  Tick **In the database** to sort and filter every row instead; see
+  [Sorting and filtering in the database](table-data.md#sorting-and-filtering-in-the-database).
+- **Exporting.** **Export → Loaded rows as CSV…** or **as JSON…** saves the rows as shown,
+  sorted and filtered, to a file you pick. **All rows as CSV…** and **as JSON…** run the query
+  again and write every row; see [Exporting every row](table-data.md#exporting-every-row).
 
 ### Large results
 
@@ -294,13 +297,14 @@ share, so nothing tells one row from another.
   elsewhere keeps the new text; Esc drops it. **Set NULL** in the cell's menu sets `NULL`
   (emptying a cell gives an empty string, not `NULL`).
 - Changed cells are tinted. **Submit** writes them, one `UPDATE` per changed row, all or none;
-  **Revert** forgets them.
+  **Revert** forgets them. You can also add and delete rows, and follow foreign keys: see
+  [Working with table data](table-data.md).
 - If a row changed or disappeared since it was loaded, or a value doesn't fit its column,
   nothing is written, your changes stay, and the error names the row.
 - In manual commit mode, submitted changes join the open transaction and stay pending until
   you commit. DuckDB has no savepoints to undo a failed edit with, so on DuckDB, changes can't
   be submitted while a transaction is open: commit or roll back first.
-- On a **careful** data source, **Submit** asks first, naming the data source and how many rows
+- On a **careful** data source, **Submit** asks first, naming the data source and what will
   change. On a **read-only** one, the grid says **Read-only**.
 
 Values are sent as text and converted by the database, so type them the way the grid shows

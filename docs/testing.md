@@ -124,6 +124,22 @@ against a real server, such as a cancel arriving after the last row.
   not create databases, so its schemas are only in the golden tests. PostgreSQL's
   materialized views have a test of their own.
 
+### Power in the grid
+
+- `dbdesk_sql`'s row statements (`dml.rs`) and the database sort and filter (`arrange.rs`) have
+  golden tests per dialect.
+- `dbdesk-engine/tests/grid/` is a module of the `console` test binary, not a binary of its own,
+  so it adds no link step to CI. Its tests run on every engine with a test server, each in
+  tables with the process id in their names so runs sharing the servers don't clash: a submit
+  of deletes, updates and inserts built by `RowSql` (and one that fails and changes nothing),
+  foreign keys both ways in two described tables, the sort and filter wrapper (ClickHouse
+  too), an export of 1,200 rows in pages of 500 in both formats (ClickHouse too), and an
+  import of 1,200 rows from CSV that succeeds and one that fails on a known line. SQLite alone
+  covers a cancelled export, refusals on a read-only data source, and an import line with too
+  few fields.
+- The DuckDB driver checks that two connections to one file see each other's changes.
+- The app's W5 UI tests are in `app/tests/grid.rs`, against SQLite.
+
 ## MCP server
 
 - `dbdesk_sql::classify` has a corpus per dialect: reads, writes hidden in CTEs, `SELECT …

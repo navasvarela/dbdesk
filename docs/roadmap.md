@@ -625,6 +625,32 @@ The gaps that keep dbdesk from being an everyday tool. The full plan is in
   - **W5c:** sort and filter in the database, by wrapping the statement;
   - **W5d:** export every row, streamed to the file;
   - **W5e:** import a CSV into a table, with a column mapping and a preview.
+
+  **W5 demo note:** built. Open data on `customers` and **Add row**: a `+` row shows `DEFAULT`
+  or `NULL` per column; type a name, change a cell in another row, right-click a third and
+  **Delete row** (struck through, **Restore row** undoes it). The toolbar says *1 changed cell ·
+  1 new row · 1 deleted row*; **Submit** sends the `DELETE`, the `UPDATE` and the `INSERT`, in
+  that order, all or none, and runs the query again to show the new row's generated id. A
+  duplicate key rolls everything back and says *New row 1: …*; a careful data source first asks
+  *this inserts 1 row, updates 1 edited row and deletes 1 row*; every statement is in the
+  history. In `orders`, `customer_id` values are underlined: ⌘-click one, or **Open customers
+  row**, and a new console selects that customer; there, **Referencing rows ›
+  orders.customer_id** opens their orders. Tick **In the database** and click a header: the
+  query runs again as `SELECT * FROM (…) AS dbdesk_rows ORDER BY 2 DESC`, covering rows that
+  weren't loaded, and Enter in **Filter every row** adds a `WHERE` with the same meaning as the
+  grid's filter; the rows stay editable. **Export › All rows as CSV…** on a 100,000-row result
+  writes every row a page at a time (*Exporting… 52000 rows*, **Cancel export** leaves no
+  file). **Import CSV…** on a table maps a file's columns by header name, previews 20 rows,
+  warns *Line 4, id: “A-11” isn't a whole number*, and imports in 500-row `INSERT`s in one
+  transaction; a duplicate key on line 703 rolls it all back and says so. The statements are
+  built by `dbdesk_sql` (`RowSql`, `arrange`), table descriptions carry foreign keys both ways
+  on every driver (none on ClickHouse), the store has a streaming `ExportWriter` and an RFC 4180
+  `CsvReader`, and the DuckDB driver now shares one database per file between connections, so
+  the explorer's changes show in open consoles. Covered by `dbdesk_sql` golden tests per
+  dialect, store tests of the writer and reader, engine tests on SQLite, DuckDB, PostgreSQL,
+  MySQL, MariaDB and SQL Server (ClickHouse too for the wrapper and the export) in
+  `tests/grid`, a DuckDB driver test of two connections to one file, and kittest tests of each
+  feature on SQLite.
 - **W6 — Files and parameters:** open and save `.sql` files, `:name` parameters, find and
   replace.
 

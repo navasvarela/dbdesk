@@ -95,7 +95,7 @@ pub struct DbDeskApp {
     /// Asks where to export rows. The platform's save dialog, except in tests.
     pick_export_path: Box<dyn Fn(ExportFormat) -> Option<PathBuf>>,
     /// Asks for a CSV file to import into a table. A field so tests can answer it.
-    pick_csv_file: Box<dyn Fn() -> Option<PathBuf>>,
+    pub(crate) pick_csv_file: Box<dyn Fn() -> Option<PathBuf>>,
     consoles: Consoles,
     /// Set on first launch until the window has been asked to maximize. After that, eframe
     /// restores whatever size the user left it at.

@@ -1,6 +1,6 @@
 # Power in the grid
 
-Status: **planned** (2026-10-26). This is the design of W5 in
+Status: **built** (2026-10-26). This is the design of W5 in
 [A well-rounded app](well-rounded.md#w5--power-in-the-grid); the
 [roadmap](roadmap.md#well-rounded-track) tracks it.
 

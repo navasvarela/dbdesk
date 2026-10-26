@@ -9,6 +9,7 @@
 - [Creating and changing tables](objects.md)
 - [Views and schemas](views-schemas.md)
 - [Query consoles](consoles.md)
+- [Working with table data](table-data.md)
 - [Keyboard shortcuts](shortcuts.md)
 - [Connecting an AI assistant](mcp.md)
 - [Where dbdesk keeps its files](files.md)
