@@ -833,6 +833,7 @@ flowchart LR
     D1 --> D4[D4 Website]
     D2 --> D3[D3 User manual]
     D3 --> D4
+    D2 --> D5[D5 Native look on macOS]
 ```
 
 ### D1 — Logo and brand palette
@@ -929,3 +930,27 @@ on pull requests that touch it (checking the landing page's links with lychee, o
 manual's with mdbook-linkcheck2) and publishes it on every push to `main`. The Welcome tab's
 **Open the manual** now opens the published manual. The Download button goes to the releases
 page, which is empty until the first release is published.
+
+### D5 — A native look on macOS
+
+dbdesk keeps egui for everything inside the window, but on macOS its chrome becomes the
+system's. The design, decisions and risks are in [A native look on macOS](macos-look.md). In
+layers, one PR each:
+
+- **D5a — One list of commands:** the egui menu bar is built from a list of app commands (id,
+  label, keymap shortcut, enabled and checked state), and every menu click and file shortcut
+  runs through one function. No visible change.
+- **D5b — The macOS menu bar:** a native menu bar built from the same list with `muda`: the app
+  menu (About, Check for updates…, Settings… ⌘,, Services, Hide, Quit), File, Edit (routed to
+  the focused egui widget), View, Code, Window and Help, kept in sync with enabled and checked
+  state and the keymap. The egui menu bar stays on Windows and Linux.
+- **D5c — An integrated title bar:** the content runs under a transparent title bar, with room
+  for the window buttons; the top strip drags the window and double-click zooms.
+- **D5d — The system font and accent colour:** SF Pro and SF Mono read from the system at
+  runtime (never bundled), falling back to Inter and JetBrains Mono, and the system accent
+  colour for selection and focus, following changes.
+- **D5e — The manual:** the menu bar and the macOS look in the book.
+
+**Exit:** on a Mac, dbdesk's menus are in the menu bar, ⌘, opens Settings, ⌘Q still asks before
+rolling back an open transaction, the window has no separate title bar, and text is in the
+system font with the user's accent colour; Windows and Linux look and behave as before.
