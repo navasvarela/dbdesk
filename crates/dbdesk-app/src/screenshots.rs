@@ -299,6 +299,13 @@ const SCENES: &[Scene] = &[
         needs: &[],
     },
     Scene {
+        name: "new-user",
+        data_sources: FixtureSources::Shop,
+        play: new_user,
+        keeps_pointer: false,
+        needs: &[POSTGRES_URL],
+    },
+    Scene {
         name: "explorer-projects",
         data_sources: FixtureSources::Projects,
         play: explorer_projects,
@@ -1062,6 +1069,44 @@ fn new_view(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
             "SELECT o.id, c.name, o.placed_at\nFROM orders o\nJOIN customers c ON c.id = \
              o.customer_id\nWHERE o.status = 'shipped'",
         );
+    harness.run_ok();
+}
+
+/// New user on the PostgreSQL data source, filled in but not run: the review panel shows the
+/// password redacted.
+fn new_user(harness: &mut Harness<'static, DbDeskApp>, fixture: &Fixture) {
+    let Some((postgres, _)) = &fixture.postgres else {
+        return;
+    };
+    expand(harness, &[postgres.name.as_str(), "roles"]);
+    harness.get_by_label("roles").click_secondary();
+    harness.run_ok();
+    harness.get_by_label("New").hover();
+    harness.run_ok();
+    harness.get_by_label("User…").click();
+    harness.run_ok();
+    retype(harness, "Name", "report_reader");
+    for label in ["Password", "Confirm password"] {
+        harness
+            .get_by_role_and_label(Role::PasswordInput, label)
+            .focus();
+        harness.run_ok();
+        harness
+            .get_by_role_and_label(Role::PasswordInput, label)
+            .type_text("correct horse battery");
+        harness.run_ok();
+    }
+    harness.get_by_label("Limit to").click();
+    harness.run_ok();
+    harness.get_by_label("Roles it belongs to").click();
+    harness.run_ok();
+    // PostgreSQL's own roles are hidden in the tree but offered here, once the folder loads.
+    step_until_visible(harness, "pg_read_all_data");
+    harness
+        .get_by_role_and_label(Role::CheckBox, "pg_read_all_data")
+        .click();
+    harness.run_ok();
+    harness.key_press(egui::Key::Escape);
     harness.run_ok();
 }
 

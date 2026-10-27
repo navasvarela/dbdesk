@@ -37,6 +37,7 @@ project, and a project may hold data sources of any colour and engine.
 
 ```text
 data source
+├─ roles                  the server's users and groups (see Users and roles)
 └─ database               every database on the server that accepts connections
    └─ schema
       ├─ tables
@@ -208,7 +209,8 @@ Expand the parts you want to search first.
 
 The explorer hides each database's own objects:
 
-- PostgreSQL's `pg_catalog`, `information_schema` and temporary schemas;
+- PostgreSQL's `pg_catalog`, `information_schema` and temporary schemas, and its predefined
+  `pg_` roles;
 - SQLite's internal `sqlite_` tables;
 - MySQL's `mysql`, `information_schema`, `performance_schema` and `sys` databases;
 - SQL Server's `master`, `model`, `msdb` and `tempdb` databases, and in every database the
