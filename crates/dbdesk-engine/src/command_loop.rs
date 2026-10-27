@@ -49,13 +49,18 @@ pub(crate) async fn run(
     tracing::info!("engine started");
     events.send(Event::Started);
     events.send(keymap::load(&config.keymap).await);
-    events.send(settings::load(&config.settings).await);
+    let settings = settings::load(&config.settings).await;
+    let retention = settings::history_retention(&settings);
+    events.send(settings);
     let projects = ProjectRegistry::load(config.projects).await;
     events.send(projects.loaded_event());
     let registry = Registry::load(config.data_sources).await;
     events.send(registry.loaded_event());
     events.send(console_files::load(&config.consoles).await);
     let (history, history_task) = HistoryLog::start(config.history, events.clone());
+    if let Some(retention) = retention {
+        history.prune(retention);
+    }
 
     let mut engine = Engine {
         history,
@@ -305,8 +310,11 @@ impl Engine {
                 self.events.send(settings::load(&self.settings_file).await);
             }
             Command::SaveSettings(new) => {
-                self.events
-                    .send(settings::save(&self.settings_file, new).await);
+                let saved = settings::save(&self.settings_file, new).await;
+                if let Some(retention) = settings::history_retention(&saved) {
+                    self.history.prune(retention);
+                }
+                self.events.send(saved);
             }
             Command::ExportRows { console, export } => {
                 tokio::spawn(export::run(console, export, self.events.clone()));

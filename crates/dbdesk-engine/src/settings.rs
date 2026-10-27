@@ -1,7 +1,7 @@
 //! Reading and writing `settings.toml` on the blocking pool.
 
 use dbdesk_core::describe_error;
-use dbdesk_store::{Settings, SettingsError, SettingsFile};
+use dbdesk_store::{HistorySettings, Settings, SettingsError, SettingsFile};
 use tokio::task::JoinError;
 
 use crate::Event;
@@ -33,6 +33,18 @@ pub(crate) async fn save(file: &SettingsFile, settings: Settings) -> Event {
                 result: Err(error),
             }
         }
+    }
+}
+
+/// The history's retention in what [`load`] or [`save`] read; `None` if the file couldn't be
+/// read, so a broken file never prunes by the defaults.
+pub(crate) fn history_retention(loaded: &Event) -> Option<HistorySettings> {
+    match loaded {
+        Event::SettingsLoaded {
+            result: Ok(settings),
+            ..
+        } => Some(settings.history),
+        _ => None,
     }
 }
 

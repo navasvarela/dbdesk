@@ -19,6 +19,7 @@ pub use source::{HistorySource, HistorySourceKind};
 
 mod change;
 mod redact;
+mod retention;
 mod schema;
 mod source;
 

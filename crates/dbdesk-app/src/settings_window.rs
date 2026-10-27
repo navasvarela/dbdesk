@@ -1,9 +1,12 @@
-//! View → Settings: how SQL is formatted, what the console checks while typing, and whether
-//! to look for updates, each change saved to `settings.toml` at once; and the MCP defaults,
-//! saved to `projects.toml` with their own button.
+//! View → Settings: how SQL is formatted, what the console checks while typing, whether to
+//! look for updates, and how long the query history keeps statements, each change saved to
+//! `settings.toml` at once; and the MCP defaults, saved to `projects.toml` with their own
+//! button.
+
+use std::num::NonZeroU32;
 
 use dbdesk_sql::LintRule;
-use dbdesk_store::{KeywordCase, McpPermissions, Settings};
+use dbdesk_store::{HistorySettings, KeywordCase, McpPermissions, Settings};
 use egui::{Grid, RichText, Window};
 
 use crate::mcp_settings::McpDefaultsEditor;
@@ -106,10 +109,83 @@ fn contents(ui: &mut egui::Ui, settings: &AppSettings) -> Option<SettingsWindowA
         "Check for a new release when dbdesk starts",
     )
     .on_hover_text("Asks GitHub once per start. Help › Check for updates works either way.");
+    ui.separator();
+    history_settings(ui, &mut draft.history);
     if &draft != settings.settings() {
         action = Some(SettingsWindowAction::Save(draft));
     }
     action
+}
+
+/// How long the query history keeps statements. Chosen from a few lengths rather than typed:
+/// every change is saved, and prunes, at once, so typing 365 would delete everything older
+/// than 3 days on the way.
+fn history_settings(ui: &mut egui::Ui, history: &mut HistorySettings) {
+    ui.strong("Query history");
+    Grid::new("history_settings")
+        .num_columns(2)
+        .spacing([16.0, 8.0])
+        .show(ui, |ui| {
+            ui.label("Keep statements for");
+            limit_choice(
+                ui,
+                "history_max_age",
+                &mut history.max_age_days,
+                &AGES,
+                |days| format!("{days} days"),
+            );
+            ui.end_row();
+            ui.label("Keep per data source");
+            limit_choice(
+                ui,
+                "history_max_count",
+                &mut history.max_per_data_source,
+                &COUNTS,
+                |count| format!("the newest {count}"),
+            );
+            ui.end_row();
+        });
+    ui.weak("Older statements are deleted at start-up and when this changes.");
+}
+
+/// The lengths offered for the history's age, in days.
+const AGES: [(u32, &str); 4] = [
+    (30, "30 days"),
+    (90, "90 days"),
+    (365, "a year"),
+    (730, "two years"),
+];
+
+/// The counts offered per data source.
+const COUNTS: [(u32, &str); 3] = [
+    (10_000, "the newest 10,000"),
+    (100_000, "the newest 100,000"),
+    (1_000_000, "the newest 1,000,000"),
+];
+
+/// A menu of `choices` and no limit. A value set by hand in `settings.toml` shows as it is.
+fn limit_choice(
+    ui: &mut egui::Ui,
+    id: &str,
+    limit: &mut Option<NonZeroU32>,
+    choices: &[(u32, &str)],
+    custom: impl Fn(u32) -> String,
+) {
+    let label = |value: Option<NonZeroU32>| match value {
+        None => "no limit".to_owned(),
+        Some(value) => choices
+            .iter()
+            .find(|(choice, _)| *choice == value.get())
+            .map_or_else(|| custom(value.get()), |(_, label)| (*label).to_owned()),
+    };
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(label(*limit))
+        .show_ui(ui, |ui| {
+            ui.selectable_value(limit, None, "no limit");
+            for &(choice, text) in choices {
+                ui.selectable_value(limit, NonZeroU32::new(choice), text);
+            }
+        });
 }
 
 /// The rules the console checks while typing, each switchable off, and whether to ask the
