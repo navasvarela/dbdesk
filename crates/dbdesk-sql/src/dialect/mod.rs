@@ -16,6 +16,8 @@ use sqlparser::dialect::{
     ClickHouseDialect, DuckDbDialect, MsSqlDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect,
 };
 
+use crate::ParameterBinding;
+
 /// The SQL flavour of a data source.
 ///
 /// A closed enum, like `DriverKind`: see `docs/adr/0002-native-drivers-behind-a-trait.md`.
@@ -509,6 +511,25 @@ impl Dialect {
                 backslash_escapes: false,
                 string_prefix: "N",
             },
+        }
+    }
+
+    /// How the dialect's driver takes values for `:name` parameters (see
+    /// [`crate::bind`]).
+    ///
+    /// PostgreSQL's consoles run over the simple query protocol, which returns every value as
+    /// `psql` prints it but has no parameters; binding would need the extended protocol and
+    /// decoding every type from binary. PostgreSQL types an untyped `'…'` literal from its
+    /// context exactly as it would an untyped parameter. ClickHouse's own parameters need a
+    /// type in the placeholder (`{name:String}`), and a `String` one doesn't compare with a
+    /// number, where a literal is converted.
+    pub fn parameter_binding(self) -> ParameterBinding {
+        match self {
+            Self::Sqlite => ParameterBinding::Numbered("?"),
+            Self::DuckDb => ParameterBinding::Numbered("$"),
+            Self::SqlServer => ParameterBinding::Numbered("@P"),
+            Self::Mysql => ParameterBinding::Positional,
+            Self::Postgres | Self::ClickHouse => ParameterBinding::Literal,
         }
     }
 
