@@ -8,9 +8,10 @@ use dbdesk_store::{ExportWriter, HistoryEntry, HistoryOutcome, HistorySource};
 use jiff::Timestamp;
 
 use super::guard::{self, ReadOnly};
+use super::parameters::Sendable;
 use super::query::PAGE_SIZE;
 use super::{Disconnected, SessionOwner, Worker, cancel_running_statement};
-use crate::{Event, ExportAll};
+use crate::{Event, ExportAll, RunPurpose};
 
 /// Why an export stopped short. The partial file is removed either way.
 enum Stopped {
@@ -37,9 +38,15 @@ pub(super) async fn write_all(
     };
     let started_at = Timestamp::now();
     let started = Instant::now();
-    let written = match read_only_check(worker, &export.sql).await? {
-        Ok(()) => export_rows(worker, &export).await?,
-        Err(refused) => Err(Stopped::Failed(refused)),
+    let dialect = worker.context.dialect();
+    let sendable = Sendable::new(&export.sql, dialect, &export.parameters, RunPurpose::Run)
+        .map_err(|missing| missing.to_string());
+    let written = match &sendable {
+        Ok(sendable) => match read_only_check(worker, &sendable.checked).await? {
+            Ok(()) => export_rows(worker, &export, sendable).await?,
+            Err(refused) => Err(Stopped::Failed(refused)),
+        },
+        Err(missing) => Err(Stopped::Failed(missing.clone())),
     };
     let (rows, outcome) = match &written {
         Ok(rows) => (Some(*rows as u64), HistoryOutcome::Ok),
@@ -49,7 +56,7 @@ pub(super) async fn write_all(
     worker.context.record(HistoryEntry {
         data_source: worker.context.data_source.id,
         executed_at: started_at,
-        sql: export.sql.clone(),
+        sql: sendable.map_or_else(|_| export.sql.clone(), |sendable| sendable.recorded),
         duration: Some(started.elapsed()),
         rows,
         outcome,
@@ -95,9 +102,10 @@ async fn read_only_check(
 async fn export_rows(
     worker: &mut Worker<'_>,
     export: &ExportAll,
+    sendable: &Sendable,
 ) -> Result<Result<usize, Stopped>, Disconnected> {
     let run = Some(export.run);
-    let execute = worker.connection.execute(&export.sql);
+    let execute = sendable.execute(worker.connection);
     let mut cursor = match worker
         .signals
         .guard(execute, run, worker.cancel_handle)

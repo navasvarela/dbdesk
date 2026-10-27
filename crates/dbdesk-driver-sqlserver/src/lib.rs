@@ -17,9 +17,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use dbdesk_core::{
-    BoxError, CancelHandle, CatalogNode, CatalogPath, Connection, DriverError, Password, Quoting,
-    Rejection, RelationName, ResultCursor, Route, ServerInfo, SqlServerConfig, TableDescription,
-    TransactionStatus,
+    BoxError, CancelHandle, CatalogNode, CatalogPath, Cell, Connection, DriverError, Password,
+    Quoting, Rejection, RelationName, ResultCursor, Route, ServerInfo, SqlServerConfig,
+    TableDescription, TransactionStatus,
 };
 use tiberius::{AuthMethod, Client, Config};
 use tokio::net::TcpStream;
@@ -231,7 +231,16 @@ impl Connection for SqlServerConnection {
 
     async fn execute(&mut self, sql: &str) -> Result<Box<dyn ResultCursor>, DriverError> {
         self.cancel.ensure_in_step()?;
-        execution::execute(&self.client, &self.cancel, sql).await
+        execution::execute(&self.client, &self.cancel, sql, &[]).await
+    }
+
+    async fn execute_bound(
+        &mut self,
+        sql: &str,
+        values: &[Cell],
+    ) -> Result<Box<dyn ResultCursor>, DriverError> {
+        self.cancel.ensure_in_step()?;
+        execution::execute(&self.client, &self.cancel, sql, values).await
     }
 
     async fn describe_table(

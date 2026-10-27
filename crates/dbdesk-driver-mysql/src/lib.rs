@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use dbdesk_core::{
-    BoxError, CancelHandle, CatalogNode, CatalogPath, Connection, DriverError, MysqlConfig,
+    BoxError, CancelHandle, CatalogNode, CatalogPath, Cell, Connection, DriverError, MysqlConfig,
     Password, Quoting, Rejection, RelationName, ResultCursor, Route, ServerInfo, TableDescription,
     TransactionStatus,
 };
@@ -187,7 +187,15 @@ impl Connection for MysqlConnection {
     }
 
     async fn execute(&mut self, sql: &str) -> Result<Box<dyn ResultCursor>, DriverError> {
-        execution::execute(&self.conn, sql).await
+        execution::execute(&self.conn, sql, &[]).await
+    }
+
+    async fn execute_bound(
+        &mut self,
+        sql: &str,
+        values: &[Cell],
+    ) -> Result<Box<dyn ResultCursor>, DriverError> {
+        execution::execute(&self.conn, sql, values).await
     }
 
     async fn describe_table(

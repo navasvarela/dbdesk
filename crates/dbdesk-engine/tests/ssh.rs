@@ -64,6 +64,7 @@ impl Machine {
             data_source: id,
             run,
             statements: vec!["SELECT 42".to_owned()],
+            parameters: dbdesk_sql::ParameterValues::default(),
             transactions: TransactionMode::Auto,
             purpose: RunPurpose::Run,
         });

@@ -472,6 +472,7 @@ impl Consoles {
                 .into_iter()
                 .map(|statement| statement.sql)
                 .collect(),
+            parameters: dbdesk_sql::ParameterValues::default(),
         })
     }
 

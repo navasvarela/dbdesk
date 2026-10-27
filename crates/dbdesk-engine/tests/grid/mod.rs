@@ -431,6 +431,7 @@ pub(super) fn export_all(
         export: dbdesk_engine::ExportAll {
             run: RunId(run),
             sql: sql.to_owned(),
+            parameters: dbdesk_sql::ParameterValues::default(),
             path: path.to_owned(),
             format,
         },
@@ -528,6 +529,7 @@ fn cancels_fails_and_refuses_exports_without_leaving_a_file() {
             run: RunId(2),
             sql: "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r) SELECT n FROM r"
                 .to_owned(),
+            parameters: dbdesk_sql::ParameterValues::default(),
             path: path.clone(),
             format: dbdesk_store::ExportFormat::Csv,
         },

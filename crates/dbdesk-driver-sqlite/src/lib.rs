@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use dbdesk_core::{
-    BoxError, CancelHandle, CatalogNode, CatalogPath, Connection, DriverError, Rejection,
+    BoxError, CancelHandle, CatalogNode, CatalogPath, Cell, Connection, DriverError, Rejection,
     RelationName, ResultCursor, ServerInfo, SqliteConfig, TableDescription, TransactionStatus,
 };
 use rusqlite::OpenFlags;
@@ -168,7 +168,15 @@ impl Connection for SqliteConnection {
     }
 
     async fn execute(&mut self, sql: &str) -> Result<Box<dyn ResultCursor>, DriverError> {
-        execution::execute(&self.connection, &self.cancel, sql).await
+        execution::execute(&self.connection, &self.cancel, sql, &[]).await
+    }
+
+    async fn execute_bound(
+        &mut self,
+        sql: &str,
+        values: &[Cell],
+    ) -> Result<Box<dyn ResultCursor>, DriverError> {
+        execution::execute(&self.connection, &self.cancel, sql, values).await
     }
 
     async fn describe_table(

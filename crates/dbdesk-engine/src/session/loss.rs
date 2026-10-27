@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
 use dbdesk_core::{
-    CancelHandle, CatalogNode, CatalogPath, ColumnInfo, Connection, DriverError, Rejection,
+    CancelHandle, CatalogNode, CatalogPath, Cell, ColumnInfo, Connection, DriverError, Rejection,
     RelationName, ResultCursor, RoleDescription, Row, ServerInfo, TableDescription,
     TransactionStatus, describe_error,
 };
@@ -74,6 +74,20 @@ impl Connection for Watched {
 
     async fn execute(&mut self, sql: &str) -> Result<Box<dyn ResultCursor>, DriverError> {
         let cursor = self.loss.watch(self.connection.execute(sql).await)?;
+        Ok(Box::new(WatchedCursor {
+            cursor,
+            loss: self.loss.clone(),
+        }))
+    }
+
+    async fn execute_bound(
+        &mut self,
+        sql: &str,
+        values: &[Cell],
+    ) -> Result<Box<dyn ResultCursor>, DriverError> {
+        let cursor = self
+            .loss
+            .watch(self.connection.execute_bound(sql, values).await)?;
         Ok(Box::new(WatchedCursor {
             cursor,
             loss: self.loss.clone(),
