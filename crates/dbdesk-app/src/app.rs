@@ -2632,17 +2632,6 @@ mod tests {
         harness.get_by_label("orders").click_secondary();
         harness.run_steps(2);
         harness.get_by_label("Copy DDL").click();
-        let copied = |harness: &Harness<'_, DbDeskApp>| {
-            harness
-                .output()
-                .platform_output
-                .commands
-                .iter()
-                .find_map(|command| match command {
-                    egui::OutputCommand::CopyText(text) => Some(text.clone()),
-                    _ => None,
-                })
-        };
         step_until(&mut harness, "the DDL being copied", |harness| {
             copied(harness).is_some()
         });
@@ -3171,6 +3160,80 @@ mod tests {
         );
     }
 
+    /// The PostgreSQL test server `DBDESK_TEST_POSTGRES_URL` names, as data sources on it.
+    struct PostgresTestServer {
+        host: String,
+        port: u16,
+        user: String,
+        password: String,
+        /// The database the URL names.
+        database: String,
+    }
+
+    impl PostgresTestServer {
+        /// `None`, with a note, when the variable is unset, so the test skips.
+        fn from_env() -> Option<Self> {
+            let Ok(url) = std::env::var("DBDESK_TEST_POSTGRES_URL") else {
+                eprintln!("skipped: DBDESK_TEST_POSTGRES_URL is not set");
+                return None;
+            };
+            let (login, rest) = url.strip_prefix("postgres://")?.split_once('@')?;
+            let (user, password) = login.split_once(':')?;
+            let (address, database) = rest.split_once('/')?;
+            let (host, port) = address.split_once(':')?;
+            Some(Self {
+                host: host.to_owned(),
+                port: port.parse().ok()?,
+                user: user.to_owned(),
+                password: password.to_owned(),
+                database: database.to_owned(),
+            })
+        }
+
+        fn data_source(&self, database: &str, name: &str) -> dbdesk_core::DataSource {
+            dbdesk_core::DataSource {
+                id: DataSourceId::generate(),
+                name: name.to_owned(),
+                color: None,
+                safety: dbdesk_core::SafetyLevel::Normal,
+                project: None,
+                mcp_login: None,
+                config: dbdesk_core::ConnectionConfig::Postgres(dbdesk_core::PostgresConfig {
+                    server: dbdesk_core::ServerConfig {
+                        host: self.host.clone(),
+                        port: self.port.into(),
+                        database: database.to_owned(),
+                        user: self.user.clone(),
+                        tls: dbdesk_core::TlsMode::Disable,
+                        ssh: None,
+                    },
+                }),
+            }
+        }
+
+        /// The password, kept for `data_source`, as the app's secret store would.
+        fn secrets(
+            &self,
+            data_source: &dbdesk_core::DataSource,
+        ) -> crate::test_support::MemorySecrets {
+            crate::test_support::MemorySecrets::with_password(
+                data_source.id,
+                Password::new(self.password.as_str()),
+            )
+        }
+
+        /// A connection of the test's own to the `postgres` database, to set up and clean up
+        /// behind the app's back.
+        fn open(&self, runtime: &tokio::runtime::Runtime) -> Box<dyn dbdesk_core::Connection> {
+            let admin = self.data_source("postgres", "admin");
+            let secrets: Arc<dyn SecretStore> = Arc::new(self.secrets(&admin));
+            let tunnels = dbdesk_engine::Tunnels::new("known_hosts".into());
+            runtime
+                .block_on(dbdesk_engine::open_data_source(&admin, &secrets, &tunnels))
+                .unwrap()
+        }
+    }
+
     /// The first value of `sql`'s first row, on `connection`.
     fn first_value(
         runtime: &tokio::runtime::Runtime,
@@ -3187,55 +3250,91 @@ mod tests {
         })
     }
 
+    /// The text the app last put on the clipboard, if any.
+    fn copied(harness: &Harness<'_, DbDeskApp>) -> Option<String> {
+        harness
+            .output()
+            .platform_output
+            .commands
+            .iter()
+            .find_map(|command| match command {
+                egui::OutputCommand::CopyText(text) => Some(text.clone()),
+                _ => None,
+            })
+    }
+
+    /// A PostgreSQL data source starts with the server's roles, each saying what it may do,
+    /// with PostgreSQL's own `pg_` roles among the system objects; Copy DDL on one copies its
+    /// `CREATE ROLE`.
+    #[test]
+    fn lists_postgres_roles_and_copies_one_as_ddl() {
+        let Some(server) = PostgresTestServer::from_env() else {
+            return;
+        };
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let mut admin = server.open(&runtime);
+        let role = format!("dbdesk_e3_tree_{}", std::process::id());
+        first_value(&runtime, &mut admin, &format!("DROP ROLE IF EXISTS {role}"));
+        first_value(
+            &runtime,
+            &mut admin,
+            &format!("CREATE ROLE {role} LOGIN CONNECTION LIMIT 2"),
+        );
+        let source = server.data_source(&server.database, "pg");
+        let dir = tempfile::tempdir().unwrap();
+        DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .save(std::slice::from_ref(&source))
+            .unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = crate::test_support::start_app(
+            harness_at_default_size(),
+            dir.path(),
+            feed,
+            server.secrets(&source),
+        );
+        step_until_visible(&mut harness, "Expand pg");
+        harness.get_by_label("Expand pg").click();
+        step_until_visible(&mut harness, "Expand roles");
+        harness.get_by_label("Expand roles").click();
+        step_until_visible(&mut harness, &role);
+        assert!(
+            harness
+                .query_all_by_label("login, superuser")
+                .next()
+                .is_some(),
+            "the test server's own role says what it may do"
+        );
+        assert!(
+            harness.query_by_label("pg_monitor").is_none(),
+            "PostgreSQL's own roles are hidden with the other system objects"
+        );
+
+        harness.get_by_label(&role).click_secondary();
+        harness.run_steps(2);
+        harness.get_by_label("Copy DDL").click();
+        step_until(&mut harness, "the DDL being copied", |harness| {
+            copied(harness).is_some()
+        });
+        assert_eq!(
+            copied(&harness),
+            Some(format!(
+                "CREATE ROLE {role} WITH LOGIN CONNECTION LIMIT 2;\n"
+            ))
+        );
+
+        drop(harness);
+        first_value(&runtime, &mut admin, &format!("DROP ROLE {role}"));
+    }
+
     /// Ends a console's session server-side, as a restart would, then reconnects it from its
     /// toolbar. Works in a database of its own, so ending its sessions touches no other test.
     #[test]
     fn a_console_whose_connection_was_lost_says_so_and_reconnects_when_asked() {
-        let Ok(url) = std::env::var("DBDESK_TEST_POSTGRES_URL") else {
-            eprintln!("skipped: DBDESK_TEST_POSTGRES_URL is not set");
+        let Some(server) = PostgresTestServer::from_env() else {
             return;
         };
-        let (login, rest) = url
-            .strip_prefix("postgres://")
-            .unwrap()
-            .split_once('@')
-            .unwrap();
-        let (user, password) = login.split_once(':').unwrap();
-        let (address, _) = rest.split_once('/').unwrap();
-        let (host, port) = address.split_once(':').unwrap();
-        let postgres = |database: &str, name: &str| dbdesk_core::DataSource {
-            id: DataSourceId::generate(),
-            name: name.to_owned(),
-            color: None,
-            safety: dbdesk_core::SafetyLevel::Normal,
-            project: None,
-            mcp_login: None,
-            config: dbdesk_core::ConnectionConfig::Postgres(dbdesk_core::PostgresConfig {
-                server: dbdesk_core::ServerConfig {
-                    host: host.to_owned(),
-                    port: port.parse::<u16>().unwrap().into(),
-                    database: database.to_owned(),
-                    user: user.to_owned(),
-                    tls: dbdesk_core::TlsMode::Disable,
-                    ssh: None,
-                },
-            }),
-        };
         let runtime = tokio::runtime::Runtime::new().unwrap();
-        let admin_source = postgres("postgres", "admin");
-        let secrets: Arc<dyn SecretStore> =
-            Arc::new(crate::test_support::MemorySecrets::with_password(
-                admin_source.id,
-                Password::new(password),
-            ));
-        let tunnels = dbdesk_engine::Tunnels::new("known_hosts".into());
-        let mut admin = runtime
-            .block_on(dbdesk_engine::open_data_source(
-                &admin_source,
-                &secrets,
-                &tunnels,
-            ))
-            .unwrap();
+        let mut admin = server.open(&runtime);
         let database = format!("dbdesk_reconnect_{}", std::process::id());
         first_value(
             &runtime,
@@ -3243,7 +3342,7 @@ mod tests {
             &format!("DROP DATABASE IF EXISTS {database} WITH (FORCE)"),
         );
         first_value(&runtime, &mut admin, &format!("CREATE DATABASE {database}"));
-        let scratch = postgres(&database, "scratch");
+        let scratch = server.data_source(&database, "scratch");
         let dir = tempfile::tempdir().unwrap();
         DataSourceFile::new(dir.path().join("data_sources.toml"))
             .save(std::slice::from_ref(&scratch))
@@ -3253,7 +3352,7 @@ mod tests {
             harness_at_default_size(),
             dir.path(),
             feed,
-            crate::test_support::MemorySecrets::with_password(scratch.id, Password::new(password)),
+            server.secrets(&scratch),
         );
         step_until_visible(&mut harness, "Expand scratch");
         // Opening a console loads the catalog for completion, so a connection's spinner may

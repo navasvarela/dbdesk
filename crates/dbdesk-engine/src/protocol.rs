@@ -201,10 +201,11 @@ pub enum Command {
         data_source: DataSourceId,
         statements: Vec<String>,
     },
-    /// Loads the statement that creates the table or view at `path`, for Copy DDL, on the
-    /// explorer's connection: the catalog's definition where the database keeps one, or for a
-    /// table where it doesn't (PostgreSQL, SQL Server), one rebuilt from the table's
-    /// description and its constraints. Answered by [`Event::DdlLoaded`].
+    /// Loads the statement that creates the table, view or role at `path`, for Copy DDL, on
+    /// the explorer's connection: the catalog's definition where the database keeps one, or
+    /// for a table where it doesn't (PostgreSQL, SQL Server), one rebuilt from the table's
+    /// description and its constraints. A role's is rebuilt from its description, without
+    /// its password. Answered by [`Event::DdlLoaded`].
     LoadDdl {
         data_source: DataSourceId,
         path: CatalogPath,

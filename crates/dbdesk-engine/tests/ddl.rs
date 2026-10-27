@@ -959,7 +959,7 @@ fn log_in(engine: &mut TestEngine, server: &PostgresConfig, user: &str, password
 }
 
 /// E3's exit, below the dialogs: a login user with a password and a membership is created,
-/// logs in, is changed, renamed and dropped with what it owns given away; and neither its
+/// is copied as DDL, logs in, is changed, renamed and dropped with what it owns given away; and neither its
 /// password nor the verifier sent for it reaches the history.
 #[test]
 fn creates_logs_in_as_changes_and_drops_a_postgres_role() {
@@ -1031,6 +1031,12 @@ fn creates_logs_in_as_changes_and_drops_a_postgres_role() {
     let group_path = roles.child(NodeKind::Role, &group);
     let described_group = describe_role(&mut engine, postgres.id, &group_path).unwrap();
     assert_eq!(described_group.members, [user.clone()].into());
+
+    assert_eq!(
+        load_ddl(&mut engine, postgres.id, path.clone()),
+        format!("CREATE ROLE {user} WITH LOGIN CONNECTION LIMIT 3 IN ROLE {group};\n"),
+        "Copy DDL leaves the password out"
+    );
 
     assert!(log_in(&mut engine, &server.config, &user, &password));
     assert!(!log_in(
