@@ -1,6 +1,6 @@
 # History as an audit trail
 
-Status: **planned** (2026-10-27). This is the design of W4 in
+Status: **built** (2026-10-27). This is the design of W4 in
 [A well-rounded app](well-rounded.md#w4--history-as-an-audit-trail); the
 [roadmap](roadmap.md#well-rounded-track) tracks it.
 
@@ -61,7 +61,7 @@ for older readers):
 | Variant | Recorded by | `source` |
 | --- | --- | --- |
 | `Console` | a console's run | `app` |
-| `GridEdit(RowChange)` | Submit in the grid, one per row (see W4c) | `app` |
+| `GridEdit(Option<RowChange>)` | Submit in the grid, one per row (see W4c); `None` for a change this dbdesk can't read | `app` |
 | `ObjectHelper` | `ApplyDdl`: the explorer's create, alter, drop, rename and copy dialogs | `app` |
 | `Import { file }` | Import CSV, one entry per import | `app` |
 | `Export` | Export › All rows, the statement it ran | `app` |
@@ -167,7 +167,9 @@ UI thread. Retention keeps it from growing without bound.
 
 ## W4e — Retention
 
-`settings.toml` gets a `[history]` table, set in View › Settings:
+`settings.toml` gets a `[history]` table, set in View › Settings from a few lengths (30 days to
+two years; 10,000 to 1,000,000 per data source) rather than typed, since every change saves
+and prunes at once:
 
 ```toml
 [history]
@@ -188,7 +190,7 @@ max_per_data_source = 50000
 
 ## W4f — Export
 
-**Export…** in the History window writes the current search, without its 500-row limit, as
+**Export history › As CSV… / As JSON…** in the History window writes the current search, without its 500-row limit, as
 CSV or JSON through the store's `ExportWriter`: time, data source (name and id), kind, detail,
 outcome, duration, rows, the SQL, and a grid edit's change as JSON. The engine streams it
 from the history thread, a page at a time, so a large history never sits in memory.

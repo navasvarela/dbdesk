@@ -75,7 +75,7 @@ production, you also type the object's name before **Execute** can be clicked:
 
 ![Drop on a red data source, waiting for the table's name](images/drop-table.png)
 
-Every statement a helper runs is kept in the [query history](consoles.md#history), like those
+Every statement a helper runs is kept in the [query history](history.md), like those
 you run in a console.
 
 ## New table

@@ -13,7 +13,7 @@ dbdesk keeps everything in one folder per platform:
 | `data_sources.toml` (settings folder) | Your data sources. No passwords. |
 | `projects.toml` (settings folder) | Your projects. Which project a data source is in is written in `data_sources.toml`. |
 | `consoles/<data source id>/*.sql` (settings folder) | Your query consoles, one file each. See [Query consoles](consoles.md#consoles-are-saved). |
-| `history.sqlite` (settings folder) | Every statement your consoles and MCP clients ran, with its time, duration and outcome. |
+| `history.sqlite` (settings folder) | Every statement dbdesk and MCP clients sent, with its time, duration, outcome and where it came from (see [The query history](history.md)). |
 | `keymap.toml` (settings folder) | Your shortcuts, if you changed any. See [Keyboard shortcuts](shortcuts.md#changing-them). |
 | `settings.toml` (settings folder) | Your choices in **View → Settings…**, such as how SQL is formatted and whether to check for updates. |
 | `app.ron` (window state folder) | The window's size and position, the panel layout, the theme you picked. |

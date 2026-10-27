@@ -649,6 +649,31 @@ The gaps that keep dbdesk from being an everyday tool. The full plan is in
   - **W4e:** retention by age and per data source, pruned in short batches beside other
     processes;
   - **W4f:** export of a search as CSV or JSON.
+
+  **W4 demo note:** built. Edit a customer's country in the grid and **Submit**, then open
+  **History**: the `UPDATE` is tagged **Grid**; click it and the details say *Submitted from
+  the grid, on main.customers*, *Changed the row where id = 3*, country **Before** `ES`
+  **After** `PT`, and **To put it back** `UPDATE "main"."customers" SET "country" = 'ES' WHERE
+  "id" = '3'`, which **Insert into console** puts in the console to review and run. Each entry
+  is tagged **Console**, **Grid**, **Object** (the explorer's helpers), **Import** (one entry
+  per CSV file, with the file on hover), **Export** or **MCP** (the client's name, from its
+  `initialize`, on hover); rows from before W4 read as **dbdesk**. Pick **Every data source**
+  and **MCP clients**: an assistant's statements on any data source show, each named, a removed
+  data source as *Removed data source*; **Last hour** narrows them. `CREATE ROLE app PASSWORD
+  's3cret'` (or `IDENTIFIED BY`, `CREATE SECRET`, `password=` in a connection string) is stored
+  and logged as `'<redacted>'`. **Export history › As JSON…** writes every match, without the
+  500-row limit. In **View › Settings…**, **Keep statements for: a year** saves
+  `[history] max_age_days = 365` and deletes older statements at once, in 2,000-row
+  transactions, and again at every start. The file is migrated to schema version 2 (`origin`,
+  `detail`, `changes` and two indexes; old rows untouched, `source` still `app`/`mcp` for an
+  older dbdesk sharing the file). Full-text search was measured and left out: on a million
+  statements FTS5 doubled the file and took 10 s to build under the write lock. Covered by store
+  tests (migrations from 0.2.0 and pre-W4 files, two processes writing and migrating, pruning
+  while another process writes, every search filter and its query plan, the secrets guard
+  reading the file's bytes, export), engine tests on SQLite (each recorder's provenance, a grid
+  edit's change, secrets, retention at start-up and on save, export), the MCP stdio test (the
+  client's name), and kittest tests of the tags and filter, a grid edit's details and revert,
+  every data source and a period, the retention setting, and the export.
 - **W5 — Power in the grid:** designed in [Power in the grid](grid-power.md), in layers:
   - **W5a:** insert and delete rows, submitted with cell edits all or none, and recorded in the
     history;

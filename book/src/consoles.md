@@ -315,12 +315,9 @@ them (`t` for a PostgreSQL boolean, `{1,2}` for an array).
 Every statement a console runs is recorded with its time, duration, row count and outcome.
 **History** in the toolbar lists the data source's statements, newest first; type to search
 them, and click **Insert** (or double-click) to put one into the console on a line of its own.
-
-Statements an AI assistant ran through [`dbdesk mcp`](mcp.md) are in the same history, marked
-**MCP**. The menu next to the search shows all of them, only your own (**dbdesk**), or only
-the assistants' (**MCP clients**).
-
-![The history, with statements an assistant ran](images/history-mcp.png)
+[The query history](history.md) covers the rest: statements from the grid, the explorer and AI
+assistants, a grid edit's old values, searching every data source, exporting, and how long
+statements are kept.
 
 ## Errors
 

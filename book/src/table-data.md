@@ -39,7 +39,8 @@ generated id.
 
 On a **careful** data source, Submit first asks, naming the data source and what will happen:
 *this inserts 1 row, updates 2 edited rows and deletes 1 row*. A **read-only** data source's
-rows can't be changed. Every statement Submit sends is in the console's **History**.
+rows can't be changed. Every statement Submit sends is in the console's **History**, with the
+values it replaced (see [The query history](history.md#what-a-statement-did)).
 
 ## Following foreign keys
 
