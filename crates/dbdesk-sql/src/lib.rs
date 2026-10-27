@@ -2,8 +2,8 @@
 //! statement-under-cursor, a check for destructive statements, a formatter, a syntax
 //! checker and linter, a classifier of what a statement may change, the DDL the object
 //! helpers write, the statements that change a table's rows from the grid, the query that
-//! sorts and filters a statement's rows in the database, and the SCRAM verifiers role passwords
-//! are sent as.
+//! sorts and filters a statement's rows in the database, the SCRAM verifiers role passwords
+//! are sent as, and the `:name` parameters a statement takes.
 //!
 //! Everything works on text as typed, which is usually half-finished: nothing here fails on
 //! invalid input. Unterminated strings and comments run to the end of the text. All
@@ -23,6 +23,7 @@ mod dml;
 mod format;
 mod keywords;
 mod lexer;
+mod parameters;
 mod password;
 mod projection;
 mod safety;
@@ -47,6 +48,10 @@ pub use dml::{ColumnValue, RowSql, Table};
 pub use format::{FormatError, FormatOptions, Formatted, KeywordCase, format_ranges, same_meaning};
 pub use keywords::{is_keyword, keywords};
 pub use lexer::{Token, TokenKind, first_word, tokenize};
+pub use parameters::{
+    MissingValue, Parameter, ParameterBinding, ParameterValues, Prepared, bind, inline,
+    parameter_names, parameters, values_comment,
+};
 pub use password::ScramVerifier;
 pub use projection::{ProjectionItem, projection};
 pub use safety::{Hazard, hazard};
