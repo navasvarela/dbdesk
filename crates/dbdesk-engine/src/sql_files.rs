@@ -33,7 +33,7 @@ fn flatten<T>(result: Result<Result<T, SqlFileError>, JoinError>) -> Result<T, S
 }
 
 /// Reads the file, answering with [`Event::SqlFileRead`].
-pub(crate) async fn read(path: PathBuf, events: EventSink) {
+pub(crate) async fn read(path: PathBuf, events: &EventSink) {
     let task_path = path.clone();
     let result =
         flatten(tokio::task::spawn_blocking(move || dbdesk_store::read_sql_file(&task_path)).await);
@@ -63,7 +63,7 @@ pub(crate) async fn save(console: ConsoleKey, path: PathBuf, text: String) -> Ev
 /// Answers with an [`Event::SqlFileChanged`] for each file whose modification time isn't the
 /// one given, with what it holds now, or `None` once it is gone. A file that can't be read is
 /// only logged: it is looked at again at the next check.
-pub(crate) async fn check(files: Vec<WatchedFile>, events: EventSink) {
+pub(crate) async fn check(files: Vec<WatchedFile>, events: &EventSink) {
     let changed = tokio::task::spawn_blocking(move || {
         files
             .into_iter()

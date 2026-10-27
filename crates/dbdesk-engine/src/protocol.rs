@@ -179,7 +179,8 @@ pub enum Command {
     /// Removes a console's file, if it exists.
     DeleteConsoleFile(ConsoleKey),
     /// Reads a `.sql` file from anywhere on disk, to show in a console. Answered by
-    /// [`Event::SqlFileRead`].
+    /// [`Event::SqlFileRead`]. Reads, saves and checks of `.sql` files happen, and are
+    /// answered, in the order sent.
     OpenSqlFile(PathBuf),
     /// Writes a console's text to a `.sql` file, replacing it in one step. Saves are applied in
     /// the order sent. Answered by [`Event::SqlFileSaved`].
@@ -189,7 +190,7 @@ pub enum Command {
         text: String,
     },
     /// Looks at whether `.sql` files changed on disk since the times given. Answered by an
-    /// [`Event::SqlFileChanged`] for each one that did.
+    /// [`Event::SqlFileChanged`] for each one that did, before anything sent after it is.
     CheckSqlFiles(Vec<WatchedFile>),
     /// Resolves and describes a table on the explorer's connection, connecting first if
     /// needed, so a console's open result isn't disturbed. Answered by

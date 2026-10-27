@@ -197,8 +197,7 @@ fn opens_saves_and_watches_a_sql_file() {
             if contents.text == "select 1;" && contents.modified == modified
     ));
 
-    // Changed by another program, then removed. Checks that find nothing to say come last:
-    // a check is answered in the background, so one sent earlier could see a later change.
+    // Changed by another program, then removed.
     let watched = |modified| {
         vec![WatchedFile {
             path: path.clone(),
@@ -218,12 +217,32 @@ fn opens_saves_and_watches_a_sql_file() {
         contents: None,
     });
 
+    // Checks are answered in the order sent, saves included: a check sent before a save sees
+    // the file as it was, and is answered first. Answered after the save instead (as when
+    // checks ran in the background, which Linux showed), it would tell a console the file
+    // went back to its old text. A check of a file already known to be gone says nothing:
+    // the read sent after it is answered next.
+    engine.send(Command::CheckSqlFiles(watched(None)));
+    engine.send(Command::OpenSqlFile(path.clone()));
+    assert!(matches!(
+        engine.next_event(),
+        Event::SqlFileRead { result: Err(_), .. }
+    ));
+    std::fs::write(&path, "select 3;").unwrap();
     engine.send(Command::CheckSqlFiles(watched(None)));
     engine.send(Command::SaveSqlFile {
         console,
         path: path.clone(),
-        text: "select 3;".to_owned(),
+        text: "select 4;".to_owned(),
     });
+    let Event::SqlFileChanged {
+        contents: Some(before_the_save),
+        ..
+    } = engine.next_event()
+    else {
+        panic!("the check sent before the save wasn't answered first");
+    };
+    assert_eq!(before_the_save.text, "select 3;");
     let Event::SqlFileSaved {
         result: Ok(modified),
         ..
@@ -233,7 +252,10 @@ fn opens_saves_and_watches_a_sql_file() {
     };
     engine.send(Command::CheckSqlFiles(watched(modified)));
     engine.send(Command::OpenSqlFile(path));
-    assert!(matches!(engine.next_event(), Event::SqlFileRead { .. }));
+    assert!(matches!(
+        engine.next_event(),
+        Event::SqlFileRead { result: Ok(contents), .. } if contents.text == "select 4;"
+    ));
 }
 
 #[test]
