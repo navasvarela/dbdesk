@@ -146,7 +146,9 @@ An id in `lint.disabled` that names no rule is listed in the Settings window, an
 
 ## Query history
 
-SQLite table, in `history.sqlite`, created on first start:
+SQLite table, in `history.sqlite`, created on first start. `PRAGMA user_version` is the
+schema's version (2 since W4; files from before it are 0 and are migrated on open, see
+[History as an audit trail](history-audit.md#the-schema-version-2)):
 
 ```sql
 CREATE TABLE history (
@@ -156,14 +158,24 @@ CREATE TABLE history (
     sql           TEXT NOT NULL,
     duration_ms   INTEGER,
     rows          INTEGER,
-    outcome       TEXT NOT NULL       -- ok | error | cancelled
+    outcome       TEXT NOT NULL,      -- ok | error | cancelled
+    source        TEXT NOT NULL DEFAULT 'app',  -- app | mcp, what dbdesk before W4 reads
+    origin        TEXT,               -- console | grid | object | import | export | mcp
+    detail        TEXT,               -- the MCP client's name, or the imported file
+    changes       TEXT                -- a grid edit's row change, JSON
 );
 CREATE INDEX history_by_source ON history (data_source, executed_at DESC);
+CREATE INDEX history_by_time   ON history (executed_at DESC);
+CREATE INDEX history_by_origin ON history (coalesce(origin, source), executed_at DESC);
 ```
 
+- A row without `origin` (written before W4, or by an older dbdesk sharing the file) reads as
+  `coalesce(origin, source)`: `app` is "dbdesk, before it recorded where".
 - `executed_at` always has three fraction digits (`2026-10-22T09:15:02.500Z`) so the text sorts
   in time order: with a variable number of digits, `…:02Z` would sort after `…:02.5Z`.
-- One row per statement a console runs, written when it finishes. `rows` is what the database
+- One row per statement a console runs, written when it finishes; one per statement the grid,
+  an object helper or an export sends; one per CSV import, with the `INSERT`'s columns but not
+  its rows. `rows` is what the database
   reports (rows changed, or returned once fully read), `duration_ms` the time until the
   statement completed or its first page arrived.
 - Searchable from the History window of a console (by data source, substring of the SQL,

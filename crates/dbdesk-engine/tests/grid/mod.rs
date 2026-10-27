@@ -419,7 +419,7 @@ fn sorts_and_filters_rows_in_the_database_on_every_engine() {
 }
 
 /// Exports every row of a statement and returns the progress reported and the outcome.
-fn export_all(
+pub(super) fn export_all(
     engine: &mut TestEngine,
     run: u64,
     sql: &str,
@@ -596,7 +596,7 @@ fn cancels_fails_and_refuses_exports_without_leaving_a_file() {
 
 /// Imports a CSV file into a table, as the import dialog asks, and returns the progress
 /// reported and the outcome.
-fn import_rows(
+pub(super) fn import_rows(
     engine: &mut TestEngine,
     data_source: DataSourceId,
     import: dbdesk_engine::RowsImport,

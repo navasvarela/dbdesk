@@ -6,7 +6,7 @@
 //! engine; a `DELETE` hidden in a CTE refused by the parser; a write hidden in a function
 //! refused by the read-only transaction (PostgreSQL, MySQL and MariaDB; SQLite has no SQL
 //! functions, and its file is opened read-only); both refusals in the log; and every
-//! statement in the query history, marked as coming from MCP.
+//! statement in the query history, marked as coming from MCP and the client's name.
 //! The permissions beyond reading are checked in `permissions.rs`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -284,7 +284,9 @@ async fn drives_the_server_over_stdio() {
     let history = rusqlite::Connection::open(dir.path().join("history.sqlite")).unwrap();
     let recorded: i64 = history
         .query_row(
-            "SELECT count(*) FROM history WHERE source = 'mcp'",
+            // `rmcp` is the name rmcp's client gives itself when it connects.
+            "SELECT count(*) FROM history
+             WHERE source = 'mcp' AND origin = 'mcp' AND detail = 'rmcp'",
             [],
             |row| row.get(0),
         )

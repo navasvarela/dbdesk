@@ -6,10 +6,12 @@
 
 use std::fs::File;
 use std::io::BufReader;
+use std::time::Instant;
 
 use dbdesk_core::{Cell, DriverError, describe_error};
 use dbdesk_sql::{RowSql, Savepoint};
-use dbdesk_store::{CsvError, CsvReader, CsvRecord};
+use dbdesk_store::{CsvError, CsvReader, CsvRecord, HistoryEntry, HistoryOutcome, HistorySource};
+use jiff::Timestamp;
 
 use super::{Disconnected, Worker, transaction};
 use crate::{Event, ImportFailure, RowsImport};
@@ -20,7 +22,7 @@ const BATCH_ROWS: usize = 500;
 
 type Reader = CsvReader<BufReader<File>>;
 
-/// Imports the file and reports [`Event::RowsImported`].
+/// Imports the file, records it in the history, and reports [`Event::RowsImported`].
 pub(super) async fn import(
     worker: &mut Worker<'_>,
     import: &RowsImport,
@@ -39,7 +41,13 @@ pub(super) async fn import(
             lines: None,
             message,
         }),
-        None => in_transaction(worker, import).await?,
+        None => {
+            let started_at = Timestamp::now();
+            let started = Instant::now();
+            let result = in_transaction(worker, import).await?;
+            record(worker, import, &result, (started_at, started));
+            result
+        }
     };
     match &result {
         Ok(rows) => tracing::info!(
@@ -58,6 +66,37 @@ pub(super) async fn import(
         result,
     });
     Ok(())
+}
+
+/// Records the whole import as one entry: the `INSERT`'s table and columns without the rows,
+/// which are the file's, how many went in, and the file.
+fn record(
+    worker: &Worker<'_>,
+    import: &RowsImport,
+    result: &Result<u64, ImportFailure>,
+    (started_at, started): (Timestamp, Instant),
+) {
+    let columns: Vec<&str> = import
+        .mapping
+        .iter()
+        .map(|(column, _)| column.as_str())
+        .collect();
+    let insert = RowSql::new(worker.context.dialect(), &import.table).insert_rows(&columns, &[]);
+    let (rows, outcome) = match result {
+        Ok(rows) => (Some(*rows), HistoryOutcome::Ok),
+        Err(_) => (None, HistoryOutcome::Error),
+    };
+    worker.context.record(HistoryEntry {
+        data_source: worker.context.data_source.id,
+        executed_at: started_at,
+        sql: format!("{insert}\u{2026}"),
+        duration: Some(started.elapsed()),
+        rows,
+        outcome,
+        source: HistorySource::Import {
+            file: import.file.clone(),
+        },
+    });
 }
 
 /// Opens the file and a transaction, inserts every row, and commits, or rolls back at the

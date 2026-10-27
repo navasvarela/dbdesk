@@ -24,6 +24,7 @@ pub use data_sources::{DataSourceFile, StoreError};
 pub use export::{ExportError, ExportFormat, ExportWriter, export_rows};
 pub use history::{
     History, HistoryEntry, HistoryError, HistoryFile, HistoryOutcome, HistoryQuery, HistorySource,
+    HistorySourceKind,
 };
 pub use keymap::{KeymapBindings, KeymapError, KeymapFile};
 pub use paths::{APP_NAME, AppPaths};

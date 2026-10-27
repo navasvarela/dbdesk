@@ -16,6 +16,7 @@ use jiff::Timestamp;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, Implementation, ServerCapabilities, ServerConfig};
+use rmcp::service::{NotificationContext, RoleServer};
 use rmcp::{ErrorData, ServerHandler, schemars, tool, tool_handler, tool_router};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -682,5 +683,12 @@ impl ServerHandler for DbdeskMcp {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("dbdesk", env!("CARGO_PKG_VERSION")))
             .with_instructions(instructions)
+    }
+
+    /// Learns the client's name for the history, once the handshake is done.
+    async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
+        if let Some(info) = context.peer.peer_info() {
+            self.inner.audit.set_client(&info.client_info.name);
+        }
     }
 }

@@ -1,5 +1,5 @@
-//! Query history: every statement a console or an MCP client runs, in `history.sqlite`. Only
-//! the SQL and how it went are kept, never the rows.
+//! Query history: every statement dbdesk or an MCP client sends, in `history.sqlite`, with
+//! where it came from. Only the SQL and how it went are kept, never the rows.
 //!
 //! The app and `dbdesk mcp` may have the file open at the same time, each writing. The
 //! database is in WAL mode, where one writer at a time appends while readers carry on, and
@@ -11,7 +11,12 @@ use std::time::{Duration, Instant};
 
 use dbdesk_core::DataSourceId;
 use jiff::Timestamp;
-use rusqlite::{TransactionBehavior, params};
+use rusqlite::params;
+
+pub use source::{HistorySource, HistorySourceKind};
+
+mod schema;
+mod source;
 
 /// Lexically sortable and RFC 3339: fixed millisecond precision, always UTC. A variable
 /// number of fraction digits would sort `…:00.5Z` before `…:00Z`.
@@ -24,24 +29,6 @@ const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long to wait between attempts to switch the file to WAL (see [`switch_to_wal`]): long
 /// enough not to spin, short next to the other process's few milliseconds of opening.
 const WAL_RETRY_DELAY: Duration = Duration::from_millis(10);
-
-const SCHEMA: &str = "
-CREATE TABLE IF NOT EXISTS history (
-    id            INTEGER PRIMARY KEY,
-    data_source   TEXT NOT NULL,
-    executed_at   TEXT NOT NULL,
-    sql           TEXT NOT NULL,
-    duration_ms   INTEGER,
-    rows          INTEGER,
-    outcome       TEXT NOT NULL,
-    source        TEXT NOT NULL DEFAULT 'app'
-);
-CREATE INDEX IF NOT EXISTS history_by_source ON history (data_source, executed_at DESC);
-";
-
-/// Files written before MCP (0.2.0 and earlier) lack the `source` column. Every row in them
-/// came from the app, which is what the default says.
-const ADD_SOURCE: &str = "ALTER TABLE history ADD COLUMN source TEXT NOT NULL DEFAULT 'app'";
 
 /// How a statement ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,30 +51,6 @@ impl HistoryOutcome {
         [Self::Ok, Self::Error, Self::Cancelled]
             .into_iter()
             .find(|outcome| outcome.as_str() == text)
-    }
-}
-
-/// Who ran a statement.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum HistorySource {
-    /// A query console in the app.
-    App,
-    /// An MCP client, through `dbdesk mcp`.
-    Mcp,
-}
-
-impl HistorySource {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::App => "app",
-            Self::Mcp => "mcp",
-        }
-    }
-
-    fn parse(text: &str) -> Option<Self> {
-        [Self::App, Self::Mcp]
-            .into_iter()
-            .find(|source| source.as_str() == text)
     }
 }
 
@@ -157,7 +120,7 @@ impl HistoryFile {
         connection.busy_timeout(BUSY_TIMEOUT).map_err(open_error)?;
         switch_to_wal(&connection).map_err(open_error)?;
         commit_without_syncing(&connection).map_err(open_error)?;
-        migrate(&mut connection).map_err(open_error)?;
+        schema::migrate(&mut connection).map_err(open_error)?;
         Ok(History { connection })
     }
 }
@@ -204,20 +167,6 @@ fn is_busy(error: &rusqlite::Error) -> bool {
     error.sqlite_error_code() == Some(rusqlite::ErrorCode::DatabaseBusy)
 }
 
-/// Brings the schema up to date. In an immediate transaction, so when the app and the MCP
-/// server open an old file at the same moment, the second waits, then finds the column added.
-fn migrate(connection: &mut rusqlite::Connection) -> rusqlite::Result<()> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    transaction.execute_batch(SCHEMA)?;
-    let has_source = transaction
-        .prepare("SELECT 1 FROM pragma_table_info('history') WHERE name = 'source'")?
-        .exists([])?;
-    if !has_source {
-        transaction.execute(ADD_SOURCE, [])?;
-    }
-    transaction.commit()
-}
-
 /// An open history database.
 pub struct History {
     connection: rusqlite::Connection,
@@ -235,8 +184,9 @@ impl History {
             .rows
             .map(|rows| i64::try_from(rows).unwrap_or(i64::MAX));
         self.connection.execute(
-            "INSERT INTO history (data_source, executed_at, sql, duration_ms, rows, outcome, source)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO history
+                 (data_source, executed_at, sql, duration_ms, rows, outcome, source, origin, detail)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 entry.data_source.to_string(),
                 format_timestamp(entry.executed_at),
@@ -244,7 +194,9 @@ impl History {
                 duration_ms,
                 rows,
                 entry.outcome.as_str(),
-                entry.source.as_str(),
+                entry.source.legacy_source(),
+                entry.source.origin(),
+                entry.source.detail(),
             ],
         )?;
         Ok(())
@@ -262,9 +214,10 @@ impl History {
         limit: usize,
     ) -> Result<Vec<HistoryEntry>, HistoryError> {
         let mut statement = self.connection.prepare_cached(
-            "SELECT executed_at, sql, duration_ms, rows, outcome, source FROM history
+            "SELECT executed_at, sql, duration_ms, rows, outcome, coalesce(origin, source), detail
+             FROM history
              WHERE data_source = ?1 AND sql LIKE '%' || ?2 || '%' ESCAPE '\\'
-               AND (?3 IS NULL OR source = ?3)
+               AND (?3 IS NULL OR coalesce(origin, source) = ?3)
              ORDER BY executed_at DESC, id DESC
              LIMIT ?4",
         )?;
@@ -274,7 +227,7 @@ impl History {
             params![
                 data_source.to_string(),
                 escape_like(&query.text),
-                query.source.map(HistorySource::as_str),
+                query.kind.map(HistorySourceKind::as_str),
                 limit
             ],
             |row| {
@@ -284,7 +237,8 @@ impl History {
                     duration_ms: row.get(2)?,
                     rows: row.get(3)?,
                     outcome: row.get(4)?,
-                    source: row.get(5)?,
+                    kind: row.get(5)?,
+                    detail: row.get(6)?,
                 })
             },
         )?;
@@ -303,7 +257,7 @@ pub struct HistoryQuery {
     /// Statements containing it, ignoring ASCII case; empty for all.
     pub text: String,
     /// Only statements from there; `None` for all.
-    pub source: Option<HistorySource>,
+    pub kind: Option<HistorySourceKind>,
 }
 
 impl HistoryQuery {
@@ -312,7 +266,7 @@ impl HistoryQuery {
         Self {
             data_source,
             text: String::new(),
-            source: None,
+            kind: None,
         }
     }
 }
@@ -324,7 +278,9 @@ struct StoredRow {
     duration_ms: Option<i64>,
     rows: Option<i64>,
     outcome: String,
-    source: String,
+    /// `coalesce(origin, source)`.
+    kind: String,
+    detail: Option<String>,
 }
 
 impl StoredRow {
@@ -339,7 +295,7 @@ impl StoredRow {
                 .map(Duration::from_millis),
             rows: self.rows.and_then(|rows| u64::try_from(rows).ok()),
             outcome: HistoryOutcome::parse(&self.outcome)?,
-            source: HistorySource::parse(&self.source)?,
+            source: HistorySource::from_stored(&self.kind, self.detail)?,
         })
     }
 }
@@ -372,7 +328,7 @@ mod tests {
             duration: Some(Duration::from_millis(12)),
             rows: Some(3),
             outcome: HistoryOutcome::Ok,
-            source: HistorySource::App,
+            source: HistorySource::Console,
         }
     }
 
@@ -426,23 +382,33 @@ mod tests {
         let shop = DataSourceId::generate();
         let from_app = entry(shop, 1_000, "SELECT 1");
         let from_mcp = HistoryEntry {
-            source: HistorySource::Mcp,
+            source: HistorySource::Mcp {
+                client: Some("claude-ai".to_owned()),
+            },
             ..entry(shop, 2_000, "SELECT 2")
         };
         history.record(&from_app).unwrap();
         history.record(&from_mcp).unwrap();
 
-        let only = |source| HistoryQuery {
-            source: Some(source),
+        let only = |kind| HistoryQuery {
+            kind: Some(kind),
             ..HistoryQuery::all(shop)
         };
         assert_eq!(
-            history.search(&only(HistorySource::Mcp), 10).unwrap(),
+            history.search(&only(HistorySourceKind::Mcp), 10).unwrap(),
             std::slice::from_ref(&from_mcp)
         );
         assert_eq!(
-            history.search(&only(HistorySource::App), 10).unwrap(),
+            history
+                .search(&only(HistorySourceKind::Console), 10)
+                .unwrap(),
             std::slice::from_ref(&from_app)
+        );
+        assert_eq!(
+            history
+                .search(&only(HistorySourceKind::Import), 10)
+                .unwrap(),
+            []
         );
         assert_eq!(
             history.search(&HistoryQuery::all(shop), 10).unwrap(),
@@ -473,59 +439,121 @@ mod tests {
         assert_eq!(found("a_b"), ["select a_b"]);
     }
 
-    #[test]
-    fn adds_the_source_column_to_a_file_from_0_2_0() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("history.sqlite");
-        let shop = DataSourceId::generate();
-        let old = rusqlite::Connection::open(&path).unwrap();
-        old.execute_batch(
-            "CREATE TABLE history (
-                id INTEGER PRIMARY KEY, data_source TEXT NOT NULL, executed_at TEXT NOT NULL,
-                sql TEXT NOT NULL, duration_ms INTEGER, rows INTEGER, outcome TEXT NOT NULL
-            );",
-        )
-        .unwrap();
-        old.execute(
-            "INSERT INTO history (data_source, executed_at, sql, outcome)
-             VALUES (?1, '2026-10-01T10:00:00.000Z', 'SELECT 1', 'ok')",
-            [shop.to_string()],
-        )
-        .unwrap();
+    /// The table as dbdesk 0.2.0 made it, before MCP.
+    const SCHEMA_0_2: &str = "CREATE TABLE history (
+        id INTEGER PRIMARY KEY, data_source TEXT NOT NULL, executed_at TEXT NOT NULL,
+        sql TEXT NOT NULL, duration_ms INTEGER, rows INTEGER, outcome TEXT NOT NULL
+    );";
 
-        // An older dbdesk still has the file open, as when the app runs during an upgrade.
-        let history = HistoryFile::new(&path).open().unwrap();
-        history
-            .record(&HistoryEntry {
-                source: HistorySource::Mcp,
-                ..entry(shop, 1_800_000_000_000, "SELECT 2")
-            })
-            .unwrap();
-        old.execute(
-            "INSERT INTO history (data_source, executed_at, sql, outcome)
-             VALUES (?1, '2026-10-02T10:00:00.000Z', 'SELECT 3', 'ok')",
-            [shop.to_string()],
-        )
-        .unwrap();
+    /// The table as dbdesk made it from MCP until provenance: `source`, and no
+    /// `user_version`.
+    const SCHEMA_BEFORE_PROVENANCE: &str = "CREATE TABLE history (
+        id INTEGER PRIMARY KEY, data_source TEXT NOT NULL, executed_at TEXT NOT NULL,
+        sql TEXT NOT NULL, duration_ms INTEGER, rows INTEGER, outcome TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'app'
+    );
+    CREATE INDEX history_by_source ON history (data_source, executed_at DESC);";
 
-        let sources: Vec<(String, HistorySource)> = history
-            .search(&containing(shop, ""), 10)
+    /// Writes a row as dbdesk before provenance did: `source` if the table has it, never
+    /// `origin` or `detail`.
+    fn insert_as_before(connection: &rusqlite::Connection, shop: DataSourceId, sql: &str) {
+        let has_source = connection
+            .prepare("SELECT 1 FROM pragma_table_info('history') WHERE name = 'source'")
             .unwrap()
-            .into_iter()
-            .map(|entry| (entry.sql, entry.source))
-            .collect();
-        assert_eq!(
-            sources,
-            [
-                ("SELECT 2".to_owned(), HistorySource::Mcp),
-                ("SELECT 3".to_owned(), HistorySource::App),
-                ("SELECT 1".to_owned(), HistorySource::App),
-            ]
-        );
-        let mode: String = old
-            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .exists([])
             .unwrap();
-        assert_eq!(mode, "wal");
+        let source = if has_source { ", source" } else { "" };
+        let value = if has_source { ", 'app'" } else { "" };
+        connection
+            .execute(
+                &format!(
+                    "INSERT INTO history (data_source, executed_at, sql, outcome{source})
+                     VALUES (?1, '2026-10-01T10:00:00.000Z', ?2, 'ok'{value})"
+                ),
+                params![shop.to_string(), sql],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn migrates_files_from_before_provenance() {
+        for old_schema in [SCHEMA_0_2, SCHEMA_BEFORE_PROVENANCE] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("history.sqlite");
+            let shop = DataSourceId::generate();
+            let old = rusqlite::Connection::open(&path).unwrap();
+            old.execute_batch(old_schema).unwrap();
+            insert_as_before(&old, shop, "SELECT 1");
+
+            // An older dbdesk still has the file open, as when the app runs during an upgrade,
+            // and goes on writing rows without provenance.
+            let history = HistoryFile::new(&path).open().unwrap();
+            let from_mcp = HistorySource::Mcp {
+                client: Some("claude-ai".to_owned()),
+            };
+            history
+                .record(&HistoryEntry {
+                    source: from_mcp.clone(),
+                    ..entry(shop, 1_800_000_000_000, "SELECT 2")
+                })
+                .unwrap();
+            insert_as_before(&old, shop, "SELECT 3");
+
+            let sources: Vec<(String, HistorySource)> = history
+                .search(&HistoryQuery::all(shop), 10)
+                .unwrap()
+                .into_iter()
+                .map(|entry| (entry.sql, entry.source))
+                .collect();
+            assert_eq!(
+                sources,
+                [
+                    ("SELECT 2".to_owned(), from_mcp),
+                    ("SELECT 3".to_owned(), HistorySource::Dbdesk),
+                    ("SELECT 1".to_owned(), HistorySource::Dbdesk),
+                ]
+            );
+            // What an older dbdesk's search reads: every row has a `source` it parses.
+            let legacy: Vec<String> = old
+                .prepare("SELECT source FROM history ORDER BY id")
+                .unwrap()
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+            assert_eq!(legacy, ["app", "mcp", "app"]);
+            let (mode, version): (String, i32) = old
+                .query_row(
+                    "SELECT * FROM pragma_journal_mode, pragma_user_version",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!((mode.as_str(), version), ("wal", 2));
+        }
+    }
+
+    #[test]
+    fn leaves_a_file_from_a_newer_dbdesk_as_it_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = HistoryFile::new(dir.path().join("history.sqlite"));
+        drop(file.open().unwrap());
+        let newer = rusqlite::Connection::open(file.path()).unwrap();
+        newer
+            .execute_batch("ALTER TABLE history ADD COLUMN later TEXT; PRAGMA user_version = 3;")
+            .unwrap();
+
+        let history = file.open().unwrap();
+        let shop = DataSourceId::generate();
+        history.record(&entry(shop, 0, "SELECT 1")).unwrap();
+        assert_eq!(
+            history.search(&HistoryQuery::all(shop), 10).unwrap().len(),
+            1
+        );
+        let version: i32 = newer
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 3);
     }
 
     /// Set to a history file's path in the child process of
@@ -540,16 +568,21 @@ mod tests {
         let Ok(path) = std::env::var(CHILD_PATH) else {
             return;
         };
-        write_many(&HistoryFile::new(path), HistorySource::Mcp);
+        write_many(
+            &HistoryFile::new(path),
+            &HistorySource::Mcp {
+                client: Some("claude-ai".to_owned()),
+            },
+        );
     }
 
-    fn write_many(file: &HistoryFile, source: HistorySource) {
+    fn write_many(file: &HistoryFile, source: &HistorySource) {
         let history = file.open().unwrap();
         let shop = DataSourceId::generate();
         for at in 0..WRITES_PER_PROCESS {
             history
                 .record(&HistoryEntry {
-                    source,
+                    source: source.clone(),
                     ..entry(shop, at, "SELECT 1")
                 })
                 .unwrap();
@@ -558,11 +591,16 @@ mod tests {
 
     /// The app and `dbdesk mcp` are separate processes, and SQLite's locks between processes
     /// differ from those between connections in one; so the second writer here really is
-    /// another process: this test binary again, running [`write_as_second_process`].
+    /// another process: this test binary again, running [`write_as_second_process`]. The
+    /// file is from before provenance, so both also migrate it at once.
     #[test]
     fn two_processes_write_at_once() {
         let dir = tempfile::tempdir().unwrap();
         let file = HistoryFile::new(dir.path().join("history.sqlite"));
+        rusqlite::Connection::open(file.path())
+            .unwrap()
+            .execute_batch(SCHEMA_BEFORE_PROVENANCE)
+            .unwrap();
         let child = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
@@ -575,7 +613,7 @@ mod tests {
             .spawn()
             .unwrap();
 
-        write_many(&file, HistorySource::App);
+        write_many(&file, &HistorySource::Console);
         // libtest prints a failed test's panic to stdout, so that is where the child's is.
         let child = child.wait_with_output().unwrap();
         assert!(
@@ -586,7 +624,7 @@ mod tests {
 
         let counts: Vec<(String, i64)> = rusqlite::Connection::open(file.path())
             .unwrap()
-            .prepare("SELECT source, count(*) FROM history GROUP BY source ORDER BY source")
+            .prepare("SELECT origin, count(*) FROM history GROUP BY origin ORDER BY origin")
             .unwrap()
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
             .unwrap()
@@ -595,7 +633,7 @@ mod tests {
         assert_eq!(
             counts,
             [
-                ("app".to_owned(), WRITES_PER_PROCESS),
+                ("console".to_owned(), WRITES_PER_PROCESS),
                 ("mcp".to_owned(), WRITES_PER_PROCESS)
             ]
         );
