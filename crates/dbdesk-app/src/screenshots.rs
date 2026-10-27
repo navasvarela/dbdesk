@@ -20,8 +20,8 @@ use dbdesk_core::{
     SourceColor, SqliteConfig, TlsMode,
 };
 use dbdesk_store::{
-    DataSourceFile, HistoryEntry, HistoryFile, HistoryOutcome, HistorySource, Project, ProjectFile,
-    ProjectSlug, Projects,
+    DataSourceFile, HistoryEntry, HistoryFile, HistoryOutcome, HistorySource, NamedCell, Project,
+    ProjectFile, ProjectSlug, Projects, ReplacedCell, RowChange, RowChangeKind,
 };
 use egui::accesskit::Role;
 use egui::{Theme, Vec2};
@@ -331,6 +331,13 @@ const SCENES: &[Scene] = &[
         name: "history-mcp",
         data_sources: FixtureSources::Shop,
         play: history_mcp,
+        keeps_pointer: false,
+        needs: &[],
+    },
+    Scene {
+        name: "history-audit",
+        data_sources: FixtureSources::Shop,
+        play: history_audit,
         keeps_pointer: false,
         needs: &[],
     },
@@ -1140,6 +1147,74 @@ fn history_mcp(harness: &mut Harness<'static, DbDeskApp>, fixture: &Fixture) {
     run_all(harness, "8 rows");
     harness.get_by_label("History").click();
     step_until_visible(harness, "MCP");
+}
+
+/// Statements from several places, the grid edit's details open: the value it replaced, and
+/// the statement that puts it back.
+fn history_audit(harness: &mut Harness<'static, DbDeskApp>, fixture: &Fixture) {
+    let data_sources = DataSourceFile::new(fixture.dir.path().join("data_sources.toml"))
+        .load()
+        .unwrap();
+    let shop = data_sources
+        .iter()
+        .find(|data_source| data_source.name == "shop")
+        .unwrap();
+    let history = HistoryFile::new(fixture.dir.path().join("history.sqlite"))
+        .open()
+        .unwrap();
+    let edit = r#"UPDATE "main"."customers" SET "country" = 'PT' WHERE "id" = '3'"#;
+    let change = RowChange {
+        table: "main.customers".to_owned(),
+        kind: RowChangeKind::Updated {
+            key: vec![NamedCell {
+                column: "id".to_owned(),
+                value: Some("3".to_owned()),
+            }],
+            cells: vec![ReplacedCell {
+                column: "country".to_owned(),
+                old: Some("ES".to_owned()),
+                new: Some("PT".to_owned()),
+            }],
+        },
+        revert: Some(
+            r#"UPDATE "main"."customers" SET "country" = 'ES' WHERE "id" = '3'"#.to_owned(),
+        ),
+    };
+    let now = jiff::Timestamp::now();
+    for (minutes_ago, sql, source) in [
+        (
+            30,
+            "CREATE INDEX orders_by_status ON orders (status)",
+            HistorySource::ObjectHelper,
+        ),
+        (
+            21,
+            "SELECT * FROM customers WHERE country = 'ES'",
+            HistorySource::Mcp {
+                client: Some("claude-ai".to_owned()),
+            },
+        ),
+        (8, edit, HistorySource::GridEdit(Some(change))),
+    ] {
+        history
+            .record(&HistoryEntry {
+                data_source: shop.id,
+                executed_at: now - jiff::SignedDuration::from_mins(minutes_ago),
+                sql: sql.to_owned(),
+                duration: Some(std::time::Duration::from_millis(2)),
+                rows: Some(1),
+                outcome: HistoryOutcome::Ok,
+                source,
+            })
+            .unwrap();
+    }
+    open_console(harness, "shop", BEST_CUSTOMERS);
+    run_all(harness, "8 rows");
+    harness.get_by_label("History").click();
+    step_until_visible(harness, "MCP");
+    harness.get_by_label(edit).click();
+    harness.run_ok();
+    step_until_visible(harness, "To put it back:");
 }
 
 fn explorer_filter(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {

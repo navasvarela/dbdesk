@@ -73,7 +73,7 @@ it asks again after each update.
 
 Ask the assistant to list the project's data sources, then to describe a table and query it.
 Each statement it runs shows up in the data source's **History**, marked **MCP** (see
-[History](consoles.md#history)).
+[The query history](history.md)).
 
 ## What the assistant can do
 
@@ -175,7 +175,8 @@ SQLite files have no logins, so for them dbdesk's own checks are all there is.
   next to the app's (see [Where dbdesk keeps its files](files.md)). It also logs to standard
   error, which most clients keep in their own logs.
 - **The query history.** Every statement the server sends to a database is in the data
-  source's history, marked **MCP**, beside your own. The History window can show just those.
+  source's history, marked **MCP** with the assistant's name, beside your own. The History
+  window can show just those, and export them (see [The query history](history.md)).
 
 ## When it doesn't work
 
