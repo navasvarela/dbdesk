@@ -31,6 +31,13 @@ against every background it is drawn on, in both themes, for WCAG AA (4.5:1). It
 first selection colours: SQL strings and keywords on selected text fell to 3.5:1. When adding a
 role or a new text-on-background combination, add the pair to `text_pairs`.
 
+**On macOS, selection and focus take the system's accent colour** (`macos::look`), read from
+`NSColor.controlAccentColor` and read again when the window comes back to the front or the theme
+changes. The selection fill is the accent faded into the field only as far as needed for plain
+and SQL text on it to keep WCAG AA (`theme::accent_selection`), and
+`theme::tests::accent_selection_meets_wcag_aa` checks it for each of macOS's accent colours. The
+brand colours stay for icons, tabs and buttons.
+
 ## Panels as islands
 
 The dock's background is the darker `base`, and each dock node (its tab bar and body) is a
@@ -57,7 +64,14 @@ Three typefaces ship in `assets/fonts/`, each with its OFL licence:
 - **JetBrains Mono** for SQL, result cells and the log console.
 - **Phosphor** (from the `egui-phosphor` crate) for icons.
 
-Body text is Inter at 13 points; spacing is tighter than egui's defaults so more tree and grid
+On macOS the real window uses the system's own faces instead: SF Pro and SF Mono, read at
+runtime from `/System/Library/Fonts` and never shipped (`fonts::install_system`). Both are
+variable fonts, so each family is the file at set coordinates: SF Pro at its text optical size
+(17; the file defaults to its display cut) and weights 400 and 590, SF Mono at 400 (it defaults
+to its lightest weight). If a file is missing or has no weight axis, the bundled faces stay and
+the log says why. UI tests and the manual's pictures always use the bundled faces.
+
+Body text is Inter (or SF Pro) at 13 points; spacing is tighter than egui's defaults so more tree and grid
 rows fit on screen.
 
 **Icons have their own font family** (`fonts::icon`, `widgets::glyph`), and are deliberately

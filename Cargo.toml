@@ -66,11 +66,15 @@ egui-phosphor = "0.14.0"
 # default features, which would build GTK on Linux. Its macOS dependencies (objc2, objc2-app-kit,
 # crossbeam-channel, dpi) are winit's and rfd's already; it adds keyboard-types.
 muda = { version = "0.21.2", default-features = false }
-# AppKit, for what eframe doesn't expose on macOS: the pasteboard's text for Edit › Paste. The
-# versions winit, rfd and muda already use; features are listed per use.
+# AppKit, for what eframe doesn't expose on macOS: the pasteboard's text for Edit › Paste, and
+# the user's accent colour (NSColor, in an NSColorSpace, with CGFloat components from
+# objc2-core-foundation). The versions winit, rfd and muda already use.
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "std",
+    "NSColor",
+    "NSColorSpace",
     "NSPasteboard",
+    "objc2-core-foundation",
 ] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSString"] }
 # Decodes the PNGs egui_extras loads (the logo on the Welcome tab).

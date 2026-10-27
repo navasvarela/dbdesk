@@ -46,6 +46,7 @@ mod settings;
 mod settings_window;
 mod sql_files;
 mod state;
+mod system_look;
 mod telemetry;
 #[cfg(test)]
 mod test_support;
@@ -147,7 +148,8 @@ fn main() -> anyhow::Result<()> {
             #[cfg(target_os = "macos")]
             let app = app
                 .with_native_menu(native_menu::NativeMenu::install(&cc.egui_ctx))
-                .with_integrated_title_bar();
+                .with_integrated_title_bar()
+                .with_system_look(system_look::SystemLook::install(&cc.egui_ctx));
             Ok(Box::new(app))
         }),
     )
