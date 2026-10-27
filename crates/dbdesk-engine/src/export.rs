@@ -4,6 +4,7 @@
 use std::path::PathBuf;
 
 use dbdesk_core::{Row, describe_error};
+use dbdesk_sql::ParameterValues;
 use dbdesk_store::{ExportFormat, export_rows};
 
 use crate::events::EventSink;
@@ -24,6 +25,8 @@ pub struct ExportAll {
     /// Identifies the export for [`crate::Command::Cancel`]; like a run's, chosen by the UI.
     pub run: RunId,
     pub sql: String,
+    /// The values of the statement's `:name` parameters, as for [`crate::Command::Execute`].
+    pub parameters: ParameterValues,
     pub path: PathBuf,
     pub format: ExportFormat,
 }

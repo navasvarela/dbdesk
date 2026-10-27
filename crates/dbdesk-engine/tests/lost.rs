@@ -139,6 +139,7 @@ fn run(engine: &TestEngine, scratch: &Scratch, run: u64) {
         data_source: scratch.data_source.id,
         run: RunId(run),
         statements: vec!["SELECT 1".to_owned()],
+        parameters: dbdesk_sql::ParameterValues::default(),
         transactions: TransactionMode::Auto,
         purpose: RunPurpose::Run,
     });

@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use dbdesk_core::{CancelHandle, ColumnInfo, DriverError, Rejection, ResultCursor, Row};
+use dbdesk_core::{CancelHandle, Cell, ColumnInfo, DriverError, Rejection, ResultCursor, Row};
 use dbdesk_sql::{Dialect, first_word};
 use duckdb::InterruptHandle;
 use duckdb::arrow::array::{Array, AsArray, StructArray};
@@ -78,10 +78,12 @@ struct Page {
     exhausted: bool,
 }
 
+/// Runs `sql` with `values` bound to its `$1`, `$2`, … placeholders.
 pub(crate) async fn execute(
     connection: &Arc<Mutex<duckdb::Connection>>,
     cancel: &DuckDbCancel,
     sql: &str,
+    values: &[Cell],
 ) -> Result<Box<dyn ResultCursor>, DriverError> {
     // A cancel applies to the statement running when it arrives; a new statement starts
     // uncancelled. This runs before the statement thread exists, so a cancel can't slip in
@@ -94,13 +96,14 @@ pub(crate) async fn execute(
     let (page_sender, pages) = mpsc::channel(1);
     let connection = Arc::clone(connection);
     let sql = sql.to_owned();
+    let values = values.to_vec();
     let thread = tokio::task::spawn_blocking(move || {
         let channels = Channels {
             started: started_sender,
             demand: demand_receiver,
             pages: page_sender,
         };
-        run_statement(&connection, &sql, &cancelled, channels);
+        run_statement(&connection, &sql, &values, &cancelled, channels);
     });
 
     let started = started
@@ -129,6 +132,7 @@ struct Channels {
 fn run_statement(
     connection: &Mutex<duckdb::Connection>,
     sql: &str,
+    values: &[Cell],
     cancelled: &AtomicBool,
     channels: Channels,
 ) {
@@ -150,7 +154,8 @@ fn run_statement(
         }
     };
     // Only to start the statement streaming: its iterator is dropped unused (see the module).
-    if let Err(error) = statement.stream_arrow([]).map(drop) {
+    let values = duckdb::params_from_iter(values.iter().map(Option::as_deref));
+    if let Err(error) = statement.stream_arrow(values).map(drop) {
         let _ = started.send(Err(statement_error(error, sql)));
         return;
     }

@@ -10,6 +10,7 @@ mod export;
 mod guard;
 mod import;
 mod loss;
+mod parameters;
 mod query;
 mod transaction;
 mod validate;
@@ -22,7 +23,7 @@ use dbdesk_core::{
     CancelHandle, CatalogPath, Connection, DataSource, DataSourceId, RelationName, SafetyLevel,
     TransactionStatus, describe_error,
 };
-use dbdesk_sql::Dialect;
+use dbdesk_sql::{Dialect, ParameterValues};
 use dbdesk_store::{HistoryEntry, SecretStore};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::{oneshot, watch};
@@ -65,6 +66,8 @@ pub(crate) enum SessionRequest {
 pub(crate) struct Script {
     pub(crate) run: RunId,
     pub(crate) statements: Vec<String>,
+    /// The values of the statements' `:name` parameters.
+    pub(crate) parameters: ParameterValues,
     pub(crate) transactions: TransactionMode,
     pub(crate) purpose: RunPurpose,
 }

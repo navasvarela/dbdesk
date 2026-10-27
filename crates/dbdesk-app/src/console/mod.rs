@@ -577,6 +577,7 @@ impl QueryConsole {
             export: ExportAll {
                 run,
                 sql,
+                parameters: dbdesk_sql::ParameterValues::default(),
                 path,
                 format,
             },

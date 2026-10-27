@@ -33,10 +33,12 @@ struct Page {
     exhausted: bool,
 }
 
+/// Runs `sql` with `values` bound to its `?1`, `?2`, … placeholders.
 pub(crate) async fn execute(
     connection: &Arc<Mutex<rusqlite::Connection>>,
     cancel: &SqliteCancel,
     sql: &str,
+    values: &[Cell],
 ) -> Result<Box<dyn ResultCursor>, DriverError> {
     // A cancel applies to the statement running when it arrives; a new statement starts
     // uncancelled. This runs before the statement thread exists, so a cancel can't slip in
@@ -49,13 +51,14 @@ pub(crate) async fn execute(
     let (page_sender, pages) = mpsc::channel(1);
     let connection = Arc::clone(connection);
     let sql = sql.to_owned();
+    let values = values.to_vec();
     let thread = tokio::task::spawn_blocking(move || {
         let channels = Channels {
             started: started_sender,
             demand: demand_receiver,
             pages: page_sender,
         };
-        run_statement(&connection, &sql, &cancelled, channels);
+        run_statement(&connection, &sql, &values, &cancelled, channels);
     });
 
     let started = started
@@ -84,6 +87,7 @@ struct Channels {
 fn run_statement(
     connection: &Mutex<rusqlite::Connection>,
     sql: &str,
+    values: &[Cell],
     cancelled: &AtomicBool,
     channels: Channels,
 ) {
@@ -96,7 +100,13 @@ fn run_statement(
         let _ = started.send(Err(poisoned()));
         return;
     };
-    let mut statement = match connection.prepare(sql) {
+    let prepared = connection.prepare(sql).and_then(|mut statement| {
+        for (index, value) in values.iter().enumerate() {
+            statement.raw_bind_parameter(index + 1, value.as_deref())?;
+        }
+        Ok(statement)
+    });
+    let mut statement = match prepared {
         Ok(statement) => statement,
         Err(error) => {
             // The receiver only disappears if the cursor's caller gave up; nothing to do.

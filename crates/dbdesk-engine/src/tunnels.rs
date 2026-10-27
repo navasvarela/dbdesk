@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 use async_trait::async_trait;
 use dbdesk_core::{
-    CancelHandle, CatalogNode, CatalogPath, Connection, DataSourceId, DriverError, Rejection,
+    CancelHandle, CatalogNode, CatalogPath, Cell, Connection, DataSourceId, DriverError, Rejection,
     RelationName, ResultCursor, RoleDescription, ServerInfo, SshConfig, TableDescription,
     TransactionStatus,
 };
@@ -115,6 +115,14 @@ impl Connection for Tunnelled {
 
     async fn execute(&mut self, sql: &str) -> Result<Box<dyn ResultCursor>, DriverError> {
         self.connection.execute(sql).await
+    }
+
+    async fn execute_bound(
+        &mut self,
+        sql: &str,
+        values: &[Cell],
+    ) -> Result<Box<dyn ResultCursor>, DriverError> {
+        self.connection.execute_bound(sql, values).await
     }
 
     async fn describe_table(

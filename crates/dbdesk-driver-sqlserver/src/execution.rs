@@ -18,10 +18,10 @@ use std::sync::{Arc, PoisonError};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use dbdesk_core::{CancelHandle, ColumnInfo, DriverError, Rejection, ResultCursor, Row};
+use dbdesk_core::{CancelHandle, Cell, ColumnInfo, DriverError, Rejection, ResultCursor, Row};
 use dbdesk_sql::{Dialect, first_word};
 use futures_util::TryStreamExt;
-use tiberius::{QueryItem, QueryStream};
+use tiberius::{Query, QueryItem, QueryStream};
 use tokio::sync::{Mutex, OwnedMutexGuard, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
@@ -138,10 +138,12 @@ struct Channels {
     pages: mpsc::Sender<Result<Page, DriverError>>,
 }
 
+/// Runs `sql`, with `values` bound to its `@P1`, `@P2`, … placeholders if there are any.
 pub(crate) async fn execute(
     client: &Arc<Mutex<SqlClient>>,
     cancel: &Arc<CancelSlot>,
     sql: &str,
+    values: &[Cell],
 ) -> Result<Box<dyn ResultCursor>, DriverError> {
     let client = Arc::clone(client).lock_owned().await;
     // Armed before the statement is sent, so a cancel that arrives as soon as it is running
@@ -158,7 +160,10 @@ pub(crate) async fn execute(
     };
     let task = tokio::spawn(run_statement(
         client,
-        sql.to_owned(),
+        Statement {
+            sql: sql.to_owned(),
+            values: values.to_vec(),
+        },
         channels,
         Arc::clone(cancel),
         cancellation,
@@ -199,12 +204,12 @@ enum Outcome {
 /// task's result, which [`SqlServerCursor::finish`] reports.
 async fn run_statement(
     mut client: OwnedMutexGuard<SqlClient>,
-    sql: String,
+    statement: Statement,
     channels: Channels,
     slot: Arc<CancelSlot>,
     mut cancellation: Cancellation,
 ) -> Result<(), DriverError> {
-    let outcome = read_statement(&mut client, &sql, channels, &mut cancellation).await;
+    let outcome = read_statement(&mut client, statement, channels, &mut cancellation).await;
     slot.disarm();
     let report = match outcome {
         Outcome::Ended(result) => return result,
@@ -236,22 +241,45 @@ async fn run_statement(
     }
 }
 
+/// A statement to run, and the values for its placeholders.
+struct Statement {
+    sql: String,
+    values: Vec<Cell>,
+}
+
+impl Statement {
+    /// Sends the statement: as a batch of its own, or, with values, through `sp_executesql`,
+    /// whose scope ends with the statement (a `#temp` table it creates, a `USE` or a `SET`
+    /// it runs, don't outlast it).
+    async fn send<'a>(&self, client: &'a mut SqlClient) -> tiberius::Result<QueryStream<'a>> {
+        if self.values.is_empty() {
+            return client.simple_query(self.sql.as_str()).await;
+        }
+        let mut query = Query::new(self.sql.as_str());
+        for value in &self.values {
+            query.bind(value.as_deref());
+        }
+        query.query(client).await
+    }
+}
+
 async fn read_statement(
     client: &mut SqlClient,
-    sql: &str,
+    statement: Statement,
     channels: Channels,
     cancellation: &mut Cancellation,
 ) -> Outcome {
+    let sql = statement.sql.as_str();
     let Channels {
         started,
         demand,
         pages,
     } = channels;
     let channels = PageChannels { demand, pages };
-    // `simple_query` sends the batch and then waits for its first result set, or the end of
-    // its reply: a statement that takes long before it answers is cancelled here.
+    // Sending waits for the statement's first result set, or the end of its reply: a
+    // statement that takes long before it answers is cancelled here.
     let mut stream =
-        match until_cancelled(client.simple_query(sql), GRACE_BEFORE_ROWS, cancellation).await {
+        match until_cancelled(statement.send(client), GRACE_BEFORE_ROWS, cancellation).await {
             Next::Cancelled => return Outcome::Cancelled(Report::Started(started)),
             Next::Done(Ok(stream)) => stream,
             Next::Done(Err(error)) => {

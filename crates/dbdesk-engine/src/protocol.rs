@@ -7,6 +7,7 @@ use dbdesk_core::{
     ProjectId, Rejection, RelationName, RoleDescription, Row, ServerInfo, TableDescription,
     TableName, TransactionStatus,
 };
+use dbdesk_sql::ParameterValues;
 use dbdesk_store::{
     ConsoleKey, ExportFormat, HistoryEntry, HistoryQuery, ImportPlan, ImportPreview,
     KeymapBindings, McpOverrides, McpPermissions, Project, Projects, RowChange, SavedConsole,
@@ -140,11 +141,17 @@ pub enum Command {
     /// `data_source` first if needed, and stops at the first failure. Each statement's first
     /// page of rows is reported; the last statement's remaining rows stay available through
     /// [`Command::FetchMore`] until the next run.
+    ///
+    /// With `parameters`, each statement's `:name` parameters take their values: bound where
+    /// the driver binds them, written as literals where it doesn't. A statement whose
+    /// parameter has no value fails without being sent. With none, statements go as typed.
+    /// The history records each statement as typed, followed by a comment naming its values.
     Execute {
         console: ConsoleId,
         data_source: DataSourceId,
         run: RunId,
         statements: Vec<String>,
+        parameters: ParameterValues,
         transactions: TransactionMode,
         purpose: RunPurpose,
     },

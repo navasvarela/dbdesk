@@ -9,8 +9,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use dbdesk_core::{Cell, ColumnInfo, DriverError, Rejection, ResultCursor, Row};
 use mysql_async::consts::{ColumnFlags, ColumnType};
+use mysql_async::prelude::Protocol;
 use mysql_async::prelude::Queryable;
-use mysql_async::{Column, Conn, Value};
+use mysql_async::{Column, Conn, Params, QueryResult, Value};
 use tokio::sync::{Mutex, OwnedMutexGuard, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
@@ -37,9 +38,11 @@ struct Page {
     exhausted: bool,
 }
 
+/// Runs `sql`, with `values` bound to its `?` placeholders if there are any.
 pub(crate) async fn execute(
     conn: &Arc<Mutex<Conn>>,
     sql: &str,
+    values: &[Cell],
 ) -> Result<Box<dyn ResultCursor>, DriverError> {
     let conn = Arc::clone(conn).lock_owned().await;
     let (started_sender, started) = oneshot::channel();
@@ -51,7 +54,12 @@ pub(crate) async fn execute(
         demand: demand_receiver,
         pages: page_sender,
     };
-    let task = tokio::spawn(run_statement(conn, sql.to_owned(), channels));
+    let task = tokio::spawn(run_statement(
+        conn,
+        sql.to_owned(),
+        values.to_vec(),
+        channels,
+    ));
 
     let started = started
         .await
@@ -78,9 +86,33 @@ struct Channels {
 /// exhausted, fails, or the cursor goes away. Whatever is left is read and discarded, so the
 /// connection is ready for the next statement, and how that went is the task's result,
 /// which [`MysqlCursor::finish`] reports.
+///
+/// A statement without values goes over the text protocol, which sends every value as the
+/// server formats it; one with values is prepared and runs over the binary protocol, the only
+/// one that binds.
 async fn run_statement(
     mut conn: OwnedMutexGuard<Conn>,
     sql: String,
+    values: Vec<Cell>,
+    channels: Channels,
+) -> Result<(), DriverError> {
+    if values.is_empty() {
+        let result = conn.query_iter(sql.as_str()).await;
+        return read_result(result, &sql, channels).await;
+    }
+    let values: Vec<Value> = values
+        .into_iter()
+        .map(|value| value.map_or(Value::NULL, |text| Value::Bytes(text.into_bytes())))
+        .collect();
+    let result = conn
+        .exec_iter(sql.as_str(), Params::Positional(values))
+        .await;
+    read_result(result, &sql, channels).await
+}
+
+async fn read_result<P: Protocol>(
+    result: mysql_async::Result<QueryResult<'_, 'static, P>>,
+    sql: &str,
     channels: Channels,
 ) -> Result<(), DriverError> {
     let Channels {
@@ -88,11 +120,11 @@ async fn run_statement(
         mut demand,
         pages,
     } = channels;
-    let mut result = match conn.query_iter(sql.as_str()).await {
+    let mut result = match result {
         Ok(result) => result,
         Err(error) => {
             // The receiver only disappears if the cursor's caller gave up; nothing to do.
-            let _ = started.send(Err(statement_error(error, &sql)));
+            let _ = started.send(Err(statement_error(error, sql)));
             return Ok(());
         }
     };
@@ -108,7 +140,7 @@ async fn run_statement(
                 columns: column_info,
                 rows_changed: Some(rows_changed),
             })
-            .map_err(|error| statement_error(error, &sql));
+            .map_err(|error| statement_error(error, sql));
         let _ = started.send(finished);
         return Ok(());
     }
@@ -122,7 +154,7 @@ async fn run_statement(
         return result
             .drop_result()
             .await
-            .map_err(|error| statement_error(error, &sql));
+            .map_err(|error| statement_error(error, sql));
     }
     while let Some(max_rows) = demand.recv().await {
         let mut page = Vec::new();
@@ -135,7 +167,7 @@ async fn run_statement(
                     break;
                 }
                 Err(error) => {
-                    let _ = pages.send(Err(statement_error(error, &sql))).await;
+                    let _ = pages.send(Err(statement_error(error, sql))).await;
                     return Ok(());
                 }
             }
@@ -155,7 +187,7 @@ async fn run_statement(
     result
         .drop_result()
         .await
-        .map_err(|error| statement_error(error, &sql))
+        .map_err(|error| statement_error(error, sql))
 }
 
 fn column_info(column: &Column) -> ColumnInfo {
@@ -261,7 +293,8 @@ fn cells(row: mysql_async::Row, formats: &[ValueFormat]) -> Row {
 }
 
 /// One value as text. The text protocol sends every value as the server formats it, so only
-/// `NULL` and bytes arrive here; the other variants are for completeness.
+/// `NULL` and bytes arrive from it; the binary protocol, used when values are bound, sends
+/// numbers, dates and times as such.
 fn cell(value: Value, format: ValueFormat) -> Cell {
     match (value, format) {
         (Value::NULL, _) => None,

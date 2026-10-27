@@ -5,6 +5,7 @@
 mod common;
 mod grid;
 mod history;
+mod parameters;
 
 use std::sync::Arc;
 
@@ -67,6 +68,7 @@ fn execute_in(
         data_source,
         run: RunId(run),
         statements: statements.iter().map(|s| (*s).to_owned()).collect(),
+        parameters: dbdesk_sql::ParameterValues::default(),
         transactions,
         purpose: RunPurpose::Run,
     });
@@ -795,6 +797,7 @@ fn explains_on_sqlserver_with_showplan_and_switches_it_off() {
         data_source: id,
         run: RunId(run),
         statements: vec![sql.to_owned()],
+        parameters: dbdesk_sql::ParameterValues::default(),
         transactions: TransactionMode::Auto,
         purpose: RunPurpose::Explain,
     };

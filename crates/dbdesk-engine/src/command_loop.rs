@@ -221,6 +221,7 @@ impl Engine {
                 data_source,
                 run,
                 statements,
+                parameters,
                 transactions,
                 purpose,
             } => self.execute(
@@ -229,6 +230,7 @@ impl Engine {
                 Script {
                     run,
                     statements,
+                    parameters,
                     transactions,
                     purpose,
                 },

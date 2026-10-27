@@ -14,6 +14,7 @@ use jiff::Timestamp;
 use dbdesk_sql::{ExplainSetting, controls_transactions};
 
 use super::guard::{self, ReadOnly};
+use super::parameters::Sendable;
 use super::{Disconnected, Script, SessionContext, Worker, cancel_running_statement, transaction};
 use crate::{
     Event, RunId, RunOutcome, RunPurpose, StatementFailure, StatementSummary, TransactionMode,
@@ -30,7 +31,8 @@ const LOG_PREVIEW_CHARS: usize = 80;
 struct StatementRef {
     run: RunId,
     index: usize,
-    sql: String,
+    /// The statement as sent, and as the history records it.
+    sent: Sendable,
     started_at: Timestamp,
 }
 
@@ -80,7 +82,7 @@ async fn explain_with_setting(
     let switched_on = StatementRef {
         run: script.run,
         index: 0,
-        sql: setting.on.to_owned(),
+        sent: Sendable::plain(setting.on),
         started_at: Timestamp::now(),
     };
     if let Err(error) = transaction::run_counting(worker, setting.on, None).await? {
@@ -125,15 +127,31 @@ async fn run_statements(
             outcome = RunOutcome::Cancelled;
             break;
         }
+        let dialect = worker.context.dialect();
+        let sendable = match Sendable::new(sql, dialect, &script.parameters, script.purpose) {
+            Ok(sendable) => sendable,
+            Err(missing) => {
+                // Nothing was sent, so nothing goes in the history.
+                let statement = StatementRef {
+                    run,
+                    index,
+                    sent: Sendable::plain(sql),
+                    started_at: Timestamp::now(),
+                };
+                report_refusal(worker.context, &statement, missing.to_string());
+                outcome = RunOutcome::Failed;
+                break;
+            }
+        };
+        let checked = sendable.checked.clone();
         let statement = StatementRef {
             run,
             index,
-            sql: sql.clone(),
+            sent: sendable,
             started_at: Timestamp::now(),
         };
         if let Some(read_only) = worker.context.read_only {
-            let dialect = worker.context.dialect();
-            if let Err(refusal) = ReadOnly::check(sql, dialect, worker.context.name()) {
+            if let Err(refusal) = ReadOnly::check(&checked, dialect, worker.context.name()) {
                 report_refusal(worker.context, &statement, refusal);
                 outcome = RunOutcome::Failed;
                 break;
@@ -145,7 +163,7 @@ async fn run_statements(
                 break;
             }
         } else if let Err(error) =
-            transaction::begin_if_needed(worker, transactions, run, sql).await?
+            transaction::begin_if_needed(worker, transactions, run, &checked).await?
         {
             report_failure(worker, &statement, Duration::ZERO, &error);
             outcome = RunOutcome::Failed;
@@ -160,7 +178,7 @@ async fn run_statements(
         // A parked statement still holds the connection, so it can't be asked. Only the last
         // statement parks, and one that returns rows hardly ever controls transactions.
         let failed = matches!(end, StatementEnd::Failed);
-        let controls = controls_transactions(sql, worker.context.dialect());
+        let controls = controls_transactions(&checked, dialect);
         if (failed || controls) && !matches!(end, StatementEnd::Parked(_)) {
             transaction::refresh(worker).await?;
         }
@@ -192,7 +210,7 @@ async fn run_statement(
 ) -> Result<StatementEnd, Disconnected> {
     let run = statement.run;
     let started = Instant::now();
-    let execute = worker.connection.execute(&statement.sql);
+    let execute = statement.sent.execute(worker.connection);
     let mut cursor = match worker
         .signals
         .guard(execute, Some(run), worker.cancel_handle)
@@ -409,7 +427,10 @@ fn report_failure(
         // of each statement; the database's own message is what matters.
         DriverError::Statement {
             source, position, ..
-        } => (describe_error(source.as_ref()), *position),
+        } => (
+            describe_error(source.as_ref()),
+            statement.sent.typed_position(*position),
+        ),
         other => (describe_error(other), None),
     };
     tracing::warn!(data_source = %context.name(), "statement {} failed: {message}", statement.index + 1);
@@ -436,7 +457,7 @@ fn history_entry(
     HistoryEntry {
         data_source: context.data_source.id,
         executed_at: statement.started_at,
-        sql: statement.sql.clone(),
+        sql: statement.sent.recorded.clone(),
         duration: Some(elapsed),
         rows,
         outcome,

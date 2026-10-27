@@ -5,7 +5,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::{
-    CancelHandle, CatalogNode, CatalogPath, DriverError, RelationName, ResultCursor,
+    CancelHandle, CatalogNode, CatalogPath, Cell, DriverError, RelationName, ResultCursor,
     RoleDescription, TableDescription, TransactionStatus,
 };
 
@@ -80,6 +80,33 @@ pub trait Connection: Send {
     /// [`DriverError::Statement`] if the statement is rejected or fails before producing a
     /// result, with the error's position when known.
     async fn execute(&mut self, sql: &str) -> Result<Box<dyn ResultCursor>, DriverError>;
+
+    /// [`Connection::execute`], with `values` bound to the statement's placeholders in order,
+    /// each as text or `NULL`, which the database converts as it would a string. The
+    /// placeholders are written as `dbdesk_sql::Dialect::parameter_binding` says for the
+    /// driver's dialect (`?1`, `$1`, `@P1` or `?`).
+    ///
+    /// Drivers whose dialect takes values as literals instead don't implement it: the
+    /// default runs a statement without values, and refuses values.
+    ///
+    /// # Errors
+    ///
+    /// As [`Connection::execute`]; also [`DriverError::Statement`] if the values don't fit
+    /// the placeholders, or the driver can't bind any.
+    async fn execute_bound(
+        &mut self,
+        sql: &str,
+        values: &[Cell],
+    ) -> Result<Box<dyn ResultCursor>, DriverError> {
+        if !values.is_empty() {
+            return Err(DriverError::Statement {
+                source: "this database's driver doesn't bind parameters".into(),
+                position: None,
+                sqlstate: None,
+            });
+        }
+        self.execute(sql).await
+    }
 
     /// Resolves a table the way a statement on this connection would (search path, case
     /// folding) and describes it, for editing its rows. `None` if no such table exists, or it

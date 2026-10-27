@@ -62,6 +62,7 @@ fn run(
         data_source,
         run: RunId(run),
         statements: vec![sql.to_owned()],
+        parameters: dbdesk_sql::ParameterValues::default(),
         transactions: TransactionMode::Auto,
         purpose: RunPurpose::Run,
     });
@@ -256,6 +257,7 @@ fn page_through(engine: &mut TestEngine, data_source: DataSourceId, run: u64) ->
         data_source,
         run: RunId(run),
         statements: vec!["SELECT g FROM generate_series(1, 1200) AS g".to_owned()],
+        parameters: dbdesk_sql::ParameterValues::default(),
         transactions: TransactionMode::Auto,
         purpose: RunPurpose::Run,
     });
