@@ -1,5 +1,7 @@
 //! PostgreSQL's roles: the users and groups of a whole server.
 
+use std::collections::BTreeSet;
+
 /// What a role may do, as `CREATE ROLE` and `ALTER ROLE` set it: each attribute is on or off,
 /// written as its keyword or the keyword with `NO` in front (`LOGIN`, `NOLOGIN`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -60,4 +62,27 @@ impl RoleAttribute {
             Self::BypassRls => "Ignores row-level security policies",
         }
     }
+}
+
+/// A role as the database describes it, for editing it and for what dropping it takes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoleDescription {
+    pub name: String,
+    /// The attributes that are on.
+    pub attributes: BTreeSet<RoleAttribute>,
+    /// `None` for no limit.
+    pub connection_limit: Option<u32>,
+    /// When its password stops working, as the database prints the timestamp; `None` for
+    /// never, whether it was never set or set to `infinity`.
+    pub valid_until: Option<String>,
+    /// The roles it is a member of.
+    pub member_of: BTreeSet<String>,
+    /// The roles that are members of it, which lose that membership when it is dropped.
+    pub members: BTreeSet<String>,
+    /// How many objects it owns in the connected database.
+    pub owned_objects: u64,
+    /// How many objects in the connected database it holds privileges on.
+    pub privileges: u64,
+    /// The databases it owns, in alphabetical order. Dropping it fails while there are any.
+    pub owned_databases: Vec<String>,
 }

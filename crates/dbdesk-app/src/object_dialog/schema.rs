@@ -168,6 +168,7 @@ fn singular(folder: FolderKind) -> &'static str {
         FolderKind::Indexes => "index",
         FolderKind::Constraints => "constraint",
         FolderKind::Triggers => "trigger",
+        FolderKind::Roles => "role",
     }
 }
 

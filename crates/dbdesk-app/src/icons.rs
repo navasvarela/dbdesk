@@ -109,6 +109,7 @@ pub fn node(kind: NodeKind) -> Icon {
         NodeKind::Index => Icon::new(glyph::LIST_MAGNIFYING_GLASS, Role::Warning),
         NodeKind::Constraint => Icon::new(glyph::KEY, Role::Warning),
         NodeKind::Trigger => Icon::new(glyph::LIGHTNING, Role::Error),
+        NodeKind::Role => Icon::new(glyph::USER, Role::Secondary),
     }
 }
 

@@ -260,6 +260,9 @@ impl Engine {
             Command::DescribeTable { data_source, table } => {
                 self.request(data_source, SessionRequest::DescribeTable(table));
             }
+            Command::DescribeRole { data_source, path } => {
+                self.request(data_source, SessionRequest::DescribeRole(path));
+            }
             Command::ApplyDdl {
                 data_source,
                 statements,

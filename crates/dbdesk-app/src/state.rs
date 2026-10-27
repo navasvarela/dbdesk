@@ -173,6 +173,7 @@ impl AppState {
             | Event::ExportFinished { .. }
             | Event::TableDescribed { .. }
             | Event::EditsApplied { .. }
+            | Event::RoleDescribed { .. }
             | Event::DdlApplied { .. }
             | Event::DdlLoaded { .. }
             | Event::TransactionChanged { .. }

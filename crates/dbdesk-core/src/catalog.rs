@@ -40,6 +40,8 @@ pub enum NodeKind {
     Index,
     Constraint,
     Trigger,
+    /// A user or group of the whole server (PostgreSQL's roles), listed beside its databases.
+    Role,
 }
 
 /// Groups children by kind ("tables", "views", and so on), as most database tools' trees do.
@@ -58,6 +60,7 @@ pub enum FolderKind {
     Indexes,
     Constraints,
     Triggers,
+    Roles,
 }
 
 impl FolderKind {
@@ -76,6 +79,7 @@ impl FolderKind {
             Self::Indexes => "indexes",
             Self::Constraints => "constraints",
             Self::Triggers => "triggers",
+            Self::Roles => "roles",
         }
     }
 }
@@ -161,7 +165,8 @@ impl CatalogPath {
 
     /// The name to use in SQL for the object at this path: schema-qualified for schema objects
     /// (`public.users`, `"My Schema"."Order Items"`), bare for columns, constraints and
-    /// triggers. `None` for databases, schemas and folders.
+    /// triggers, and for roles, which belong to no schema. `None` for databases, schemas and
+    /// folders.
     pub fn qualified_name(&self, quoting: Quoting) -> Option<String> {
         let object = self.last()?;
         let quote = |name: &str| quoting.identifier_if_needed(name);
@@ -177,7 +182,7 @@ impl CatalogPath {
             | NodeKind::Index => Some(self.schema_qualified(&quote(&object.name), quoting)),
             // Function names already carry their argument list, e.g. `add(integer, integer)`.
             NodeKind::Function => Some(self.schema_qualified(&object.name, quoting)),
-            NodeKind::Column | NodeKind::Constraint | NodeKind::Trigger => {
+            NodeKind::Column | NodeKind::Constraint | NodeKind::Trigger | NodeKind::Role => {
                 Some(quote(&object.name))
             }
             NodeKind::Database | NodeKind::Schema | NodeKind::Folder(_) => None,

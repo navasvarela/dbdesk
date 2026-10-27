@@ -6,7 +6,7 @@ use async_trait::async_trait;
 
 use crate::{
     CancelHandle, CatalogNode, CatalogPath, DriverError, RelationName, ResultCursor,
-    TableDescription, TransactionStatus,
+    RoleDescription, TableDescription, TransactionStatus,
 };
 
 /// What a server reported about itself when the connection was opened.
@@ -92,6 +92,18 @@ pub trait Connection: Send {
         &mut self,
         table: &RelationName,
     ) -> Result<Option<TableDescription>, DriverError>;
+
+    /// Describes the role at `path`, a node the roles folder lists, on engines whose users
+    /// are roles (see `dbdesk_sql::Capabilities::users`).
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError::InvalidPath`] where there are no roles, for a path that isn't a role,
+    /// or for a role that no longer exists; [`DriverError::Connection`] if the catalog query
+    /// fails.
+    async fn describe_role(&mut self, path: &CatalogPath) -> Result<RoleDescription, DriverError> {
+        Err(DriverError::InvalidPath(path.clone()))
+    }
 
     /// Asks the database whether it would accept `sql`, one data query or change (`SELECT`,
     /// `WITH`, `VALUES`, `INSERT`, `UPDATE`, `DELETE`), without running it: PostgreSQL parses

@@ -4,6 +4,7 @@
 
 mod catalog;
 mod execution;
+mod roles;
 mod table;
 mod tls;
 
@@ -15,8 +16,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use dbdesk_core::{
     CancelHandle, CatalogNode, CatalogPath, Connection, DriverError, NodeKind, Password,
-    PostgresConfig, Rejection, RelationName, ResultCursor, Route, ServerInfo, TableDescription,
-    TransactionStatus,
+    PostgresConfig, Rejection, RelationName, ResultCursor, RoleDescription, Route, ServerInfo,
+    TableDescription, TransactionStatus,
 };
 use tokio::task::{JoinError, JoinHandle};
 use tokio_postgres::tls::MakeTlsConnect;
@@ -264,6 +265,12 @@ impl Connection for PostgresConnection {
     /// so there is no other database to pick.
     async fn execute(&mut self, sql: &str) -> Result<Box<dyn ResultCursor>, DriverError> {
         execution::execute(&self.primary.client, sql).await
+    }
+
+    /// Roles belong to the server, but what the role owns is counted in the configured
+    /// database, where the helpers' statements run.
+    async fn describe_role(&mut self, path: &CatalogPath) -> Result<RoleDescription, DriverError> {
+        roles::describe(&self.primary.client, path).await
     }
 
     /// Always on the configured database, the one consoles run on.
@@ -659,6 +666,20 @@ mod tests {
             "{root_labels:?}"
         );
         assert!(root_labels.contains(&"postgres"), "{root_labels:?}");
+        assert_eq!(root_labels.first(), Some(&"roles"), "{root_labels:?}");
+        let roles = folder(&CatalogPath::root(), FolderKind::Roles);
+        let login = nodes
+            .iter()
+            .find(|node| node.path == roles.child(NodeKind::Role, config.server.user.clone()))
+            .expect("the test server's own role");
+        assert_eq!(login.detail.as_deref(), Some("login, superuser"));
+        assert!(!login.system);
+        assert!(
+            nodes
+                .iter()
+                .any(|node| node.path.parent().as_ref() == Some(&roles) && node.system),
+            "PostgreSQL's predefined pg_ roles are system objects"
+        );
         let database =
             CatalogPath::root().child(NodeKind::Database, config.server.database.clone());
         let pg_catalog = nodes

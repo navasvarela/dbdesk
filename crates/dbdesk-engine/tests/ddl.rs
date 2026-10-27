@@ -1,12 +1,14 @@
 //! The object helpers' DDL: applied on the explorer's connection, all or none where the
 //! engine's DDL is transactional, refused on read-only data sources, recorded in the history;
 //! a table built from a spec described back as the spec says, and views and schemas created,
-//! changed and dropped, on every engine with a test server.
+//! changed and dropped, on every engine with a test server; and PostgreSQL's roles, with
+//! their passwords kept out of the history.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod common;
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use common::{
@@ -15,14 +17,14 @@ use common::{
 };
 use dbdesk_core::{
     CatalogNode, CatalogPath, ConnectionConfig, DataSource, DataSourceId, DuckDbConfig,
-    DuckDbDatabase, FolderKind, Identifier, NodeKind, Password, RelationName, SafetyLevel,
-    TableDescription,
+    DuckDbDatabase, FolderKind, Identifier, NodeKind, Password, PostgresConfig, RelationName,
+    RoleAttribute, RoleDescription, SafetyLevel, TableDescription,
 };
 use dbdesk_engine::{Command, DdlFailure, Event, PasswordUpdate, SessionState};
 use dbdesk_sql::{
-    Check, ColumnSpec, DdlOperation, Dialect, ForeignKey, ObjectName, ReferentialAction,
-    SchemaCreation, SchemaSpec, TableSpec, UniqueKey, ViewKind, ViewSpec, ddl_statements,
-    split_statements, view_query,
+    Check, ColumnSpec, DdlOperation, Dialect, ForeignKey, ObjectName, OwnedObjects, PasswordChange,
+    ReferentialAction, RoleSpec, SchemaCreation, SchemaSpec, ScramVerifier, TableSpec, UniqueKey,
+    ViewKind, ViewSpec, ddl_statements, split_statements, view_query,
 };
 use dbdesk_store::{HistoryOutcome, HistoryQuery};
 
@@ -911,6 +913,229 @@ fn creates_lists_and_drops_a_schema_with_what_it_holds() {
         if !matches!(data_source.config, ConnectionConfig::Mysql(_)) {
             check_schema_round_trip(&mut engine, &data_source, password);
         }
+    }
+    engine.shut_down();
+}
+
+fn describe_role(
+    engine: &mut TestEngine,
+    data_source: DataSourceId,
+    path: &CatalogPath,
+) -> Result<RoleDescription, String> {
+    engine.send(Command::DescribeRole {
+        data_source,
+        path: path.clone(),
+    });
+    loop {
+        match engine.next_event() {
+            Event::RoleDescribed {
+                path: described,
+                result,
+                ..
+            } if described == *path => return result,
+            Event::SessionChanged { .. } => {}
+            other => panic!("expected RoleDescribed, got {other:?}"),
+        }
+    }
+}
+
+/// Logs in to the test server as `user`, as a new data source would.
+fn log_in(engine: &mut TestEngine, server: &PostgresConfig, user: &str, password: &str) -> bool {
+    let mut config = server.clone();
+    user.clone_into(&mut config.server.user);
+    let login = data_source(user, ConnectionConfig::Postgres(config));
+    engine.send(Command::TestConnection {
+        data_source: login.clone(),
+        password: PasswordUpdate::Set(Password::new(password)),
+        ssh_secret: PasswordUpdate::Keep,
+    });
+    loop {
+        match engine.next_event() {
+            Event::ConnectionTested { id, result } if id == login.id => return result.is_ok(),
+            Event::SessionChanged { .. } => {}
+            other => panic!("expected ConnectionTested, got {other:?}"),
+        }
+    }
+}
+
+/// E3's exit, below the dialogs: a login user with a password and a membership is created,
+/// logs in, is changed, renamed and dropped with what it owns given away; and neither its
+/// password nor the verifier sent for it reaches the history.
+#[test]
+fn creates_logs_in_as_changes_and_drops_a_postgres_role() {
+    let Some(server) = postgres_test_server() else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = start(dir.path());
+    let postgres = data_source(
+        "postgres",
+        ConnectionConfig::Postgres(server.config.clone()),
+    );
+    save(&mut engine, &postgres, Some(server.password));
+    let owner = server.config.server.user.clone();
+    let group = unique("dbdesk_e3_readers", &postgres);
+    let user = unique("dbdesk_e3_user", &postgres);
+    let renamed = format!("{user}_renamed");
+    let table = unique("dbdesk_e3_owned", &postgres);
+    let password = format!("pw-{}", unique("secret", &postgres));
+    let verifier = ScramVerifier::hash(&password);
+    let new_user = RoleSpec {
+        attributes: [RoleAttribute::Login, RoleAttribute::Inherit].into(),
+        connection_limit: Some(3),
+        valid_until: None,
+        member_of: [group.clone()].into(),
+    };
+    let steps = [
+        DdlOperation::CreateRole {
+            name: group.clone(),
+            spec: RoleSpec {
+                attributes: [RoleAttribute::Inherit].into(),
+                connection_limit: None,
+                valid_until: None,
+                member_of: BTreeSet::new(),
+            },
+            password: None,
+        },
+        DdlOperation::CreateRole {
+            name: user.clone(),
+            spec: new_user.clone(),
+            password: Some(verifier.clone()),
+        },
+    ];
+    for step in steps {
+        assert_eq!(apply_operation(&mut engine, &postgres, step), Ok(()));
+    }
+    let owned = vec![
+        format!("CREATE TABLE {table} (id integer)"),
+        format!("ALTER TABLE {table} OWNER TO {user}"),
+    ];
+    assert_eq!(apply(&mut engine, postgres.id, owned), Ok(()));
+
+    let roles = CatalogPath::root().child(NodeKind::Folder(FolderKind::Roles), "roles");
+    let listed = load_children(&mut engine, postgres.id, roles.clone());
+    let node = listed
+        .iter()
+        .find(|node| node.label == user)
+        .expect("the new user in the roles folder");
+    assert_eq!(
+        node.detail.as_deref(),
+        Some(format!("login, member of {group}").as_str())
+    );
+    let path = roles.child(NodeKind::Role, &user);
+    let described = describe_role(&mut engine, postgres.id, &path).unwrap();
+    assert_eq!(described.attributes, new_user.attributes);
+    assert_eq!(described.connection_limit, Some(3));
+    assert_eq!(described.member_of, new_user.member_of);
+    assert_eq!(described.owned_objects, 1, "{described:?}");
+    let group_path = roles.child(NodeKind::Role, &group);
+    let described_group = describe_role(&mut engine, postgres.id, &group_path).unwrap();
+    assert_eq!(described_group.members, [user.clone()].into());
+
+    assert!(log_in(&mut engine, &server.config, &user, &password));
+    assert!(!log_in(
+        &mut engine,
+        &server.config,
+        &user,
+        "not the password"
+    ));
+
+    let changed = RoleSpec {
+        attributes: [RoleAttribute::CreateDb].into(),
+        connection_limit: None,
+        valid_until: Some("2100-01-01".to_owned()),
+        member_of: BTreeSet::new(),
+    };
+    let steps = [
+        DdlOperation::AlterRole {
+            name: user.clone(),
+            before: new_user.clone(),
+            after: changed.clone(),
+            password: PasswordChange::Remove,
+        },
+        DdlOperation::RenameRole {
+            name: user.clone(),
+            new_name: renamed.clone(),
+        },
+    ];
+    for step in steps {
+        assert_eq!(apply_operation(&mut engine, &postgres, step), Ok(()));
+    }
+    let renamed_path = roles.child(NodeKind::Role, &renamed);
+    let described = describe_role(&mut engine, postgres.id, &renamed_path).unwrap();
+    assert_eq!(described.attributes, changed.attributes);
+    assert_eq!(described.connection_limit, None);
+    assert!(
+        described
+            .valid_until
+            .as_deref()
+            .is_some_and(|until| until.starts_with("2100-01-01")),
+        "{described:?}"
+    );
+    assert!(described.member_of.is_empty());
+    assert!(describe_role(&mut engine, postgres.id, &path).is_err());
+    let unexpiring = DdlOperation::AlterRole {
+        name: renamed.clone(),
+        before: changed.clone(),
+        after: RoleSpec {
+            valid_until: None,
+            ..changed.clone()
+        },
+        password: PasswordChange::Keep,
+    };
+    assert_eq!(apply_operation(&mut engine, &postgres, unexpiring), Ok(()));
+    let described = describe_role(&mut engine, postgres.id, &renamed_path).unwrap();
+    assert_eq!(described.valid_until, None, "'infinity' reads as never");
+
+    let refused = apply_operation(
+        &mut engine,
+        &postgres,
+        DdlOperation::DropRole {
+            name: renamed.clone(),
+            owned: OwnedObjects::Keep,
+        },
+    );
+    assert!(refused.is_err(), "it still owns the table");
+    let steps = [
+        DdlOperation::DropRole {
+            name: renamed.clone(),
+            owned: OwnedObjects::ReassignTo(owner),
+        },
+        DdlOperation::DropRole {
+            name: group.clone(),
+            owned: OwnedObjects::Drop,
+        },
+    ];
+    for step in steps {
+        assert_eq!(apply_operation(&mut engine, &postgres, step), Ok(()));
+    }
+    assert!(describe_role(&mut engine, postgres.id, &renamed_path).is_err());
+    assert_eq!(
+        apply(
+            &mut engine,
+            postgres.id,
+            vec![format!("DROP TABLE {table}")]
+        ),
+        Ok(()),
+        "the table was given to the owner, not dropped"
+    );
+
+    engine.send(Command::SearchHistory(HistoryQuery::all(postgres.id)));
+    let entries = match engine.next_event() {
+        Event::HistoryFound { result, .. } => result.unwrap(),
+        other => panic!("expected the history, got {other:?}"),
+    };
+    let created = format!(
+        "CREATE ROLE {user} WITH LOGIN CONNECTION LIMIT 3 IN ROLE {group} PASSWORD '<redacted>'"
+    );
+    assert!(
+        entries.iter().any(|entry| entry.sql == created),
+        "{entries:#?}"
+    );
+    for entry in &entries {
+        assert!(!entry.sql.contains(&password), "{}", entry.sql);
+        assert!(!entry.sql.contains(verifier.as_str()), "{}", entry.sql);
+        assert!(!entry.sql.contains("SCRAM-SHA-256"), "{}", entry.sql);
     }
     engine.shut_down();
 }
