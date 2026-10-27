@@ -636,9 +636,19 @@ The gaps that keep dbdesk from being an everyday tool. The full plan is in
   tests of each engine through a forwarded port and of a session the server ended, engine
   tests of lost explorers and consoles in a scratch database, and kittest tests of the SSH
   fields, the host-key prompt and Reconnect.
-- **W4 — History as an audit trail:**
-  - where each statement came from, and grid edits with the values they replaced;
-  - retention, a search across data sources, and export.
+- **W4 — History as an audit trail:** designed in [History as an audit trail](history-audit.md),
+  in layers:
+  - **W4a:** where each statement came from (console, grid edit, object helper, import,
+    export, or MCP with the client's name), migrated forward from existing rows, and a filter
+    by it;
+  - **W4b:** passwords and connection strings redacted before they reach the file, with a test
+    that reads the file's bytes;
+  - **W4c:** grid edits with the values they replaced, keyed by the row's primary key, and the
+    statement that would put them back;
+  - **W4d:** a search across data sources, by text, kind and time, on indexes;
+  - **W4e:** retention by age and per data source, pruned in short batches beside other
+    processes;
+  - **W4f:** export of a search as CSV or JSON.
 - **W5 — Power in the grid:** designed in [Power in the grid](grid-power.md), in layers:
   - **W5a:** insert and delete rows, submitted with cell edits all or none, and recorded in the
     history;

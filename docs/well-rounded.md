@@ -114,6 +114,8 @@ portable, so a configuration can be recreated on another machine or shared with 
 
 ## W4 — History as an audit trail
 
+The design, layer by layer, is in [History as an audit trail](history-audit.md).
+
 The query history already records every statement:
 - the data source, time and SQL;
 - the duration, the rows, and the outcome.
