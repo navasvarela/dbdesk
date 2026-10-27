@@ -13,9 +13,11 @@ use dbdesk_core::DataSourceId;
 use jiff::Timestamp;
 use rusqlite::params;
 
+pub use change::{NamedCell, ReplacedCell, RowChange, RowChangeKind};
 pub use redact::redact_secrets;
 pub use source::{HistorySource, HistorySourceKind};
 
+mod change;
 mod redact;
 mod schema;
 mod source;
@@ -191,8 +193,9 @@ impl History {
             .map(|rows| i64::try_from(rows).unwrap_or(i64::MAX));
         self.connection.execute(
             "INSERT INTO history
-                 (data_source, executed_at, sql, duration_ms, rows, outcome, source, origin, detail)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                 (data_source, executed_at, sql, duration_ms, rows, outcome, source, origin, detail,
+                  changes)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 entry.data_source.to_string(),
                 format_timestamp(entry.executed_at),
@@ -203,6 +206,7 @@ impl History {
                 entry.source.legacy_source(),
                 entry.source.origin(),
                 entry.source.detail(),
+                entry.source.changes(),
             ],
         )?;
         Ok(())
@@ -220,7 +224,8 @@ impl History {
         limit: usize,
     ) -> Result<Vec<HistoryEntry>, HistoryError> {
         let mut statement = self.connection.prepare_cached(
-            "SELECT executed_at, sql, duration_ms, rows, outcome, coalesce(origin, source), detail
+            "SELECT executed_at, sql, duration_ms, rows, outcome, coalesce(origin, source), detail,
+                    changes
              FROM history
              WHERE data_source = ?1 AND sql LIKE '%' || ?2 || '%' ESCAPE '\\'
                AND (?3 IS NULL OR coalesce(origin, source) = ?3)
@@ -245,6 +250,7 @@ impl History {
                     outcome: row.get(4)?,
                     kind: row.get(5)?,
                     detail: row.get(6)?,
+                    changes: row.get(7)?,
                 })
             },
         )?;
@@ -287,6 +293,7 @@ struct StoredRow {
     /// `coalesce(origin, source)`.
     kind: String,
     detail: Option<String>,
+    changes: Option<String>,
 }
 
 impl StoredRow {
@@ -301,7 +308,7 @@ impl StoredRow {
                 .map(Duration::from_millis),
             rows: self.rows.and_then(|rows| u64::try_from(rows).ok()),
             outcome: HistoryOutcome::parse(&self.outcome)?,
-            source: HistorySource::from_stored(&self.kind, self.detail)?,
+            source: HistorySource::from_stored(&self.kind, self.detail, self.changes.as_deref())?,
         })
     }
 }
@@ -420,6 +427,56 @@ mod tests {
             history.search(&HistoryQuery::all(shop), 10).unwrap(),
             [from_mcp, from_app]
         );
+    }
+
+    /// A grid edit comes back with the values it replaced; one whose change can't be read
+    /// (from a newer dbdesk, or edited by hand) still comes back, without it.
+    #[test]
+    fn keeps_a_grid_edits_replaced_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = HistoryFile::new(dir.path().join("history.sqlite"));
+        let history = file.open().unwrap();
+        let shop = DataSourceId::generate();
+        let edit = HistoryEntry {
+            source: HistorySource::GridEdit(Some(RowChange {
+                table: "main.people".to_owned(),
+                kind: RowChangeKind::Updated {
+                    key: vec![NamedCell {
+                        column: "id".to_owned(),
+                        value: Some("1".to_owned()),
+                    }],
+                    cells: vec![ReplacedCell {
+                        column: "name".to_owned(),
+                        old: Some("ada".to_owned()),
+                        new: Some("Ada".to_owned()),
+                    }],
+                },
+                revert: Some("UPDATE \"main\".\"people\" SET \"name\" = 'ada'".to_owned()),
+            })),
+            ..entry(
+                shop,
+                1_000,
+                "UPDATE \"main\".\"people\" SET \"name\" = 'Ada'",
+            )
+        };
+        history.record(&edit).unwrap();
+        rusqlite::Connection::open(file.path())
+            .unwrap()
+            .execute(
+                "UPDATE history SET changes = '{\"from\":\"the future\"}'
+                 WHERE id = (SELECT max(id) FROM history)",
+                [],
+            )
+            .unwrap();
+        history.record(&edit).unwrap();
+
+        let sources: Vec<HistorySource> = history
+            .search(&HistoryQuery::all(shop), 10)
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.source)
+            .collect();
+        assert_eq!(sources, [edit.source, HistorySource::GridEdit(None)]);
     }
 
     #[test]

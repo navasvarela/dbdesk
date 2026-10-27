@@ -448,7 +448,7 @@ impl QueryConsole {
             .pending
             .statements(target, &statement.columns, &statement.rows, self.dialect)
             .into_iter()
-            .map(|(_, sql)| sql)
+            .map(|(_, edit)| edit)
             .collect();
         statement.edits.submitting = true;
         statement.edits.error = None;

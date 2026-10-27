@@ -52,7 +52,7 @@ fn marks_each_statement_with_where_it_came_from_and_filters_by_it() {
             ),
             (
                 "UPDATE \"orders\" SET \"id\" = '2' WHERE \"id\" = '1'",
-                HistorySource::GridEdit,
+                HistorySource::GridEdit(None),
             ),
             (
                 "INSERT INTO \"orders\" (\"id\") VALUES\n\u{2026}",
@@ -77,4 +77,45 @@ fn marks_each_statement_with_where_it_came_from_and_filters_by_it() {
         harness.query_all_by_label("Insert").count() == 1
     });
     harness.get_by_label_contains("UPDATE \"orders\"");
+}
+
+/// A cell edited in the grid shows in the history as a grid edit with the value it replaced,
+/// and the statement that puts it back goes into the console.
+#[test]
+fn shows_a_grid_edits_old_values_and_the_statement_to_put_them_back() {
+    let dir = tempfile::tempdir().unwrap();
+    save_shop(
+        dir.path(),
+        "CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT);
+         INSERT INTO orders VALUES (1, 'ada');",
+    );
+    let (_layer, feed) = log_console::pipeline();
+    let mut harness = start_app(dir.path(), feed);
+    open_orders(&mut harness, "1 rows");
+    rename_ada(&mut harness);
+    harness.get_by_label("Submit").click();
+    step_until(&mut harness, "the edit being saved", |harness| {
+        harness.query_by_label_contains("changed cell").is_none()
+            && harness.query_by_label("Saving…").is_none()
+    });
+
+    open_history(&mut harness, 2);
+    harness
+        .get_by_label_contains("UPDATE \"main\".\"orders\"")
+        .click();
+    harness.run();
+    harness.get_by_label("Submitted from the grid, on main.orders.");
+    harness.get_by_label("Changed the row where id = 1:");
+    for heading in ["Before", "After"] {
+        harness.get_by_label(heading);
+    }
+    let revert = r#"UPDATE "main"."orders" SET "customer" = 'ada' WHERE "id" = '1'"#;
+    harness.get_by_label(revert);
+    harness.get_by_label("Insert into console").click();
+    harness.run();
+    assert!(
+        editor_text(&harness).contains(revert),
+        "{}",
+        editor_text(&harness)
+    );
 }

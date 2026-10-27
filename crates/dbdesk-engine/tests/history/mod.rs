@@ -1,9 +1,11 @@
 //! The history as an audit trail, through the engine on SQLite: where each statement came
-//! from, and no secrets in the file.
+//! from, a grid edit's change, and no secrets in the file.
 
 use dbdesk_core::TableName;
 use dbdesk_engine::RowsImport;
-use dbdesk_store::{ExportFormat, HistoryEntry, HistorySource, Separator};
+use dbdesk_store::{
+    ExportFormat, HistoryEntry, HistorySource, NamedCell, RowChange, RowChangeKind, Separator,
+};
 
 use super::*;
 
@@ -49,10 +51,23 @@ fn records_where_each_statement_came_from() {
         id,
         "CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT)",
     );
-    edits(
-        &engine,
-        &["INSERT INTO people (id, name) VALUES ('1', 'ada')"],
-    );
+    let added = RowChange {
+        table: "main.people".to_owned(),
+        kind: RowChangeKind::Inserted {
+            values: vec![NamedCell {
+                column: "name".to_owned(),
+                value: Some("ada".to_owned()),
+            }],
+        },
+        revert: None,
+    };
+    engine.send(Command::ApplyEdits {
+        console: CONSOLE,
+        statements: vec![RowEdit {
+            sql: "INSERT INTO people (id, name) VALUES ('1', 'ada')".to_owned(),
+            change: Some(added.clone()),
+        }],
+    });
     assert_eq!(expect_edits(&mut engine), Ok(()));
     let exported = dir.path().join("people.csv");
     let (_, written) = grid::export_all(
@@ -98,7 +113,7 @@ fn records_where_each_statement_came_from() {
                 Some(1)
             ),
             (
-                HistorySource::GridEdit,
+                HistorySource::GridEdit(Some(added)),
                 "INSERT INTO people (id, name) VALUES ('1', 'ada')".to_owned(),
                 Some(1)
             ),

@@ -13,7 +13,11 @@ use jiff::tz::TimeZone;
 
 use crate::theme::Palette;
 
-const DEFAULT_SIZE: [f32; 2] = [640.0, 420.0];
+mod detail;
+
+const DEFAULT_SIZE: [f32; 2] = [720.0, 520.0];
+/// The share of the window's height the list keeps while an entry's details show below it.
+const LIST_SHARE: f32 = 0.45;
 const TIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
 pub struct HistoryWindow {
@@ -25,6 +29,8 @@ pub struct HistoryWindow {
     kind: Option<HistorySourceKind>,
     /// The answer to the latest search; `None` while it is pending.
     results: Option<Result<Vec<HistoryEntry>, String>>,
+    /// The entry whose details show; kept when the results are searched again.
+    selected: Option<HistoryEntry>,
 }
 
 /// What the user did in the window this frame.
@@ -48,6 +54,7 @@ impl HistoryWindow {
             search: String::new(),
             kind: None,
             results: None,
+            selected: None,
         };
         let search = window.search_command();
         (window, search)
@@ -112,9 +119,12 @@ impl HistoryWindow {
             self.results = None;
             return Some(HistoryAction::Search(self.query()));
         }
-        ui.weak("Double-click a statement, or click Insert, to put it into the console.");
+        ui.weak(
+            "Click a statement for its details; double-click it, or click Insert, to put it \
+             into the console.",
+        );
         ui.separator();
-        match &self.results {
+        let listed = match &self.results {
             None => {
                 ui.spinner();
                 None
@@ -127,31 +137,71 @@ impl HistoryWindow {
                 ui.weak("Nothing found.");
                 None
             }
-            Some(Ok(entries)) => self.entries(ui, entries),
-        }
+            Some(Ok(entries)) => {
+                let (action, clicked) = self.entries(ui, entries);
+                if clicked.is_some() {
+                    self.selected = clicked;
+                }
+                action
+            }
+        };
+        let Some(selected) = &self.selected else {
+            return listed;
+        };
+        ui.separator();
+        let detailed = ScrollArea::vertical()
+            .id_salt("history_detail")
+            .show(ui, |ui| detail::show(ui, selected))
+            .inner;
+        listed.or(
+            detailed.map(|detail::DetailAction::Insert(sql)| HistoryAction::Insert {
+                console: self.console.clone(),
+                sql,
+            }),
+        )
     }
 
-    fn entries(&self, ui: &mut Ui, entries: &[HistoryEntry]) -> Option<HistoryAction> {
+    /// Lists the entries. Returns what to do, and the entry clicked, if any.
+    fn entries(
+        &self,
+        ui: &mut Ui,
+        entries: &[HistoryEntry],
+    ) -> (Option<HistoryAction>, Option<HistoryEntry>) {
         let row_height = ui.spacing().interact_size.y;
         let time_zone = TimeZone::system();
         let mut chosen = None;
-        ScrollArea::vertical().auto_shrink(false).show_rows(
-            ui,
-            row_height,
-            entries.len(),
-            |ui, rows| {
+        let mut clicked = None;
+        let height = if self.selected.is_some() {
+            ui.available_height() * LIST_SHARE
+        } else {
+            f32::INFINITY
+        };
+        ScrollArea::vertical()
+            .auto_shrink([false, self.selected.is_some()])
+            .max_height(height)
+            .show_rows(ui, row_height, entries.len(), |ui, rows| {
                 for entry in &entries[rows] {
-                    if entry_row(ui, entry, &time_zone) {
-                        chosen = Some(HistoryAction::Insert {
-                            console: self.console.clone(),
-                            sql: entry.sql.clone(),
-                        });
+                    let selected = self.selected.as_ref() == Some(entry);
+                    match entry_row(ui, entry, selected, &time_zone) {
+                        Some(RowClick::Insert) => {
+                            chosen = Some(HistoryAction::Insert {
+                                console: self.console.clone(),
+                                sql: entry.sql.clone(),
+                            });
+                        }
+                        Some(RowClick::Select) => clicked = Some(entry.clone()),
+                        None => {}
                     }
                 }
-            },
-        );
-        chosen
+            });
+        (chosen, clicked)
     }
+}
+
+/// What a click on an entry's row asked for.
+enum RowClick {
+    Insert,
+    Select,
 }
 
 const ALL_SOURCES: &str = "All sources";
@@ -188,8 +238,13 @@ fn kind_filter(ui: &mut Ui, kind: &mut Option<HistorySourceKind>) -> bool {
     changed
 }
 
-/// Draws one entry. Returns whether the user chose to insert it.
-fn entry_row(ui: &mut Ui, entry: &HistoryEntry, time_zone: &TimeZone) -> bool {
+/// Draws one entry, its statement emphasised when it is the selected one.
+fn entry_row(
+    ui: &mut Ui,
+    entry: &HistoryEntry,
+    selected: bool,
+    time_zone: &TimeZone,
+) -> Option<RowClick> {
     ui.horizontal(|ui| {
         let insert = ui.small_button("Insert").clicked();
         let time = entry.executed_at.to_zoned(time_zone.clone());
@@ -197,14 +252,20 @@ fn entry_row(ui: &mut Ui, entry: &HistoryEntry, time_zone: &TimeZone) -> bool {
         outcome_label(ui, entry);
         source_badge(ui, &entry.source);
         let first_line = entry.sql.lines().next().unwrap_or_default();
+        let mut text = RichText::new(first_line).monospace();
+        if selected {
+            text = text.strong();
+        }
         let statement = ui
-            .add(
-                Label::new(RichText::new(first_line).monospace())
-                    .truncate()
-                    .sense(egui::Sense::click()),
-            )
+            .add(Label::new(text).truncate().sense(egui::Sense::click()))
             .on_hover_text(&entry.sql);
-        insert || statement.double_clicked()
+        if insert || statement.double_clicked() {
+            Some(RowClick::Insert)
+        } else if statement.clicked() {
+            Some(RowClick::Select)
+        } else {
+            None
+        }
     })
     .inner
 }
@@ -219,7 +280,7 @@ fn source_badge(ui: &mut Ui, source: &HistorySource) {
             palette.text_weak,
             "Run in a query console".to_owned(),
         ),
-        HistorySource::GridEdit => (
+        HistorySource::GridEdit(_) => (
             "Grid",
             palette.text_weak,
             "Submitted from the grid".to_owned(),

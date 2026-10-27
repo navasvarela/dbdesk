@@ -8,7 +8,8 @@ use dbdesk_core::{
 };
 use dbdesk_store::{
     ConsoleKey, HistoryEntry, HistoryQuery, ImportPlan, ImportPreview, KeymapBindings,
-    McpOverrides, McpPermissions, Project, Projects, SavedConsole, Secret, Separator, Settings,
+    McpOverrides, McpPermissions, Project, Projects, RowChange, SavedConsole, Secret, Separator,
+    Settings,
 };
 
 use crate::{Export, ExportAll, HostKey, PasswordNeeded, Release};
@@ -213,11 +214,11 @@ pub enum Command {
     /// Runs the grid's generated `DELETE`s, `UPDATE`s and `INSERT`s on the console's
     /// connection, all or none: each must change exactly one row. Inside an open transaction
     /// they stay part of it (behind a savepoint); otherwise they commit together. Refused on a
-    /// read-only data source. Each statement sent is recorded in the history. Answered by
-    /// [`Event::EditsApplied`].
+    /// read-only data source. Each statement sent is recorded in the history, with its row's
+    /// change. Answered by [`Event::EditsApplied`].
     ApplyEdits {
         console: ConsoleId,
-        statements: Vec<String>,
+        statements: Vec<RowEdit>,
     },
     /// Asks the console's own connection whether the database would accept each statement,
     /// without running any (see `Connection::validate`). Never connects: a console that
@@ -552,6 +553,14 @@ pub enum StatementCheck {
     /// Not asked: the console isn't connected, holds unread rows or an open transaction, the
     /// statement isn't a data query or change, or the database couldn't be asked.
     Skipped,
+}
+
+/// One statement of the grid's Submit, and what it does to its row, for the history.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RowEdit {
+    pub sql: String,
+    /// `None` only where nobody knows the row as it was, as in tests of the SQL alone.
+    pub change: Option<RowChange>,
 }
 
 /// Why the grid's changes weren't applied. None were: they were rolled back.

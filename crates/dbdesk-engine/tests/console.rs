@@ -18,7 +18,7 @@ use dbdesk_core::{
 };
 use dbdesk_core::{Quoting, RejectionKind, TransactionStatus};
 use dbdesk_engine::{
-    Command, ConsoleId, EditFailure, Event, PasswordUpdate, RunId, RunOutcome, RunPurpose,
+    Command, ConsoleId, EditFailure, Event, PasswordUpdate, RowEdit, RunId, RunOutcome, RunPurpose,
     SessionState, StatementCheck, StatementFailure, TransactionEnd, TransactionMode,
 };
 use dbdesk_store::{HistoryOutcome, HistoryQuery};
@@ -445,10 +445,18 @@ fn names(dir: &std::path::Path) -> Vec<(i64, String)> {
         .collect()
 }
 
+/// Sends the grid's statements, without the rows' changes the app adds for the history.
 fn edits(engine: &TestEngine, statements: &[&str]) {
+    let statements = statements
+        .iter()
+        .map(|sql| RowEdit {
+            sql: (*sql).to_owned(),
+            change: None,
+        })
+        .collect();
     engine.send(Command::ApplyEdits {
         console: CONSOLE,
-        statements: statements.iter().map(|s| (*s).to_owned()).collect(),
+        statements,
     });
 }
 
