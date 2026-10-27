@@ -19,6 +19,7 @@ On Linux and Windows, read Ctrl wherever this page says ⌘.
 | ⌥⌘F | Find and replace in the console | the editor or the find bar has focus |
 | ⌘G, F3 | Go to the next match | the editor or the find bar has focus |
 | ⇧⌘G, ⇧F3 | Go to the previous match | the editor or the find bar has focus |
+| ⌘, | Open the settings | always |
 | ⌘O | Open a `.sql` file in a new console | always |
 | ⌘S | Save the console to its `.sql` file | a console's tab is selected |
 | ⇧⌘S | Save the console to a new `.sql` file | a console's tab is selected |
@@ -28,6 +29,10 @@ On Linux and Windows, read Ctrl wherever this page says ⌘.
 
 Console shortcuts are taken before the editor sees them, so ⌘↵ runs a statement instead of
 inserting a new line. **History**, **Commit** and **Rollback** have no shortcut by default.
+
+On a Mac the menu bar adds the keys every Mac app has: ⌘Q quits, ⌘H hides dbdesk, ⌥⌘H hides
+the other apps, ⌘M minimizes the window and ⌃⌘F enters full screen. They aren't in
+`keymap.toml`.
 
 ## Changing them
 

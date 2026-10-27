@@ -132,3 +132,41 @@ Every panel is a tab you can drag: onto another panel's tab bar to join it, or o
 a panel to split it. Drag the gaps between panels to resize them. dbdesk remembers the layout
 and the window size when you quit. **View → Reset layout** puts everything back where it
 started.
+
+## On a Mac
+
+On macOS dbdesk's menus are in the menu bar at the top of the screen, like any Mac app's, and
+the window has no separate title bar. On Linux and Windows the menus are in the window, under
+its title bar, and this manual names them that way (**View → Settings…**). On a Mac a few of
+them live where Mac apps keep them:
+
+| In the window (Linux, Windows) | On a Mac |
+| --- | --- |
+| **Help → About dbdesk** | **dbdesk → About dbdesk** |
+| **Help → Check for updates…** | **dbdesk → Check for updates…** |
+| **View → Settings…** | **dbdesk → Settings…** (⌘,) |
+
+The rest of the Mac's menu bar:
+
+- **dbdesk → Quit dbdesk** (⌘Q) quits the way closing the window does: if a console has an open
+  transaction or unsaved changes, dbdesk asks first. **Hide**, **Hide Others**, **Show All**
+  and **Services** are the usual ones.
+- **Edit** has **Undo**, **Redo**, **Cut**, **Copy**, **Paste** and **Select All** for whatever
+  has focus: the SQL editor, a text field, or the results grid (**Copy** copies the selected
+  cells).
+- **View → Enter Full Screen** (⌃⌘F), and **Window** with **Minimize** (⌘M), **Zoom** and
+  **Bring All to Front**.
+- **Help → dbdesk manual** opens this manual, and the Help menu's search finds any menu item.
+
+Items that need a console, such as **File → Save** or **Code → Format**, are greyed out until a
+console's tab is selected, and every item shows its shortcut, including ones you changed in
+`keymap.toml` (see [Keyboard shortcuts](shortcuts.md)).
+
+The strip along the top of the window, beside the close, minimize and zoom buttons, works as a
+title bar: drag it to move the window, and double-click it to zoom.
+
+dbdesk also takes the Mac's look: text is in the system font, SF Pro (SF Mono for SQL and
+results), and selected text, cells and rows are tinted with the accent colour chosen in
+**System Settings → Appearance**. Change the accent colour and dbdesk follows it when you come
+back to its window. The pictures in this manual were taken with dbdesk's own fonts and colours,
+which it uses on Linux and Windows.
