@@ -238,3 +238,45 @@ fn prunes_at_start_up_and_when_the_retention_is_saved() {
     assert_eq!(sqls(&mut engine), ["SELECT 'newest'"]);
     engine.shut_down();
 }
+
+/// A search written to a file, after the statements the console just ran.
+#[test]
+fn exports_a_search_to_a_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut engine, id) = engine_with_sqlite(dir.path());
+    execute(&engine, id, 1, &["SELECT 1", "SELECT 2"]);
+    finish_run(&mut engine, 1);
+    let path = dir.path().join("history.csv");
+    engine.send(Command::ExportHistory {
+        query: HistoryQuery {
+            text: "2".to_owned(),
+            ..HistoryQuery::all(id)
+        },
+        path: path.clone(),
+        format: ExportFormat::Csv,
+        names: std::collections::HashMap::from([(id, "shop".to_owned())]),
+    });
+    loop {
+        match next_answer(&mut engine) {
+            Event::HistoryExported {
+                path: written,
+                result,
+            } => {
+                assert_eq!((written, result), (path.clone(), Ok(1)));
+                break;
+            }
+            Event::TransactionChanged { .. } => {}
+            other => panic!("expected the export, got {other:?}"),
+        }
+    }
+    let text = std::fs::read_to_string(&path).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 2, "{text}");
+    assert!(
+        lines[1].contains(",shop,")
+            && lines[1].contains(",console,")
+            && lines[1].ends_with(",SELECT 2,"),
+        "{text}"
+    );
+    engine.shut_down();
+}

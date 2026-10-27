@@ -166,6 +166,7 @@ impl AppState {
             | Event::UpdateProgress { .. }
             | Event::UpdateInstalled(_)
             | Event::HistoryFound { .. }
+            | Event::HistoryExported { .. }
             | Event::ImportProgress { .. }
             | Event::RowsImported { .. }
             | Event::ExportProgress { .. }

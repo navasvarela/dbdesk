@@ -14,10 +14,12 @@ use jiff::Timestamp;
 use rusqlite::params;
 
 pub use change::{NamedCell, ReplacedCell, RowChange, RowChangeKind};
+pub use export::HistoryExportError;
 pub use redact::redact_secrets;
 pub use source::{HistorySource, HistorySourceKind};
 
 mod change;
+mod export;
 mod redact;
 mod retention;
 mod schema;
