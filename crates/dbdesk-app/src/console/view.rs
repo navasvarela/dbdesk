@@ -9,9 +9,9 @@ use egui::{Id, Margin, ScrollArea, TextEdit, Ui, vec2};
 
 use super::highlight::Marks;
 use super::{
-    Candidate, ExportedRows, FormatScope, LintOptions, QueryConsole, RecentCompletions, RowsToOpen,
-    RunScope, RunState, SubmittedRun, TreeCatalog, cell_viewer, completion_popup, highlight,
-    results,
+    Candidate, Disk, ExportedRows, FormatScope, LintOptions, QueryConsole, RecentCompletions,
+    RowsToOpen, RunScope, RunState, SubmittedRun, TreeCatalog, cell_viewer, completion_popup,
+    highlight, results,
 };
 use crate::icons::{self, Role};
 use crate::keymap::{Action, Keymap};
@@ -96,6 +96,7 @@ pub fn show(
     let editor_id = Id::new(("console_editor", console.id.0));
     shortcuts(ui, console, keymap, editor_id, actions);
     toolbar(ui, console, keymap, actions);
+    file_bar(ui, console);
     if console.dialect.has_transactions() {
         transaction_bar(ui, console, keymap, actions);
     }
@@ -212,12 +213,15 @@ fn perform(console: &QueryConsole, action: Action, actions: &mut Vec<ConsoleActi
             actions.push(ConsoleAction::Format(FormatScope::All));
             return;
         }
-        // The grid and the editor handle these themselves.
+        // The grid and the editor handle these themselves, and the app the files.
         Action::ViewCell
         | Action::EditCell
         | Action::Complete
         | Action::NextProblem
-        | Action::PreviousProblem => return,
+        | Action::PreviousProblem
+        | Action::OpenFile
+        | Action::Save
+        | Action::SaveAs => return,
     };
     let statements = console.statements_to_run(scope);
     let purpose = match scope {
@@ -244,7 +248,10 @@ fn is_enabled(console: &QueryConsole, action: Action) -> bool {
         | Action::Format
         | Action::FormatAll
         | Action::NextProblem
-        | Action::PreviousProblem => true,
+        | Action::PreviousProblem
+        | Action::OpenFile
+        | Action::Save
+        | Action::SaveAs => true,
     }
 }
 
@@ -293,7 +300,10 @@ fn toolbar_icon(action: Action) -> Option<(&'static str, Role)> {
         | Action::PreviousProblem
         | Action::ViewCell
         | Action::EditCell
-        | Action::Complete => None,
+        | Action::Complete
+        | Action::OpenFile
+        | Action::Save
+        | Action::SaveAs => None,
     }
 }
 
@@ -331,6 +341,53 @@ fn toolbar(
                 .on_hover_text(error);
         }
     });
+}
+
+/// What another program did to the console's `.sql` file, while that matters: changed under
+/// unsaved edits (which to keep?), or deleted (Save writes it again).
+fn file_bar(ui: &mut Ui, console: &mut QueryConsole) {
+    let Some(disk) = console.disk() else {
+        return;
+    };
+    let palette = Palette::for_visuals(ui.visuals());
+    let name = console.title().to_owned();
+    match disk {
+        Disk::Changed(_) => {
+            ui.horizontal(|ui| {
+                let text = format!("{name} changed on disk, and you have unsaved changes");
+                ui.label(widgets::icon_text(
+                    ui,
+                    icons::WARNING,
+                    palette.warning,
+                    &text,
+                ));
+                if ui
+                    .button("Reload")
+                    .on_hover_text("Show what the file holds now, dropping your changes")
+                    .clicked()
+                {
+                    console.reload_file();
+                }
+                if ui
+                    .button("Keep mine")
+                    .on_hover_text("Keep your text; saving it replaces the file")
+                    .clicked()
+                {
+                    console.keep_mine();
+                }
+            });
+        }
+        Disk::Deleted => {
+            let text = format!("{name} was deleted from disk; Save writes it again");
+            ui.label(widgets::icon_text(
+                ui,
+                icons::WARNING,
+                palette.warning,
+                &text,
+            ));
+        }
+        Disk::Unchanged => {}
+    }
 }
 
 /// While the connection is lost: that it is, what went with it, and Reconnect. The console
@@ -521,9 +578,10 @@ fn run_status(ui: &mut Ui, console: &QueryConsole, palette: &Palette) {
     }
 }
 
-/// Applies a cursor move requested from outside the editor, and focuses it. After a format,
-/// also records the text before and after it as undo points, so one undo restores it; egui
-/// would otherwise only record a point once the text had stayed the same for a second.
+/// Applies a cursor move requested from outside the editor, and focuses it. After the text
+/// was replaced (a format, a reload from its file), also records the text before and after
+/// as undo points, so one undo restores it; egui would otherwise only record a point once the
+/// text had stayed the same for a second.
 fn move_cursor(ui: &Ui, console: &mut QueryConsole, editor_id: Id) {
     let Some(offset) = console.pending_cursor.take() else {
         return;
@@ -536,7 +594,7 @@ fn move_cursor(ui: &Ui, console: &mut QueryConsole, editor_id: Id) {
         .count();
     let cursor = CCursorRange::one(CCursor::new(char_index));
     let mut state = TextEditState::load(ui.ctx(), editor_id).unwrap_or_default();
-    if let Some(before) = console.format_undo.take() {
+    if let Some(before) = console.replaced_text.take() {
         let mut undoer = state.undoer();
         let cursor_before = state.cursor.char_range().unwrap_or(cursor);
         undoer.add_undo(&(cursor_before, before));

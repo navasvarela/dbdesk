@@ -25,10 +25,13 @@ pub enum Action {
     PreviousProblem,
     ViewCell,
     EditCell,
+    OpenFile,
+    Save,
+    SaveAs,
 }
 
 impl Action {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 17] = [
         Self::Complete,
         Self::RunCurrent,
         Self::RunAll,
@@ -43,6 +46,9 @@ impl Action {
         Self::PreviousProblem,
         Self::ViewCell,
         Self::EditCell,
+        Self::OpenFile,
+        Self::Save,
+        Self::SaveAs,
     ];
 
     pub fn id(self) -> &'static str {
@@ -61,6 +67,9 @@ impl Action {
             Self::PreviousProblem => "console.previous-problem",
             Self::ViewCell => "grid.view-cell",
             Self::EditCell => "grid.edit-cell",
+            Self::OpenFile => "file.open",
+            Self::Save => "file.save",
+            Self::SaveAs => "file.save-as",
         }
     }
 
@@ -80,6 +89,9 @@ impl Action {
             Self::PreviousProblem => "Go to the previous syntax error or warning",
             Self::ViewCell => "Show the selected cell in the cell viewer",
             Self::EditCell => "Edit the selected cell, if its table can be edited",
+            Self::OpenFile => "Open a .sql file in a new console",
+            Self::Save => "Save the console to its .sql file",
+            Self::SaveAs => "Save the console to a new .sql file",
         }
     }
 
@@ -111,6 +123,9 @@ impl Action {
                 KeyboardShortcut::new(Modifiers::NONE, Key::F2),
                 KeyboardShortcut::new(Modifiers::NONE, Key::Enter),
             ],
+            Self::OpenFile => shortcut(Modifiers::COMMAND, Key::O),
+            Self::Save => shortcut(Modifiers::COMMAND, Key::S),
+            Self::SaveAs => shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::S),
             Self::ShowHistory | Self::Commit | Self::Rollback => Vec::new(),
         }
     }

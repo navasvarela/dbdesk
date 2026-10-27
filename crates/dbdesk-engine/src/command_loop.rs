@@ -22,6 +22,7 @@ use crate::registry::{Registry, RegistryError};
 use crate::releases::{self, ReleaseFeed};
 use crate::session::{Script, Services, Session, SessionOwner, SessionRequest};
 use crate::settings;
+use crate::sql_files;
 use crate::transfer;
 use crate::tunnels::Tunnels;
 use crate::updater::{self, UpdateInstaller};
@@ -256,6 +257,18 @@ impl Engine {
             }
             Command::DeleteConsoleFile(key) => {
                 console_files::delete(&self.console_files, key).await;
+            }
+            Command::OpenSqlFile(path) => {
+                tokio::spawn(sql_files::read(path, self.events.clone()));
+            }
+            // Awaited, like console saves, so saves land in the order sent.
+            Command::SaveSqlFile {
+                console,
+                path,
+                text,
+            } => self.events.send(sql_files::save(console, path, text).await),
+            Command::CheckSqlFiles(files) => {
+                tokio::spawn(sql_files::check(files, self.events.clone()));
             }
             Command::DescribeTable { data_source, table } => {
                 self.request(data_source, SessionRequest::DescribeTable(table));

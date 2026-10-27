@@ -18,6 +18,7 @@ use dbdesk_core::{
 };
 use dbdesk_engine::{
     Command, ConsoleId, DatabaseFile, Event, Export, PasswordUpdate, Release, SessionState,
+    WatchedFile,
 };
 use dbdesk_store::{
     ConsoleKey, ConsoleName, DataSourceFile, ExportFormat, FormatSettings, KeymapBindings,
@@ -158,6 +159,81 @@ fn saves_console_files_in_order_and_reloads_them_after_a_restart() {
         key: key("console"),
         text: "select 2;".to_owned(),
     }]));
+}
+
+#[test]
+fn opens_saves_and_watches_a_sql_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    engine.expect_started(vec![]);
+    let path = dir.path().join("report.sql");
+    let console = ConsoleKey {
+        data_source: DataSourceId::generate(),
+        name: ConsoleName::try_from("file_1".to_owned()).unwrap(),
+    };
+
+    engine.send(Command::OpenSqlFile(path.clone()));
+    assert!(matches!(
+        engine.next_event(),
+        Event::SqlFileRead { result: Err(error), .. } if error.contains("could not read")
+    ));
+
+    engine.send(Command::SaveSqlFile {
+        console: console.clone(),
+        path: path.clone(),
+        text: "select 1;".to_owned(),
+    });
+    let Event::SqlFileSaved {
+        result: Ok(modified),
+        ..
+    } = engine.next_event()
+    else {
+        panic!("the file wasn't saved");
+    };
+    engine.send(Command::OpenSqlFile(path.clone()));
+    assert!(matches!(
+        engine.next_event(),
+        Event::SqlFileRead { result: Ok(contents), .. }
+            if contents.text == "select 1;" && contents.modified == modified
+    ));
+
+    // Changed by another program, then removed. Checks that find nothing to say come last:
+    // a check is answered in the background, so one sent earlier could see a later change.
+    let watched = |modified| {
+        vec![WatchedFile {
+            path: path.clone(),
+            modified,
+        }]
+    };
+    std::fs::write(&path, "select 2;").unwrap();
+    engine.send(Command::CheckSqlFiles(watched(None)));
+    assert!(matches!(
+        engine.next_event(),
+        Event::SqlFileChanged { contents: Some(contents), .. } if contents.text == "select 2;"
+    ));
+    std::fs::remove_file(&path).unwrap();
+    engine.send(Command::CheckSqlFiles(watched(modified)));
+    engine.expect(Event::SqlFileChanged {
+        path: path.clone(),
+        contents: None,
+    });
+
+    engine.send(Command::CheckSqlFiles(watched(None)));
+    engine.send(Command::SaveSqlFile {
+        console,
+        path: path.clone(),
+        text: "select 3;".to_owned(),
+    });
+    let Event::SqlFileSaved {
+        result: Ok(modified),
+        ..
+    } = engine.next_event()
+    else {
+        panic!("the file wasn't saved again");
+    };
+    engine.send(Command::CheckSqlFiles(watched(modified)));
+    engine.send(Command::OpenSqlFile(path));
+    assert!(matches!(engine.next_event(), Event::SqlFileRead { .. }));
 }
 
 #[test]

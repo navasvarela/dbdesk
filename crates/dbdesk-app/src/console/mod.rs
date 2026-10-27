@@ -9,6 +9,7 @@ mod cell_viewer;
 mod completion;
 mod completion_popup;
 mod edit;
+mod file;
 mod grid;
 pub(crate) mod highlight;
 mod keys;
@@ -17,8 +18,8 @@ mod results;
 mod view;
 
 use std::ops::Range;
-use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant, SystemTime};
 
 use dbdesk_core::{
     Cell, ColumnInfo, DataSource, DataSourceId, RelationName, Row, SafetyLevel, TableDescription,
@@ -26,14 +27,16 @@ use dbdesk_core::{
 };
 use dbdesk_engine::{
     Command, ConsoleId, EditFailure, Event, Export, ExportAll, RunId, RunOutcome, RunPurpose,
-    SessionState, StatementFailure, StatementSummary, TransactionEnd, TransactionMode,
+    SessionState, StatementFailure, StatementSummary, TransactionEnd, TransactionMode, WatchedFile,
 };
 use dbdesk_sql::{Dialect, FormatOptions, format_ranges, split_statements, statement_at, tokenize};
-use dbdesk_store::{ConsoleKey, ExportFormat};
+use dbdesk_store::{ConsoleKey, ExportFormat, SqlFileContents};
 
 use edit::Editability;
+use file::{ConfigFile, Reload, SqlFile, Storage};
 
 pub use edit::ChangeCount;
+pub use file::Disk;
 pub use keys::RowsToOpen;
 
 pub use catalog_source::TreeCatalog;
@@ -121,9 +124,10 @@ pub struct QueryConsole {
     /// A byte offset to move the editor's cursor to on the next frame, after the text was
     /// changed from outside the editor.
     pending_cursor: Option<usize>,
-    /// The text before it was formatted, for the editor to record as an undo point next to
-    /// the formatted text, so one undo takes the whole format back.
-    format_undo: Option<String>,
+    /// The text before it was replaced from outside the editor (formatted, or reloaded from
+    /// its file), for the editor to record as an undo point next to the new text, so one
+    /// undo takes the whole change back.
+    replaced_text: Option<String>,
     /// Why the last format was refused, until the text changes.
     format_error: Option<String>,
     /// Syntax errors and lint warnings, kept up to date while typing.
@@ -141,22 +145,10 @@ pub struct QueryConsole {
     /// An export of every row in progress: its run, to cancel it, and how many rows it has
     /// written.
     exporting: Option<(RunId, usize)>,
-    file: FileState,
+    storage: Storage,
     /// The data source's name and safety level, kept up to date as it is edited.
     data_source_name: String,
     safety: SafetyLevel,
-}
-
-/// How the console's text relates to its file.
-#[derive(Debug, Default)]
-struct FileState {
-    /// When the text was first changed since it was last written; `None` if it is saved.
-    unsaved_since: Option<Instant>,
-    /// Whether closing the tab keeps the file, so the console can be reopened. False for
-    /// consoles nobody typed in, such as a fresh one or one opened by Open data.
-    keep: bool,
-    /// Why the last save failed, until a later one succeeds.
-    save_error: Option<String>,
 }
 
 pub struct RunView {
@@ -295,7 +287,7 @@ impl QueryConsole {
             run: None,
             error_marker: None,
             pending_cursor: None,
-            format_undo: None,
+            replaced_text: None,
             format_error: None,
             problems: problems::Problems::new(Instant::now()),
             problem_rects: Vec::new(),
@@ -304,7 +296,7 @@ impl QueryConsole {
             accepted_completion: None,
             export_status: None,
             exporting: None,
-            file: FileState::default(),
+            storage: Storage::Config(ConfigFile::default()),
             data_source_name: String::new(),
             safety: SafetyLevel::Normal,
         }
@@ -347,7 +339,17 @@ impl QueryConsole {
 
     /// A console reopened from its file, which closing it again must keep.
     pub fn reopened(mut self) -> Self {
-        self.file.keep = true;
+        if let Storage::Config(file) = &mut self.storage {
+            file.keep = true;
+        }
+        self
+    }
+
+    /// This console showing a `.sql` file just read, rather than one in the config folder.
+    pub fn showing(mut self, path: PathBuf, contents: SqlFileContents) -> Self {
+        let file = SqlFile::new(path, contents);
+        self.title = file.file_name();
+        self.storage = Storage::File(file);
         self
     }
 
@@ -738,7 +740,7 @@ impl QueryConsole {
             return;
         }
         let cursor = formatted.map_offset(self.selection.end);
-        self.format_undo = Some(std::mem::replace(&mut self.text, formatted.into_text()));
+        self.replaced_text = Some(std::mem::replace(&mut self.text, formatted.into_text()));
         self.selection = cursor..cursor;
         self.pending_cursor = Some(cursor);
         self.edited(now);
@@ -818,50 +820,193 @@ impl QueryConsole {
         self.error_marker = None;
         self.format_error = None;
         self.problems.edited(now);
-        self.file.keep = true;
-        self.file.unsaved_since.get_or_insert(now);
+        if let Storage::Config(file) = &mut self.storage {
+            file.keep = true;
+            file.unsaved_since.get_or_insert(now);
+        }
     }
 
     /// The save to send if the text has been unsaved for at least `delay` (or at all, for a
-    /// zero delay), marking it saved. Otherwise how long until it would be due.
+    /// zero delay), marking it saved. Otherwise how long until it would be due. A console
+    /// showing a `.sql` file is only saved when asked, by [`QueryConsole::save_file`].
     pub fn take_save(
         &mut self,
         now: Instant,
         delay: Duration,
     ) -> Result<Command, Option<Duration>> {
-        let since = self.file.unsaved_since.ok_or(None)?;
+        let Storage::Config(file) = &mut self.storage else {
+            return Err(None);
+        };
+        let since = file.unsaved_since.ok_or(None)?;
         let waited = now.saturating_duration_since(since);
         if waited < delay {
             return Err(Some(delay - waited));
         }
-        self.file.unsaved_since = None;
-        self.file.save_error = None;
+        file.unsaved_since = None;
+        file.save_error = None;
         Ok(Command::SaveConsole {
             key: self.key.clone(),
             text: self.text.clone(),
         })
     }
 
-    /// What to do with the file when the tab closes: write the last edits, or remove a file
-    /// nobody typed anything into.
+    /// What to do with the console's file in the config folder when the tab closes: write the
+    /// last edits, or remove a file nobody typed anything into. Nothing for a `.sql` file,
+    /// which the user saves or not.
     pub fn file_on_close(&mut self) -> Option<Command> {
-        if !self.file.keep || self.text.trim().is_empty() {
+        let Storage::Config(file) = &self.storage else {
+            return None;
+        };
+        if !file.keep || self.text.trim().is_empty() {
             return Some(Command::DeleteConsoleFile(self.key.clone()));
         }
         self.take_save(Instant::now(), Duration::ZERO).ok()
     }
 
-    /// Whether the file is kept once the tab closes.
+    /// Whether the console's file in the config folder is kept once the tab closes, to be
+    /// reopened from the explorer.
     pub fn keeps_file(&self) -> bool {
-        self.file.keep && !self.text.trim().is_empty()
+        match &self.storage {
+            Storage::Config(file) => file.keep && !self.text.trim().is_empty(),
+            Storage::File(_) => false,
+        }
     }
 
     pub fn save_error(&self) -> Option<&str> {
-        self.file.save_error.as_deref()
+        match &self.storage {
+            Storage::Config(file) => file.save_error.as_deref(),
+            Storage::File(file) => file.save_error.as_deref(),
+        }
+    }
+
+    /// The `.sql` file the console shows, if it shows one.
+    pub fn file_path(&self) -> Option<&Path> {
+        match &self.storage {
+            Storage::File(file) => Some(file.path()),
+            Storage::Config(_) => None,
+        }
+    }
+
+    /// Whether the console shows a `.sql` file and has changes not written to it.
+    pub fn has_unsaved_file(&self) -> bool {
+        matches!(&self.storage, Storage::File(file) if file.is_unsaved(&self.text))
+    }
+
+    /// What another program did to the console's `.sql` file, if anything.
+    pub fn disk(&self) -> Option<&Disk> {
+        match &self.storage {
+            Storage::File(file) if file.disk != Disk::Unchanged => Some(&file.disk),
+            _ => None,
+        }
+    }
+
+    /// Writes the text to the console's `.sql` file. `None` if it shows none, and Save as must
+    /// ask where.
+    pub fn save_file(&mut self) -> Option<Command> {
+        let Storage::File(file) = &mut self.storage else {
+            return None;
+        };
+        file.saving(self.text.clone());
+        Some(Command::SaveSqlFile {
+            console: self.key.clone(),
+            path: file.path().to_owned(),
+            text: self.text.clone(),
+        })
+    }
+
+    /// Writes the text to `path`, and shows that file from now on. A console from the config
+    /// folder stops saving itself there; its file is removed once this one is written.
+    pub fn save_file_as(&mut self, path: PathBuf) -> Command {
+        let mut file = match &self.storage {
+            Storage::Config(_) => SqlFile::saved_from_config(path.clone()),
+            Storage::File(_) => SqlFile::new(
+                path.clone(),
+                SqlFileContents {
+                    text: String::new(),
+                    modified: None,
+                },
+            ),
+        };
+        file.saving(self.text.clone());
+        self.title = file.file_name();
+        self.storage = Storage::File(file);
+        Command::SaveSqlFile {
+            console: self.key.clone(),
+            path,
+            text: self.text.clone(),
+        }
+    }
+
+    /// Takes in how a save of the console's `.sql` file went. Returns the removal of its old
+    /// file in the config folder, once there is nothing left there that isn't written.
+    pub fn file_saved(&mut self, result: &Result<Option<SystemTime>, String>) -> Option<Command> {
+        let Storage::File(file) = &mut self.storage else {
+            return None;
+        };
+        file.saved(result)
+            .then(|| Command::DeleteConsoleFile(self.key.clone()))
+    }
+
+    /// Takes in what the console's `.sql` file holds after another program changed it.
+    pub fn file_changed(&mut self, contents: Option<&SqlFileContents>) {
+        let Storage::File(file) = &mut self.storage else {
+            return;
+        };
+        if let Reload::Replaced(text) = file.changed_on_disk(contents, &self.text) {
+            self.replace_text(text);
+        }
+    }
+
+    /// Drops the unsaved changes for what the `.sql` file now holds.
+    pub fn reload_file(&mut self) {
+        if let Storage::File(file) = &mut self.storage
+            && let Some(text) = file.reload()
+        {
+            self.replace_text(text);
+        }
+    }
+
+    /// Keeps the text over what the `.sql` file now holds, until it is saved over it.
+    pub fn keep_mine(&mut self) {
+        if let Storage::File(file) = &mut self.storage {
+            file.keep_mine();
+        }
+    }
+
+    /// The `.sql` file to look at for changes, and when it was last modified.
+    pub fn watched_file(&self) -> Option<WatchedFile> {
+        match &self.storage {
+            Storage::File(file) => Some(file.watched()),
+            Storage::Config(_) => None,
+        }
+    }
+
+    /// Replaces the whole text from outside the editor, as one undo step, keeping the cursor
+    /// where it was if the new text is long enough.
+    fn replace_text(&mut self, text: String) {
+        let (_, end) = ordered(&self.selection);
+        let mut cursor = end.min(text.len());
+        while !text.is_char_boundary(cursor) {
+            cursor -= 1;
+        }
+        self.replaced_text = Some(std::mem::replace(&mut self.text, text));
+        self.selection = cursor..cursor;
+        self.pending_cursor = Some(cursor);
+        self.error_marker = None;
+        self.problems.edited(Instant::now());
     }
 
     pub fn title(&self) -> &str {
         &self.title
+    }
+
+    /// The tab's title: a `.sql` file's name ends with `•` while it has unsaved changes.
+    pub fn tab_title(&self) -> String {
+        if self.has_unsaved_file() {
+            format!("{} \u{2022}", self.title)
+        } else {
+            self.title.clone()
+        }
     }
 
     pub fn dialect(&self) -> Dialect {
@@ -1065,7 +1210,9 @@ impl QueryConsole {
             }
             Event::ConsoleSaveFailed { key, error } if *key == self.key => {
                 // Shown until the next save is sent; that one writes the whole text again.
-                self.file.save_error = Some(error.clone());
+                if let Storage::Config(file) = &mut self.storage {
+                    file.save_error = Some(error.clone());
+                }
             }
             Event::StatementStarted {
                 run,

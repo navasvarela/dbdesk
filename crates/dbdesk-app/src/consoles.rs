@@ -2,13 +2,13 @@
 //! engine commands to send rather than sending them, so it can be tested without an engine.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use dbdesk_core::{CatalogPath, DataSource, DataSourceId, SafetyLevel};
-use dbdesk_engine::{Command, ConsoleId, Event, RunId, RunPurpose, TransactionMode};
+use dbdesk_engine::{Command, ConsoleId, Event, RunId, RunPurpose, TransactionMode, WatchedFile};
 use dbdesk_sql::{Dialect, FormatOptions};
-use dbdesk_store::{ConsoleKey, ConsoleName, ExportFormat};
+use dbdesk_store::{ConsoleKey, ConsoleName, ExportFormat, SqlFileContents};
 
 use crate::console::{
     ConsoleAction, ExportedRows, FormatScope, QueryConsole, RecentCompletions, RowsToOpen,
@@ -90,6 +90,109 @@ impl Consoles {
         let console = self.new_console(data_source, key.clone(), text).reopened();
         self.open.insert(key.clone(), console);
         Some(key.clone())
+    }
+
+    /// Opens a console on `data_source` showing the `.sql` file at `path`, just read. Its key
+    /// is none that `in_layout` holds: a tab restored from the last session may still be
+    /// waiting for its own file.
+    pub fn open_file(
+        &mut self,
+        data_source: &DataSource,
+        path: PathBuf,
+        contents: SqlFileContents,
+        in_layout: impl Fn(&ConsoleKey) -> bool,
+    ) -> ConsoleKey {
+        let key = self.free_file_key(data_source.id, in_layout);
+        self.reopen_file(data_source, key.clone(), path, contents);
+        key
+    }
+
+    /// Opens the console `key`, restored from the last session's layout, showing the `.sql`
+    /// file at `path`.
+    pub fn reopen_file(
+        &mut self,
+        data_source: &DataSource,
+        key: ConsoleKey,
+        path: PathBuf,
+        contents: SqlFileContents,
+    ) {
+        let console = self
+            .new_console(data_source, key.clone(), contents.text.clone())
+            .showing(path, contents);
+        self.open.insert(key, console);
+    }
+
+    /// The console showing the `.sql` file at `path`, if one does.
+    pub fn showing_file(&self, path: &Path) -> Option<ConsoleKey> {
+        self.open
+            .iter()
+            .find(|(_, console)| console.file_path() == Some(path))
+            .map(|(key, _)| key.clone())
+    }
+
+    /// Each console showing a `.sql` file, with its path, to restore them at the next launch.
+    pub fn files(&self) -> impl Iterator<Item = (&ConsoleKey, &Path)> {
+        self.open
+            .iter()
+            .filter_map(|(key, console)| Some((key, console.file_path()?)))
+    }
+
+    /// The `.sql` files the consoles show, to look at for changes made by other programs.
+    pub fn watched_files(&self) -> Vec<WatchedFile> {
+        self.open
+            .values()
+            .filter_map(QueryConsole::watched_file)
+            .collect()
+    }
+
+    /// Writes the console's text to its `.sql` file. `None` if it has none, and Save as must ask
+    /// where.
+    pub fn save_file(&mut self, key: &ConsoleKey) -> Option<Command> {
+        self.open.get_mut(key)?.save_file()
+    }
+
+    /// Writes the console's text to `path`, which it shows from then on.
+    pub fn save_file_as(&mut self, key: &ConsoleKey, path: PathBuf) -> Option<Command> {
+        Some(self.open.get_mut(key)?.save_file_as(path))
+    }
+
+    /// The consoles `closing` would close that have changes not written to their `.sql`
+    /// files, with their titles. Disconnecting closes no tab, so it loses nothing here.
+    pub fn unsaved_files(&self, closing: &Closing) -> Vec<(ConsoleKey, String)> {
+        self.open
+            .iter()
+            .filter(|(key, console)| {
+                !matches!(closing, Closing::Disconnect(_))
+                    && closing.affects(key)
+                    && console.has_unsaved_file()
+            })
+            .map(|(key, console)| (key.clone(), console.title().to_owned()))
+            .collect()
+    }
+
+    pub fn get_mut(&mut self, key: &ConsoleKey) -> Option<&mut QueryConsole> {
+        self.open.get_mut(key)
+    }
+
+    /// The lowest numbered `file_<n>` key no console of the data source uses, for a console
+    /// showing a `.sql` file: never one of a console file in the config folder.
+    fn free_file_key(
+        &self,
+        data_source: DataSourceId,
+        in_layout: impl Fn(&ConsoleKey) -> bool,
+    ) -> ConsoleKey {
+        (1..)
+            .filter_map(|n| ConsoleName::try_from(format!("file_{n}")).ok())
+            .map(|name| ConsoleKey { data_source, name })
+            .find(|key| {
+                !self.open.contains_key(key)
+                    && !self.saved.files.contains_key(key)
+                    && !in_layout(key)
+            })
+            .unwrap_or_else(|| ConsoleKey {
+                data_source,
+                name: ConsoleName::numbered(0),
+            })
     }
 
     /// The lowest numbered name no console of the data source uses, open or saved.
@@ -235,7 +338,34 @@ impl Consoles {
         }
     }
 
-    pub fn apply(&mut self, event: &Event) {
+    /// Takes in an engine event. Returns what it calls for: removing a console's file from the
+    /// config folder once the console was saved to a `.sql` file.
+    pub fn apply(&mut self, event: &Event) -> Option<Command> {
+        let command = self.apply_to_files(event);
+        self.apply_to_consoles(event);
+        command
+    }
+
+    fn apply_to_files(&mut self, event: &Event) -> Option<Command> {
+        match event {
+            Event::SqlFileSaved {
+                console, result, ..
+            } => self.open.get_mut(console)?.file_saved(result),
+            Event::SqlFileChanged { path, contents } => {
+                for console in self
+                    .open
+                    .values_mut()
+                    .filter(|console| console.file_path() == Some(path.as_path()))
+                {
+                    console.file_changed(contents.as_ref());
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    fn apply_to_consoles(&mut self, event: &Event) {
         if let Event::ConsolesLoaded(files) = event {
             self.saved.files.extend(
                 files

@@ -1,5 +1,7 @@
 //! Which build this is, and the few command-line flags dbdesk understands.
 
+use std::path::PathBuf;
+
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Set by `build.rs`: the commit the binary was built from, or "unknown".
 pub const COMMIT: &str = env!("DBDESK_COMMIT");
@@ -10,10 +12,11 @@ pub fn describe() -> String {
 }
 
 const USAGE: &str = "\
-Usage: dbdesk [--version | --help]
+Usage: dbdesk [--version | --help] [FILE.sql …]
        dbdesk mcp --project <slug>
 
-Starts the dbdesk desktop app. With --version (-V), prints the version and exits.
+Starts the dbdesk desktop app, opening each FILE.sql given in a console. With --version (-V),
+prints the version and exits.
 
 `dbdesk mcp --project <slug>` runs an MCP server for the project with that slug, read-only,
 over standard input and output, without opening a window. An MCP client starts it; see
@@ -30,9 +33,12 @@ pub enum CliRequest {
     },
     /// Arguments that can't be followed, with what was wrong.
     Invalid(String),
-    /// Open the app. Arguments dbdesk doesn't know are ignored, because launchers add their
-    /// own: older macOS passes `-psn_…` to apps started from Finder.
-    Run,
+    /// Open the app, and in it the files named. Options dbdesk doesn't know are ignored,
+    /// because launchers add their own: older macOS passes `-psn_…` to apps started from
+    /// Finder.
+    Run {
+        files: Vec<PathBuf>,
+    },
 }
 
 impl CliRequest {
@@ -41,15 +47,21 @@ impl CliRequest {
         if args.peek().is_some_and(|first| first == "mcp") {
             return Self::parse_mcp(args.skip(1));
         }
-        let mut request = Self::Run;
+        let mut help = false;
+        let mut files = Vec::new();
         for arg in args {
             match arg.as_str() {
                 "--version" | "-V" => return Self::Version,
-                "--help" | "-h" => request = Self::Help,
-                _ => {}
+                "--help" | "-h" => help = true,
+                option if option.starts_with('-') => {}
+                file => files.push(PathBuf::from(file)),
             }
         }
-        request
+        if help {
+            Self::Help
+        } else {
+            Self::Run { files }
+        }
     }
 
     /// Unlike the app, the subcommand refuses arguments it doesn't know: an MCP client's
@@ -83,7 +95,7 @@ impl CliRequest {
         match self {
             Self::Version => println!("{}", describe()),
             Self::Help => println!("{}\n\n{USAGE}", describe()),
-            Self::Mcp { .. } | Self::Invalid(_) | Self::Run => return false,
+            Self::Mcp { .. } | Self::Invalid(_) | Self::Run { .. } => return false,
         }
         true
     }
@@ -119,8 +131,13 @@ mod tests {
                 &["mcp", "--projcet", "shop"],
                 CliRequest::Invalid("unknown argument \"--projcet\"".to_owned()),
             ),
-            // Only as the first argument; elsewhere it is one more argument to ignore.
-            (&["-psn_0_1", "mcp"], CliRequest::Run),
+            // Only as the first argument; elsewhere it names a file to open.
+            (
+                &["-psn_0_1", "mcp"],
+                CliRequest::Run {
+                    files: vec!["mcp".into()],
+                },
+            ),
         ];
         for (args, expected) in cases {
             let parsed = CliRequest::parse(args.iter().map(|arg| (*arg).to_owned()));
@@ -129,10 +146,17 @@ mod tests {
     }
 
     #[test]
-    fn version_wins_and_unknown_arguments_are_ignored() {
-        let cases: [(&[&str], CliRequest); 5] = [
-            (&[], CliRequest::Run),
-            (&["-psn_0_12345"], CliRequest::Run),
+    fn version_wins_files_are_opened_and_unknown_options_ignored() {
+        let run = |files: &[&str]| CliRequest::Run {
+            files: files.iter().map(PathBuf::from).collect(),
+        };
+        let cases: [(&[&str], CliRequest); 6] = [
+            (&[], run(&[])),
+            (&["-psn_0_12345"], run(&[])),
+            (
+                &["-psn_0_1", "a.sql", "../b.sql"],
+                run(&["a.sql", "../b.sql"]),
+            ),
             (&["--version"], CliRequest::Version),
             (&["--help", "-V"], CliRequest::Version),
             (&["-h"], CliRequest::Help),

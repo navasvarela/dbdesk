@@ -179,6 +179,9 @@ impl AppState {
             | Event::TransactionChanged { .. }
             | Event::TransactionEnded { .. }
             | Event::ConsoleSaveFailed { .. }
+            | Event::SqlFileRead { .. }
+            | Event::SqlFileSaved { .. }
+            | Event::SqlFileChanged { .. }
             | Event::ConnectionTested { .. }
             | Event::PasswordNeeded { .. }
             | Event::HostKeyUnknown { .. }

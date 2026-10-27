@@ -15,6 +15,7 @@ mod portable;
 mod projects;
 mod secrets;
 mod settings;
+mod sql_files;
 
 pub use consoles::{
     ConsoleFiles, ConsoleKey, ConsoleName, ConsoleStoreError, InvalidConsoleName, SavedConsole,
@@ -42,3 +43,4 @@ pub use settings::{
     FormatSettings, HistorySettings, KeywordCase, LintSettings, Settings, SettingsError,
     SettingsFile, UpdateSettings,
 };
+pub use sql_files::{SqlFileContents, SqlFileError, modified, read_sql_file, write_sql_file};

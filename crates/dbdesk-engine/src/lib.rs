@@ -24,6 +24,7 @@ mod releases;
 mod repaint;
 mod session;
 mod settings;
+mod sql_files;
 mod transfer;
 mod tunnels;
 mod updater;
@@ -41,5 +42,6 @@ pub use protocol::{
 };
 pub use releases::{GithubReleases, Release, ReleaseError, ReleaseFeed};
 pub use repaint::Repaint;
+pub use sql_files::WatchedFile;
 pub use tunnels::Tunnels;
 pub use updater::{InstallError, InstallSupport, PackagerInstaller, UpdateInstaller};

@@ -38,11 +38,13 @@ mod rollback_dialog;
 mod screenshots;
 mod settings;
 mod settings_window;
+mod sql_files;
 mod state;
 mod telemetry;
 #[cfg(test)]
 mod test_support;
 mod theme;
+mod unsaved_dialog;
 mod update_dialog;
 mod updates;
 mod version;
@@ -72,13 +74,19 @@ fn main() -> anyhow::Result<()> {
     if request.answer() {
         return Ok(());
     }
-    match request {
+    let files = match request {
         version::CliRequest::Mcp { project } => return mcp::run(&project),
         version::CliRequest::Invalid(problem) => {
             anyhow::bail!("{problem}\n\n{}", version::CliRequest::usage())
         }
-        version::CliRequest::Version | version::CliRequest::Help | version::CliRequest::Run => {}
-    }
+        version::CliRequest::Run { files } => files,
+        version::CliRequest::Version | version::CliRequest::Help => Vec::new(),
+    };
+    // Relative to where dbdesk was started, which the app no longer knows once it runs.
+    let files: Vec<_> = files
+        .into_iter()
+        .map(|file| std::path::absolute(&file).unwrap_or(file))
+        .collect();
     let paths = AppPaths::discover()
         .context("the OS reports no home directory, so dbdesk has nowhere to keep its files")?;
     let telemetry = telemetry::init(&paths.logs_dir())?;
@@ -119,7 +127,10 @@ fn main() -> anyhow::Result<()> {
     eframe::run_native(
         APP_NAME,
         options,
-        Box::new(move |cc| Ok(Box::new(DbDeskApp::new(cc, log_feed, engine_config)?))),
+        Box::new(move |cc| {
+            let app = DbDeskApp::new(cc, log_feed, engine_config)?.with_files_to_open(files);
+            Ok(Box::new(app))
+        }),
     )
     // eframe's error wraps winit/GL errors that aren't `Sync`, so it can't become an
     // `anyhow::Error` directly.
