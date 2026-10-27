@@ -13,7 +13,7 @@ use tokio::task::{JoinError, JoinSet};
 use crate::console_files;
 use crate::events::EventSink;
 use crate::export;
-use crate::history::HistoryLog;
+use crate::history::{HistoryExport, HistoryLog};
 use crate::keymap;
 use crate::open::{TypedSecrets, create_database_file, test_connection};
 use crate::passwords::SessionPasswords;
@@ -328,6 +328,17 @@ impl Engine {
                 }),
             },
             Command::SearchHistory(query) => self.history.search(query),
+            Command::ExportHistory {
+                query,
+                path,
+                format,
+                names,
+            } => self.history.export(HistoryExport {
+                query,
+                path,
+                format,
+                names,
+            }),
             Command::CheckForUpdates => {
                 tokio::spawn(releases::check(
                     Arc::clone(&self.releases),

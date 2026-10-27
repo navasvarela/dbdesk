@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -7,9 +8,9 @@ use dbdesk_core::{
     TransactionStatus,
 };
 use dbdesk_store::{
-    ConsoleKey, HistoryEntry, HistoryQuery, ImportPlan, ImportPreview, KeymapBindings,
-    McpOverrides, McpPermissions, Project, Projects, RowChange, SavedConsole, Secret, Separator,
-    Settings,
+    ConsoleKey, ExportFormat, HistoryEntry, HistoryQuery, ImportPlan, ImportPreview,
+    KeymapBindings, McpOverrides, McpPermissions, Project, Projects, RowChange, SavedConsole,
+    Secret, Separator, Settings,
 };
 
 use crate::{Export, ExportAll, HostKey, PasswordNeeded, Release};
@@ -258,6 +259,14 @@ pub enum Command {
     },
     /// Looks up past statements, newest first. Answered by [`Event::HistoryFound`].
     SearchHistory(HistoryQuery),
+    /// Writes every statement a search finds, without its usual limit, to a file, naming data
+    /// sources by `names`. Answered by [`Event::HistoryExported`].
+    ExportHistory {
+        query: HistoryQuery,
+        path: PathBuf,
+        format: ExportFormat,
+        names: HashMap<DataSourceId, String>,
+    },
     /// Asks the release feed for the newest published release. Answered by
     /// [`Event::LatestRelease`].
     CheckForUpdates,
@@ -427,6 +436,11 @@ pub enum Event {
     HistoryFound {
         query: HistoryQuery,
         result: Result<Vec<HistoryEntry>, String>,
+    },
+    /// The answer to [`Command::ExportHistory`]: how many statements were written.
+    HistoryExported {
+        path: PathBuf,
+        result: Result<usize, String>,
     },
     SessionChanged {
         id: DataSourceId,

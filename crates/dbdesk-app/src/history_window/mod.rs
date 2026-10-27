@@ -4,11 +4,13 @@
 //! helper, an import, an export, or an MCP client.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use dbdesk_core::DataSourceId;
 use dbdesk_engine::{Command, Event};
 use dbdesk_store::{
-    ConsoleKey, HistoryEntry, HistoryOutcome, HistoryQuery, HistorySource, HistorySourceKind,
+    ConsoleKey, ExportFormat, HistoryEntry, HistoryOutcome, HistoryQuery, HistorySource,
+    HistorySourceKind,
 };
 use egui::{Label, RichText, ScrollArea, TextEdit, Ui, Window};
 use jiff::Timestamp;
@@ -45,6 +47,17 @@ pub struct HistoryWindow {
     results: Option<Result<Vec<HistoryEntry>, String>>,
     /// The entry whose details show; kept when the results are searched again.
     selected: Option<HistoryEntry>,
+    export: ExportStatus,
+}
+
+/// Where the latest export of the history is.
+enum ExportStatus {
+    None,
+    Writing(PathBuf),
+    Done {
+        path: PathBuf,
+        result: Result<usize, String>,
+    },
 }
 
 /// What the user did in the window this frame.
@@ -56,6 +69,8 @@ pub enum HistoryAction {
         console: ConsoleKey,
         sql: String,
     },
+    /// Export the current search, every match of it, in this format, to a file to ask for.
+    Export(ExportFormat),
     Close,
 }
 
@@ -78,6 +93,7 @@ impl HistoryWindow {
             period: Period::AnyTime,
             results: None,
             selected: None,
+            export: ExportStatus::None,
         };
         let search = window.search_command();
         (window, search)
@@ -112,11 +128,30 @@ impl HistoryWindow {
         self.sent.clone()
     }
 
+    /// Exports what the window lists, without its limit, to `path`.
+    pub fn export(&mut self, path: PathBuf, format: ExportFormat) -> Command {
+        self.export = ExportStatus::Writing(path.clone());
+        Command::ExportHistory {
+            query: self.sent.clone(),
+            path,
+            format,
+            names: self.names.clone(),
+        }
+    }
+
     pub fn apply(&mut self, event: &Event) {
-        if let Event::HistoryFound { query, result } = event
-            && *query == self.sent
-        {
-            self.results = Some(result.clone());
+        match event {
+            Event::HistoryFound { query, result } if *query == self.sent => {
+                self.results = Some(result.clone());
+            }
+            Event::HistoryExported { path, result } if matches!(&self.export, ExportStatus::Writing(writing) if writing == path) =>
+            {
+                self.export = ExportStatus::Done {
+                    path: path.clone(),
+                    result: result.clone(),
+                };
+            }
+            _ => {}
         }
     }
 
@@ -151,6 +186,16 @@ impl HistoryWindow {
                 filtered || typed
             })
             .inner;
+        let exported = ui
+            .horizontal(|ui| {
+                let format = export_menu(ui);
+                self.export_status(ui);
+                format
+            })
+            .inner;
+        if let Some(format) = exported {
+            return Some(HistoryAction::Export(format));
+        }
         if searched {
             self.results = None;
             return Some(HistoryAction::Search(self.next_search()));
@@ -195,6 +240,35 @@ impl HistoryWindow {
                 sql,
             }),
         )
+    }
+
+    fn export_status(&self, ui: &mut Ui) {
+        match &self.export {
+            ExportStatus::None => {}
+            ExportStatus::Writing(path) => {
+                ui.spinner();
+                ui.weak(format!("Exporting to {}\u{2026}", path.display()));
+            }
+            ExportStatus::Done {
+                path,
+                result: Ok(written),
+            } => {
+                let statements = if *written == 1 {
+                    "statement"
+                } else {
+                    "statements"
+                };
+                ui.weak(format!(
+                    "Exported {written} {statements} to {}",
+                    path.display()
+                ));
+            }
+            ExportStatus::Done {
+                result: Err(error), ..
+            } => {
+                ui.colored_label(ui.visuals().error_fg_color, error);
+            }
+        }
     }
 
     /// Lists the entries. Returns what to do, and the entry clicked, if any.
@@ -242,6 +316,24 @@ impl HistoryWindow {
             });
         (chosen, clicked)
     }
+}
+
+/// **Export history** with its two formats. Returns the one chosen.
+fn export_menu(ui: &mut Ui) -> Option<ExportFormat> {
+    let mut chosen = None;
+    ui.menu_button("Export history", |ui| {
+        for (format, label) in [
+            (ExportFormat::Csv, "As CSV\u{2026}"),
+            (ExportFormat::Json, "As JSON\u{2026}"),
+        ] {
+            if ui.button(label).clicked() {
+                chosen = Some(format);
+            }
+        }
+    })
+    .response
+    .on_hover_text("Write every statement this search finds to a file");
+    chosen
 }
 
 /// What a click on an entry's row asked for.

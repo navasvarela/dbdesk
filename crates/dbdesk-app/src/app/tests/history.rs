@@ -204,3 +204,33 @@ fn keeps_the_history_as_long_as_the_settings_say() {
     open_history(&mut harness, 1);
     assert!(harness.query_by_label("SELECT 'from 1970'").is_none());
 }
+
+/// Export writes what the window lists to the file the save dialog names, and says so.
+#[test]
+fn exports_the_search_to_a_file() {
+    let dir = tempfile::tempdir().unwrap();
+    save_shop(dir.path(), "CREATE TABLE orders (id INTEGER PRIMARY KEY)");
+    let (_layer, feed) = log_console::pipeline();
+    let mut harness = start_app(dir.path(), feed);
+    let picked = dir.path().join("history.json");
+    let answer = picked.clone();
+    harness.state_mut().pick_export_path = Box::new(move |_, what| {
+        assert_eq!(what, "history");
+        Some(answer.clone())
+    });
+    open_orders(&mut harness, "0 rows");
+
+    open_history(&mut harness, 1);
+    harness.get_by_label("Export history").click();
+    harness.run();
+    harness.get_by_label("As JSON…").click();
+    step_until(&mut harness, "the export", |harness| {
+        harness
+            .query_by_label_contains("Exported 1 statement to")
+            .is_some()
+    });
+    let exported: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&picked).unwrap()).unwrap();
+    assert_eq!(exported[0]["sql"], "SELECT * FROM main.orders");
+    assert_eq!(exported[0]["data_source"], "shop");
+}

@@ -1,8 +1,13 @@
 //! The query history database, owned by one thread from the blocking pool. Requests queue
 //! up in order, so a search sent after a run has finished sees that run's statements.
 
-use dbdesk_core::describe_error;
-use dbdesk_store::{History, HistoryEntry, HistoryFile, HistoryQuery, HistorySettings};
+use std::collections::HashMap;
+use std::path::PathBuf;
+
+use dbdesk_core::{DataSourceId, describe_error};
+use dbdesk_store::{
+    ExportFormat, History, HistoryEntry, HistoryFile, HistoryQuery, HistorySettings,
+};
 use jiff::Timestamp;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
@@ -18,6 +23,15 @@ enum HistoryRequest {
     Record(HistoryEntry),
     Search(HistoryQuery),
     Prune(HistorySettings),
+    Export(HistoryExport),
+}
+
+/// A search to write to a file, as [`crate::Command::ExportHistory`] asks.
+pub(crate) struct HistoryExport {
+    pub(crate) query: HistoryQuery,
+    pub(crate) path: PathBuf,
+    pub(crate) format: ExportFormat,
+    pub(crate) names: HashMap<DataSourceId, String>,
 }
 
 /// A handle for queueing history work. Cheap to clone into sessions.
@@ -42,6 +56,12 @@ impl HistoryLog {
     /// Answered by [`Event::HistoryFound`].
     pub(crate) fn search(&self, query: HistoryQuery) {
         self.send(HistoryRequest::Search(query));
+    }
+
+    /// Answered by [`Event::HistoryExported`]. On the history thread like everything else, so
+    /// it sees every statement recorded before it, and statements recorded meanwhile wait.
+    pub(crate) fn export(&self, export: HistoryExport) {
+        self.send(HistoryRequest::Export(export));
     }
 
     /// Deletes what `retention` no longer keeps. Logged, not reported: nobody is waiting.
@@ -80,6 +100,18 @@ fn serve(file: &HistoryFile, mut requests: UnboundedReceiver<HistoryRequest>, ev
                     Err(error) => Err(error.clone()),
                 };
                 events.send(Event::HistoryFound { query, result });
+            }
+            HistoryRequest::Export(export) => {
+                let result = match &history {
+                    Ok(history) => history
+                        .export(&export.query, (&export.path, export.format), &export.names)
+                        .map_err(|error| describe_error(&error)),
+                    Err(error) => Err(error.clone()),
+                };
+                events.send(Event::HistoryExported {
+                    path: export.path,
+                    result,
+                });
             }
             HistoryRequest::Prune(retention) => {
                 if let Ok(history) = &history {

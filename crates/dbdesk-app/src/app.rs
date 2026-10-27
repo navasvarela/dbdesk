@@ -51,6 +51,9 @@ use crate::{fonts, icons, relaunch, widgets};
 /// restored after a version change, but their files are, under Open saved console.
 const LAYOUT_STORAGE_KEY: &str = "dock_layout_v2";
 
+/// Asks where to export `what` ("rows", "history") in a format; `None` if cancelled.
+type PickExportPath = dyn Fn(ExportFormat, &str) -> Option<PathBuf>;
+
 pub struct DbDeskApp {
     /// `None` once the engine has been shut down, at exit or after it stopped unexpectedly.
     engine: Option<EngineHandle>,
@@ -92,8 +95,9 @@ pub struct DbDeskApp {
     about_open: bool,
     settings: AppSettings,
     updates: Updates,
-    /// Asks where to export rows. The platform's save dialog, except in tests.
-    pick_export_path: Box<dyn Fn(ExportFormat) -> Option<PathBuf>>,
+    /// Asks where to export rows or the history (named by the `&str`). The platform's save
+    /// dialog, except in tests.
+    pick_export_path: Box<PickExportPath>,
     /// Asks for a CSV file to import into a table. A field so tests can answer it.
     pub(crate) pick_csv_file: Box<dyn Fn() -> Option<PathBuf>>,
     consoles: Consoles,
@@ -844,7 +848,7 @@ impl DbDeskApp {
     }
 
     fn export(&mut self, console: &ConsoleKey, rows: ExportedRows, format: ExportFormat) {
-        if let Some(path) = (self.pick_export_path)(format) {
+        if let Some(path) = (self.pick_export_path)(format, "rows") {
             let command = self.consoles.export(console, rows, format, path);
             self.send_if(command);
         }
@@ -891,6 +895,14 @@ impl DbDeskApp {
             HistoryAction::Search(query) => self.send(Command::SearchHistory(query)),
             HistoryAction::Insert { console, sql } => {
                 self.consoles.insert_statement(&console, &sql);
+            }
+            HistoryAction::Export(format) => {
+                if let Some(path) = (self.pick_export_path)(format, "history")
+                    && let Some(window) = &mut self.history_window
+                {
+                    let command = window.export(path, format);
+                    self.send(command);
+                }
             }
             HistoryAction::Close => self.history_window = None,
         }
@@ -3048,7 +3060,7 @@ mod tests {
         let (_layer, feed) = log_console::pipeline();
         let mut harness = start_app(dir.path(), feed);
         let picked = export_path.clone();
-        harness.state_mut().pick_export_path = Box::new(move |_| Some(picked.clone()));
+        harness.state_mut().pick_export_path = Box::new(move |_, _| Some(picked.clone()));
         open_orders(&mut harness, "3 rows");
 
         harness.get_by_label("id").click();

@@ -194,7 +194,7 @@ fn exports_every_row_not_only_those_loaded() {
     let (_layer, feed) = log_console::pipeline();
     let mut harness = start_app(dir.path(), feed);
     let picked = export_path.clone();
-    harness.state_mut().pick_export_path = Box::new(move |_| Some(picked.clone()));
+    harness.state_mut().pick_export_path = Box::new(move |_, _| Some(picked.clone()));
     open_orders(&mut harness, "500 rows, more available");
     step_until_visible(&mut harness, "Add row");
     harness.get_by_label("In the database").click();
