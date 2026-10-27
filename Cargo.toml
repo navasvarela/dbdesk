@@ -66,8 +66,12 @@ egui-phosphor = "0.14.0"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 # HMAC-SHA1, which OpenSSH hashes host names in known_hosts with. The versions russh uses.
+# hmac also checks SCRAM verifiers in dbdesk-sql's tests, with sha2 and base64, at the
+# versions postgres-protocol uses.
 hmac = "0.13.0"
 sha1 = "0.11.0"
+sha2 = "0.11.1"
+base64 = "0.22.1"
 jiff = "0.2.38"
 keyring = "4.2.0"
 # MySQL and MariaDB. No default features, which compress with the zlib C library:
@@ -107,6 +111,9 @@ tempfile = "3.27.0"
 thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "sync", "time", "macros"] }
 tokio-postgres = "0.7.18"
+# tokio-postgres's own protocol crate, for hashing role passwords into SCRAM verifiers on the
+# client (dbdesk-sql): the version tokio-postgres pulls in, so nothing new is built.
+postgres-protocol = "0.6.12"
 tokio-postgres-rustls = { version = "0.14.0", features = ["ring"] }
 toml = "1.1.8"
 tracing = "0.1.44"

@@ -1,8 +1,9 @@
 //! SQL text utilities for the query console: a forgiving lexer, statement splitting,
 //! statement-under-cursor, a check for destructive statements, a formatter, a syntax
 //! checker and linter, a classifier of what a statement may change, the DDL the object
-//! helpers write, the statements that change a table's rows from the grid, and the query that
-//! sorts and filters a statement's rows in the database.
+//! helpers write, the statements that change a table's rows from the grid, the query that
+//! sorts and filters a statement's rows in the database, and the SCRAM verifiers role passwords
+//! are sent as.
 //!
 //! Everything works on text as typed, which is usually half-finished: nothing here fails on
 //! invalid input. Unterminated strings and comments run to the end of the text. All
@@ -22,6 +23,7 @@ mod dml;
 mod format;
 mod keywords;
 mod lexer;
+mod password;
 mod projection;
 mod safety;
 mod split;
@@ -34,16 +36,18 @@ pub use classify::{
 };
 pub use ddl::{
     Check, ColumnSpec, DdlError, DdlOperation, ForeignKey, IndexMethod, IndexSpec, ObjectName,
-    ReferentialAction, SchemaSpec, TableSpec, UniqueKey, ViewKind, ViewSpec, ddl_statements,
-    quote_name, view_query,
+    OwnedObjects, PasswordChange, ReferentialAction, RoleSpec, SchemaSpec, TableSpec, UniqueKey,
+    ViewKind, ViewSpec, ddl_statements, quote_name, view_query,
 };
 pub use dialect::{
-    Capabilities, Dialect, ExplainSetting, Savepoint, SchemaCreation, TableChange, ViewReplacement,
+    Capabilities, Dialect, ExplainSetting, Savepoint, SchemaCreation, TableChange, UserModel,
+    ViewReplacement,
 };
 pub use dml::{ColumnValue, RowSql, Table};
 pub use format::{FormatError, FormatOptions, Formatted, KeywordCase, format_ranges, same_meaning};
 pub use keywords::{is_keyword, keywords};
 pub use lexer::{Token, TokenKind, first_word, tokenize};
+pub use password::ScramVerifier;
 pub use projection::{ProjectionItem, projection};
 pub use safety::{Hazard, hazard};
 pub use split::{split_statements, statement_at};

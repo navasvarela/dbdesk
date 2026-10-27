@@ -10,8 +10,14 @@ publish.workspace = true
 
 [dependencies]
 dbdesk-core.workspace = true
+postgres-protocol.workspace = true
 sqlparser.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+base64.workspace = true
+hmac.workspace = true
+sha2.workspace = true
 
 [lints]
 workspace = true

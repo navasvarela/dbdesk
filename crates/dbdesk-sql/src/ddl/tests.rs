@@ -1,6 +1,9 @@
 //! Golden tests: what each dialect's DDL looks like, written out in full.
 
+use dbdesk_core::RoleAttribute;
+
 use super::*;
+use crate::UserModel;
 
 fn column(name: &str, data_type: &str, nullable: bool, default: Option<&str>) -> ColumnSpec {
     ColumnSpec {
@@ -929,4 +932,180 @@ fn refuses_schemas_the_dialect_cannot_create_or_drop() {
         unnamed.statements(Dialect::Postgres),
         Err(DdlError::MissingName("schema"))
     );
+}
+
+/// A verifier as `ScramVerifier::hash` writes one, fixed so the statements are the same every
+/// run.
+const VERIFIER: &str = "SCRAM-SHA-256$4096:c2FsdHNhbHRzYWx0c2FsdA==$\
+    c3RvcmVkc3RvcmVkc3RvcmVkc3RvcmVkc3RvcmVkMTI=:c2VydmVyc2VydmVyc2VydmVyc2VydmVyc2VydmVyMTI=";
+
+fn role_spec(attributes: &[RoleAttribute], member_of: &[&str]) -> RoleSpec {
+    RoleSpec {
+        attributes: attributes.iter().copied().collect(),
+        connection_limit: None,
+        valid_until: None,
+        member_of: member_of.iter().map(|role| (*role).to_owned()).collect(),
+    }
+}
+
+#[test]
+fn creates_a_login_role_with_its_password_verifier_and_memberships() {
+    let spec = RoleSpec {
+        connection_limit: Some(5),
+        valid_until: Some(" 2027-01-01 ".to_owned()),
+        ..role_spec(
+            &[RoleAttribute::Login, RoleAttribute::CreateDb],
+            &["readers", "Report Writers"],
+        )
+    };
+    let operation = DdlOperation::CreateRole {
+        name: "alice".to_owned(),
+        spec,
+        password: Some(ScramVerifier::fixed(VERIFIER)),
+    };
+    assert_eq!(
+        operation.statements(Dialect::Postgres).unwrap(),
+        [format!(
+            "CREATE ROLE alice WITH LOGIN CREATEDB NOINHERIT CONNECTION LIMIT 5 \
+             VALID UNTIL '2027-01-01' IN ROLE \"Report Writers\", readers PASSWORD '{VERIFIER}'"
+        )]
+    );
+}
+
+#[test]
+fn a_role_with_postgres_defaults_needs_no_options() {
+    let operation = DdlOperation::CreateRole {
+        name: "user".to_owned(),
+        spec: role_spec(&[RoleAttribute::Inherit], &[]),
+        password: None,
+    };
+    assert_eq!(
+        operation.statements(Dialect::Postgres).unwrap(),
+        ["CREATE ROLE \"user\""]
+    );
+}
+
+#[test]
+fn alters_only_what_changed_and_grants_or_revokes_memberships() {
+    let before = RoleSpec {
+        connection_limit: Some(5),
+        valid_until: Some("2027-01-01 00:00:00+00".to_owned()),
+        ..role_spec(
+            &[RoleAttribute::Login, RoleAttribute::Inherit],
+            &["readers", "auditors"],
+        )
+    };
+    let after = RoleSpec {
+        connection_limit: None,
+        valid_until: Some(String::new()),
+        ..role_spec(
+            &[RoleAttribute::Login, RoleAttribute::CreateRole],
+            &["readers", "writers"],
+        )
+    };
+    let operation = DdlOperation::AlterRole {
+        name: "alice".to_owned(),
+        before,
+        after,
+        password: PasswordChange::Set(ScramVerifier::fixed(VERIFIER)),
+    };
+    assert_eq!(
+        operation.statements(Dialect::Postgres).unwrap(),
+        [
+            format!(
+                "ALTER ROLE alice WITH CREATEROLE NOINHERIT CONNECTION LIMIT -1 \
+                 VALID UNTIL 'infinity' PASSWORD '{VERIFIER}'"
+            ),
+            "REVOKE auditors FROM alice".to_owned(),
+            "GRANT writers TO alice".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn alters_a_password_alone_or_removes_it() {
+    let spec = role_spec(&[RoleAttribute::Login], &[]);
+    let alter = |password| DdlOperation::AlterRole {
+        name: "alice".to_owned(),
+        before: spec.clone(),
+        after: spec.clone(),
+        password,
+    };
+    assert_eq!(
+        alter(PasswordChange::Remove)
+            .statements(Dialect::Postgres)
+            .unwrap(),
+        ["ALTER ROLE alice WITH PASSWORD NULL"]
+    );
+    assert_eq!(
+        alter(PasswordChange::Keep).statements(Dialect::Postgres),
+        Err(DdlError::NothingChanged)
+    );
+}
+
+#[test]
+fn renames_and_drops_roles_with_what_they_own() {
+    let rename = DdlOperation::RenameRole {
+        name: "alice".to_owned(),
+        new_name: "Alice Smith".to_owned(),
+    };
+    assert_eq!(
+        rename.statements(Dialect::Postgres).unwrap(),
+        ["ALTER ROLE alice RENAME TO \"Alice Smith\""]
+    );
+    let drop = |owned| DdlOperation::DropRole {
+        name: "alice".to_owned(),
+        owned,
+    };
+    let cases = [
+        (OwnedObjects::Keep, vec!["DROP ROLE alice"]),
+        (
+            OwnedObjects::ReassignTo("bob".to_owned()),
+            vec![
+                "REASSIGN OWNED BY alice TO bob",
+                "DROP OWNED BY alice",
+                "DROP ROLE alice",
+            ],
+        ),
+        (
+            OwnedObjects::Drop,
+            vec!["DROP OWNED BY alice", "DROP ROLE alice"],
+        ),
+    ];
+    for (owned, statements) in cases {
+        assert_eq!(
+            drop(owned).statements(Dialect::Postgres).unwrap(),
+            statements
+        );
+    }
+    assert_eq!(
+        drop(OwnedObjects::ReassignTo(" ".to_owned())).statements(Dialect::Postgres),
+        Err(DdlError::NoNewOwner)
+    );
+    assert_eq!(
+        drop(OwnedObjects::ReassignTo("alice".to_owned())).statements(Dialect::Postgres),
+        Err(DdlError::ReassignToItself)
+    );
+}
+
+#[test]
+fn roles_need_a_name_and_an_engine_whose_users_are_roles() {
+    let create = |name: &str| DdlOperation::CreateRole {
+        name: name.to_owned(),
+        spec: role_spec(&[RoleAttribute::Inherit], &[]),
+        password: None,
+    };
+    assert_eq!(
+        create(" ").statements(Dialect::Postgres),
+        Err(DdlError::MissingName("role"))
+    );
+    for dialect in Dialect::ALL {
+        let supported = dialect.capabilities().users == UserModel::Roles;
+        assert_eq!(
+            create("alice").statements(dialect).is_ok(),
+            supported,
+            "{dialect:?}"
+        );
+    }
+    assert_eq!(Dialect::Postgres.capabilities().users, UserModel::Roles);
 }

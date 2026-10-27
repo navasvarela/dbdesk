@@ -48,6 +48,21 @@ pub struct Capabilities {
     pub schema_owner: bool,
     /// `DROP SCHEMA … CASCADE`, which also drops everything in the schema.
     pub drop_schema_cascade: bool,
+    /// How the engine models the users who log in to it, which decides whether the explorer
+    /// lists them and offers New user.
+    pub users: UserModel,
+}
+
+/// How a dialect's users are modelled, for the users and roles helpers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UserModel {
+    /// None dbdesk manages yet: SQLite has no users, and the other engines' kinds of users
+    /// (MySQL's `'name'@'host'` accounts, SQL Server's logins) are variants of their own when
+    /// they are built.
+    Unsupported,
+    /// PostgreSQL's roles, which belong to the whole server: a user is a role that may log
+    /// in, so one kind of object serves both.
+    Roles,
 }
 
 /// How a dialect replaces an existing view's query.
@@ -153,6 +168,7 @@ const POSTGRES: Capabilities = Capabilities {
     schema_creation: SchemaCreation::CreateSchema,
     schema_owner: true,
     drop_schema_cascade: true,
+    users: UserModel::Roles,
 };
 
 /// SQLite's `ALTER TABLE` renames tables and columns and adds or drops simple columns; any
@@ -179,6 +195,7 @@ const SQLITE: Capabilities = Capabilities {
     schema_creation: SchemaCreation::Unsupported,
     schema_owner: false,
     drop_schema_cascade: false,
+    users: UserModel::Unsupported,
 };
 
 /// InnoDB parses `SET DEFAULT` but refuses the table, so it isn't offered. `CASCADE` after
@@ -225,6 +242,7 @@ const MYSQL: Capabilities = Capabilities {
     schema_creation: SchemaCreation::CreateDatabase,
     schema_owner: false,
     drop_schema_cascade: false,
+    users: UserModel::Unsupported,
 };
 
 /// SQL Server has no `RESTRICT`: `NO ACTION` is what refuses. Its renames are `sp_rename`
@@ -271,6 +289,7 @@ const SQL_SERVER: Capabilities = Capabilities {
     schema_creation: SchemaCreation::CreateSchema,
     schema_owner: true,
     drop_schema_cascade: false,
+    users: UserModel::Unsupported,
 };
 
 /// DuckDB's foreign keys only refuse: it has no `ON DELETE` or `ON UPDATE` actions. Its
@@ -318,6 +337,7 @@ const DUCKDB: Capabilities = Capabilities {
     schema_creation: SchemaCreation::CreateSchema,
     schema_owner: false,
     drop_schema_cascade: true,
+    users: UserModel::Unsupported,
 };
 
 /// ClickHouse has no unique or foreign keys, only checks; its `PRIMARY KEY` is the sort
@@ -359,6 +379,7 @@ const CLICKHOUSE: Capabilities = Capabilities {
     schema_creation: SchemaCreation::CreateDatabase,
     schema_owner: false,
     drop_schema_cascade: false,
+    users: UserModel::Unsupported,
 };
 
 impl Dialect {
