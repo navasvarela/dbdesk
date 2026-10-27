@@ -383,6 +383,28 @@ million rows, and the catalog with definitions, an engine test of a session acro
 lexer, syntax-check and formatter corpora for the dialect, and UI tests of the form's TLS port
 and read-only results.
 
+## Cloud and big data track
+
+Managed databases signed into with a cloud account, data in object storage, and the cloud
+warehouses. Planned, not scheduled. The full plan, with the order, the shared groundwork and the
+open decisions, is in [Cloud and big data](cloud-data.md).
+
+- **C0 — Groundwork:**
+  - signing in with AWS, Google Cloud and Microsoft Entra ID accounts, reusing the sign-in
+    already on the machine and never storing a cloud secret;
+  - cost guards per data source, so that nothing scans a whole table unasked;
+  - queries run as jobs (submit, poll, page, cancel by id);
+  - lazy, searchable catalogs for very large ones.
+- **C1 — Managed databases:** RDS and Aurora, Cloud SQL, Azure SQL and Azure Database, Neon,
+  Supabase, ClickHouse Cloud and Redshift, through the drivers dbdesk has, with presets in the
+  data source dialog.
+- **C2 — Object storage:** Parquet, CSV and JSON in S3, Google Cloud Storage and Azure Blob
+  Storage, Iceberg and Delta tables, and MotherDuck, all through DuckDB.
+- **C3 — Snowflake**, over its SQL API.
+- **C4 — BigQuery**, over its jobs API, with a dry run showing the bytes a query will scan.
+- **C5 — Databricks SQL**, over the Statement Execution API and Unity Catalog.
+- **C6 — Trino and Athena**, over Trino's HTTP protocol and AWS's Athena API.
+
 ## Object helpers track
 
 Dialogs that write, show and run the SQL to create and change tables, indexes, views, schemas

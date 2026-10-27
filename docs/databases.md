@@ -53,7 +53,8 @@ Left out on purpose:
 - **PostgreSQL-compatible databases** (CockroachDB, Neon, Supabase, TimescaleDB, Amazon
   Aurora). They already connect through the PostgreSQL driver. Trying each and fixing what its
   catalog does differently is a small task of its own, best done after DB0 brings TLS, which
-  hosted services require.
+  hosted services require. It is C1 of [Cloud and big data](cloud-data.md), along with the
+  cloud warehouses.
 
 ## What a new engine needs
 
