@@ -4,9 +4,12 @@
 use dbdesk_core::Cell;
 use dbdesk_sql::ParameterValues;
 use dbdesk_store::ConsoleKey;
-use egui::{Align, Id, Key, Layout, Modal, TextEdit};
+use egui::{Align, Id, Key, Layout, Modal, TextEdit, vec2};
 
 use crate::console::SubmittedRun;
+
+/// Room for a date and time, or a short sentence, in each value field.
+const VALUE_WIDTH: f32 = 260.0;
 
 pub enum ParametersChoice {
     Run,
@@ -85,13 +88,18 @@ impl ParametersDialog {
                 .show(ui, |ui| {
                     for (index, field) in self.fields.iter_mut().enumerate() {
                         let label = ui.label(format!(":{}", field.name));
+                        // Sized explicitly: in a grid, a text field's desired width is
+                        // squeezed to the column, which starts out a few characters wide.
+                        let size = vec2(VALUE_WIDTH, ui.spacing().interact_size.y);
                         let edit = ui
-                            .add_enabled(
-                                !field.null,
-                                TextEdit::singleline(&mut field.text)
-                                    .hint_text(if field.null { "NULL" } else { "" })
-                                    .desired_width(260.0),
-                            )
+                            .add_enabled_ui(!field.null, |ui| {
+                                ui.add_sized(
+                                    size,
+                                    TextEdit::singleline(&mut field.text)
+                                        .hint_text(if field.null { "NULL" } else { "" }),
+                                )
+                            })
+                            .inner
                             .labelled_by(label.id);
                         if index == 0 && std::mem::take(&mut self.focus_first) {
                             edit.request_focus();
