@@ -805,6 +805,23 @@ The gaps that keep dbdesk from being an everyday tool. The full plan is in
   unit tests of the find logic, and kittest tests of each feature on SQLite with temporary
   files. New engine tests reuse W5's `test_sources`, so they add a few seconds per server.
 
+  **W6 demo note:** built. **File › Open…** a `report.sql` from a project: with one data source
+  it opens at once, otherwise a dialog asks which (and remembers it under **Open recent**). Type,
+  and the tab reads `report.sql •`; ⌘S writes it and the dot goes. Edit the file in another
+  editor and the console follows it within two seconds; edit both and the console says *changed
+  on disk* with **Reload** and **Keep mine**. Close the tab, or quit, with unsaved changes and
+  dbdesk asks **Save**, **Don't save** or **Cancel**; a failed save keeps the tab. **Save as…**
+  on an ordinary console moves it to a file and removes its copy in `consoles/`. Restart, and
+  the file's tab is back; `dbdesk other.sql` opens another. Run `SELECT * FROM orders WHERE
+  placed_at >= :since AND status = :status`: **Parameter values** asks for both, with **NULL**
+  switches, and next time starts from what you typed. SQLite, DuckDB, MySQL, MariaDB and SQL
+  Server bind the values (`Connection::execute_bound`); PostgreSQL and ClickHouse get quoted
+  literals; casts, `:=`, labels, slices and ClickHouse's `{id:UInt64}` are left alone. The
+  history keeps `… :since` with `-- :since = '2026-01-01'` under it. ⌘F finds as you type
+  (*1 of 2*), with **Aa**, **W** and **.\***; ⌥⌘F adds the replace field, and **Replace all**
+  replaces every match in one undo step. Covered by the tests above; the engine tests ran on
+  every server of the compose file.
+
 ## Design and documentation track
 
 Runs alongside the feature milestones rather than after them: each item is usable on its own.

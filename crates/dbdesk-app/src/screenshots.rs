@@ -426,6 +426,20 @@ const SCENES: &[Scene] = &[
         needs: &[],
     },
     Scene {
+        name: "parameters",
+        data_sources: FixtureSources::Shop,
+        play: parameters,
+        keeps_pointer: false,
+        needs: &[],
+    },
+    Scene {
+        name: "find-replace",
+        data_sources: FixtureSources::Shop,
+        play: find_replace,
+        keeps_pointer: false,
+        needs: &[],
+    },
+    Scene {
         name: "csv-import",
         data_sources: FixtureSources::Shop,
         play: csv_import,
@@ -1411,6 +1425,57 @@ fn csv_import(harness: &mut Harness<'static, DbDeskApp>, fixture: &Fixture) {
     harness.run_ok();
     harness.get_by_label("Import CSV…").click();
     step_until_visible(harness, "Source of name");
+    harness.run_ok();
+}
+
+fn parameters(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    open_console(
+        harness,
+        "shop",
+        "SELECT * FROM orders\nWHERE placed_at >= :since\n  AND status = :status;",
+    );
+    harness.get_by_label("Run").click();
+    step_until_visible(harness, "Parameter values");
+    harness.run_steps(2);
+    harness
+        .get_by_role_and_label(Role::TextInput, ":since")
+        .type_text("2026-01-01");
+    harness.run_ok();
+    harness
+        .get_by_role_and_label(Role::TextInput, ":status")
+        .focus();
+    harness.run_ok();
+    harness
+        .get_by_role_and_label(Role::TextInput, ":status")
+        .type_text("shipped");
+    harness.run_ok();
+}
+
+fn find_replace(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    open_console(
+        harness,
+        "shop",
+        "SELECT o.id, c.name\nFROM orders o\nJOIN customers c ON c.id = o.customer_id\n\
+         WHERE o.status = 'shipped';\n\nSELECT count(*) FROM orders;",
+    );
+    harness.key_press_modifiers(
+        egui::Modifiers::COMMAND | egui::Modifiers::ALT,
+        egui::Key::F,
+    );
+    harness.run_ok();
+    harness
+        .get_by_role_and_label(Role::TextInput, "Find")
+        .type_text("orders");
+    harness.run_ok();
+    harness.key_press(egui::Key::Enter);
+    harness.run_ok();
+    harness
+        .get_by_role_and_label(Role::TextInput, "Replace")
+        .focus();
+    harness.run_ok();
+    harness
+        .get_by_role_and_label(Role::TextInput, "Replace")
+        .type_text("orders_2026");
     harness.run_ok();
 }
 
