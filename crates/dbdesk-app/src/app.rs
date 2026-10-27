@@ -6,10 +6,11 @@ use dbdesk_engine::{
     Command, EngineConfig, EngineError, EngineHandle, Event, PasswordKept, Repaint,
 };
 use dbdesk_store::{ConsoleKey, ExportFormat, McpPermissions, SqlFileContents};
-use egui::{Frame, Margin, RichText, ThemePreference};
+use egui::{Frame, Margin, RichText};
 use egui_dock::{DockArea, DockState};
 
 use crate::about_dialog;
+use crate::commands::{self, AppCommand, CommandState};
 use crate::console::{ConsoleAction, ExportedRows, FormatScope, RowsToOpen};
 use crate::consoles::Consoles;
 use crate::csv_import::{CsvImportAction, CsvImportDialog};
@@ -28,6 +29,7 @@ use crate::keymap::{self, Keymap};
 use crate::keymap_window::{self, KeymapWindowAction};
 use crate::log_console::{LogConsole, LogFeed};
 use crate::mcp_settings::McpDefaultsEditor;
+use crate::menu_bar;
 use crate::object_dialog::{self, ObjectDialog, ObjectDialogAction, Target};
 use crate::password_prompt::{PasswordPrompt, PromptAction};
 use crate::project_dialog::{
@@ -44,7 +46,7 @@ use crate::unsaved_dialog::{UnsavedChoice, UnsavedConfirmation};
 use crate::update_dialog::{self, UpdateAction};
 use crate::updates::Updates;
 use crate::workspace::{self, Panels, Tab};
-use crate::{fonts, icons, relaunch, widgets};
+use crate::{fonts, relaunch};
 
 /// Where the dock layout is saved. Versioned so a change to the default layout reaches people
 /// who already have one saved: layouts under an older key are ignored once, and the default
@@ -503,13 +505,8 @@ impl DbDeskApp {
                 ],
             )
         });
-        for action in triggered {
-            match (action, self.focused_console()) {
-                (keymap::Action::OpenFile, _) => self.choose_sql_file(),
-                (keymap::Action::Save, Some(console)) => self.save_console(&console),
-                (keymap::Action::SaveAs, Some(console)) => self.save_console_as(&console),
-                _ => {}
-            }
+        for command in triggered.into_iter().filter_map(AppCommand::for_action) {
+            self.run_command(command, ctx);
         }
     }
 
@@ -1234,102 +1231,72 @@ impl DbDeskApp {
     }
 
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
-        egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button("File", |ui| self.file_menu(ui));
-            ui.menu_button("View", |ui| {
-                ui.menu_button("Theme", theme_menu);
-                if ui.button("Keymap…").clicked() {
-                    self.keymap_window_open = true;
-                }
-                if ui.button("Settings…").clicked() {
-                    self.settings.window_open = true;
-                }
-                if ui.button("Reset layout").clicked() {
-                    self.dock = workspace::default_layout();
-                    tracing::info!("layout reset");
-                }
-            });
-            ui.menu_button("Code", |ui| self.code_menu(ui));
-            ui.menu_button("Help", |ui| {
-                if ui.button("Check for updates…").clicked() {
-                    let check = self.updates.check_now();
-                    self.send(check);
-                }
-                if ui.button("About dbdesk").clicked() {
-                    self.about_open = true;
-                }
-            });
-        });
+        let state = self.command_state(ui.ctx());
+        let recent = self.sql_files.recent().iter().map(|file| file.path.clone());
+        let menus = commands::egui_menu_bar(recent);
+        if let Some(command) = menu_bar::show(ui, &menus, &state, &self.keymap) {
+            self.run_command(command, ui.ctx());
+        }
     }
 
-    fn file_menu(&mut self, ui: &mut egui::Ui) {
-        let console = self.focused_console();
-        if self
-            .menu_item(ui, "Open…", keymap::Action::OpenFile, true)
-            .clicked()
-        {
-            self.choose_sql_file();
+    fn command_state(&mut self, ctx: &egui::Context) -> CommandState {
+        CommandState {
+            console_focused: self.focused_console().is_some(),
+            has_data_sources: !self.state.data_sources.entries().is_empty(),
+            theme: ctx.options(|options| options.theme_preference),
         }
-        let mut reopen = None;
-        ui.menu_button("Open recent", |ui| {
-            if self.sql_files.recent().is_empty() {
-                ui.weak("No recent files");
-                return;
-            }
-            for recent in self.sql_files.recent() {
-                let name = recent.path.file_name().map_or_else(
-                    || recent.path.display().to_string(),
-                    |name| name.to_string_lossy().into_owned(),
-                );
-                if ui
-                    .button(name)
-                    .on_hover_text(recent.path.display().to_string())
-                    .clicked()
-                {
-                    reopen = Some(recent.path.clone());
+    }
+
+    /// Does what a menu item, or its shortcut, asks for.
+    fn run_command(&mut self, command: AppCommand, ctx: &egui::Context) {
+        tracing::debug!(command = command.id(), "running a menu command");
+        match command {
+            AppCommand::OpenFile => self.choose_sql_file(),
+            AppCommand::OpenRecent(path) => self.open_sql_file(path),
+            AppCommand::ClearRecentFiles => self.sql_files.clear_recent(),
+            AppCommand::Save => {
+                if let Some(console) = self.focused_console() {
+                    self.save_console(&console);
                 }
             }
-            ui.separator();
-            if ui.button("Clear recent files").clicked() {
-                self.sql_files.clear_recent();
+            AppCommand::SaveAs => {
+                if let Some(console) = self.focused_console() {
+                    self.save_console_as(&console);
+                }
             }
-        });
-        if let Some(path) = reopen {
-            self.open_sql_file(path);
+            AppCommand::ExportDataSources => {
+                self.export_sources_dialog = Some(ExportSourcesDialog::new());
+            }
+            AppCommand::ImportDataSources => self.import_data_sources(),
+            AppCommand::Theme(preference) => ctx.set_theme(preference),
+            AppCommand::ShowKeymap => self.keymap_window_open = true,
+            AppCommand::ShowSettings => self.settings.window_open = true,
+            AppCommand::ResetLayout => {
+                self.dock = workspace::default_layout();
+                tracing::info!("layout reset");
+            }
+            AppCommand::Format => self.format_focused_console(FormatScope::Current),
+            AppCommand::FormatAll => self.format_focused_console(FormatScope::All),
+            AppCommand::CheckForUpdates => {
+                let check = self.updates.check_now();
+                self.send(check);
+            }
+            AppCommand::About => self.about_open = true,
         }
-        if self
-            .menu_item(ui, "Save", keymap::Action::Save, console.is_some())
-            .clicked()
-            && let Some(console) = &console
-        {
-            self.save_console(console);
-        }
-        if self
-            .menu_item(ui, "Save as…", keymap::Action::SaveAs, console.is_some())
-            .clicked()
-            && let Some(console) = &console
-        {
-            self.save_console_as(console);
-        }
-        ui.separator();
-        let has_data_sources = !self.state.data_sources.entries().is_empty();
-        if ui
-            .add_enabled(has_data_sources, egui::Button::new("Export data sources…"))
-            .on_hover_text("Write data sources and projects to a file, without passwords")
-            .on_disabled_hover_text("There are no data sources to export yet")
-            .clicked()
-        {
-            self.export_sources_dialog = Some(ExportSourcesDialog::new());
-        }
-        if ui
-            .button("Import data sources…")
-            .on_hover_text("Add or update data sources from an exported file")
-            .clicked()
-            && let Some(path) = (self.pick_data_sources_import)()
-        {
+    }
+
+    fn import_data_sources(&mut self) {
+        if let Some(path) = (self.pick_data_sources_import)() {
             let (dialog, read) = ImportDialog::open(path);
             self.import_dialog = Some(dialog);
             self.send(read);
+        }
+    }
+
+    fn format_focused_console(&mut self, scope: FormatScope) {
+        if let Some(console) = self.focused_console() {
+            self.consoles
+                .format(&console, scope, &self.settings.format_options());
         }
     }
 
@@ -1427,41 +1394,6 @@ impl DbDeskApp {
             }
             Some(UpdateAction::Restart) | None => {}
         }
-    }
-
-    /// Formatting, for the console whose tab has focus.
-    fn code_menu(&mut self, ui: &mut egui::Ui) {
-        let console = self.focused_console();
-        for (label, scope, action) in [
-            ("Format", FormatScope::Current, keymap::Action::Format),
-            ("Format all", FormatScope::All, keymap::Action::FormatAll),
-        ] {
-            let response = self.menu_item(ui, label, action, console.is_some());
-            if response.clicked()
-                && let Some(console) = &console
-            {
-                self.consoles
-                    .format(console, scope, &self.settings.format_options());
-            }
-        }
-    }
-
-    /// A menu item for `action`, showing its shortcut. Disabled ones say a console must be
-    /// selected first, which is what every disabled item here is waiting for.
-    fn menu_item(
-        &self,
-        ui: &mut egui::Ui,
-        label: &str,
-        action: keymap::Action,
-        enabled: bool,
-    ) -> egui::Response {
-        let mut button = egui::Button::new(label);
-        if let Some(shortcut) = self.keymap.hint(ui.ctx(), action) {
-            button = button.shortcut_text(shortcut);
-        }
-        ui.add_enabled(enabled, button)
-            .on_hover_text(action.description())
-            .on_disabled_hover_text("Select a query console first")
     }
 
     /// The console in the dock's focused tab, if that is a console.
@@ -1690,28 +1622,6 @@ impl eframe::App for DbDeskApp {
     }
 }
 
-/// Follow the OS, or force light or dark. egui keeps the choice with its own saved state.
-fn theme_menu(ui: &mut egui::Ui) {
-    let current = ui.ctx().options(|options| options.theme_preference);
-    for (preference, glyph, label) in [
-        (ThemePreference::System, icons::MONITOR, "Match system"),
-        (ThemePreference::Light, icons::SUN, "Light"),
-        (ThemePreference::Dark, icons::MOON, "Dark"),
-    ] {
-        let text = widgets::icon_text(ui, glyph, egui::Color32::PLACEHOLDER, label);
-        let response = widgets::name(
-            ui.selectable_label(current == preference, text),
-            egui::WidgetType::RadioButton,
-            label,
-            true,
-        );
-        if response.clicked() {
-            ui.ctx().set_theme(preference);
-            ui.close();
-        }
-    }
-}
-
 /// Lets the engine wake egui without depending on it.
 struct EguiRepaint(egui::Context);
 
@@ -1727,6 +1637,7 @@ mod tests {
     mod find;
     mod grid;
     mod history;
+    mod menus;
     mod parameters;
 
     use std::path::Path;
