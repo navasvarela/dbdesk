@@ -8,6 +8,7 @@
 - [The explorer](explorer.md)
 - [Creating and changing tables](objects.md)
 - [Views and schemas](views-schemas.md)
+- [Users and roles](users-roles.md)
 - [Query consoles](consoles.md)
 - [Working with table data](table-data.md)
 - [The query history](history.md)

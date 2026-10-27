@@ -481,8 +481,29 @@ and users, from a **New** submenu and object actions in the explorer. The full p
   - Edit, Rename, Drop (with what the role owns, reassigned or dropped);
   - menus from `Capabilities::users`, so other engines can add theirs.
 
-  Built as one stack: specs and the SCRAM verifier, the catalog and the engine, the tree, the
-  dialogs, Rename and Drop, then the manual.
+  **E3 demo note:** built. A PostgreSQL data source starts with a **roles** folder: each role
+  says `login`, `superuser` and what it is a member of, PostgreSQL's `pg_` roles among the
+  system objects, and **Copy DDL** copies its `CREATE ROLE` without the password. Right-click
+  the data source or the folder → **New › User…**, name it `report_reader`, type its password
+  twice, tick **Limit to** and pick `pg_read_all_data` under **Member of**: the review panel
+  shows `CREATE ROLE report_reader WITH LOGIN CONNECTION LIMIT 10 IN ROLE pg_read_all_data
+  PASSWORD '<redacted>'`, says the password was hashed here into a SCRAM-SHA-256 verifier, and
+  greys out **Copy** and **Open in console**; **Execute** sends the verifier, never the
+  password. **Edit…** loads the role and writes one `ALTER ROLE` for what changed plus `GRANT`
+  and `REVOKE` for memberships, keeping the password unless a new one is typed or **Remove
+  password** is ticked; **Rename…** writes `ALTER ROLE … RENAME TO`; **Drop…** counts what the
+  role owns and holds privileges on, names the databases it owns and the members that lose
+  it, and gives what it owns to another role (`REASSIGN OWNED`, then `DROP OWNED`) or drops
+  it, in one transaction before `DROP ROLE`. The panel redacts the password with W4's
+  `redact_secrets`, as the history and the log do. Menus come from `Capabilities::users`,
+  so only PostgreSQL shows them. Covered by the builder's golden tests, a verifier checked
+  against a reference SCRAM computation that reproduces RFC 7677's exchange, an engine round
+  trip on the PostgreSQL test server that creates a group and a user, copies its DDL, logs
+  in as it (and is refused with a wrong password), alters, renames and drops it with the
+  table it owns given away, then searches the history for the password and the verifier;
+  panel tests of the redaction; and an app test on the PostgreSQL server that creates, edits,
+  renames and drops a user through the dialogs and finds no password or verifier anywhere in
+  the history store.
 - **E4 — Modify table:** `ALTER TABLE` from a changed table, with SQLite's table rebuild last.
 
 ## MCP track

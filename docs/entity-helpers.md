@@ -1,7 +1,7 @@
 # Creating and changing database objects
 
-Status: **E0, E1 and E2 built** (2026-10-26); E3 started on 2026-10-27, E4 planned. Proposed on
-2026-10-23; on 2026-10-26 indexes moved from Later into E1 and schemas into E2.
+Status: **E0, E1 and E2 built** (2026-10-26), **E3 built** (2026-10-27); E4 planned. Proposed
+on 2026-10-23; on 2026-10-26 indexes moved from Later into E1 and schemas into E2.
 
 Today the explorer only reads: it browses the catalog, opens a table's data and shows
 definitions. Creating or changing anything means writing the SQL by hand in a console. This
@@ -223,6 +223,21 @@ own users when its driver lands:
 - I create a login user with a password and a membership, log in as it from a new data
   source, change its attributes, and drop it.
 - Its password appears in no history entry, log line or review panel.
+
+**As built:**
+- The tree needed little of its own once the driver listed the roles, so its layer also
+  gives roles **Copy DDL**, rebuilt from the role's description through the same builder as
+  New role, without its password.
+- The dialog hashes the password as soon as both fields match, so a form never holds an
+  operation with the password in it; a mismatch reads "The two passwords differ." and keeps
+  **Execute** off.
+- Drop starts on **Give it to** when the role owns something or holds privileges, and waits
+  for the new owner to be picked.
+- A role whose expiry was cleared reads back as never, not `infinity`.
+- Built after W4, whose `redact_secrets` already kept passwords out of every history entry
+  and the DDL log line, so E3's own masking became the panel's call to the same function;
+  the builder writes `PASSWORD` after every other option, since the redaction hides every
+  string to the end of the clause.
 
 ## E4 — Modify table
 

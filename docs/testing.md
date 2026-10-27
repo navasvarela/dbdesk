@@ -123,6 +123,20 @@ against a real server, such as a cancel arriving after the last row.
   and dropped (with `CASCADE`, `DROP DATABASE`, or the table first). MySQL's test user may
   not create databases, so its schemas are only in the golden tests. PostgreSQL's
   materialized views have a test of their own.
+- Roles (E3): the builder's golden tests write every role statement, with a fixed verifier.
+  `ScramVerifier` is checked against a reference SCRAM-SHA-256 computation in the test, which
+  itself reproduces the exchange published in RFC 7677. The engine's role round trip runs on
+  the PostgreSQL test server only: it creates a group and a login user, lists and describes
+  them, copies the user's DDL, logs in as it with `TestConnection` (and is refused with a wrong
+  password), alters, renames and drops it with the table it owns given away, then searches
+  the history for the password and the verifier, and finds the `CREATE ROLE` recorded with
+  `'<redacted>'`. Its roles carry part of the data source's id in their names, and the app
+  tests' the process id, so parallel runs on the shared servers don't collide.
+- The app's role tests: panel tests of the redacted SQL and the disabled Copy and Open in
+  console, and of New user's two password fields; on the PostgreSQL server, one lists the
+  roles and copies one's DDL, and one creates, edits, renames and drops a user through the
+  dialogs, then searches every byte of `history.sqlite` (and its write-ahead log) for the
+  password and for `SCRAM-SHA-256`.
 
 ### Power in the grid
 
