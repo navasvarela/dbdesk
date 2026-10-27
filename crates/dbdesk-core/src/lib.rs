@@ -11,6 +11,7 @@ mod execution;
 mod password;
 mod placeholder;
 mod quoting;
+mod role;
 mod table;
 
 #[cfg(feature = "conformance")]
@@ -30,6 +31,7 @@ pub use placeholder::{
     ExpandError, PlaceholderError, Setting, Variables, expand, expand_path, has_placeholder,
 };
 pub use quoting::Quoting;
+pub use role::RoleAttribute;
 pub use table::{
     ColumnDescription, ForeignKey, Identifier, RelationName, TableDescription, TableName,
 };

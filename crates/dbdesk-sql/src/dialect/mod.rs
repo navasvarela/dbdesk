@@ -9,7 +9,7 @@
 mod capabilities;
 mod functions;
 
-pub use capabilities::{Capabilities, SchemaCreation, TableChange, ViewReplacement};
+pub use capabilities::{Capabilities, SchemaCreation, TableChange, UserModel, ViewReplacement};
 
 use dbdesk_core::{DriverKind, Quoting, ServerInfo};
 use sqlparser::dialect::{

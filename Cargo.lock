@@ -1766,7 +1766,11 @@ dependencies = [
 name = "dbdesk-sql"
 version = "0.9.0"
 dependencies = [
+ "base64 0.22.1",
  "dbdesk-core",
+ "hmac",
+ "postgres-protocol",
+ "sha2 0.11.1",
  "sqlparser",
  "thiserror 2.0.21",
 ]

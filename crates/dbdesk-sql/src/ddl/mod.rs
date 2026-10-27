@@ -8,6 +8,7 @@
 
 mod index;
 mod reserved;
+mod role;
 mod schema;
 mod table;
 #[cfg(test)]
@@ -16,7 +17,11 @@ mod view;
 
 pub use view::view_query;
 
-use crate::Dialect;
+use std::collections::BTreeSet;
+
+use dbdesk_core::RoleAttribute;
+
+use crate::{Dialect, ScramVerifier};
 
 /// A schema object's name. `schema` is `None` for an object in the connection's default
 /// schema, which is what the database chooses for an unqualified name.
@@ -227,6 +232,44 @@ pub struct SchemaSpec {
     pub owner: Option<String>,
 }
 
+/// A role's settings apart from its name and password: what New role creates, and what Edit
+/// compares with the role's description to find what changed. See
+/// [`Capabilities::users`](crate::Capabilities::users).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoleSpec {
+    /// The attributes that are on; every other one is off.
+    pub attributes: BTreeSet<RoleAttribute>,
+    /// How many connections the role may have open at once; `None` for no limit.
+    pub connection_limit: Option<u32>,
+    /// When the role's password stops working, written as typed and read by the database
+    /// as a timestamp (`2027-01-01`, `2027-01-01 12:00+02`); `None` or blank for never.
+    pub valid_until: Option<String>,
+    /// The roles it is a member of, whose privileges it has.
+    pub member_of: BTreeSet<String>,
+}
+
+/// What Edit does to a role's password.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PasswordChange {
+    Keep,
+    /// Replaces it with a verifier hashed on the client.
+    Set(ScramVerifier),
+    /// Leaves the role without a password (`PASSWORD NULL`), so password logins fail.
+    Remove,
+}
+
+/// What dropping a role does with the objects it owns in the connected database, which
+/// PostgreSQL won't drop a role for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OwnedObjects {
+    /// Nothing: the drop fails while the role owns anything.
+    Keep,
+    /// Gives them to another role.
+    ReassignTo(String),
+    /// Drops them with the role.
+    Drop,
+}
+
 /// One change to the database, which may take several statements.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DdlOperation {
@@ -280,6 +323,26 @@ pub enum DdlOperation {
         /// isn't empty otherwise.
         cascade: bool,
     },
+    CreateRole {
+        name: String,
+        spec: RoleSpec,
+        password: Option<ScramVerifier>,
+    },
+    /// Changes a role from `before`, as its description reads, to `after`.
+    AlterRole {
+        name: String,
+        before: RoleSpec,
+        after: RoleSpec,
+        password: PasswordChange,
+    },
+    RenameRole {
+        name: String,
+        new_name: String,
+    },
+    DropRole {
+        name: String,
+        owned: OwnedObjects,
+    },
 }
 
 /// Why a spec can't be written as SQL. The message is shown in the dialog, which stays open to
@@ -309,6 +372,12 @@ pub enum DdlError {
     EmptyCheck,
     #[error("The {0} needs a query.")]
     EmptyQuery(&'static str),
+    #[error("Nothing has changed yet.")]
+    NothingChanged,
+    #[error("Pick the role to give its objects to.")]
+    NoNewOwner,
+    #[error("A role's objects can't be given to the role itself.")]
+    ReassignToItself,
     #[error("{dialect} has no {what}.", dialect = .dialect.display_name())]
     Unsupported {
         what: &'static str,
@@ -357,6 +426,21 @@ impl DdlOperation {
             Self::DropSchema { schema, cascade } => {
                 schema::drop(schema, *cascade, dialect).map(|sql| vec![sql])
             }
+            Self::CreateRole {
+                name,
+                spec,
+                password,
+            } => role::create(name, spec, password.as_ref(), dialect).map(|sql| vec![sql]),
+            Self::AlterRole {
+                name,
+                before,
+                after,
+                password,
+            } => role::alter(name, before, after, password, dialect),
+            Self::RenameRole { name, new_name } => {
+                role::rename(name, new_name, dialect).map(|sql| vec![sql])
+            }
+            Self::DropRole { name, owned } => role::drop(name, owned, dialect),
         }
     }
 }
