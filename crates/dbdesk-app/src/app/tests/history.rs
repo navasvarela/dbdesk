@@ -119,3 +119,49 @@ fn shows_a_grid_edits_old_values_and_the_statement_to_put_them_back() {
         editor_text(&harness)
     );
 }
+
+/// Every data source's statements, named (a data source no longer saved too), and only the
+/// recent ones once a period is chosen.
+#[test]
+fn searches_every_data_source_and_a_recent_period() {
+    let dir = tempfile::tempdir().unwrap();
+    let shop = save_shop(dir.path(), "CREATE TABLE orders (id INTEGER PRIMARY KEY)");
+    let removed = dbdesk_core::DataSourceId::generate();
+    // At 1970's first seconds: older than any period.
+    record(
+        dir.path(),
+        removed,
+        &[(
+            "SELECT 'from a removed data source'",
+            HistorySource::Console,
+        )],
+    );
+    record(
+        dir.path(),
+        shop.id,
+        &[("SELECT 'long ago'", HistorySource::Console)],
+    );
+    let (_layer, feed) = log_console::pipeline();
+    let mut harness = start_app(dir.path(), feed);
+    open_orders(&mut harness, "0 rows");
+
+    open_history(&mut harness, 2);
+    // The name is in the explorer and the console's tab too.
+    let named_elsewhere = harness.query_all_by_label(&shop.name).count();
+    choose(&mut harness, "This data source", "Every data source");
+    step_until(&mut harness, "every data source's statements", |harness| {
+        harness.query_all_by_label("Insert").count() == 3
+    });
+    harness.get_by_label("Removed data source");
+    harness.get_by_label("SELECT 'from a removed data source'");
+    assert_eq!(
+        harness.query_all_by_label(&shop.name).count(),
+        named_elsewhere + 2
+    );
+
+    choose(&mut harness, "Any time", "Last hour");
+    step_until(&mut harness, "the last hour's statements", |harness| {
+        harness.query_all_by_label("Insert").count() == 1
+    });
+    harness.get_by_label_contains("SELECT * FROM main.orders");
+}

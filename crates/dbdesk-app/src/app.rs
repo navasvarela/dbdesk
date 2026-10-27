@@ -240,9 +240,10 @@ impl DbDeskApp {
         }
         // The run's statements are recorded by now; show them.
         if matches!(event, Event::RunFinished { .. })
-            && let Some(window) = &self.history_window
+            && let Some(window) = &mut self.history_window
         {
-            self.send(window.search_command());
+            let search = window.search_command();
+            self.send(search);
         }
         self.apply_to_password_prompt(event);
         self.apply_to_host_key_prompt(event);
@@ -866,7 +867,14 @@ impl DbDeskApp {
         let Some(entry) = self.state.data_source(console.data_source) else {
             return;
         };
-        let (window, search) = HistoryWindow::open(console, entry.data_source.name.clone());
+        let names = self
+            .state
+            .data_sources
+            .entries()
+            .iter()
+            .map(|entry| (entry.data_source.id, entry.data_source.name.clone()))
+            .collect();
+        let (window, search) = HistoryWindow::open(console, entry.data_source.name.clone(), names);
         self.history_window = Some(window);
         self.send(search);
     }

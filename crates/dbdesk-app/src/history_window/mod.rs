@@ -1,32 +1,46 @@
-//! The query history of one data source, searchable and filtered by where statements came
-//! from, opened from a console to put a past statement back into it. Each statement is marked
-//! with where it came from: a console, the grid, an object helper, an import, an export, or an
-//! MCP client.
+//! The query history, opened from a console to put a past statement back into it: the
+//! console's data source or every one, searchable and filtered by where statements came from
+//! and when. Each statement is marked with where it came from: a console, the grid, an object
+//! helper, an import, an export, or an MCP client.
+
+use std::collections::HashMap;
 
 use dbdesk_core::DataSourceId;
 use dbdesk_engine::{Command, Event};
 use dbdesk_store::{
     ConsoleKey, HistoryEntry, HistoryOutcome, HistoryQuery, HistorySource, HistorySourceKind,
 };
-use egui::{ComboBox, Label, RichText, ScrollArea, TextEdit, Ui, Window};
+use egui::{Label, RichText, ScrollArea, TextEdit, Ui, Window};
+use jiff::Timestamp;
 use jiff::tz::TimeZone;
 
 use crate::theme::Palette;
+use filters::{Period, Scope, kind_filter, period_filter, scope_filter};
 
 mod detail;
+mod filters;
 
 const DEFAULT_SIZE: [f32; 2] = [720.0, 520.0];
 /// The share of the window's height the list keeps while an entry's details show below it.
 const LIST_SHARE: f32 = 0.45;
 const TIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
+/// How an entry of a data source no longer saved is named.
+const REMOVED_DATA_SOURCE: &str = "Removed data source";
 
 pub struct HistoryWindow {
     /// The console that statements are inserted into.
     console: ConsoleKey,
     data_source_name: String,
+    /// Every data source's name, for the entries of a search of them all.
+    names: HashMap<DataSourceId, String>,
+    scope: Scope,
     search: String,
     /// Only statements from there; `None` for all.
     kind: Option<HistorySourceKind>,
+    period: Period,
+    /// The search last sent: an answer to any other is one the window has moved on from.
+    /// Kept rather than rebuilt from the filters, since a period's start moves with the clock.
+    sent: HistoryQuery,
     /// The answer to the latest search; `None` while it is pending.
     results: Option<Result<Vec<HistoryEntry>, String>>,
     /// The entry whose details show; kept when the results are searched again.
@@ -47,12 +61,21 @@ pub enum HistoryAction {
 
 impl HistoryWindow {
     /// Opens the window for `console`, with the search for every recent statement to send.
-    pub fn open(console: ConsoleKey, data_source_name: String) -> (Self, Command) {
-        let window = Self {
+    /// `names` names the data sources, for a search of them all.
+    pub fn open(
+        console: ConsoleKey,
+        data_source_name: String,
+        names: HashMap<DataSourceId, String>,
+    ) -> (Self, Command) {
+        let mut window = Self {
+            sent: HistoryQuery::all(console.data_source),
             console,
             data_source_name,
+            names,
+            scope: Scope::ThisDataSource,
             search: String::new(),
             kind: None,
+            period: Period::AnyTime,
             results: None,
             selected: None,
         };
@@ -64,23 +87,34 @@ impl HistoryWindow {
         self.console.data_source
     }
 
-    fn query(&self) -> HistoryQuery {
+    fn query(&self, now: Timestamp) -> HistoryQuery {
         HistoryQuery {
-            data_source: self.data_source(),
+            data_source: match self.scope {
+                Scope::ThisDataSource => Some(self.data_source()),
+                Scope::Every => None,
+            },
             text: self.search.clone(),
             kind: self.kind,
+            since: self.period.since(now),
+            until: None,
         }
     }
 
-    /// The search for the current text and source, to rerun when new statements may have
-    /// been recorded.
-    pub fn search_command(&self) -> Command {
-        Command::SearchHistory(self.query())
+    /// The search for the current filters, to rerun when new statements may have been
+    /// recorded.
+    pub fn search_command(&mut self) -> Command {
+        Command::SearchHistory(self.next_search())
+    }
+
+    /// The search for the current filters, remembered as the one sent.
+    fn next_search(&mut self) -> HistoryQuery {
+        self.sent = self.query(Timestamp::now());
+        self.sent.clone()
     }
 
     pub fn apply(&mut self, event: &Event) {
         if let Event::HistoryFound { query, result } = event
-            && *query == self.query()
+            && *query == self.sent
         {
             self.results = Some(result.clone());
         }
@@ -104,7 +138,9 @@ impl HistoryWindow {
     fn contents(&mut self, ui: &mut Ui) -> Option<HistoryAction> {
         let searched = ui
             .horizontal(|ui| {
-                let filtered = kind_filter(ui, &mut self.kind);
+                let filtered = scope_filter(ui, &mut self.scope)
+                    | kind_filter(ui, &mut self.kind)
+                    | period_filter(ui, &mut self.period);
                 let typed = ui
                     .add(
                         TextEdit::singleline(&mut self.search)
@@ -117,7 +153,7 @@ impl HistoryWindow {
             .inner;
         if searched {
             self.results = None;
-            return Some(HistoryAction::Search(self.query()));
+            return Some(HistoryAction::Search(self.next_search()));
         }
         ui.weak(
             "Click a statement for its details; double-click it, or click Insert, to put it \
@@ -182,7 +218,17 @@ impl HistoryWindow {
             .show_rows(ui, row_height, entries.len(), |ui, rows| {
                 for entry in &entries[rows] {
                     let selected = self.selected.as_ref() == Some(entry);
-                    match entry_row(ui, entry, selected, &time_zone) {
+                    let data_source = (self.scope == Scope::Every).then(|| {
+                        self.names
+                            .get(&entry.data_source)
+                            .map_or(REMOVED_DATA_SOURCE, String::as_str)
+                    });
+                    let row = EntryRow {
+                        entry,
+                        data_source,
+                        selected,
+                    };
+                    match row.show(ui, &time_zone) {
                         Some(RowClick::Insert) => {
                             chosen = Some(HistoryAction::Insert {
                                 console: self.console.clone(),
@@ -204,70 +250,45 @@ enum RowClick {
     Select,
 }
 
-const ALL_SOURCES: &str = "All sources";
-
-/// What the filter and the badges call each kind of source.
-fn kind_label(kind: HistorySourceKind) -> &'static str {
-    match kind {
-        HistorySourceKind::Console => "Consoles",
-        HistorySourceKind::GridEdit => "Grid edits",
-        HistorySourceKind::ObjectHelper => "Object helpers",
-        HistorySourceKind::Import => "Imports",
-        HistorySourceKind::Export => "Exports",
-        HistorySourceKind::Mcp => "MCP clients",
-        HistorySourceKind::Dbdesk => "Earlier dbdesk",
-    }
+/// One entry of the list.
+struct EntryRow<'a> {
+    entry: &'a HistoryEntry,
+    /// The entry's data source's name, shown when the list holds every data source's.
+    data_source: Option<&'a str>,
+    /// Whether its details show, which emphasises its statement.
+    selected: bool,
 }
 
-/// Returns whether the choice changed.
-fn kind_filter(ui: &mut Ui, kind: &mut Option<HistorySourceKind>) -> bool {
-    let selected = kind.map_or(ALL_SOURCES, kind_label);
-    let mut changed = false;
-    ComboBox::from_id_salt("history_source")
-        .selected_text(selected)
-        .show_ui(ui, |ui| {
-            changed |= ui.selectable_value(kind, None, ALL_SOURCES).changed();
-            for choice in HistorySourceKind::ALL {
-                changed |= ui
-                    .selectable_value(kind, Some(choice), kind_label(choice))
-                    .changed();
+impl EntryRow<'_> {
+    fn show(&self, ui: &mut Ui, time_zone: &TimeZone) -> Option<RowClick> {
+        let entry = self.entry;
+        ui.horizontal(|ui| {
+            let insert = ui.small_button("Insert").clicked();
+            let time = entry.executed_at.to_zoned(time_zone.clone());
+            ui.weak(time.strftime(TIME_FORMAT).to_string());
+            outcome_label(ui, entry);
+            source_badge(ui, &entry.source);
+            if let Some(name) = self.data_source {
+                ui.label(RichText::new(name).small());
+            }
+            let first_line = entry.sql.lines().next().unwrap_or_default();
+            let mut text = RichText::new(first_line).monospace();
+            if self.selected {
+                text = text.strong();
+            }
+            let statement = ui
+                .add(Label::new(text).truncate().sense(egui::Sense::click()))
+                .on_hover_text(&entry.sql);
+            if insert || statement.double_clicked() {
+                Some(RowClick::Insert)
+            } else if statement.clicked() {
+                Some(RowClick::Select)
+            } else {
+                None
             }
         })
-        .response
-        .on_hover_text("Where the statements were run from");
-    changed
-}
-
-/// Draws one entry, its statement emphasised when it is the selected one.
-fn entry_row(
-    ui: &mut Ui,
-    entry: &HistoryEntry,
-    selected: bool,
-    time_zone: &TimeZone,
-) -> Option<RowClick> {
-    ui.horizontal(|ui| {
-        let insert = ui.small_button("Insert").clicked();
-        let time = entry.executed_at.to_zoned(time_zone.clone());
-        ui.weak(time.strftime(TIME_FORMAT).to_string());
-        outcome_label(ui, entry);
-        source_badge(ui, &entry.source);
-        let first_line = entry.sql.lines().next().unwrap_or_default();
-        let mut text = RichText::new(first_line).monospace();
-        if selected {
-            text = text.strong();
-        }
-        let statement = ui
-            .add(Label::new(text).truncate().sense(egui::Sense::click()))
-            .on_hover_text(&entry.sql);
-        if insert || statement.double_clicked() {
-            Some(RowClick::Insert)
-        } else if statement.clicked() {
-            Some(RowClick::Select)
-        } else {
-            None
-        }
-    })
-    .inner
+        .inner
+    }
 }
 
 /// A short tag naming where the statement came from, with the details on hover. Statements
