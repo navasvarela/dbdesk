@@ -385,6 +385,8 @@ pub enum DdlError {
     EmptyQuery(&'static str),
     #[error("Nothing has changed yet.")]
     NothingChanged,
+    #[error("The two passwords differ.")]
+    PasswordsDiffer,
     #[error("Pick the role to give its objects to.")]
     NoNewOwner,
     #[error("A role's objects can't be given to the role itself.")]

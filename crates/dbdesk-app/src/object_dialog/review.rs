@@ -4,6 +4,7 @@
 use dbdesk_core::SafetyLevel;
 use dbdesk_engine::DdlFailure;
 use dbdesk_sql::DdlError;
+use dbdesk_store::redact_secrets;
 use egui::{Align, Id, Layout, Modal, ScrollArea, TextEdit, Ui};
 
 use super::Target;
@@ -38,6 +39,29 @@ enum State {
         /// Statements that committed before the failure, where DDL isn't transactional.
         applied: usize,
     },
+}
+
+/// Why Copy and Open in console are off while the SQL holds a password: the redacted text
+/// would set a password nobody knows, and the real one would leave the verifier on the
+/// clipboard.
+const HOLDS_PASSWORD: &str = "The SQL holds a password, so it runs from here only: what it \
+     sends stays out of the clipboard and the console";
+
+/// The SQL as the panel shows it: the script with its secrets redacted, as the history
+/// records it.
+struct Shown {
+    text: String,
+    holds_password: bool,
+}
+
+impl Shown {
+    fn new(script: &str) -> Self {
+        let text = redact_secrets(script);
+        Self {
+            holds_password: text != script,
+            text: text.into_owned(),
+        }
+    }
 }
 
 /// The statements as one script, each ended with `;`, as the panel shows them and a console
@@ -84,11 +108,12 @@ impl Review {
     ) -> Option<ReviewAction> {
         let palette = Palette::for_visuals(ui.visuals());
         ui.strong("SQL");
-        let script = match statements {
+        let shown = match statements {
             Ok(statements) => {
-                sql(ui, target, &script(statements));
-                notes(ui, target, statements.len());
-                Some(script(statements))
+                let shown = Shown::new(&script(statements));
+                sql(ui, target, &shown.text);
+                notes(ui, target, statements.len(), shown.holds_password);
+                Some(shown)
             }
             Err(error) => {
                 ui.colored_label(palette.warning, error.to_string());
@@ -102,7 +127,7 @@ impl Review {
             }
         }
         ui.separator();
-        let action = self.buttons(ui, target, script.as_deref(), confirmed);
+        let action = self.buttons(ui, target, shown.as_ref(), confirmed);
         let action = match action {
             Some(ReviewAction::Execute) if target.safety == SafetyLevel::Careful => {
                 self.confirming = true;
@@ -121,12 +146,13 @@ impl Review {
         &self,
         ui: &mut Ui,
         target: &Target,
-        script: Option<&str>,
+        shown: Option<&Shown>,
         confirmed: bool,
     ) -> Option<ReviewAction> {
         let running = self.is_running();
         let writable = target.safety != SafetyLevel::ReadOnly;
-        let ready = script.is_some() && !running;
+        let ready = shown.is_some() && !running;
+        let shareable = shown.is_some_and(|shown| !shown.holds_password);
         // Inside a row, so the buttons take one line's height rather than all that is left.
         ui.horizontal(|ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -145,13 +171,17 @@ impl Review {
                 if running {
                     ui.spinner();
                 }
-                let console = ui.add_enabled(ready, egui::Button::new("Open in console"));
-                let copy = ui.add_enabled(script.is_some(), egui::Button::new("Copy"));
+                let console = ui
+                    .add_enabled(ready && shareable, egui::Button::new("Open in console"))
+                    .on_disabled_hover_text(HOLDS_PASSWORD);
+                let copy = ui
+                    .add_enabled(shareable, egui::Button::new("Copy"))
+                    .on_disabled_hover_text(HOLDS_PASSWORD);
                 let cancel = ui.add_enabled(!running, egui::Button::new("Cancel"));
                 if copy.clicked()
-                    && let Some(script) = script
+                    && let Some(shown) = shown
                 {
-                    ui.ctx().copy_text(script.to_owned());
+                    ui.ctx().copy_text(shown.text.clone());
                 }
                 if execute.clicked() {
                     Some(ReviewAction::Execute)
@@ -244,10 +274,20 @@ fn sql(ui: &mut Ui, target: &Target, text: &str) {
         });
 }
 
-/// What the user should know before Execute: that a read-only data source refuses it, and
-/// where DDL isn't transactional, that a failure part way keeps what ran before it.
-fn notes(ui: &mut Ui, target: &Target, statements: usize) {
+/// What the user should know before Execute: that a read-only data source refuses it, where
+/// DDL isn't transactional, that a failure part way keeps what ran before it, and how a
+/// password is sent.
+fn notes(ui: &mut Ui, target: &Target, statements: usize, holds_password: bool) {
     let palette = Palette::for_visuals(ui.visuals());
+    if holds_password {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(widgets::glyph(icons::LOCK_SIMPLE).color(palette.success));
+            ui.label(
+                "The password is hashed here into a SCRAM-SHA-256 verifier, which is sent in \
+                 its place, and redacted here, in the history and in the log.",
+            );
+        });
+    }
     if target.safety == SafetyLevel::ReadOnly {
         ui.horizontal_wrapped(|ui| {
             ui.label(widgets::glyph(icons::LOCK_SIMPLE).color(palette.warning));

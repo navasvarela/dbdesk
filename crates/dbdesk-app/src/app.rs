@@ -574,6 +574,12 @@ impl DbDeskApp {
                     if let Some(path) = dialog.definition_request() {
                         self.send(Command::LoadDefinition { id, path });
                     }
+                    if let Some(path) = dialog.role_request() {
+                        self.send(Command::DescribeRole {
+                            data_source: id,
+                            path,
+                        });
+                    }
                     self.object_dialog = Some(dialog);
                 }
             }
@@ -3324,6 +3330,143 @@ mod tests {
 
         drop(harness);
         first_value(&runtime, &mut admin, &format!("DROP ROLE {role}"));
+    }
+
+    /// Every byte of the history store, its write-ahead log included.
+    fn history_bytes(dir: &Path) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let is_history = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("history.sqlite"));
+            if is_history && let Ok(contents) = std::fs::read(&path) {
+                bytes.extend(contents);
+            }
+        }
+        bytes
+    }
+
+    fn contains(haystack: &[u8], needle: &str) -> bool {
+        haystack
+            .windows(needle.len())
+            .any(|window| window == needle.as_bytes())
+    }
+
+    /// E3's exit through the dialogs: New user with a password and a membership, then Edit;
+    /// the password is redacted in the review panel and appears nowhere in the history store.
+    #[test]
+    fn creates_and_edits_a_postgres_user_through_the_dialogs() {
+        let Some(server) = PostgresTestServer::from_env() else {
+            return;
+        };
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let mut admin = server.open(&runtime);
+        let group = format!("dbdesk_e3_ui_readers_{}", std::process::id());
+        let user = format!("dbdesk_e3_ui_user_{}", std::process::id());
+        let password = format!("correct-horse-{}", std::process::id());
+        for role in [&user, &group] {
+            first_value(&runtime, &mut admin, &format!("DROP ROLE IF EXISTS {role}"));
+        }
+        first_value(&runtime, &mut admin, &format!("CREATE ROLE {group}"));
+        let source = server.data_source(&server.database, "pg");
+        let dir = tempfile::tempdir().unwrap();
+        DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .save(std::slice::from_ref(&source))
+            .unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = crate::test_support::start_app(
+            harness_at_default_size(),
+            dir.path(),
+            feed,
+            server.secrets(&source),
+        );
+        step_until_visible(&mut harness, "Expand pg");
+        harness.get_by_label("Expand pg").click();
+        step_until_visible(&mut harness, "Expand roles");
+        harness.get_by_label("Expand roles").click();
+        step_until_visible(&mut harness, &group);
+
+        harness.get_by_label("pg").click_secondary();
+        harness.run_steps(2);
+        harness.get_by_label("New").hover();
+        harness.run_steps(2);
+        harness.get_by_label("User…").click();
+        harness.run_steps(2);
+        fill(&mut harness, "Name", &user);
+        for label in ["Password", "Confirm password"] {
+            harness
+                .get_by_role_and_label(Role::PasswordInput, label)
+                .focus();
+            harness.run_steps(2);
+            harness
+                .get_by_role_and_label(Role::PasswordInput, label)
+                .type_text(&password);
+            harness.run_steps(2);
+        }
+        // The group is in the tree too, so its tick box is told apart by its role.
+        harness.get_by_label("Roles it belongs to").click();
+        harness.run_steps(2);
+        harness
+            .get_by_role_and_label(Role::CheckBox, &group)
+            .click();
+        harness.run_steps(2);
+        harness.key_press(egui::Key::Escape);
+        harness.run_steps(2);
+        let redacted =
+            format!("CREATE ROLE {user} WITH LOGIN IN ROLE {group} PASSWORD '<redacted>';\n");
+        assert!(
+            harness.query_all_by_value(&redacted).next().is_some(),
+            "the review panel redacts the password"
+        );
+        harness.get_by_label("Execute").click();
+        step_until(&mut harness, "the user in the tree", |harness| {
+            harness.query_by_label("Execute").is_none() && harness.query_by_label(&user).is_some()
+        });
+
+        node_menu(&mut harness, &user, "Edit…");
+        step_until_visible(&mut harness, "Create databases");
+        harness.get_by_label("Create databases").click();
+        harness.run_steps(2);
+        assert!(
+            harness
+                .query_all_by_value(&format!("ALTER ROLE {user} WITH CREATEDB;\n"))
+                .next()
+                .is_some()
+        );
+        harness.get_by_label("Execute").click();
+        step_until(&mut harness, "the edit applying", |harness| {
+            harness.query_by_label("Execute").is_none()
+        });
+        let described = first_value(
+            &runtime,
+            &mut admin,
+            &format!(
+                "SELECT r.rolcanlogin::text || r.rolcreatedb::text || count(m.roleid)::text \
+                 FROM pg_roles r LEFT JOIN pg_auth_members m ON m.member = r.oid \
+                 WHERE r.rolname = '{user}' GROUP BY r.rolcanlogin, r.rolcreatedb"
+            ),
+        );
+        assert_eq!(described.as_deref(), Some("truetrue1"));
+
+        drop(harness);
+        let history = history_bytes(dir.path());
+        assert!(
+            contains(&history, &format!("ALTER ROLE {user} WITH CREATEDB")),
+            "the history was written"
+        );
+        assert!(
+            !contains(&history, &password),
+            "the password is in the history"
+        );
+        assert!(
+            !contains(&history, "SCRAM-SHA-256"),
+            "a verifier is in the history"
+        );
+        for role in [&user, &group] {
+            first_value(&runtime, &mut admin, &format!("DROP ROLE IF EXISTS {role}"));
+        }
     }
 
     /// Ends a console's session server-side, as a restart would, then reconnects it from its
