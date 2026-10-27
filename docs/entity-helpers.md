@@ -1,7 +1,7 @@
 # Creating and changing database objects
 
-Status: **E0, E1 and E2 built** (2026-10-26); E3 and E4 planned. Proposed on 2026-10-23; on
-2026-10-26 indexes moved from Later into E1 and schemas into E2.
+Status: **E0, E1 and E2 built** (2026-10-26); E3 started on 2026-10-27, E4 planned. Proposed on
+2026-10-23; on 2026-10-26 indexes moved from Later into E1 and schemas into E2.
 
 Today the explorer only reads: it browses the catalog, opens a table's data and shows
 definitions. Creating or changing anything means writing the SQL by hand in a console. This
@@ -63,9 +63,9 @@ Everything the helpers have in common, built once.
   - **On MySQL and ClickHouse**, where DDL commits as it goes, the panel says that a failure
     part way leaves the earlier statements applied, and the answer says how many.
   - A read-only data source refuses it, and every statement sent is recorded in the history.
-  - **Sensitive statements** (anything holding a password) arrive with E3, which adds a
-    `sensitive` flag: they are kept out of the query history and the log, which records only
-    the statement's kind, e.g. "CREATE ROLE".
+  - **Statements holding a password** arrive with E3. W4's redaction keeps them out of the
+    history and the log: every statement recorded has its secrets replaced by `'<redacted>'`
+    (`dbdesk_store::redact_secrets`), so `ApplyDdl` needs no flag of its own (see E3).
 - **Confirmations for destructive actions.** Drop and Truncate name the object and what goes
   with it (`CASCADE` drops dependent views). On a data source coloured red, the user types the
   object's name to confirm. The colour is how the M1 follow-up marks production.
@@ -156,31 +156,68 @@ PostgreSQL has one kind of object for both: a **user** is a role that may log in
 offers both words, and **New user** starts with LOGIN ticked. pgAdmin likewise uses one
 "Login/Group Role" dialog for both.
 
-- **Catalog:** a **Roles** folder at the top of a PostgreSQL data source, next to its
+- **Capabilities:** `Capabilities::users` says how an engine models its users. PostgreSQL's is
+  `UserModel::Roles`; every other engine's is `UserModel::Unsupported` for now, and their menus
+  show no users or roles. MySQL's `'name'@'host'` accounts and SQL Server's logins become
+  variants of their own when they are built, without changing PostgreSQL's.
+- **Catalog:** a **roles** folder at the top of a PostgreSQL data source, before its
   databases, because roles belong to the whole server. Each role shows whether it can log in
-  and whether it is a superuser. It lists the roles it belongs to. This needs two new node
-  kinds, `NodeKind::Role` and `FolderKind::Roles`.
+  and whether it is a superuser, and lists the roles it belongs to. This needs two new node
+  kinds, `NodeKind::Role` and `FolderKind::Roles`. The `pg_*` roles PostgreSQL predefines
+  are system objects, hidden unless the explorer shows them.
 - **New user / New role** dialog:
-  - name and password;
+  - name, and the password typed twice;
   - attributes: LOGIN, SUPERUSER, CREATEDB, CREATEROLE, INHERIT, REPLICATION, BYPASSRLS;
-  - connection limit and expiry date;
-  - the roles it is a member of.
+  - connection limit and expiry date (`VALID UNTIL`);
+  - the roles it is a member of, picked from the roles folder (`IN ROLE`).
 - **The password never travels or gets stored in clear.**
-  - The dialog hashes it on the client into a SCRAM-SHA-256 verifier, which PostgreSQL accepts
-    in place of a password (`PASSWORD 'SCRAM-SHA-256$…'`). The hashing function to use is the
-    one in `postgres-protocol`, which tokio-postgres already depends on.
-  - The statement is marked sensitive, so it stays out of the history and the log.
-  - The review panel shows the password as `••••••`.
-- **Edit…**: the same dialog, producing `ALTER ROLE` for what changed, plus `GRANT`/`REVOKE`
-  for changed memberships.
-- **Rename…** and **Drop…**. PostgreSQL refuses to drop a role that still owns objects, and
-  the error says so. The dialog then offers `REASSIGN OWNED BY … TO …`, then `DROP OWNED BY …`,
-  as a separate, confirmed step.
+  - The dialog hashes it on the client into a SCRAM-SHA-256 verifier, which PostgreSQL stores
+    as it is in place of a password (`PASSWORD 'SCRAM-SHA-256$4096:…'`). The hashing function
+    is the one in `postgres-protocol`, which tokio-postgres already depends on, so dbdesk
+    builds no crate it didn't before.
+  - **The review panel shows `PASSWORD '<redacted>'`, not the verifier.** A verifier lets
+    whoever holds it guess the password offline, and it teaches nothing to read. Execute sends
+    the verifier; **Copy** and **Open in console** are disabled while the SQL holds a password,
+    since the redacted text would set a password nobody knows, and the real one would put the
+    verifier on the clipboard.
+  - **No `sensitive` flag**: the panel redacts with the function the history uses
+    (`dbdesk_store::redact_secrets`, from W4), which every history write and the DDL log line
+    already go through, whatever sent the statement. A flag could be forgotten by the next
+    caller; the redaction can't. Error messages name statements by position, never by text.
+  - Needs PostgreSQL 10 or later, which accepts a verifier whatever `password_encryption`
+    says. dbdesk never falls back to sending the password as typed.
+- **Edit…**: the same dialog, filled from the role's description (`Connection::describe_role`,
+  `Command::DescribeRole`), producing one `ALTER ROLE` for what changed, plus `GRANT`/`REVOKE`
+  for changed memberships. The password is left as it is unless a new one is typed, or
+  **Remove password** is ticked (`PASSWORD NULL`).
+- **Rename…**: `ALTER ROLE … RENAME TO …`.
+- **Drop…**: PostgreSQL refuses to drop a role that still owns objects or holds privileges.
+  The confirmation counts what the role owns in the connected database and names the
+  databases it owns, and offers, in one transaction before `DROP ROLE`:
+  - **Keep them**, which fails while the role owns anything;
+  - **Give them to** another role: `REASSIGN OWNED BY … TO …`, then `DROP OWNED BY …` for the
+    privileges left;
+  - **Drop them**: `DROP OWNED BY …`, spelt out in the confirmation.
+
+  `REASSIGN OWNED` and `DROP OWNED` act only in the connected database, which the
+  confirmation says when the role owns databases.
 
 Privileges on tables and schemas (a grants editor) are not part of E3. Each new engine adds its
 own users when its driver lands:
 - **MySQL** (DB1) has `'name'@'host'` accounts.
 - **SQL Server** (DB2) has logins plus database users.
+
+**Layers**, one stack:
+1. This plan.
+2. `RoleSpec` and the role operations in `dbdesk_sql::ddl`, `ScramVerifier` and
+   `Capabilities::users`, with golden tests.
+3. `NodeKind::Role`, `FolderKind::Roles`, `Connection::describe_role` on PostgreSQL and
+   `Command::DescribeRole`: round trips on the PostgreSQL test server, including logging in as
+   the new role, and a test that no password or verifier reaches the history.
+4. The roles folder in the explorer.
+5. New user, New role and Edit.
+6. Rename and Drop.
+7. The manual's chapter and the demo note.
 
 **Exit:**
 - I create a login user with a password and a membership, log in as it from a new data
@@ -230,7 +267,7 @@ Proposed defaults; each is confirmed when its milestone starts.
 | Run straight away, or always review first | **Always review first**, with Execute in the review panel. | One extra click per change; nothing runs unseen. |
 | Where the DDL builder lives | **`dbdesk-sql`**, beside the dialects. | Pure and testable without a database or the UI. |
 | Users and roles in one dialog | **One dialog**: New user is New role with LOGIN ticked. | Matches PostgreSQL's model, and pgAdmin's single Login/Group Role dialog. |
-| Passwords | **Hashed into a SCRAM verifier on the client**, and kept out of the history and logs. | Needs a server with `password_encryption = scram-sha-256`, the default since PostgreSQL 14. Older servers get the password sent as typed, with a warning in the panel. |
+| Passwords | **Hashed into a SCRAM verifier on the client**, redacted in the review panel, the history and the log. | Needs PostgreSQL 10 or later, which stores a verifier as it is whatever `password_encryption` says. Nothing older is supported, so the password is never sent as typed. |
 | SQLite table rebuilds | **Last, in E4**, behind round-trip tests. | Until then, Modify table on SQLite offers only what `ALTER TABLE` does in place. Other options are disabled, with a tooltip saying why. |
 
 ## Risks
@@ -243,6 +280,7 @@ Proposed defaults; each is confirmed when its milestone starts.
   show nothing is lost.
 - **Dropping the wrong thing.** Typing the name for red (production) data sources,
   `CASCADE` spelled out in the confirmation, and the review panel all guard against it.
-- **Passwords leaking.** The sensitive flag has to be honoured everywhere a statement is
-  recorded: the history, the log and the console's error messages. A test runs a sensitive
-  statement and then searches every one of them for the password.
+- **Passwords leaking.** The redaction has to apply everywhere a helper's statement is
+  recorded: the history and the log; error messages name statements by position. A test creates a
+  role with a password through `ApplyDdl` and then searches the history for the password
+  and its verifier.
