@@ -476,9 +476,13 @@ and users, from a **New** submenu and object actions in the explorer. The full p
   and kittest tests that create, edit and drop a view on SQLite and a schema on DuckDB.
 - **E3 — Users and roles (PostgreSQL):**
   - a Roles folder in the tree;
-  - New user and New role, with passwords hashed into a SCRAM verifier and kept out of the
-    history and logs;
-  - Edit, Rename, Drop.
+  - New user and New role, with passwords hashed into a SCRAM verifier on the client and
+    redacted in the review panel, the history and the log;
+  - Edit, Rename, Drop (with what the role owns, reassigned or dropped);
+  - menus from `Capabilities::users`, so other engines can add theirs.
+
+  Built as one stack: specs and the SCRAM verifier, the catalog and the engine, the tree, the
+  dialogs, Rename and Drop, then the manual.
 - **E4 — Modify table:** `ALTER TABLE` from a changed table, with SQLite's table rebuild last.
 
 ## MCP track
