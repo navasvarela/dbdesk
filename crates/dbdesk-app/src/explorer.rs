@@ -93,8 +93,10 @@ pub enum Helper {
     /// one.
     NewUser(CatalogPath),
     NewRole(CatalogPath),
-    /// On a role.
+    /// On a role, as the next two.
     EditRole(CatalogPath),
+    RenameRole(CatalogPath),
+    DropRole(CatalogPath),
 }
 
 /// The explorer's own view settings.
@@ -893,6 +895,12 @@ fn helpers_menu(
                 "Edit…",
                 Helper::EditRole(path.clone()),
             ));
+            object.push((
+                icons::PENCIL_SIMPLE,
+                "Rename…",
+                Helper::RenameRole(path.clone()),
+            ));
+            object.push((icons::TRASH, "Drop…", Helper::DropRole(path.clone())));
         }
         Some(NodeKind::View) => object.extend(view_actions(path, capabilities)),
         Some(NodeKind::MaterializedView) if capabilities.materialized_views => {

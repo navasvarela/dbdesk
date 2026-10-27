@@ -3228,10 +3228,14 @@ mod tests {
             )
         }
 
-        /// A connection of the test's own to the `postgres` database, to set up and clean up
-        /// behind the app's back.
-        fn open(&self, runtime: &tokio::runtime::Runtime) -> Box<dyn dbdesk_core::Connection> {
-            let admin = self.data_source("postgres", "admin");
+        /// A connection of the test's own to `database`, to set up and clean up behind the
+        /// app's back.
+        fn open(
+            &self,
+            runtime: &tokio::runtime::Runtime,
+            database: &str,
+        ) -> Box<dyn dbdesk_core::Connection> {
+            let admin = self.data_source(database, "admin");
             let secrets: Arc<dyn SecretStore> = Arc::new(self.secrets(&admin));
             let tunnels = dbdesk_engine::Tunnels::new("known_hosts".into());
             runtime
@@ -3278,7 +3282,7 @@ mod tests {
             return;
         };
         let runtime = tokio::runtime::Runtime::new().unwrap();
-        let mut admin = server.open(&runtime);
+        let mut admin = server.open(&runtime, "postgres");
         let role = format!("dbdesk_e3_tree_{}", std::process::id());
         first_value(&runtime, &mut admin, &format!("DROP ROLE IF EXISTS {role}"));
         first_value(
@@ -3354,19 +3358,28 @@ mod tests {
             .any(|window| window == needle.as_bytes())
     }
 
-    /// E3's exit through the dialogs: New user with a password and a membership, then Edit;
-    /// the password is redacted in the review panel and appears nowhere in the history store.
+    /// E3's exit through the dialogs: New user with a password and a membership, Edit, Rename,
+    /// and Drop with the table it owns; the password is redacted in the review panel and
+    /// appears nowhere in the history store.
     #[test]
-    fn creates_and_edits_a_postgres_user_through_the_dialogs() {
+    fn creates_edits_renames_and_drops_a_postgres_user_through_the_dialogs() {
         let Some(server) = PostgresTestServer::from_env() else {
             return;
         };
         let runtime = tokio::runtime::Runtime::new().unwrap();
-        let mut admin = server.open(&runtime);
+        // In the data source's own database, where the user's table is counted.
+        let mut admin = server.open(&runtime, &server.database);
         let group = format!("dbdesk_e3_ui_readers_{}", std::process::id());
         let user = format!("dbdesk_e3_ui_user_{}", std::process::id());
+        let renamed = format!("{user}_renamed");
+        let table = format!("dbdesk_e3_ui_owned_{}", std::process::id());
         let password = format!("correct-horse-{}", std::process::id());
-        for role in [&user, &group] {
+        first_value(
+            &runtime,
+            &mut admin,
+            &format!("DROP TABLE IF EXISTS {table}"),
+        );
+        for role in [&user, &renamed, &group] {
             first_value(&runtime, &mut admin, &format!("DROP ROLE IF EXISTS {role}"));
         }
         first_value(&runtime, &mut admin, &format!("CREATE ROLE {group}"));
@@ -3450,6 +3463,66 @@ mod tests {
         );
         assert_eq!(described.as_deref(), Some("truetrue1"));
 
+        // The roles folder reloads after the edit.
+        step_until(&mut harness, "the user back in the tree", |harness| {
+            harness.query_by_label(&user).is_some()
+        });
+        node_menu(&mut harness, &user, "Rename…");
+        harness
+            .get_by_role_and_label(Role::TextInput, "New name")
+            .focus();
+        harness.run_steps(2);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness
+            .get_by_role_and_label(Role::TextInput, "New name")
+            .type_text(&renamed);
+        harness.run_steps(2);
+        harness.get_by_label("Execute").click();
+        step_until(&mut harness, "the renamed user in the tree", |harness| {
+            harness.query_by_label("Execute").is_none()
+                && harness.query_by_label(&renamed).is_some()
+        });
+
+        for sql in [
+            format!("CREATE TABLE {table} (id integer)"),
+            format!("ALTER TABLE {table} OWNER TO {renamed}"),
+        ] {
+            first_value(&runtime, &mut admin, &sql);
+        }
+        node_menu(&mut harness, &renamed, "Drop…");
+        // Owning something, it starts out giving it away.
+        step_until_visible(
+            &mut harness,
+            "REASSIGN OWNED gives the 1 object it owns in this database",
+        );
+        harness.get_by_label("Drop it").click();
+        harness.run_steps(2);
+        harness.get_by_label(
+            "DROP OWNED drops the 1 object it owns in this database, with their data.",
+        );
+        assert!(
+            harness
+                .query_all_by_value(&format!(
+                    "DROP OWNED BY {renamed};\n\nDROP ROLE {renamed};\n"
+                ))
+                .next()
+                .is_some()
+        );
+        harness.get_by_label("Execute").click();
+        step_until(&mut harness, "the user leaving the tree", |harness| {
+            harness.query_by_label("Execute").is_none()
+                && harness.query_by_label(&renamed).is_none()
+        });
+        let left = first_value(
+            &runtime,
+            &mut admin,
+            &format!(
+                "SELECT count(*)::text FROM pg_class WHERE relname = '{table}' \
+                 UNION ALL SELECT count(*)::text FROM pg_roles WHERE rolname = '{renamed}'"
+            ),
+        );
+        assert_eq!(left.as_deref(), Some("0"), "the table went with the user");
+
         drop(harness);
         let history = history_bytes(dir.path());
         assert!(
@@ -3464,7 +3537,12 @@ mod tests {
             !contains(&history, "SCRAM-SHA-256"),
             "a verifier is in the history"
         );
-        for role in [&user, &group] {
+        first_value(
+            &runtime,
+            &mut admin,
+            &format!("DROP TABLE IF EXISTS {table}"),
+        );
+        for role in [&user, &renamed, &group] {
             first_value(&runtime, &mut admin, &format!("DROP ROLE IF EXISTS {role}"));
         }
     }
@@ -3477,7 +3555,7 @@ mod tests {
             return;
         };
         let runtime = tokio::runtime::Runtime::new().unwrap();
-        let mut admin = server.open(&runtime);
+        let mut admin = server.open(&runtime, "postgres");
         let database = format!("dbdesk_reconnect_{}", std::process::id());
         first_value(
             &runtime,
