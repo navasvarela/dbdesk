@@ -1599,6 +1599,7 @@ dependencies = [
  "egui_kittest",
  "image",
  "jiff",
+ "regex",
  "rfd",
  "rmcp",
  "rusqlite",

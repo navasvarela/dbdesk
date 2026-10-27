@@ -1724,6 +1724,7 @@ impl Repaint for EguiRepaint {
 #[cfg(test)]
 mod tests {
     mod files;
+    mod find;
     mod grid;
     mod history;
     mod parameters;

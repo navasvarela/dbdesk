@@ -28,10 +28,14 @@ pub enum Action {
     OpenFile,
     Save,
     SaveAs,
+    Find,
+    Replace,
+    FindNext,
+    FindPrevious,
 }
 
 impl Action {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 21] = [
         Self::Complete,
         Self::RunCurrent,
         Self::RunAll,
@@ -49,6 +53,10 @@ impl Action {
         Self::OpenFile,
         Self::Save,
         Self::SaveAs,
+        Self::Find,
+        Self::Replace,
+        Self::FindNext,
+        Self::FindPrevious,
     ];
 
     pub fn id(self) -> &'static str {
@@ -70,6 +78,10 @@ impl Action {
             Self::OpenFile => "file.open",
             Self::Save => "file.save",
             Self::SaveAs => "file.save-as",
+            Self::Find => "editor.find",
+            Self::Replace => "editor.replace",
+            Self::FindNext => "editor.find-next",
+            Self::FindPrevious => "editor.find-previous",
         }
     }
 
@@ -92,6 +104,10 @@ impl Action {
             Self::OpenFile => "Open a .sql file in a new console",
             Self::Save => "Save the console to its .sql file",
             Self::SaveAs => "Save the console to a new .sql file",
+            Self::Find => "Find in the console",
+            Self::Replace => "Find and replace in the console",
+            Self::FindNext => "Go to the next match",
+            Self::FindPrevious => "Go to the previous match",
         }
     }
 
@@ -126,6 +142,19 @@ impl Action {
             Self::OpenFile => shortcut(Modifiers::COMMAND, Key::O),
             Self::Save => shortcut(Modifiers::COMMAND, Key::S),
             Self::SaveAs => shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::S),
+            Self::Find => shortcut(Modifiers::COMMAND, Key::F),
+            // VS Code's key on macOS; Ctrl+H elsewhere would differ by platform, and one
+            // binding serves both here.
+            Self::Replace => shortcut(Modifiers::COMMAND | Modifiers::ALT, Key::F),
+            // ⌘G as in macOS's own apps, F3 as in Windows'.
+            Self::FindNext => vec![
+                KeyboardShortcut::new(Modifiers::COMMAND, Key::G),
+                KeyboardShortcut::new(Modifiers::NONE, Key::F3),
+            ],
+            Self::FindPrevious => vec![
+                KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::G),
+                KeyboardShortcut::new(Modifiers::SHIFT, Key::F3),
+            ],
             Self::ShowHistory | Self::Commit | Self::Rollback => Vec::new(),
         }
     }
