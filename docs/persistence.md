@@ -182,8 +182,9 @@ CREATE INDEX history_by_origin ON history (coalesce(origin, source), executed_at
   `IDENTIFIED BY '…'`, DuckDB's `CREATE SECRET`) and in connection strings (`password=…`,
   `pwd=…`, `user:password@`) with `<redacted>`, for every writer. See
   [History as an audit trail](history-audit.md#w4b--secrets-stay-out).
-- Searchable from the History window of a console (by data source, substring of the SQL,
-  newest first, at most 500 rows). Results themselves are not stored.
+- Searchable from the History window of a console (one data source or every one, substring
+  of the SQL, where it came from, how long ago; newest first, at most 500 rows), each search
+  on an index. Results themselves are not stored.
 - Owned by one engine thread from the blocking pool, so writes and searches never block the
   UI and searches see every earlier write. If the database can't be opened, history is
   disabled for the session and the History window shows why.

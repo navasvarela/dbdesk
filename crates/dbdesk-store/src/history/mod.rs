@@ -223,68 +223,136 @@ impl History {
         query: &HistoryQuery,
         limit: usize,
     ) -> Result<Vec<HistoryEntry>, HistoryError> {
-        let mut statement = self.connection.prepare_cached(
-            "SELECT executed_at, sql, duration_ms, rows, outcome, coalesce(origin, source), detail,
-                    changes
-             FROM history
-             WHERE data_source = ?1 AND sql LIKE '%' || ?2 || '%' ESCAPE '\\'
-               AND (?3 IS NULL OR coalesce(origin, source) = ?3)
-             ORDER BY executed_at DESC, id DESC
-             LIMIT ?4",
-        )?;
-        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-        let data_source = query.data_source;
-        let rows = statement.query_map(
-            params![
-                data_source.to_string(),
-                escape_like(&query.text),
-                query.kind.map(HistorySourceKind::as_str),
-                limit
-            ],
-            |row| {
-                Ok(StoredRow {
-                    executed_at: row.get(0)?,
-                    sql: row.get(1)?,
-                    duration_ms: row.get(2)?,
-                    rows: row.get(3)?,
-                    outcome: row.get(4)?,
-                    kind: row.get(5)?,
-                    detail: row.get(6)?,
-                    changes: row.get(7)?,
-                })
-            },
-        )?;
         let mut entries = Vec::new();
-        for row in rows {
-            entries.extend(row?.into_entry(data_source));
-        }
+        self.each_match(query, Some(limit), |entry| {
+            entries.push(entry);
+            Ok::<_, HistoryError>(())
+        })?;
         Ok(entries)
+    }
+
+    /// Hands each statement `query` asks for to `each`, newest first, as SQLite reads them, so
+    /// that every match can be gone through without holding them all. Stops at the first
+    /// error `each` returns.
+    fn each_match<E: From<HistoryError>>(
+        &self,
+        query: &HistoryQuery,
+        limit: Option<usize>,
+        mut each: impl FnMut(HistoryEntry) -> Result<(), E>,
+    ) -> Result<(), E> {
+        let search = Search::new(query, limit);
+        let mut statement = self
+            .connection
+            .prepare_cached(&search.sql)
+            .map_err(HistoryError::from)?;
+        let mut rows = statement
+            .query(rusqlite::params_from_iter(&search.values))
+            .map_err(HistoryError::from)?;
+        while let Some(row) = rows.next().map_err(HistoryError::from)? {
+            let stored = StoredRow::read(row).map_err(HistoryError::from)?;
+            if let Some(entry) = stored.into_entry() {
+                each(entry)?;
+            }
+        }
+        Ok(())
     }
 }
 
 /// Which past statements to look up.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryQuery {
-    pub data_source: DataSourceId,
+    /// Only this data source's statements; `None` for every data source in the file.
+    pub data_source: Option<DataSourceId>,
     /// Statements containing it, ignoring ASCII case; empty for all.
     pub text: String,
     /// Only statements from there; `None` for all.
     pub kind: Option<HistorySourceKind>,
+    /// Only statements run at or after it.
+    pub since: Option<Timestamp>,
+    /// Only statements run before it.
+    pub until: Option<Timestamp>,
 }
 
 impl HistoryQuery {
     /// Every recorded statement of `data_source`.
     pub fn all(data_source: DataSourceId) -> Self {
         Self {
-            data_source,
+            data_source: Some(data_source),
+            ..Self::everywhere()
+        }
+    }
+
+    /// Every recorded statement, of every data source.
+    pub fn everywhere() -> Self {
+        Self {
+            data_source: None,
             text: String::new(),
             kind: None,
+            since: None,
+            until: None,
         }
     }
 }
 
+/// A [`HistoryQuery`] as SQL and its values.
+///
+/// The `WHERE` clause names only the filters the query sets. Written once with
+/// `?n IS NULL OR …` for every filter, it would read the same, but SQLite plans a statement
+/// before it sees the values, so it couldn't use the index that fits (by data source, by kind,
+/// or by time alone) and would read the whole file.
+struct Search {
+    sql: String,
+    values: Vec<rusqlite::types::Value>,
+}
+
+impl Search {
+    fn new(query: &HistoryQuery, limit: Option<usize>) -> Self {
+        let mut conditions = Vec::new();
+        let mut values: Vec<rusqlite::types::Value> = Vec::new();
+        let mut filter = |condition: &str, value: String| {
+            values.push(value.into());
+            conditions.push(format!("{condition} ?{}", values.len()));
+        };
+        if let Some(data_source) = query.data_source {
+            filter("data_source =", data_source.to_string());
+        }
+        if let Some(kind) = query.kind {
+            filter("coalesce(origin, source) =", kind.as_str().to_owned());
+        }
+        if let Some(since) = query.since {
+            filter("executed_at >=", format_timestamp(since));
+        }
+        if let Some(until) = query.until {
+            filter("executed_at <", format_timestamp(until));
+        }
+        if !query.text.is_empty() {
+            values.push(escape_like(&query.text).into());
+            conditions.push(format!(
+                "sql LIKE '%' || ?{} || '%' ESCAPE '\\'",
+                values.len()
+            ));
+        }
+        let mut sql = format!("SELECT {STORED_COLUMNS} FROM history");
+        if !conditions.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&conditions.join(" AND "));
+        }
+        sql.push_str(" ORDER BY executed_at DESC, id DESC");
+        if let Some(limit) = limit {
+            values.push(i64::try_from(limit).unwrap_or(i64::MAX).into());
+            sql.push_str(&format!(" LIMIT ?{}", values.len()));
+        }
+        Self { sql, values }
+    }
+}
+
+/// The columns [`StoredRow::read`] reads, in its order.
+const STORED_COLUMNS: &str = "data_source, executed_at, sql, duration_ms, rows, outcome, \
+     coalesce(origin, source), detail, changes";
+
 /// A history row as stored, before parsing.
 struct StoredRow {
+    data_source: String,
     executed_at: String,
     sql: String,
     duration_ms: Option<i64>,
@@ -297,9 +365,23 @@ struct StoredRow {
 }
 
 impl StoredRow {
-    fn into_entry(self, data_source: DataSourceId) -> Option<HistoryEntry> {
+    fn read(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            data_source: row.get(0)?,
+            executed_at: row.get(1)?,
+            sql: row.get(2)?,
+            duration_ms: row.get(3)?,
+            rows: row.get(4)?,
+            outcome: row.get(5)?,
+            kind: row.get(6)?,
+            detail: row.get(7)?,
+            changes: row.get(8)?,
+        })
+    }
+
+    fn into_entry(self) -> Option<HistoryEntry> {
         Some(HistoryEntry {
-            data_source,
+            data_source: self.data_source.parse().ok()?,
             executed_at: self.executed_at.parse().ok()?,
             sql: self.sql,
             duration: self
@@ -477,6 +559,143 @@ mod tests {
             .map(|entry| entry.source)
             .collect();
         assert_eq!(sources, [edit.source, HistorySource::GridEdit(None)]);
+    }
+
+    /// Across data sources, by kind, text and time, alone and together.
+    #[test]
+    fn searches_every_data_source_by_kind_text_and_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let history = HistoryFile::new(dir.path().join("history.sqlite"))
+            .open()
+            .unwrap();
+        let (shop, crm) = (DataSourceId::generate(), DataSourceId::generate());
+        let mcp = HistorySource::Mcp {
+            client: Some("claude-ai".to_owned()),
+        };
+        let recorded = [
+            entry(shop, 1_000, "SELECT * FROM orders"),
+            HistoryEntry {
+                source: mcp.clone(),
+                ..entry(crm, 2_000, "SELECT * FROM leads")
+            },
+            entry(crm, 3_000, "DELETE FROM leads"),
+            HistoryEntry {
+                source: mcp,
+                ..entry(shop, 4_000, "SELECT count(*) FROM orders")
+            },
+        ];
+        for entry in &recorded {
+            history.record(entry).unwrap();
+        }
+
+        let found = |query: HistoryQuery| -> Vec<String> {
+            history
+                .search(&query, 10)
+                .unwrap()
+                .into_iter()
+                .map(|entry| entry.sql)
+                .collect()
+        };
+        let at = |ms| Some(Timestamp::from_millisecond(ms).unwrap());
+        let everywhere = HistoryQuery::everywhere;
+        assert_eq!(
+            found(everywhere()),
+            [
+                "SELECT count(*) FROM orders",
+                "DELETE FROM leads",
+                "SELECT * FROM leads",
+                "SELECT * FROM orders"
+            ]
+        );
+        assert_eq!(
+            found(HistoryQuery {
+                kind: Some(HistorySourceKind::Mcp),
+                ..everywhere()
+            }),
+            ["SELECT count(*) FROM orders", "SELECT * FROM leads"]
+        );
+        assert_eq!(
+            found(HistoryQuery {
+                text: "leads".to_owned(),
+                since: at(2_500),
+                ..everywhere()
+            }),
+            ["DELETE FROM leads"]
+        );
+        // From inclusive, until exclusive.
+        assert_eq!(
+            found(HistoryQuery {
+                since: at(2_000),
+                until: at(4_000),
+                ..everywhere()
+            }),
+            ["DELETE FROM leads", "SELECT * FROM leads"]
+        );
+        assert_eq!(
+            found(HistoryQuery {
+                kind: Some(HistorySourceKind::Mcp),
+                until: at(3_000),
+                ..HistoryQuery::all(crm)
+            }),
+            ["SELECT * FROM leads"]
+        );
+        let shops: Vec<DataSourceId> = history
+            .search(&everywhere(), 10)
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.data_source)
+            .collect();
+        assert_eq!(shops, [shop, crm, crm, shop]);
+    }
+
+    /// Each search the History window makes reads the history through an index, in order:
+    /// never the whole table, and never sorting every match before the first comes back.
+    #[test]
+    fn searches_through_an_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = HistoryFile::new(dir.path().join("history.sqlite"));
+        let history = file.open().unwrap();
+        let shop = DataSourceId::generate();
+        let since = Some(Timestamp::UNIX_EPOCH);
+        let queries = [
+            HistoryQuery::everywhere(),
+            HistoryQuery {
+                text: "orders".to_owned(),
+                since,
+                ..HistoryQuery::everywhere()
+            },
+            HistoryQuery {
+                kind: Some(HistorySourceKind::GridEdit),
+                ..HistoryQuery::everywhere()
+            },
+            HistoryQuery {
+                text: "orders".to_owned(),
+                ..HistoryQuery::all(shop)
+            },
+            HistoryQuery {
+                kind: Some(HistorySourceKind::Mcp),
+                since,
+                ..HistoryQuery::all(shop)
+            },
+        ];
+        for query in queries {
+            let search = Search::new(&query, Some(500));
+            let plan: Vec<String> = history
+                .connection
+                .prepare(&format!("EXPLAIN QUERY PLAN {}", search.sql))
+                .unwrap()
+                .query_map(rusqlite::params_from_iter(&search.values), |row| row.get(3))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+            let reads_the_table = plan
+                .iter()
+                .any(|step| step.starts_with("SCAN history") && !step.contains("INDEX"));
+            let sorts_everything = plan
+                .iter()
+                .any(|step| step == "USE TEMP B-TREE FOR ORDER BY");
+            assert!(!reads_the_table && !sorts_everything, "{query:?}: {plan:?}");
+        }
     }
 
     #[test]
