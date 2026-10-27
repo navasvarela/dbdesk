@@ -1635,6 +1635,8 @@ impl eframe::App for DbDeskApp {
         self.save_consoles(&ctx);
         self.check_sql_files(&ctx);
         self.show_open_file_dialog(&ctx);
+        let given = self.consoles.show_parameters_dialog(&ctx);
+        self.send_if(given);
         let confirmed = self.consoles.show_hazard_confirmation(&ctx);
         self.send_if(confirmed);
         self.show_data_source_dialog(&ctx);
@@ -1724,6 +1726,7 @@ mod tests {
     mod files;
     mod grid;
     mod history;
+    mod parameters;
 
     use std::path::Path;
     use std::sync::Arc;

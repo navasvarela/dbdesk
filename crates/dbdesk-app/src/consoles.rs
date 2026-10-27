@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use dbdesk_core::{CatalogPath, DataSource, DataSourceId, SafetyLevel};
 use dbdesk_engine::{Command, ConsoleId, Event, RunId, RunPurpose, TransactionMode, WatchedFile};
-use dbdesk_sql::{Dialect, FormatOptions};
+use dbdesk_sql::{Dialect, FormatOptions, ParameterValues};
 use dbdesk_store::{ConsoleKey, ConsoleName, ExportFormat, SqlFileContents};
 
 use crate::console::{
@@ -17,6 +17,7 @@ use crate::console::{
 use crate::hazard_dialog::{
     self, HazardChoice, HazardConfirmation, Pending, Review, ReviewContext,
 };
+use crate::parameters_dialog::{ParametersChoice, ParametersDialog};
 use crate::rollback_dialog::Closing;
 
 /// How long a console's text stays unsaved after an edit. Long enough that typing doesn't
@@ -32,6 +33,8 @@ pub struct Consoles {
     next_console: u64,
     next_run: u64,
     hazard: Option<HazardConfirmation>,
+    /// A run waiting for the values of its parameters.
+    parameters: Option<ParametersDialog>,
 }
 
 /// Console files that aren't open in a tab, with their text, so they can be reopened.
@@ -254,6 +257,7 @@ impl Consoles {
         let run = SubmittedRun {
             statements,
             purpose: RunPurpose::Run,
+            parameters: ParameterValues::default(),
         };
         let command = self.start_run(&key, run)?;
         Some((key, command))
@@ -421,10 +425,27 @@ impl Consoles {
         }
     }
 
+    /// Runs the statements, first asking for the values of their parameters if the run
+    /// doesn't carry them all.
+    fn submit(&mut self, key: &ConsoleKey, run: SubmittedRun) -> Option<Command> {
+        let console = self.open.get(key)?;
+        let names = run.parameter_names(console.dialect());
+        if names.iter().all(|name| run.parameters.contains(name)) {
+            return self.review(key, run);
+        }
+        self.parameters = Some(ParametersDialog::new(
+            key.clone(),
+            run,
+            names,
+            console.parameters(),
+        ));
+        None
+    }
+
     /// Runs the statements, unless one would change every row of a table or commit what the
     /// user may mean to roll back: then the confirmation is shown first and nothing runs
     /// until the user answers.
-    fn submit(&mut self, key: &ConsoleKey, run: SubmittedRun) -> Option<Command> {
+    fn review(&mut self, key: &ConsoleKey, run: SubmittedRun) -> Option<Command> {
         let console = self.open.get(key)?;
         let context = ReviewContext {
             dialect: console.dialect(),
@@ -472,8 +493,25 @@ impl Consoles {
                 .into_iter()
                 .map(|statement| statement.sql)
                 .collect(),
-            parameters: dbdesk_sql::ParameterValues::default(),
+            parameters: submitted.parameters,
         })
+    }
+
+    /// Shows the parameters dialog, if a run is waiting for values, and goes on with the run
+    /// once they are given: to the confirmations, then the engine. The console remembers them.
+    pub fn show_parameters_dialog(&mut self, ctx: &egui::Context) -> Option<Command> {
+        let choice = self.parameters.as_mut()?.show(ctx)?;
+        let dialog = self.parameters.take()?;
+        match choice {
+            ParametersChoice::Run => {
+                let (key, run) = dialog.into_run();
+                self.open
+                    .get_mut(&key)?
+                    .remember_parameters(&run.parameters);
+                self.review(&key, run)
+            }
+            ParametersChoice::Cancel => None,
+        }
     }
 
     pub fn show_hazard_confirmation(&mut self, ctx: &egui::Context) -> Option<Command> {
@@ -525,6 +563,10 @@ mod tests {
     }
 
     fn run(statements: &[&str]) -> ConsoleAction {
+        run_with(statements, ParameterValues::default())
+    }
+
+    fn run_with(statements: &[&str], parameters: ParameterValues) -> ConsoleAction {
         ConsoleAction::Run(SubmittedRun {
             statements: statements
                 .iter()
@@ -536,7 +578,32 @@ mod tests {
                 })
                 .collect(),
             purpose: RunPurpose::Run,
+            parameters,
         })
+    }
+
+    #[test]
+    fn asks_for_parameters_unless_the_run_carries_them_all() {
+        let mut consoles = Consoles::default();
+        let key = consoles.open(&data_source("shop"), String::new());
+        let since: ParameterValues = [("since", Some("2026-01-01".to_owned()))]
+            .into_iter()
+            .collect();
+
+        assert!(
+            consoles
+                .handle(&key, run(&["SELECT :since", "SELECT :since, :until"]))
+                .is_none()
+        );
+        let asking = consoles.parameters.take().unwrap();
+        assert_eq!(asking.console, key);
+        assert!(!consoles.open[&key].is_running());
+
+        assert!(matches!(
+            consoles.handle(&key, run_with(&["SELECT :since"], since)),
+            Some(Command::Execute { parameters, .. }) if parameters.contains("since")
+        ));
+        assert!(consoles.parameters.is_none());
     }
 
     fn named(data_source: &DataSource, name: &str) -> ConsoleKey {
