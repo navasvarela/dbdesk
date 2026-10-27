@@ -10,6 +10,7 @@
 - [Views and schemas](views-schemas.md)
 - [Users and roles](users-roles.md)
 - [Query consoles](consoles.md)
+- [Files, parameters and find](files-parameters.md)
 - [Working with table data](table-data.md)
 - [The query history](history.md)
 - [Keyboard shortcuts](shortcuts.md)

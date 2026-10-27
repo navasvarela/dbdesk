@@ -32,6 +32,9 @@ console, or one opened by **Open data** and left as it was). Kept consoles are l
 **Open saved console** in their data source's context menu. If a console can't be saved, its
 toolbar says **Not saved**, with the reason on hover.
 
+A console can show a `.sql` file of your own instead, saved only when you ask; see
+[Files, parameters and find](files-parameters.md).
+
 ## The editor
 
 The editor highlights SQL keywords, strings, numbers, comments and quoted names, numbers the

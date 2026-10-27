@@ -15,6 +15,13 @@ On Linux and Windows, read Ctrl wherever this page says ⌘.
 | ⇧⌥⌘L | Format every statement in the console | the editor has focus |
 | F8 | Go to the next error or warning | the editor has focus |
 | ⇧F8 | Go to the previous error or warning | the editor has focus |
+| ⌘F | Find in the console | the editor or the find bar has focus |
+| ⌥⌘F | Find and replace in the console | the editor or the find bar has focus |
+| ⌘G, F3 | Go to the next match | the editor or the find bar has focus |
+| ⇧⌘G, ⇧F3 | Go to the previous match | the editor or the find bar has focus |
+| ⌘O | Open a `.sql` file in a new console | always |
+| ⌘S | Save the console to its `.sql` file | a console's tab is selected |
+| ⇧⌘S | Save the console to a new `.sql` file | a console's tab is selected |
 | Space | Show the selected cell's whole value | no text field has focus |
 | F2, Enter | Edit the selected cell | no text field has focus |
 | ⌘C | Copy the selected cells | no text field has focus |

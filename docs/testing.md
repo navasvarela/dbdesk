@@ -154,6 +154,22 @@ against a real server, such as a cancel arriving after the last row.
 - The DuckDB driver checks that two connections to one file see each other's changes.
 - The app's W5 UI tests are in `app/tests/grid.rs`, against SQLite.
 
+### Files and parameters
+
+- `dbdesk_sql::parameters` has a corpus per dialect in `dbdesk-sql/tests/parameters/`, read by
+  a unit test (no binary of its own), and golden tests of the placeholders and literals each
+  dialect gets.
+- `dbdesk-engine/tests/parameters/` is a module of the `console` test binary, like the grid's.
+  It binds a number typed as text, a quote, a repeated parameter and `NULL` on every engine with
+  a test server, in a table with the process id in its name; ClickHouse gets literals in a
+  query of its own. SQLite alone covers the history's comment, a missing value and an export
+  with parameters; PostgreSQL an error position mapped back.
+- The engine test binary's `opens_saves_and_watches_a_sql_file` reads, writes and watches a
+  file in a temporary folder.
+- The app's W6 UI tests are in `app/tests/files.rs`, `parameters.rs` and `find.rs`, against
+  SQLite and temporary files. Files changed on disk are noticed by a check every two seconds,
+  so that test takes about four.
+
 ## MCP server
 
 - `dbdesk_sql::classify` has a corpus per dialect: reads, writes hidden in CTEs, `SELECT …
