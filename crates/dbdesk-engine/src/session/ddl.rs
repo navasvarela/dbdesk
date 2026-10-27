@@ -1,5 +1,5 @@
 //! The object helpers' DDL on the explorer's connection: applying generated statements, and
-//! loading a table's or view's `CREATE` statement for Copy DDL.
+//! loading a table's, view's or role's `CREATE` statement for Copy DDL.
 
 use std::time::Instant;
 
@@ -7,7 +7,7 @@ use dbdesk_core::{
     CatalogNode, CatalogPath, Connection, DriverError, FolderKind, Identifier, NodeKind,
     RelationName, describe_error,
 };
-use dbdesk_sql::{ColumnSpec, DdlOperation, ObjectName, TableSpec};
+use dbdesk_sql::{ColumnSpec, DdlOperation, ObjectName, RoleSpec, TableSpec};
 use dbdesk_store::{HistoryEntry, HistoryOutcome, HistorySource, redact_secrets};
 use jiff::Timestamp;
 
@@ -143,15 +143,18 @@ pub(super) async fn load(
     connection: &mut dyn Connection,
     path: CatalogPath,
 ) {
-    let is_table = path.last().map(|segment| segment.kind) == Some(NodeKind::Table);
-    let result = if is_table && context.dialect().capabilities().rebuilds_table_ddl {
-        rebuild(context, connection, &path).await
-    } else {
-        connection
-            .definition(&path)
-            .await
-            .map_err(|error| describe_error(&error))
-    };
+    let kind = path.last().map(|segment| segment.kind);
+    let result =
+        if kind == Some(NodeKind::Table) && context.dialect().capabilities().rebuilds_table_ddl {
+            rebuild(context, connection, &path).await
+        } else if kind == Some(NodeKind::Role) {
+            rebuild_role(context, connection, &path).await
+        } else {
+            connection
+                .definition(&path)
+                .await
+                .map_err(|error| describe_error(&error))
+        };
     if let Err(error) = &result {
         tracing::warn!(data_source = %context.name(), "could not load the DDL of {path}: {error}");
     }
@@ -226,6 +229,31 @@ async fn rebuild(
         .map(|statement| format!("{statement};\n"))
         .collect::<Vec<_>>()
         .join("\n"))
+}
+
+/// `CREATE ROLE` for the role at `path`, from its description, through the same builder as
+/// New role: everything but its password, which the catalog only shows to superusers and
+/// which would be a secret on the clipboard.
+async fn rebuild_role(
+    context: &SessionContext,
+    connection: &mut dyn Connection,
+    path: &CatalogPath,
+) -> Result<String, String> {
+    let role = connection
+        .describe_role(path)
+        .await
+        .map_err(|error| describe_error(&error))?;
+    let statements = DdlOperation::CreateRole {
+        name: role.name.clone(),
+        spec: RoleSpec::from(&role),
+        password: None,
+    }
+    .statements(context.dialect())
+    .map_err(|error| error.to_string())?;
+    Ok(statements
+        .iter()
+        .map(|statement| format!("{statement};\n"))
+        .collect())
 }
 
 fn is_copied(constraint: &CatalogNode) -> bool {

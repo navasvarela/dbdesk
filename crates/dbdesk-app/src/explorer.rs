@@ -7,7 +7,7 @@ use dbdesk_core::{
     CatalogNode, CatalogPath, DataSourceId, DriverKind, FolderKind, NodeKind, ProjectId, Quoting,
 };
 use dbdesk_engine::SessionState;
-use dbdesk_sql::{Capabilities, Dialect, SchemaCreation, TableChange};
+use dbdesk_sql::{Capabilities, Dialect, SchemaCreation, TableChange, UserModel};
 use dbdesk_store::{ConsoleKey, Project};
 use egui::{
     Color32, CornerRadius, Id, Label, Rect, Response, RichText, ScrollArea, Sense, Shape, TextEdit,
@@ -892,6 +892,7 @@ fn helpers_menu(
     let copies_ddl = match node.kind() {
         Some(NodeKind::Table) => node.has_definition || capabilities.rebuilds_table_ddl,
         Some(NodeKind::View | NodeKind::MaterializedView) => node.has_definition,
+        Some(NodeKind::Role) => capabilities.users == UserModel::Roles,
         _ => false,
     };
     if copies_ddl && widgets::menu_item(ui, icons::COPY, "Copy DDL").clicked() {

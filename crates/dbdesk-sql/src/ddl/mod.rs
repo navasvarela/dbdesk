@@ -19,7 +19,7 @@ pub use view::view_query;
 
 use std::collections::BTreeSet;
 
-use dbdesk_core::RoleAttribute;
+use dbdesk_core::{RoleAttribute, RoleDescription};
 
 use crate::{Dialect, ScramVerifier};
 
@@ -246,6 +246,17 @@ pub struct RoleSpec {
     pub valid_until: Option<String>,
     /// The roles it is a member of, whose privileges it has.
     pub member_of: BTreeSet<String>,
+}
+
+impl From<&RoleDescription> for RoleSpec {
+    fn from(role: &RoleDescription) -> Self {
+        Self {
+            attributes: role.attributes.clone(),
+            connection_limit: role.connection_limit,
+            valid_until: role.valid_until.clone(),
+            member_of: role.member_of.clone(),
+        }
+    }
 }
 
 /// What Edit does to a role's password.
