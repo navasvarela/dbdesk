@@ -734,7 +734,76 @@ The gaps that keep dbdesk from being an everyday tool. The full plan is in
   `tests/grid`, a DuckDB driver test of two connections to one file, and kittest tests of each
   feature on SQLite.
 - **W6 — Files and parameters:** open and save `.sql` files, `:name` parameters, find and
-  replace.
+  replace, in layers:
+  - **W6a — `.sql` files:**
+    - **File › Open…** (⌘O), **Open recent ›** (the last ten, with **Clear**), **Save** (⌘S)
+      and **Save as…** (⇧⌘S), and a `.sql` file dropped on the window. A file opens in a
+      console on the data source it was last opened on; the first time, a small dialog asks
+      which, starting from the focused console's.
+    - A console bound to a file is titled with the file's name, with `•` while it has unsaved
+      changes, and the path on hover. It is saved only when asked: closing it with unsaved
+      changes asks **Save**, **Don't save** or **Cancel**, and so does quitting.
+    - Consoles in the config folder keep saving themselves. **Save** on one asks where (as
+      **Save as…**), binds the console to that file, and removes its copy in the config
+      folder.
+    - The file is looked at every two seconds and when the window regains focus. Changed on
+      disk with no unsaved edits, it reloads; with unsaved edits, the console says so and
+      offers **Reload** or **Keep mine**. A deleted file says so too, and **Save** writes it
+      again.
+    - Open file tabs are restored at the next launch: the dock layout already keeps the tab,
+      and the app's saved state (`app.ron`) keeps which file it shows and the recent files.
+    - `dbdesk report.sql` opens the file; the app ignores other arguments as it does now.
+      Finder's **Open With** needs a document type in the macOS bundle and Apple Events, and
+      is left as a follow-up.
+    - Reading and writing go through the engine (`Command::OpenSqlFile`, `SaveSqlFile`,
+      `CheckSqlFiles`), as every other file does, so the UI never waits on the disk. Files are
+      UTF-8; another encoding is refused with a message rather than mangled. Saves are atomic.
+  - **W6b — Finding `:name` parameters:** `dbdesk_sql::parameters` finds `:name` (a letter
+    or `_`, then letters, digits and `_`) outside strings, comments and quoted identifiers,
+    with the lexer that highlights. It skips PostgreSQL and DuckDB casts (`::int`), `:=`
+    assignments, array slices (`a[1:n]`), DuckDB's and ClickHouse's `{…}` (struct and map
+    literals, ClickHouse's own `{name:Type}` parameters), labels (`name:`), and a colon
+    written right after a name, number, string or closing bracket. Golden tests: one corpus
+    file per dialect, each statement preceded by the parameters it must find.
+  - **W6c — Binding parameters:** `Command::Execute` and the export of every row carry the
+    run's values (text or `NULL`).
+    - SQLite (`?1`), DuckDB (`$1`), MySQL and MariaDB (`?`), and SQL Server (`@P1`, through
+      `sp_executesql`) get real bound parameters, through a new `Connection::execute_bound`.
+      Values are bound as text, which each database converts as it would a string.
+    - PostgreSQL and ClickHouse get the value as a string literal, quoted as the grid's edits
+      are. PostgreSQL runs consoles over the simple query protocol, which returns every value
+      as `psql` prints it but has no parameters; binding would need the extended protocol and
+      decoding every type from binary. PostgreSQL types an untyped `'…'` literal from its
+      context exactly as it types an untyped parameter. ClickHouse's parameters need a type in
+      the placeholder, and a `String` one doesn't compare with numbers, where a literal
+      converts.
+    - **Explain** always uses literals, since SQL Server's plan settings and `sp_executesql`
+      don't mix.
+    - The read-only check and the transaction rules look at the statement with literals, so
+      they see what runs. Error positions are mapped back to the text as typed.
+    - The history records the statement as typed, followed by a comment with its values
+      (`-- :since = '2026-01-01'`), so W4's history schema is left alone.
+    - Engine tests bind a text value, a number compared with a number column, a repeated
+      parameter and `NULL` on every engine with a test server.
+  - **W6d — The parameters dialog:** a run whose statements have parameters asks for their
+    values first, in their order, each with a **NULL** switch, filled in with what that
+    console used last. **Run** goes on to the usual confirmations. Running a statement again
+    without typing (rows reloaded after an insert, sorting in the database, exporting every
+    row) reuses those values without asking.
+  - **W6e — Find and replace:** a bar above the editor, ⌘F to find and ⌥⌘F to replace, ⌘G
+    and ⇧⌘G (or Enter and ⇧Enter in the field) for the next and previous match, Esc to
+    close; **Match case**, **Whole word** and **Regex**, with `$1` in the replacement;
+    **Replace** and **Replace all** (one undo step); every match highlighted, the current one
+    more strongly, and *3 of 12*. An invalid regular expression says why. The `regex` crate
+    is already in the dependency tree through MySQL's and DuckDB's crates. Every shortcut is
+    in `keymap.toml` like the console's others.
+  - **W6f — Manual:** a chapter on files, parameters and find and replace, and this demo
+    note.
+
+  Tested with `dbdesk_sql` golden tests per dialect, store and engine tests of the files
+  (temporary folders), engine tests binding parameters on every engine with a test server,
+  unit tests of the find logic, and kittest tests of each feature on SQLite with temporary
+  files. New engine tests reuse W5's `test_sources`, so they add a few seconds per server.
 
 ## Design and documentation track
 
