@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use dbdesk_core::{DriverError, TransactionStatus, describe_error};
 use dbdesk_sql::Savepoint;
-use dbdesk_store::{HistoryEntry, HistoryOutcome, HistorySource};
+use dbdesk_store::{HistoryEntry, HistoryOutcome, HistorySource, redact_secrets};
 use jiff::Timestamp;
 
 use super::{Disconnected, SessionOwner, Worker, transaction};
@@ -110,7 +110,7 @@ async fn run_wrapped(
         return Ok(Err(unwrapped(error)));
     }
     for (index, sql) in statements.iter().enumerate() {
-        tracing::info!(data_source = %worker.context.name(), "{sql}");
+        tracing::info!(data_source = %worker.context.name(), "{}", redact_secrets(sql));
         let started_at = Timestamp::now();
         let started = Instant::now();
         let result = transaction::run_counting(worker, sql, None).await?;

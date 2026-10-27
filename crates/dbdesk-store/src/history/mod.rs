@@ -13,8 +13,10 @@ use dbdesk_core::DataSourceId;
 use jiff::Timestamp;
 use rusqlite::params;
 
+pub use redact::redact_secrets;
 pub use source::{HistorySource, HistorySourceKind};
 
+mod redact;
 mod schema;
 mod source;
 
@@ -173,6 +175,10 @@ pub struct History {
 }
 
 impl History {
+    /// Adds the entry, with any password or connection-string secret in its SQL replaced by
+    /// `<redacted>` (see [`redact_secrets`]): every writer comes through here, so nothing
+    /// that reaches the file has one.
+    ///
     /// # Errors
     ///
     /// [`HistoryError::Database`] if the row can't be written.
@@ -190,7 +196,7 @@ impl History {
             params![
                 entry.data_source.to_string(),
                 format_timestamp(entry.executed_at),
-                entry.sql,
+                redact_secrets(&entry.sql),
                 duration_ms,
                 rows,
                 entry.outcome.as_str(),
@@ -554,6 +560,60 @@ mod tests {
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(version, 3);
+    }
+
+    /// The guard against secrets in the history: statements carrying one in every form
+    /// [`redact_secrets`] knows, from every kind of writer, and then the file and its WAL read
+    /// as bytes, where neither may hold it.
+    #[test]
+    fn never_writes_a_secret_to_the_file() {
+        const SECRET: &str = "Hunter2Secret";
+        let dir = tempfile::tempdir().unwrap();
+        let file = HistoryFile::new(dir.path().join("history.sqlite"));
+        let history = file.open().unwrap();
+        let shop = DataSourceId::generate();
+        let statements = [
+            format!("CREATE ROLE app LOGIN PASSWORD '{SECRET}'"),
+            format!("CREATE LOGIN app WITH PASSWORD = N'{SECRET}'"),
+            format!("ALTER USER 'app'@'%' IDENTIFIED BY '{SECRET}'"),
+            format!("CREATE USER app IDENTIFIED WITH plaintext_password BY '{SECRET}'"),
+            format!("CREATE SECRET (TYPE s3, KEY_ID 'k', SECRET '{SECRET}')"),
+            format!("SELECT dblink_connect('host=db password={SECRET}')"),
+            format!("ATTACH 'postgresql://app:{SECRET}@db/crm' AS crm"),
+            format!("SELECT 'Server=db;Pwd={SECRET};'"),
+        ];
+        let sources = [
+            HistorySource::Console,
+            HistorySource::ObjectHelper,
+            HistorySource::Mcp {
+                client: Some("claude-ai".to_owned()),
+            },
+        ];
+        for (sql, source) in statements.iter().zip(sources.iter().cycle()) {
+            history
+                .record(&HistoryEntry {
+                    source: source.clone(),
+                    ..entry(shop, 0, sql)
+                })
+                .unwrap();
+        }
+
+        let found = history.search(&HistoryQuery::all(shop), 100).unwrap();
+        assert_eq!(found.len(), statements.len());
+        assert!(found.iter().all(|entry| entry.sql.contains("<redacted>")));
+        for path in [
+            file.path().to_owned(),
+            dir.path().join("history.sqlite-wal"),
+        ] {
+            let bytes = std::fs::read(&path).unwrap();
+            assert!(
+                !bytes
+                    .windows(SECRET.len())
+                    .any(|window| window == SECRET.as_bytes()),
+                "{} holds the secret",
+                path.display()
+            );
+        }
     }
 
     /// Set to a history file's path in the child process of

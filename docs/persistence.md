@@ -178,6 +178,10 @@ CREATE INDEX history_by_origin ON history (coalesce(origin, source), executed_at
   its rows. `rows` is what the database
   reports (rows changed, or returned once fully read), `duration_ms` the time until the
   statement completed or its first page arrived.
+- Secrets never reach the file: `History::record` replaces passwords in DDL (`PASSWORD '…'`,
+  `IDENTIFIED BY '…'`, DuckDB's `CREATE SECRET`) and in connection strings (`password=…`,
+  `pwd=…`, `user:password@`) with `<redacted>`, for every writer. See
+  [History as an audit trail](history-audit.md#w4b--secrets-stay-out).
 - Searchable from the History window of a console (by data source, substring of the SQL,
   newest first, at most 500 rows). Results themselves are not stored.
 - Owned by one engine thread from the blocking pool, so writes and searches never block the
