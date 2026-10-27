@@ -10,7 +10,7 @@ use dbdesk_core::{
 use tokio_postgres::types::ToSql;
 use tokio_postgres::{Client, Row};
 
-use crate::connection_error;
+use crate::{connection_error, roles};
 
 const SCHEMA_FOLDERS: &[FolderKind] = &[
     FolderKind::Tables,
@@ -27,7 +27,9 @@ const RELATION_OID: &str = "(SELECT c.oid FROM pg_class c \
 
 /// Which level of the tree a path points at, with the names its query needs.
 enum Level<'a> {
-    Databases,
+    /// The roles folder, then the databases.
+    Top,
+    Roles,
     Schemas,
     SchemaFolders,
     SchemaObjects {
@@ -47,7 +49,8 @@ enum Level<'a> {
 impl<'a> Level<'a> {
     fn of(path: &'a CatalogPath) -> Option<Self> {
         match path.segments() {
-            [] => Some(Self::Databases),
+            [] => Some(Self::Top),
+            [folder] if folder.kind == NodeKind::Folder(FolderKind::Roles) => Some(Self::Roles),
             [database] if database.kind == NodeKind::Database => Some(Self::Schemas),
             [database, schema, rest @ ..]
                 if database.kind == NodeKind::Database && schema.kind == NodeKind::Schema =>
@@ -129,7 +132,12 @@ pub(crate) async fn children(
 ) -> Result<Vec<CatalogNode>, DriverError> {
     let level = Level::of(path).ok_or_else(|| DriverError::InvalidPath(path.clone()))?;
     match level {
-        Level::Databases => databases(client, path).await,
+        Level::Top => {
+            let mut nodes = vec![CatalogNode::folder(path, FolderKind::Roles)];
+            nodes.extend(databases(client, path).await?);
+            Ok(nodes)
+        }
+        Level::Roles => roles::list(client, path).await,
         Level::Schemas => schemas(client, path).await,
         Level::SchemaFolders => Ok(folders(path, SCHEMA_FOLDERS)),
         Level::SchemaObjects { schema, folder } => {

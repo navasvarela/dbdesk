@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 #[schemars(crate = "rmcp::schemars")]
 pub(crate) struct PathStep {
     /// `database`, `schema`, `folder`, `table`, `view`, `materialized_view`, `function`,
-    /// `procedure`, `sequence`, `event`, `column`, `index`, `constraint` or `trigger`.
+    /// `procedure`, `sequence`, `event`, `column`, `index`, `constraint`, `trigger` or `role`.
     pub(crate) kind: String,
     /// The object's name; for a folder, what it holds (`tables`, `views`, `columns`…).
     pub(crate) name: String,
@@ -40,7 +40,7 @@ impl From<&CatalogNode> for NodeJson {
     }
 }
 
-const FOLDERS: [FolderKind; 11] = [
+const FOLDERS: [FolderKind; 12] = [
     FolderKind::Tables,
     FolderKind::Views,
     FolderKind::MaterializedViews,
@@ -52,9 +52,10 @@ const FOLDERS: [FolderKind; 11] = [
     FolderKind::Indexes,
     FolderKind::Constraints,
     FolderKind::Triggers,
+    FolderKind::Roles,
 ];
 
-const KINDS: [(NodeKind, &str); 13] = [
+const KINDS: [(NodeKind, &str); 14] = [
     (NodeKind::Database, "database"),
     (NodeKind::Schema, "schema"),
     (NodeKind::Table, "table"),
@@ -68,6 +69,7 @@ const KINDS: [(NodeKind, &str); 13] = [
     (NodeKind::Index, "index"),
     (NodeKind::Constraint, "constraint"),
     (NodeKind::Trigger, "trigger"),
+    (NodeKind::Role, "role"),
 ];
 
 fn kind_name(kind: NodeKind) -> &'static str {

@@ -51,6 +51,7 @@ pub(crate) enum SessionRequest {
     EndTransaction(TransactionEnd),
     DescribeTable(RelationName),
     ApplyEdits(Vec<RowEdit>),
+    DescribeRole(CatalogPath),
     ApplyDdl(Vec<String>),
     Ddl(CatalogPath),
     /// Prepares statements without running them; see [`crate::Command::ValidateStatements`].
@@ -576,6 +577,10 @@ impl Worker<'_> {
             SessionRequest::EndTransaction(end) => transaction::end(self, end).await,
             SessionRequest::DescribeTable(table) => {
                 let work = catalog::describe_table(self.context, &mut *self.connection, table);
+                self.signals.guard(work, None, self.cancel_handle).await
+            }
+            SessionRequest::DescribeRole(path) => {
+                let work = catalog::describe_role(self.context, &mut *self.connection, path);
                 self.signals.guard(work, None, self.cancel_handle).await
             }
             SessionRequest::ApplyEdits(statements) => edits::apply(self, &statements).await,

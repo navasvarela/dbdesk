@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use dbdesk_core::{
     CatalogNode, CatalogPath, ColumnInfo, DataSource, DataSourceId, DriverKind, Password,
-    ProjectId, Rejection, RelationName, Row, ServerInfo, TableDescription, TableName,
-    TransactionStatus,
+    ProjectId, Rejection, RelationName, RoleDescription, Row, ServerInfo, TableDescription,
+    TableName, TransactionStatus,
 };
 use dbdesk_store::{
     ConsoleKey, ExportFormat, HistoryEntry, HistoryQuery, ImportPlan, ImportPreview,
@@ -184,6 +184,12 @@ pub enum Command {
     DescribeTable {
         data_source: DataSourceId,
         table: RelationName,
+    },
+    /// Describes the role at `path` (a node of the roles folder) on the explorer's
+    /// connection, for editing or dropping it. Answered by [`Event::RoleDescribed`].
+    DescribeRole {
+        data_source: DataSourceId,
+        path: CatalogPath,
     },
     /// Runs statements that create or change database objects (the object helpers' DDL), in
     /// order, on the explorer's connection to the data source, connecting first if needed.
@@ -386,6 +392,12 @@ pub enum Event {
         data_source: DataSourceId,
         table: RelationName,
         result: Result<Option<TableDescription>, String>,
+    },
+    /// The answer to [`Command::DescribeRole`].
+    RoleDescribed {
+        data_source: DataSourceId,
+        path: CatalogPath,
+        result: Result<RoleDescription, String>,
     },
     /// The answer to [`Command::ApplyDdl`].
     DdlApplied {
