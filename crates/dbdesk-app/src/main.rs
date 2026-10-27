@@ -50,6 +50,7 @@ mod telemetry;
 #[cfg(test)]
 mod test_support;
 mod theme;
+mod title_bar;
 mod unsaved_dialog;
 mod update_dialog;
 mod updates;
@@ -126,6 +127,14 @@ fn main() -> anyhow::Result<()> {
     if let Some(icon) = brand::window_icon() {
         viewport = viewport.with_icon(icon);
     }
+    // The content runs under a transparent title bar, and dbdesk draws its own top strip
+    // (`title_bar`) around the window buttons. egui spells winit's
+    // `with_titlebar_transparent(true)` as `with_titlebar_shown(false)`.
+    #[cfg(target_os = "macos")]
+    let viewport = viewport
+        .with_fullsize_content_view(true)
+        .with_title_shown(false)
+        .with_titlebar_shown(false);
     let options = eframe::NativeOptions {
         viewport,
         ..Default::default()
@@ -136,7 +145,9 @@ fn main() -> anyhow::Result<()> {
         Box::new(move |cc| {
             let app = DbDeskApp::new(cc, log_feed, engine_config)?.with_files_to_open(files);
             #[cfg(target_os = "macos")]
-            let app = app.with_native_menu(native_menu::NativeMenu::install(&cc.egui_ctx));
+            let app = app
+                .with_native_menu(native_menu::NativeMenu::install(&cc.egui_ctx))
+                .with_integrated_title_bar();
             Ok(Box::new(app))
         }),
     )

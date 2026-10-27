@@ -43,6 +43,7 @@ use crate::settings_window::{self, SettingsWindowAction};
 use crate::sql_files::{self, Destination, OpenFileAction, OpenFileDialog, SqlFiles};
 use crate::state::{AppState, EngineStatus};
 use crate::theme::{self, Palette};
+use crate::title_bar;
 use crate::unsaved_dialog::{UnsavedChoice, UnsavedConfirmation};
 use crate::update_dialog::{self, UpdateAction};
 use crate::updates::Updates;
@@ -126,6 +127,8 @@ pub struct DbDeskApp {
     maximize_window: bool,
     /// The menu bar macOS draws, when `main` installed one; egui's is drawn only without it.
     native_menu: Option<NativeMenu>,
+    /// The window's content runs under its title bar, so the app draws the top strip itself.
+    integrated_title_bar: bool,
 }
 
 impl DbDeskApp {
@@ -197,6 +200,7 @@ impl DbDeskApp {
             pick_sql_save_path: Box::new(file_picker::pick_sql_save_path),
             maximize_window,
             native_menu: None,
+            integrated_title_bar: false,
         })
     }
 
@@ -214,6 +218,16 @@ impl DbDeskApp {
     )]
     pub fn with_native_menu(mut self, menu: Option<NativeMenu>) -> Self {
         self.native_menu = menu;
+        self
+    }
+
+    /// Draws the strip under a transparent title bar: `main` makes the title bar so on macOS.
+    #[cfg_attr(
+        not(any(target_os = "macos", test)),
+        expect(dead_code, reason = "only macOS integrates the title bar")
+    )]
+    pub fn with_integrated_title_bar(mut self) -> Self {
+        self.integrated_title_bar = true;
         self
     }
 
@@ -1254,6 +1268,28 @@ impl DbDeskApp {
         }
     }
 
+    /// The title bar strip, the egui menu bar, both, or neither (macOS with a native menu bar
+    /// and a title bar of its own, which never happens).
+    fn top_strip(&mut self, ui: &mut egui::Ui, bar: Frame) {
+        let draws_menu = self.native_menu.is_none();
+        if self.integrated_title_bar {
+            egui::Panel::top("title_bar")
+                .frame(bar.inner_margin(Margin::ZERO))
+                .exact_size(title_bar::HEIGHT)
+                .show(ui, |ui| {
+                    title_bar::show(ui, "dbdesk", |ui| {
+                        if draws_menu {
+                            self.menu_bar(ui);
+                        }
+                    });
+                });
+        } else if draws_menu {
+            egui::Panel::top("menu_bar")
+                .frame(bar)
+                .show(ui, |ui| self.menu_bar(ui));
+        }
+    }
+
     fn sync_native_menu(&mut self, ctx: &egui::Context) {
         if self.native_menu.is_none() {
             return;
@@ -1545,11 +1581,7 @@ impl eframe::App for DbDeskApp {
         let bar = Frame::new()
             .fill(ui.visuals().panel_fill)
             .inner_margin(Margin::symmetric(10, 2));
-        if self.native_menu.is_none() {
-            egui::Panel::top("menu_bar")
-                .frame(bar)
-                .show(ui, |ui| self.menu_bar(ui));
-        }
+        self.top_strip(ui, bar);
         egui::Panel::bottom("status_bar")
             .frame(bar)
             .show(ui, |ui| self.status_bar(ui));
@@ -1689,6 +1721,7 @@ mod tests {
     mod history;
     mod menus;
     mod parameters;
+    mod title_bar;
 
     use std::path::Path;
     use std::sync::Arc;
