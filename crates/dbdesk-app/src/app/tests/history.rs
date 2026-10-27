@@ -165,3 +165,42 @@ fn searches_every_data_source_and_a_recent_period() {
     });
     harness.get_by_label_contains("SELECT * FROM main.orders");
 }
+
+/// Choosing how long to keep statements saves it and deletes the older ones at once.
+#[test]
+fn keeps_the_history_as_long_as_the_settings_say() {
+    let dir = tempfile::tempdir().unwrap();
+    let shop = save_shop(dir.path(), "CREATE TABLE orders (id INTEGER PRIMARY KEY)");
+    record(
+        dir.path(),
+        shop.id,
+        &[("SELECT 'from 1970'", HistorySource::Console)],
+    );
+    let (_layer, feed) = log_console::pipeline();
+    let mut harness = start_app(dir.path(), feed);
+    open_orders(&mut harness, "0 rows");
+
+    harness.get_by_label("View").click();
+    harness.run_steps(2);
+    harness.get_by_label("Settings…").click();
+    harness.run_steps(2);
+    // The window scrolls, and the history comes after formatting, linting and updates.
+    let no_limit = |node: &egui_kittest::kittest::AccessKitNode<'_>| {
+        node.role() == Role::ComboBox && node.value().as_deref() == Some("no limit")
+    };
+    harness.get_all_by(no_limit).next().unwrap().scroll_to_me();
+    harness.run();
+    harness.get_all_by(no_limit).next().unwrap().click();
+    harness.run();
+    harness.get_by_label("a year").click();
+    step_until(&mut harness, "the settings file", |_| {
+        std::fs::read_to_string(dir.path().join("settings.toml"))
+            .is_ok_and(|text| text.contains("max_age_days = 365"))
+    });
+
+    // The window covers the console's toolbar.
+    harness.get_by_label("Close window").click();
+    harness.run();
+    open_history(&mut harness, 1);
+    assert!(harness.query_by_label("SELECT 'from 1970'").is_none());
+}

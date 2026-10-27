@@ -38,6 +38,6 @@ pub use projects::{
 };
 pub use secrets::{Keychain, Secret, SecretError, SecretStore};
 pub use settings::{
-    FormatSettings, KeywordCase, LintSettings, Settings, SettingsError, SettingsFile,
-    UpdateSettings,
+    FormatSettings, HistorySettings, KeywordCase, LintSettings, Settings, SettingsError,
+    SettingsFile, UpdateSettings,
 };

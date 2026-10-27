@@ -126,6 +126,10 @@ indent_width = 4        # spaces per level, 1 to 8
 [lint]
 disabled = ["select-star-in-insert"]  # lint rule ids, see features/sql-runner.md
 ask_database = true                   # connected consoles prepare (never run) statements
+
+[history]                 # both absent by default: the history keeps everything
+max_age_days = 365        # statements older than this go
+max_per_data_source = 100000  # only the newest this many of each data source stay
 ```
 
 An id in `lint.disabled` that names no rule is listed in the Settings window, and ignored.
@@ -188,7 +192,9 @@ CREATE INDEX history_by_origin ON history (coalesce(origin, source), executed_at
 - Owned by one engine thread from the blocking pool, so writes and searches never block the
   UI and searches see every earlier write. If the database can't be opened, history is
   disabled for the session and the History window shows why.
-- Nothing is ever deleted yet; pruning old entries is a follow-up if the file grows.
+- Kept as long as `[history]` in `settings.toml` says (`max_age_days`, `max_per_data_source`;
+  no limit by default). The app prunes at start-up and when the setting is saved, 2,000 rows
+  per transaction so another process's write never waits long; `dbdesk mcp` doesn't prune.
 
 ## Layout
 

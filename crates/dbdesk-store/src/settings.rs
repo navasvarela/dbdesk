@@ -2,6 +2,7 @@
 //! app's Settings window writes it; it can also be edited by hand.
 
 use std::io;
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,7 @@ pub struct Settings {
     pub format: FormatSettings,
     pub lint: LintSettings,
     pub updates: UpdateSettings,
+    pub history: HistorySettings,
 }
 
 /// How the SQL formatter writes statements.
@@ -69,6 +71,19 @@ impl Default for UpdateSettings {
             check_on_start: true,
         }
     }
+}
+
+/// How long the query history keeps statements. Both limits apply when both are set; with
+/// neither, as by default, nothing is ever deleted.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct HistorySettings {
+    /// Statements older than this many days go.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_age_days: Option<NonZeroU32>,
+    /// Only the newest this many statements of each data source stay.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_per_data_source: Option<NonZeroU32>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -175,6 +190,13 @@ mod tests {
         assert_eq!(settings.format.keyword_case, KeywordCase::Lower);
         assert_eq!(settings.format.indent_width, 4);
         assert!(settings.updates.check_on_start);
+        assert_eq!(settings.history, HistorySettings::default());
+
+        std::fs::write(file.path(), "[history]\nmax_per_data_source = 0\n").unwrap();
+        assert!(
+            matches!(file.load(), Err(SettingsError::Parse { .. })),
+            "keeping none of the history is a mistake, not a setting"
+        );
     }
 
     #[test]
@@ -192,6 +214,10 @@ mod tests {
             },
             updates: UpdateSettings {
                 check_on_start: false,
+            },
+            history: HistorySettings {
+                max_age_days: NonZeroU32::new(90),
+                max_per_data_source: None,
             },
         };
 

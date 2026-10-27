@@ -2,7 +2,8 @@
 //! up in order, so a search sent after a run has finished sees that run's statements.
 
 use dbdesk_core::describe_error;
-use dbdesk_store::{History, HistoryEntry, HistoryFile, HistoryQuery};
+use dbdesk_store::{History, HistoryEntry, HistoryFile, HistoryQuery, HistorySettings};
+use jiff::Timestamp;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
 
@@ -16,6 +17,7 @@ const SEARCH_LIMIT: usize = 500;
 enum HistoryRequest {
     Record(HistoryEntry),
     Search(HistoryQuery),
+    Prune(HistorySettings),
 }
 
 /// A handle for queueing history work. Cheap to clone into sessions.
@@ -40,6 +42,13 @@ impl HistoryLog {
     /// Answered by [`Event::HistoryFound`].
     pub(crate) fn search(&self, query: HistoryQuery) {
         self.send(HistoryRequest::Search(query));
+    }
+
+    /// Deletes what `retention` no longer keeps. Logged, not reported: nobody is waiting.
+    pub(crate) fn prune(&self, retention: HistorySettings) {
+        if retention != HistorySettings::default() {
+            self.send(HistoryRequest::Prune(retention));
+        }
     }
 
     fn send(&self, request: HistoryRequest) {
@@ -72,6 +81,11 @@ fn serve(file: &HistoryFile, mut requests: UnboundedReceiver<HistoryRequest>, ev
                 };
                 events.send(Event::HistoryFound { query, result });
             }
+            HistoryRequest::Prune(retention) => {
+                if let Ok(history) = &history {
+                    prune(history, &retention);
+                }
+            }
         }
     }
 }
@@ -83,5 +97,13 @@ fn record(history: &History, entry: &HistoryEntry) {
             "could not record a statement in the history: {}",
             describe_error(&error)
         );
+    }
+}
+
+fn prune(history: &History, retention: &HistorySettings) {
+    match history.prune(retention, Timestamp::now()) {
+        Ok(0) => {}
+        Ok(deleted) => tracing::info!("pruned {deleted} statements from the history"),
+        Err(error) => tracing::warn!("could not prune the history: {}", describe_error(&error)),
     }
 }

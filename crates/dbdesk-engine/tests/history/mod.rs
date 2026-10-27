@@ -1,5 +1,5 @@
 //! The history as an audit trail, through the engine on SQLite: where each statement came
-//! from, a grid edit's change, and no secrets in the file.
+//! from, a grid edit's change, no secrets in the file, and retention.
 
 use dbdesk_core::TableName;
 use dbdesk_engine::RowsImport;
@@ -10,7 +10,7 @@ use dbdesk_store::{
 use super::*;
 
 /// Every entry of the data source, newest first.
-fn history(engine: &mut TestEngine, data_source: DataSourceId) -> Vec<HistoryEntry> {
+fn history_of(engine: &mut TestEngine, data_source: DataSourceId) -> Vec<HistoryEntry> {
     engine.send(Command::SearchHistory(HistoryQuery::all(data_source)));
     loop {
         match next_answer(engine) {
@@ -95,7 +95,7 @@ fn records_where_each_statement_came_from() {
     );
     assert_eq!(result, Ok(2));
 
-    let found: Vec<(HistorySource, String, Option<u64>)> = history(&mut engine, id)
+    let found: Vec<(HistorySource, String, Option<u64>)> = history_of(&mut engine, id)
         .into_iter()
         .map(|entry| (entry.source, entry.sql, entry.rows))
         .collect();
@@ -150,7 +150,7 @@ fn keeps_secrets_out_of_the_history_file() {
         }
     }
 
-    let recorded: Vec<String> = history(&mut engine, id)
+    let recorded: Vec<String> = history_of(&mut engine, id)
         .into_iter()
         .map(|entry| entry.sql)
         .collect();
@@ -173,4 +173,68 @@ fn keeps_secrets_out_of_the_history_file() {
             "{name} holds the secret"
         );
     }
+}
+
+/// Statements older than the retention go at start-up, and saving a tighter setting prunes at
+/// once.
+#[test]
+fn prunes_at_start_up_and_when_the_retention_is_saved() {
+    let dir = tempfile::tempdir().unwrap();
+    let id = DataSourceId::generate();
+    let history = dbdesk_store::HistoryFile::new(dir.path().join("history.sqlite"))
+        .open()
+        .unwrap();
+    let now = jiff::Timestamp::now();
+    for (days_ago, sql) in [
+        (40, "SELECT 'old'"),
+        (2, "SELECT 'recent'"),
+        (1, "SELECT 'newest'"),
+    ] {
+        let executed_at = now
+            .checked_sub(jiff::SignedDuration::from_hours(24 * days_ago))
+            .unwrap();
+        history
+            .record(&HistoryEntry {
+                data_source: id,
+                executed_at,
+                sql: sql.to_owned(),
+                duration: None,
+                rows: None,
+                outcome: HistoryOutcome::Ok,
+                source: HistorySource::Console,
+            })
+            .unwrap();
+    }
+    drop(history);
+    std::fs::write(
+        dir.path().join("settings.toml"),
+        "[history]\nmax_age_days = 30\n",
+    )
+    .unwrap();
+
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    let mut settings = dbdesk_store::Settings::default();
+    settings.history.max_age_days = std::num::NonZeroU32::new(30);
+    engine.expect(Event::Started);
+    engine.expect_keymap(Ok(dbdesk_store::KeymapBindings::new()));
+    engine.expect_settings(Ok(settings.clone()));
+    engine.expect(Event::ProjectsLoaded(dbdesk_store::Projects::default()));
+    engine.expect(Event::DataSourcesLoaded(vec![]));
+    engine.expect(Event::ConsolesLoaded(vec![]));
+    let sqls = |engine: &mut TestEngine| -> Vec<String> {
+        history_of(engine, id)
+            .into_iter()
+            .map(|entry| entry.sql)
+            .collect()
+    };
+    assert_eq!(sqls(&mut engine), ["SELECT 'newest'", "SELECT 'recent'"]);
+
+    settings.history.max_per_data_source = std::num::NonZeroU32::new(1);
+    engine.send(Command::SaveSettings(settings.clone()));
+    match next_answer(&mut engine) {
+        Event::SettingsLoaded { result, .. } => assert_eq!(result, Ok(settings)),
+        other => panic!("expected the settings, got {other:?}"),
+    }
+    assert_eq!(sqls(&mut engine), ["SELECT 'newest'"]);
+    engine.shut_down();
 }
