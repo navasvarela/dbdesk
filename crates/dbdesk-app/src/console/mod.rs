@@ -10,6 +10,8 @@ mod completion;
 mod completion_popup;
 mod edit;
 mod file;
+mod find;
+mod find_bar;
 mod grid;
 pub(crate) mod highlight;
 mod keys;
@@ -40,6 +42,7 @@ use file::{ConfigFile, Reload, SqlFile, Storage};
 
 pub use edit::ChangeCount;
 pub use file::Disk;
+pub use find::Found;
 pub use keys::RowsToOpen;
 
 pub use catalog_source::TreeCatalog;
@@ -146,6 +149,10 @@ pub struct QueryConsole {
     /// A byte offset to move the editor's cursor to on the next frame, after the text was
     /// changed from outside the editor.
     pending_cursor: Option<usize>,
+    /// A range to select in the editor and scroll to on the next frame, leaving the keyboard
+    /// focus where it is: a match the find bar went to.
+    pending_selection: Option<Range<usize>>,
+    find: find::FindBar,
     /// The text before it was replaced from outside the editor (formatted, or reloaded from
     /// its file), for the editor to record as an undo point next to the new text, so one
     /// undo takes the whole change back.
@@ -312,6 +319,8 @@ impl QueryConsole {
             run: None,
             error_marker: None,
             pending_cursor: None,
+            pending_selection: None,
+            find: find::FindBar::default(),
             replaced_text: None,
             format_error: None,
             problems: problems::Problems::new(Instant::now()),

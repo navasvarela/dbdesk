@@ -79,6 +79,8 @@ keyring = "4.2.0"
 # takes rustls's process-wide provider, so ring must stay the only provider compiled in
 # (dbdesk-driver-mysql's tests check it).
 mysql_async = { version = "0.37.1", default-features = false, features = ["minimal-rust", "rustls-tls", "ring", "tls12"] }
+# Find and replace's regular expressions; already built for mysql_common and arrow.
+regex = "1.13.1"
 rfd = "0.17.2"
 # The official MCP SDK, for `dbdesk mcp`. Only the server side and the stdio transport; the
 # tests add the client to drive it.

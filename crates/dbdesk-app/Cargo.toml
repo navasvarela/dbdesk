@@ -26,6 +26,7 @@ egui_extras.workspace = true
 egui-phosphor.workspace = true
 image.workspace = true
 jiff.workspace = true
+regex.workspace = true
 rfd.workspace = true
 semver.workspace = true
 serde.workspace = true

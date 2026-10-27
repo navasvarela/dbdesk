@@ -389,3 +389,55 @@ fn runs_a_statement_again_wrapped_and_keeps_it_as_typed() {
     assert_eq!(as_typed.statements[0].sql, "select id, note from t");
     assert_eq!(as_typed.statements[0].in_database, None);
 }
+
+#[test]
+fn finds_from_the_selection_and_replaces_one_match_at_a_time() {
+    let mut console = console("select id from orders; select id from order_items;");
+    console.selection = 7..9;
+    console.open_find(false);
+    assert_eq!(
+        console.find_bar().query,
+        "id",
+        "the selection is searched for"
+    );
+
+    console.find_next(true);
+    assert_eq!(console.selection, 30..32);
+    assert_eq!(console.found().current, Some(1));
+    console.find_next(true);
+    assert_eq!(console.selection, 7..9, "wraps around");
+
+    let bar = console.find_bar_mut();
+    bar.replacement = "order_id".to_owned();
+    bar.options.whole_word = true;
+    console.replace_current(Instant::now());
+    assert_eq!(
+        console.text(),
+        "select order_id from orders; select id from order_items;"
+    );
+    assert_eq!(console.selection, 36..38, "the next match is selected");
+    assert_eq!(
+        console.replaced_text.as_deref(),
+        Some("select id from orders; select id from order_items;"),
+        "one undo step"
+    );
+}
+
+#[test]
+fn replaces_every_match_with_regular_expression_groups() {
+    let mut console = console("select a1, b2 from t");
+    console.open_find(true);
+    let bar = console.find_bar_mut();
+    bar.query = r"([a-z])(\d)".to_owned();
+    bar.replacement = "$2$1".to_owned();
+    bar.options.regex = true;
+
+    assert_eq!(console.replace_all(Instant::now()), 2);
+    assert_eq!(console.text(), "select 1a, 2b from t");
+
+    console.find_bar_mut().query = "(".to_owned();
+    assert!(console.found().error.is_some());
+    assert_eq!(console.replace_all(Instant::now()), 0);
+    console.close_find();
+    assert_eq!(console.found(), Found::default());
+}

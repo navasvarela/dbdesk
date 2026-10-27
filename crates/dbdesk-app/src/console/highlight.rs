@@ -22,7 +22,15 @@ pub struct Marks {
     pub error: Option<Range<usize>>,
     /// Shaded: the statement the cursor is in.
     pub current_statement: Option<Range<usize>>,
+    /// Highlighted: what the find bar found, in order.
+    pub matches: Vec<Range<usize>>,
+    /// Highlighted more strongly: the match the find bar selected.
+    pub current_match: Option<Range<usize>>,
 }
+
+/// How strongly the find bar's matches are highlighted, as a share of the selection colour:
+/// enough to spot every match, while the selected one stands out at full strength.
+const MATCH_STRENGTH: f32 = 0.45;
 
 /// A `TextEdit` layouter that highlights SQL as [`layout_job`] does, wrapping at the
 /// editor's width.
@@ -47,27 +55,67 @@ pub fn layout_job(text: &str, dialect: Dialect, marks: &Marks, style: &Style) ->
         .extreme_bg_color
         .lerp_to_gamma(style.visuals.text_color(), CURRENT_STATEMENT_TINT);
 
+    let match_background = style
+        .visuals
+        .selection
+        .bg_fill
+        .gamma_multiply(MATCH_STRENGTH);
+    let current_match_background = style.visuals.selection.bg_fill;
+
     let mut job = LayoutJob::default();
     for token in tokenize(text, dialect) {
-        let fragment = &text[token.range.clone()];
-        let mut format = format_for(token.kind, fragment, &font, &colors);
-        if marks
-            .error
-            .as_ref()
-            .is_some_and(|error| overlaps(error, &token.range))
-        {
-            format.underline = error_stroke;
+        let token_format = format_for(token.kind, &text[token.range.clone()], &font, &colors);
+        // A match can start or end inside a token (part of a word), so the token is split
+        // where matches begin and end.
+        for piece in pieces(&token.range, &marks.matches) {
+            let mut format = token_format.clone();
+            if marks
+                .error
+                .as_ref()
+                .is_some_and(|error| overlaps(error, &piece))
+            {
+                format.underline = error_stroke;
+            }
+            if marks
+                .current_statement
+                .as_ref()
+                .is_some_and(|current| overlaps(current, &piece))
+            {
+                format.background = current_background;
+            }
+            if marks.matches.iter().any(|found| overlaps(found, &piece)) {
+                format.background = match_background;
+            }
+            if marks
+                .current_match
+                .as_ref()
+                .is_some_and(|current| overlaps(current, &piece))
+            {
+                format.background = current_match_background;
+            }
+            job.append(&text[piece], 0.0, format);
         }
-        if marks
-            .current_statement
-            .as_ref()
-            .is_some_and(|current| overlaps(current, &token.range))
-        {
-            format.background = current_background;
-        }
-        job.append(fragment, 0.0, format);
     }
     job
+}
+
+/// `range` cut where any of `matches` starts or ends inside it.
+fn pieces(range: &Range<usize>, matches: &[Range<usize>]) -> Vec<Range<usize>> {
+    let mut cuts: Vec<usize> = matches
+        .iter()
+        .flat_map(|found| [found.start, found.end])
+        .filter(|cut| range.start < *cut && *cut < range.end)
+        .collect();
+    cuts.sort_unstable();
+    cuts.dedup();
+    let mut pieces = Vec::with_capacity(cuts.len() + 1);
+    let mut start = range.start;
+    for cut in cuts {
+        pieces.push(start..cut);
+        start = cut;
+    }
+    pieces.push(start..range.end);
+    pieces
 }
 
 fn format_for(kind: TokenKind, fragment: &str, font: &FontId, colors: &SyntaxColors) -> TextFormat {
@@ -117,6 +165,7 @@ mod tests {
         let marks = Marks {
             error: Some(17..20),
             current_statement: Some(10..20),
+            ..Marks::default()
         };
 
         let job = layout_job(text, Dialect::Postgres, &marks, &Style::default());
@@ -135,6 +184,38 @@ mod tests {
             .collect();
         assert_eq!(shaded, "select bad");
         assert_eq!(underlined, "bad");
+    }
+
+    #[test]
+    fn highlights_matches_inside_tokens_and_the_current_one_more() {
+        let text = "select order_id from orders";
+        let marks = Marks {
+            matches: vec![7..12, 21..26],
+            current_match: Some(21..26),
+            ..Marks::default()
+        };
+        let style = Style::default();
+
+        let job = layout_job(text, Dialect::Postgres, &marks, &style);
+
+        let section_text = |section: &egui::text::LayoutSection| {
+            &text[section.byte_range.start.0..section.byte_range.end.0]
+        };
+        let with_background = |wanted: egui::Color32| -> Vec<&str> {
+            job.sections
+                .iter()
+                .filter(|section| section.format.background == wanted)
+                .map(section_text)
+                .collect()
+        };
+        let selection = style.visuals.selection.bg_fill;
+        assert_eq!(
+            with_background(selection.gamma_multiply(MATCH_STRENGTH)),
+            ["order"]
+        );
+        assert_eq!(with_background(selection), ["order"]);
+        let all: String = job.sections.iter().map(section_text).collect();
+        assert_eq!(all, text);
     }
 
     #[test]

@@ -9,9 +9,9 @@ use egui::{Id, Margin, ScrollArea, TextEdit, Ui, vec2};
 
 use super::highlight::Marks;
 use super::{
-    Candidate, Disk, ExportedRows, FormatScope, LintOptions, QueryConsole, RecentCompletions,
-    RowsToOpen, RunScope, RunState, SubmittedRun, TreeCatalog, cell_viewer, completion_popup,
-    highlight, results,
+    Candidate, Disk, ExportedRows, FormatScope, Found, LintOptions, QueryConsole,
+    RecentCompletions, RowsToOpen, RunScope, RunState, SubmittedRun, TreeCatalog, cell_viewer,
+    completion_popup, find_bar, highlight, results,
 };
 use crate::icons::{self, Role};
 use crate::keymap::{Action, Keymap};
@@ -24,7 +24,7 @@ use dbdesk_sql::{ProblemSource, Severity};
 use dbdesk_store::ExportFormat;
 
 /// What the console's keys can do while its editor has focus.
-const EDITOR_ACTIONS: [Action; 12] = [
+const EDITOR_ACTIONS: [Action; 16] = [
     Action::Complete,
     Action::RunCurrent,
     Action::RunAll,
@@ -37,6 +37,10 @@ const EDITOR_ACTIONS: [Action; 12] = [
     Action::FormatAll,
     Action::NextProblem,
     Action::PreviousProblem,
+    Action::Find,
+    Action::Replace,
+    Action::FindNext,
+    Action::FindPrevious,
 ];
 
 /// Height the results start at; the user can drag the line above them.
@@ -100,11 +104,12 @@ pub fn show(
     if console.dialect.has_transactions() {
         transaction_bar(ui, console, keymap, actions);
     }
+    let found = find_bar::show(ui, console, keymap);
     ui.separator();
     let (editor_height, results_height) = split_heights(ui, console);
     let width = ui.available_width();
     ui.allocate_ui(vec2(width, editor_height), |ui| {
-        editor(ui, console, editor_id, context, actions);
+        editor(ui, console, editor_id, &found, context, actions);
     });
     splitter(ui, console);
     ui.allocate_ui(vec2(width, results_height), |ui| {
@@ -175,6 +180,10 @@ fn shortcuts(
             Action::Complete => console.open_completion(true),
             Action::NextProblem => console.jump_to_problem(true),
             Action::PreviousProblem => console.jump_to_problem(false),
+            Action::Find => console.open_find(false),
+            Action::Replace => console.open_find(true),
+            Action::FindNext => console.find_next(true),
+            Action::FindPrevious => console.find_next(false),
             action => perform(console, action, actions),
         }
     }
@@ -221,7 +230,11 @@ fn perform(console: &QueryConsole, action: Action, actions: &mut Vec<ConsoleActi
         | Action::PreviousProblem
         | Action::OpenFile
         | Action::Save
-        | Action::SaveAs => return,
+        | Action::SaveAs
+        | Action::Find
+        | Action::Replace
+        | Action::FindNext
+        | Action::FindPrevious => return,
     };
     let statements = console.statements_to_run(scope);
     let purpose = match scope {
@@ -252,7 +265,11 @@ fn is_enabled(console: &QueryConsole, action: Action) -> bool {
         | Action::PreviousProblem
         | Action::OpenFile
         | Action::Save
-        | Action::SaveAs => true,
+        | Action::SaveAs
+        | Action::Find
+        | Action::Replace
+        | Action::FindNext
+        | Action::FindPrevious => true,
     }
 }
 
@@ -304,7 +321,11 @@ fn toolbar_icon(action: Action) -> Option<(&'static str, Role)> {
         | Action::Complete
         | Action::OpenFile
         | Action::Save
-        | Action::SaveAs => None,
+        | Action::SaveAs
+        | Action::Find
+        | Action::Replace
+        | Action::FindNext
+        | Action::FindPrevious => None,
     }
 }
 
@@ -579,21 +600,33 @@ fn run_status(ui: &mut Ui, console: &QueryConsole, palette: &Palette) {
     }
 }
 
-/// Applies a cursor move requested from outside the editor, and focuses it. After the text
-/// was replaced (a format, a reload from its file), also records the text before and after
-/// as undo points, so one undo restores it; egui would otherwise only record a point once the
-/// text had stayed the same for a second.
-fn move_cursor(ui: &Ui, console: &mut QueryConsole, editor_id: Id) {
-    let Some(offset) = console.pending_cursor.take() else {
-        return;
+/// Applies a cursor move or selection requested from outside the editor. A cursor move also
+/// focuses the editor; a selection (a match the find bar went to) leaves the focus where it
+/// is, and is returned so the editor can scroll to it. After the text was replaced (a format,
+/// a reload from its file, a replacement), also records the text before and after as undo
+/// points, so one undo restores it; egui would otherwise only record a point once the text
+/// had stayed the same for a second.
+fn move_cursor(ui: &Ui, console: &mut QueryConsole, editor_id: Id) -> Option<CCursorRange> {
+    let focus = console.pending_cursor.is_some();
+    let range = match (
+        console.pending_cursor.take(),
+        console.pending_selection.take(),
+    ) {
+        (_, Some(range)) => range,
+        (Some(offset), None) => offset..offset,
+        (None, None) => return None,
     };
-    let char_index = console
-        .text
-        .get(..offset)
-        .unwrap_or(&console.text)
-        .chars()
-        .count();
-    let cursor = CCursorRange::one(CCursor::new(char_index));
+    let char_at = |offset: usize| {
+        CCursor::new(
+            console
+                .text
+                .get(..offset)
+                .unwrap_or(&console.text)
+                .chars()
+                .count(),
+        )
+    };
+    let cursor = CCursorRange::two(char_at(range.start), char_at(range.end));
     let mut state = TextEditState::load(ui.ctx(), editor_id).unwrap_or_default();
     if let Some(before) = console.replaced_text.take() {
         let mut undoer = state.undoer();
@@ -604,18 +637,23 @@ fn move_cursor(ui: &Ui, console: &mut QueryConsole, editor_id: Id) {
     }
     state.cursor.set_char_range(Some(cursor));
     state.store(ui.ctx(), editor_id);
-    ui.memory_mut(|memory| memory.request_focus(editor_id));
+    if focus {
+        ui.memory_mut(|memory| memory.request_focus(editor_id));
+        return None;
+    }
+    Some(cursor)
 }
 
 fn editor(
     ui: &mut Ui,
     console: &mut QueryConsole,
     editor_id: Id,
+    found: &Found,
     context: &ConsoleContext<'_>,
     actions: &mut Vec<ConsoleAction>,
 ) {
     let catalog = context.catalog.as_ref();
-    move_cursor(ui, console, editor_id);
+    let reveal = move_cursor(ui, console, editor_id);
     let checked = console.check_problems(catalog, context.lint, Instant::now());
     if let Some(wait) = checked.repaint_after {
         ui.ctx().request_repaint_after(wait);
@@ -626,6 +664,8 @@ fn editor(
     let marks = Marks {
         error: console.error_marker.clone(),
         current_statement: console.current_statement(),
+        current_match: found.current.map(|index| found.matches[index].clone()),
+        matches: found.matches.clone(),
     };
     let mut layouter = highlight::layouter(console.dialect, &marks);
     let gutter_width = gutter_width(ui, &console.text);
@@ -648,6 +688,11 @@ fn editor(
                 })
                 .layouter(&mut layouter)
                 .show(ui);
+            if let Some(cursor) = reveal {
+                let rect = output.galley.pos_from_cursor(cursor.primary);
+                let rect = rect.translate(output.galley_pos.to_vec2());
+                ui.scroll_to_rect(rect, Some(egui::Align::Center));
+            }
             line_numbers(ui, &output);
             squiggles(ui, console, &output);
             problem_tooltip(ui, console, &output);
