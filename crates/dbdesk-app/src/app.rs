@@ -1,11 +1,11 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use dbdesk_core::{CatalogPath, DataSource, DataSourceId};
 use dbdesk_engine::{
     Command, EngineConfig, EngineError, EngineHandle, Event, PasswordKept, Repaint,
 };
-use dbdesk_store::{ConsoleKey, ExportFormat, McpPermissions};
+use dbdesk_store::{ConsoleKey, ExportFormat, McpPermissions, SqlFileContents};
 use egui::{Frame, Margin, RichText, ThemePreference};
 use egui_dock::{DockArea, DockState};
 
@@ -37,8 +37,10 @@ use crate::project_settings::{ProjectSettingsAction, ProjectSettingsDialog};
 use crate::rollback_dialog::{Closing, RollbackChoice, RollbackConfirmation};
 use crate::settings::AppSettings;
 use crate::settings_window::{self, SettingsWindowAction};
+use crate::sql_files::{self, Destination, OpenFileAction, OpenFileDialog, SqlFiles};
 use crate::state::{AppState, EngineStatus};
 use crate::theme::{self, Palette};
+use crate::unsaved_dialog::{UnsavedChoice, UnsavedConfirmation};
 use crate::update_dialog::{self, UpdateAction};
 use crate::updates::Updates;
 use crate::workspace::{self, Panels, Tab};
@@ -53,6 +55,9 @@ const LAYOUT_STORAGE_KEY: &str = "dock_layout_v2";
 
 /// Asks where to export `what` ("rows", "history") in a format; `None` if cancelled.
 type PickExportPath = dyn Fn(ExportFormat, &str) -> Option<PathBuf>;
+
+/// Asks where to save a file, suggesting a name for it.
+type PickSavePath = Box<dyn Fn(&str) -> Option<PathBuf>>;
 
 pub struct DbDeskApp {
     /// `None` once the engine has been shut down, at exit or after it stopped unexpectedly.
@@ -101,6 +106,18 @@ pub struct DbDeskApp {
     /// Asks for a CSV file to import into a table. A field so tests can answer it.
     pub(crate) pick_csv_file: Box<dyn Fn() -> Option<PathBuf>>,
     consoles: Consoles,
+    /// The `.sql` files consoles show, and the recent ones.
+    sql_files: SqlFiles,
+    open_file_dialog: Option<OpenFileDialog>,
+    /// Files to open once the data sources are known: from the command line.
+    files_to_open: Vec<PathBuf>,
+    unsaved_confirmation: Option<UnsavedConfirmation>,
+    /// A close waiting for these consoles' files to be written; a failed save cancels it.
+    closing_after_saves: Option<(Closing, Vec<ConsoleKey>)>,
+    /// Ask for a SQL file to open, and where to save a console. The platform's file dialogs,
+    /// except in tests.
+    pub(crate) pick_sql_file: Box<dyn Fn() -> Option<PathBuf>>,
+    pub(crate) pick_sql_save_path: PickSavePath,
     /// Set on first launch until the window has been asked to maximize. After that, eframe
     /// restores whatever size the user left it at.
     maximize_window: bool,
@@ -119,6 +136,10 @@ impl DbDeskApp {
         // window rather than keep the small default size.
         let maximize_window = saved_layout.is_none();
         let dock = saved_layout.unwrap_or_else(workspace::default_layout);
+        let remembered_files = cc
+            .storage
+            .and_then(|storage| eframe::get_value(storage, sql_files::STORAGE_KEY))
+            .unwrap_or_default();
         // Asked before the engine takes the config: it only looks at how this copy was
         // installed, so the update dialog knows at once whether to offer installing.
         let install_support = engine_config.updater.support();
@@ -162,8 +183,22 @@ impl DbDeskApp {
             settings: AppSettings::default(),
             updates: Updates::new(install_support),
             consoles: Consoles::default(),
+            sql_files: SqlFiles::new(remembered_files),
+            open_file_dialog: None,
+            files_to_open: Vec::new(),
+            unsaved_confirmation: None,
+            closing_after_saves: None,
+            pick_sql_file: Box::new(file_picker::pick_sql_file),
+            pick_sql_save_path: Box::new(file_picker::pick_sql_save_path),
             maximize_window,
         })
+    }
+
+    /// Opens these files once the data sources and consoles are loaded: the ones named on the
+    /// command line.
+    pub fn with_files_to_open(mut self, paths: Vec<PathBuf>) -> Self {
+        self.files_to_open = paths;
+        self
     }
 
     /// Makes the export and import file dialogs answer `path`, for tests and screenshots.
@@ -260,7 +295,9 @@ impl DbDeskApp {
         if let Some(dialog) = &mut self.csv_import {
             dialog.apply(event);
         }
-        self.consoles.apply(event);
+        let command = self.consoles.apply(event);
+        self.send_if(command);
+        self.apply_to_sql_files(event);
         self.settings.apply(event);
         self.updates.apply(event);
         if matches!(event, Event::SettingsLoaded { .. }) {
@@ -276,6 +313,203 @@ impl DbDeskApp {
         }
         if matches!(event, Event::ConsolesLoaded(_)) {
             self.restore_console_tabs();
+            for path in std::mem::take(&mut self.files_to_open) {
+                self.open_sql_file(path);
+            }
+        }
+    }
+
+    fn apply_to_sql_files(&mut self, event: &Event) {
+        match event {
+            Event::SqlFileRead { path, result } => self.sql_file_read(path, result),
+            Event::SqlFileSaved {
+                console, result, ..
+            } => self.close_once_saved(console, result.is_ok()),
+            _ => {}
+        }
+    }
+
+    /// Shows a file just read where it was asked for: in a new console, or in a tab restored
+    /// from the last session.
+    fn sql_file_read(&mut self, path: &Path, result: &Result<SqlFileContents, String>) {
+        for destination in self.sql_files.read(path) {
+            match (destination, result) {
+                (Destination::NewConsole(id), Ok(contents)) => {
+                    if let Some(key) = self.consoles.showing_file(path) {
+                        workspace::focus_console_tab(&mut self.dock, &key);
+                        continue;
+                    }
+                    let Some(entry) = self.state.data_source(id) else {
+                        continue;
+                    };
+                    let tabs = workspace::console_tabs(&self.dock);
+                    let key = self.consoles.open_file(
+                        &entry.data_source,
+                        path.to_owned(),
+                        contents.clone(),
+                        |key| tabs.contains(key),
+                    );
+                    self.sql_files.remember(path.to_owned(), id);
+                    workspace::open_console_tab(&mut self.dock, key);
+                }
+                (Destination::NewConsole(_), Err(error)) => {
+                    self.sql_files.forget(path);
+                    self.open_file_dialog = Some(OpenFileDialog::Failed {
+                        error: error.clone(),
+                    });
+                }
+                (Destination::Restored(key), Ok(contents)) => {
+                    match self.state.data_source(key.data_source) {
+                        Some(entry) => self.consoles.reopen_file(
+                            &entry.data_source,
+                            key,
+                            path.to_owned(),
+                            contents.clone(),
+                        ),
+                        None => workspace::close_console_tab(&mut self.dock, &key),
+                    }
+                }
+                // The engine logged why; the tab goes, as for a console file that is gone.
+                (Destination::Restored(key), Err(_)) => {
+                    workspace::close_console_tab(&mut self.dock, &key);
+                }
+            }
+        }
+    }
+
+    /// Asks for a SQL file, and opens it.
+    fn choose_sql_file(&mut self) {
+        if let Some(path) = (self.pick_sql_file)() {
+            self.open_sql_file(path);
+        }
+    }
+
+    /// Opens `path` in a console: the one already showing it, or a new one on the data source
+    /// it was last opened on (or the only one there is). Otherwise asks which data source.
+    fn open_sql_file(&mut self, path: PathBuf) {
+        if let Some(key) = self.consoles.showing_file(&path) {
+            workspace::focus_console_tab(&mut self.dock, &key);
+            return;
+        }
+        let focused = self.focused_console().map(|key| key.data_source);
+        let entries = self.state.data_sources.entries();
+        let remembered = self
+            .sql_files
+            .data_source_of(&path, |id| self.state.data_source(id).is_some());
+        let only = match entries {
+            [only] => Some(only.data_source.id),
+            _ => None,
+        };
+        let data_source = remembered.or(only);
+        match data_source {
+            Some(id) => self.read_sql_file(path, id),
+            None => {
+                let chosen = focused.or_else(|| entries.first().map(|entry| entry.data_source.id));
+                self.open_file_dialog = Some(OpenFileDialog::ChooseDataSource { path, chosen });
+            }
+        }
+    }
+
+    fn read_sql_file(&mut self, path: PathBuf, data_source: DataSourceId) {
+        self.sql_files
+            .reading(path.clone(), Destination::NewConsole(data_source));
+        self.send(Command::OpenSqlFile(path));
+    }
+
+    fn show_open_file_dialog(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.open_file_dialog else {
+            return;
+        };
+        let data_sources: Vec<&DataSource> = self
+            .state
+            .data_sources
+            .entries()
+            .iter()
+            .map(|entry| &entry.data_source)
+            .collect();
+        let Some(action) = dialog.show(ctx, &data_sources) else {
+            return;
+        };
+        self.open_file_dialog = None;
+        if let OpenFileAction::Open(path, data_source) = action {
+            self.read_sql_file(path, data_source);
+        }
+    }
+
+    /// Writes the console to its `.sql` file, or asks where if it has none.
+    fn save_console(&mut self, key: &ConsoleKey) {
+        match self.consoles.save_file(key) {
+            Some(save) => self.send(save),
+            None => self.save_console_as(key),
+        }
+    }
+
+    /// Asks where to write the console, which then shows that file.
+    fn save_console_as(&mut self, key: &ConsoleKey) {
+        let Some(console) = self.consoles.get_mut(key) else {
+            return;
+        };
+        let suggested = match console.file_path() {
+            Some(_) => console.title().to_owned(),
+            None => format!("{}.sql", console.title()),
+        };
+        let Some(path) = (self.pick_sql_save_path)(&suggested) else {
+            return;
+        };
+        if let Some(save) = self.consoles.save_file_as(key, path.clone()) {
+            self.send(save);
+            self.sql_files.remember(path, key.data_source);
+        }
+    }
+
+    /// Looks at the open files for changes other programs made, when it is time to.
+    fn check_sql_files(&mut self, ctx: &egui::Context) {
+        let files = self.consoles.watched_files();
+        if files.is_empty() {
+            return;
+        }
+        // A window whose focus isn't known (in tests) counts as focused.
+        let focused = ctx.input(|input| input.viewport().focused.unwrap_or(true));
+        if self.sql_files.check_due(Instant::now(), focused) {
+            self.send(Command::CheckSqlFiles(files));
+        }
+        ctx.request_repaint_after(sql_files::CHECK_EVERY);
+    }
+
+    /// Opens the files dropped on the window.
+    fn open_dropped_files(&mut self, ctx: &egui::Context) {
+        let dropped: Vec<PathBuf> = ctx.input(|input| {
+            input
+                .raw
+                .dropped_files
+                .iter()
+                .map(|file| file.path().to_owned())
+                .collect()
+        });
+        for path in dropped {
+            self.open_sql_file(path);
+        }
+    }
+
+    /// The keys that open and save files, wherever the focus is.
+    fn file_shortcuts(&mut self, ctx: &egui::Context) {
+        let triggered = ctx.input_mut(|input| {
+            self.keymap.consume(
+                input,
+                &[
+                    keymap::Action::OpenFile,
+                    keymap::Action::Save,
+                    keymap::Action::SaveAs,
+                ],
+            )
+        });
+        for action in triggered {
+            match (action, self.focused_console()) {
+                (keymap::Action::OpenFile, _) => self.choose_sql_file(),
+                (keymap::Action::Save, Some(console)) => self.save_console(&console),
+                (keymap::Action::SaveAs, Some(console)) => self.save_console_as(&console),
+                _ => {}
+            }
         }
     }
 
@@ -392,19 +626,27 @@ impl DbDeskApp {
 
     /// Reopens the consoles whose tabs the saved layout holds. The engine reports the data
     /// sources before the console files, so both are known by now.
+    /// A tab that showed a `.sql` file stays, showing "Loading…", while the file is read.
     fn restore_console_tabs(&mut self) {
         let Self {
             dock,
             consoles,
             state,
+            sql_files,
             ..
         } = self;
+        let mut reads = Vec::new();
         workspace::restore_consoles(dock, |key| {
+            if let Some(path) = sql_files.restore(key) {
+                reads.push(Command::OpenSqlFile(path));
+                return true;
+            }
             state
                 .data_source(key.data_source)
                 .and_then(|entry| consoles.reopen(&entry.data_source, key))
                 .is_some()
         });
+        self.send_all(reads);
     }
 
     fn send_all(&self, commands: impl IntoIterator<Item = Command>) {
@@ -795,6 +1037,81 @@ impl DbDeskApp {
         }
     }
 
+    /// Does what `closing` asks, first asking whether to save the files it would close with
+    /// unsaved changes, then whether to roll back the transactions it would end.
+    fn request_close(&mut self, closing: Closing, ctx: &egui::Context) {
+        let unsaved = self.consoles.unsaved_files(&closing);
+        if unsaved.is_empty() {
+            self.close_connections(closing, ctx);
+        } else if self.unsaved_confirmation.is_none() && self.closing_after_saves.is_none() {
+            self.unsaved_confirmation = Some(UnsavedConfirmation {
+                closing,
+                consoles: unsaved,
+            });
+        }
+    }
+
+    fn show_unsaved_confirmation(&mut self, ctx: &egui::Context) {
+        let Some(choice) = self
+            .unsaved_confirmation
+            .as_ref()
+            .and_then(|confirmation| confirmation.show(ctx))
+        else {
+            return;
+        };
+        let Some(confirmation) = self.unsaved_confirmation.take() else {
+            return;
+        };
+        match choice {
+            UnsavedChoice::Save => {
+                let mut waiting = Vec::new();
+                for (key, _) in confirmation.consoles {
+                    if let Some(save) = self.consoles.save_file(&key) {
+                        self.send(save);
+                        waiting.push(key);
+                    }
+                }
+                self.closing_after_saves = Some((confirmation.closing, waiting));
+                self.close_once_saved_all(ctx);
+            }
+            UnsavedChoice::Discard => self.close_connections(confirmation.closing, ctx),
+            UnsavedChoice::Cancel if matches!(confirmation.closing, Closing::Quit) => {
+                self.updates.cancel_restart();
+            }
+            UnsavedChoice::Cancel => {}
+        }
+    }
+
+    /// Takes in a save that a close may be waiting for: a failure cancels the close, so the
+    /// text stays open with its error showing.
+    fn close_once_saved(&mut self, console: &ConsoleKey, saved: bool) {
+        let Some((closing, waiting)) = &mut self.closing_after_saves else {
+            return;
+        };
+        if !waiting.contains(console) {
+            return;
+        }
+        if !saved {
+            if matches!(closing, Closing::Quit) {
+                self.updates.cancel_restart();
+            }
+            self.closing_after_saves = None;
+            return;
+        }
+        waiting.retain(|key| key != console);
+    }
+
+    fn close_once_saved_all(&mut self, ctx: &egui::Context) {
+        if self
+            .closing_after_saves
+            .as_ref()
+            .is_some_and(|(_, waiting)| waiting.is_empty())
+            && let Some((closing, _)) = self.closing_after_saves.take()
+        {
+            self.close_connections(closing, ctx);
+        }
+    }
+
     /// Does what `closing` asks, first asking whether to roll back the open transactions it
     /// would end, if there are any.
     fn close_connections(&mut self, closing: Closing, ctx: &egui::Context) {
@@ -827,9 +1144,11 @@ impl DbDeskApp {
         if !ctx.input(|input| input.viewport().close_requested()) || self.quit_confirmed {
             return;
         }
-        if !self.consoles.rolled_back_by(&Closing::Quit).is_empty() {
+        if !self.consoles.rolled_back_by(&Closing::Quit).is_empty()
+            || !self.consoles.unsaved_files(&Closing::Quit).is_empty()
+        {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.close_connections(Closing::Quit, ctx);
+            self.request_close(Closing::Quit, ctx);
         }
     }
 
@@ -944,6 +1263,55 @@ impl DbDeskApp {
     }
 
     fn file_menu(&mut self, ui: &mut egui::Ui) {
+        let console = self.focused_console();
+        if self
+            .menu_item(ui, "Open…", keymap::Action::OpenFile, true)
+            .clicked()
+        {
+            self.choose_sql_file();
+        }
+        let mut reopen = None;
+        ui.menu_button("Open recent", |ui| {
+            if self.sql_files.recent().is_empty() {
+                ui.weak("No recent files");
+                return;
+            }
+            for recent in self.sql_files.recent() {
+                let name = recent.path.file_name().map_or_else(
+                    || recent.path.display().to_string(),
+                    |name| name.to_string_lossy().into_owned(),
+                );
+                if ui
+                    .button(name)
+                    .on_hover_text(recent.path.display().to_string())
+                    .clicked()
+                {
+                    reopen = Some(recent.path.clone());
+                }
+            }
+            ui.separator();
+            if ui.button("Clear recent files").clicked() {
+                self.sql_files.clear_recent();
+            }
+        });
+        if let Some(path) = reopen {
+            self.open_sql_file(path);
+        }
+        if self
+            .menu_item(ui, "Save", keymap::Action::Save, console.is_some())
+            .clicked()
+            && let Some(console) = &console
+        {
+            self.save_console(console);
+        }
+        if self
+            .menu_item(ui, "Save as…", keymap::Action::SaveAs, console.is_some())
+            .clicked()
+            && let Some(console) = &console
+        {
+            self.save_console_as(console);
+        }
+        ui.separator();
         let has_data_sources = !self.state.data_sources.entries().is_empty();
         if ui
             .add_enabled(has_data_sources, egui::Button::new("Export data sources…"))
@@ -1068,14 +1436,7 @@ impl DbDeskApp {
             ("Format", FormatScope::Current, keymap::Action::Format),
             ("Format all", FormatScope::All, keymap::Action::FormatAll),
         ] {
-            let mut button = egui::Button::new(label);
-            if let Some(shortcut) = self.keymap.hint(ui.ctx(), action) {
-                button = button.shortcut_text(shortcut);
-            }
-            let response = ui
-                .add_enabled(console.is_some(), button)
-                .on_hover_text(action.description())
-                .on_disabled_hover_text("Select a query console first");
+            let response = self.menu_item(ui, label, action, console.is_some());
             if response.clicked()
                 && let Some(console) = &console
             {
@@ -1083,6 +1444,24 @@ impl DbDeskApp {
                     .format(console, scope, &self.settings.format_options());
             }
         }
+    }
+
+    /// A menu item for `action`, showing its shortcut. Disabled ones say a console must be
+    /// selected first, which is what every disabled item here is waiting for.
+    fn menu_item(
+        &self,
+        ui: &mut egui::Ui,
+        label: &str,
+        action: keymap::Action,
+        enabled: bool,
+    ) -> egui::Response {
+        let mut button = egui::Button::new(label);
+        if let Some(shortcut) = self.keymap.hint(ui.ctx(), action) {
+            button = button.shortcut_text(shortcut);
+        }
+        ui.add_enabled(enabled, button)
+            .on_hover_text(action.description())
+            .on_disabled_hover_text("Select a query console first")
     }
 
     /// The console in the dock's focused tab, if that is a console.
@@ -1177,6 +1556,9 @@ impl eframe::App for DbDeskApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        self.file_shortcuts(&ctx);
+        self.open_dropped_files(&ctx);
         // The base colour shows in the gaps between the dock's islands.
         ui.painter()
             .rect_filled(ui.max_rect(), 0.0, ui.visuals().panel_fill);
@@ -1220,7 +1602,6 @@ impl eframe::App for DbDeskApp {
                     close_requests: &mut close_requests,
                 },
             );
-        let ctx = ui.ctx().clone();
         if let Some(text) = self.clipboard.take() {
             ctx.copy_text(text);
         }
@@ -1244,12 +1625,16 @@ impl eframe::App for DbDeskApp {
             }
         }
         for console in close_requests {
-            self.close_connections(Closing::Console(console), &ctx);
+            self.request_close(Closing::Console(console), &ctx);
         }
+        self.show_unsaved_confirmation(&ctx);
+        self.close_once_saved_all(&ctx);
         self.confirm_quit(&ctx);
         self.show_rollback_confirmation(&ctx);
 
         self.save_consoles(&ctx);
+        self.check_sql_files(&ctx);
+        self.show_open_file_dialog(&ctx);
         let confirmed = self.consoles.show_hazard_confirmation(&ctx);
         self.send_if(confirmed);
         self.show_data_source_dialog(&ctx);
@@ -1285,6 +1670,11 @@ impl eframe::App for DbDeskApp {
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, LAYOUT_STORAGE_KEY, &self.dock);
+        eframe::set_value(
+            storage,
+            sql_files::STORAGE_KEY,
+            &self.sql_files.remembered(self.consoles.files()),
+        );
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
@@ -1331,6 +1721,7 @@ impl Repaint for EguiRepaint {
 
 #[cfg(test)]
 mod tests {
+    mod files;
     mod grid;
     mod history;
 

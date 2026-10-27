@@ -144,7 +144,9 @@ fn inserts_a_statement_on_a_line_of_its_own_at_the_cursor() {
 
         assert_eq!(console.text, expected, "{text:?}");
         assert_eq!(console.pending_cursor, Some(console.selection.end));
-        assert!(console.file.unsaved_since.is_some());
+        assert!(
+            matches!(&console.storage, file::Storage::Config(file) if file.unsaved_since.is_some())
+        );
     }
 }
 
@@ -227,8 +229,10 @@ fn formats_the_statement_at_the_cursor_and_keeps_the_cursor_on_its_token() {
     let moved = expected.find("FROM").unwrap() + 2;
     assert_eq!(console.selection, moved..moved);
     assert_eq!(console.pending_cursor, Some(moved));
-    assert_eq!(console.format_undo.as_deref(), Some(text));
-    assert!(console.file.unsaved_since.is_some());
+    assert_eq!(console.replaced_text.as_deref(), Some(text));
+    assert!(
+        matches!(&console.storage, file::Storage::Config(file) if file.unsaved_since.is_some())
+    );
 }
 
 #[test]
@@ -260,7 +264,7 @@ fn a_format_that_changes_nothing_leaves_no_undo_point() {
     let mut console = console(text);
     console.format(FormatScope::All, &FormatOptions::default(), Instant::now());
     assert_eq!(console.text, text);
-    assert!(console.format_undo.is_none());
+    assert!(console.replaced_text.is_none());
     assert!(console.pending_cursor.is_none());
 }
 

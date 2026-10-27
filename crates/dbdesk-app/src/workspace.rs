@@ -81,7 +81,7 @@ pub fn close_console_tab(layout: &mut DockState<Tab>, key: &ConsoleKey) {
 /// Adds a console tab next to the other consoles (or the Welcome tab), and makes it the
 /// active tab and its area the focused one.
 pub fn open_console_tab(layout: &mut DockState<Tab>, key: ConsoleKey) {
-    let tab = Tab::QueryConsole(key);
+    let tab = Tab::QueryConsole(key.clone());
     let tree = layout.main_surface_mut();
     match tree.find_tab_from(|tab| matches!(tab, Tab::QueryConsole(_) | Tab::Welcome)) {
         Some((node, _)) => tree[node].append_tab(tab.clone()),
@@ -91,7 +91,12 @@ pub fn open_console_tab(layout: &mut DockState<Tab>, key: ConsoleKey) {
             tree.split_right(NodeIndex::root(), EXPLORER_SHARE, vec![tab.clone()]);
         }
     }
-    if let Some(path) = layout.find_tab(&tab) {
+    focus_console_tab(layout, &key);
+}
+
+/// Makes the console's tab the active tab and its area the focused one, if the tab exists.
+pub fn focus_console_tab(layout: &mut DockState<Tab>, key: &ConsoleKey) {
+    if let Some(path) = layout.find_tab(&Tab::QueryConsole(key.clone())) {
         // The tab was just found, so activating it can't fail.
         let _ = layout.set_active_tab(path);
         // Focused too, so menus acting on "the current console" act on this one.
@@ -165,7 +170,7 @@ impl TabViewer for Panels<'_> {
                 let title = self
                     .consoles
                     .get(key)
-                    .map_or("console", QueryConsole::title);
+                    .map_or_else(|| "console".to_owned(), QueryConsole::tab_title);
                 let role = self
                     .console_color(key)
                     .map_or(Role::Secondary, Role::Source);
@@ -173,8 +178,17 @@ impl TabViewer for Panels<'_> {
                     glyph: icons::FILE_SQL,
                     role,
                 };
-                tab_title(palette, icon, title, FontId::proportional(TAB_TITLE_SIZE))
+                tab_title(palette, icon, &title, FontId::proportional(TAB_TITLE_SIZE))
             }
+        }
+    }
+
+    /// A console showing a `.sql` file names its path on hover.
+    fn on_tab_button(&mut self, tab: &mut Tab, response: &egui::Response) {
+        if let Tab::QueryConsole(key) = tab
+            && let Some(path) = self.consoles.get(key).and_then(QueryConsole::file_path)
+        {
+            response.clone().on_hover_text(path.display().to_string());
         }
     }
 

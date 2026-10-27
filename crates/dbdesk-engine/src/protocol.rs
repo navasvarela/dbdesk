@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use dbdesk_core::{
     CatalogNode, CatalogPath, ColumnInfo, DataSource, DataSourceId, DriverKind, Password,
@@ -10,10 +10,10 @@ use dbdesk_core::{
 use dbdesk_store::{
     ConsoleKey, ExportFormat, HistoryEntry, HistoryQuery, ImportPlan, ImportPreview,
     KeymapBindings, McpOverrides, McpPermissions, Project, Projects, RowChange, SavedConsole,
-    Secret, Separator, Settings,
+    Secret, Separator, Settings, SqlFileContents,
 };
 
-use crate::{Export, ExportAll, HostKey, PasswordNeeded, Release};
+use crate::{Export, ExportAll, HostKey, PasswordNeeded, Release, WatchedFile};
 
 /// Identifies a query console. Chosen by the UI, unique for the app's lifetime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -178,6 +178,20 @@ pub enum Command {
     },
     /// Removes a console's file, if it exists.
     DeleteConsoleFile(ConsoleKey),
+    /// Reads a `.sql` file from anywhere on disk, to show in a console. Answered by
+    /// [`Event::SqlFileRead`]. Reads, saves and checks of `.sql` files happen, and are
+    /// answered, in the order sent.
+    OpenSqlFile(PathBuf),
+    /// Writes a console's text to a `.sql` file, replacing it in one step. Saves are applied in
+    /// the order sent. Answered by [`Event::SqlFileSaved`].
+    SaveSqlFile {
+        console: ConsoleKey,
+        path: PathBuf,
+        text: String,
+    },
+    /// Looks at whether `.sql` files changed on disk since the times given. Answered by an
+    /// [`Event::SqlFileChanged`] for each one that did, before anything sent after it is.
+    CheckSqlFiles(Vec<WatchedFile>),
     /// Resolves and describes a table on the explorer's connection, connecting first if
     /// needed, so a console's open result isn't disturbed. Answered by
     /// [`Event::TableDescribed`].
@@ -387,6 +401,23 @@ pub enum Event {
     ConsoleSaveFailed {
         key: ConsoleKey,
         error: String,
+    },
+    /// The answer to [`Command::OpenSqlFile`].
+    SqlFileRead {
+        path: PathBuf,
+        result: Result<SqlFileContents, String>,
+    },
+    /// The answer to [`Command::SaveSqlFile`]: the file's new modification time.
+    SqlFileSaved {
+        console: ConsoleKey,
+        path: PathBuf,
+        result: Result<Option<SystemTime>, String>,
+    },
+    /// A file [`Command::CheckSqlFiles`] looked at changed on disk: what it holds now, or
+    /// `None` if it is gone.
+    SqlFileChanged {
+        path: PathBuf,
+        contents: Option<SqlFileContents>,
     },
     /// The answer to [`Command::DescribeTable`]: `None` if there is no such plain table.
     TableDescribed {

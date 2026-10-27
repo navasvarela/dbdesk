@@ -22,6 +22,7 @@ use crate::registry::{Registry, RegistryError};
 use crate::releases::{self, ReleaseFeed};
 use crate::session::{Script, Services, Session, SessionOwner, SessionRequest};
 use crate::settings;
+use crate::sql_files;
 use crate::transfer;
 use crate::tunnels::Tunnels;
 use crate::updater::{self, UpdateInstaller};
@@ -257,6 +258,19 @@ impl Engine {
             Command::DeleteConsoleFile(key) => {
                 console_files::delete(&self.console_files, key).await;
             }
+            // Reads, saves and checks of `.sql` files are awaited rather than spawned, so they
+            // happen, and are answered, in the order sent. A check spawned before a save could
+            // otherwise read the file's old text and be answered after the save: the console,
+            // seeing nothing unsaved, would then go back to the old text. Each is a read, a
+            // write or a `stat` per file, which keeps the other commands waiting no longer
+            // than a console save does.
+            Command::OpenSqlFile(path) => sql_files::read(path, &self.events).await,
+            Command::SaveSqlFile {
+                console,
+                path,
+                text,
+            } => self.events.send(sql_files::save(console, path, text).await),
+            Command::CheckSqlFiles(files) => sql_files::check(files, &self.events).await,
             Command::DescribeTable { data_source, table } => {
                 self.request(data_source, SessionRequest::DescribeTable(table));
             }

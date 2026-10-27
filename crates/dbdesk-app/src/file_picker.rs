@@ -1,6 +1,6 @@
 //! The platform's open and save dialogs, for choosing an existing database file (SQLite or
-//! DuckDB) or naming a new one, for choosing a CA certificate, and for exporting and importing
-//! data sources.
+//! DuckDB) or naming a new one, for choosing a CA certificate, for exporting and importing
+//! data sources, and for opening and saving SQL files.
 
 use std::path::{Path, PathBuf};
 
@@ -11,6 +11,8 @@ const SSH_KEY_TITLE: &str = "Choose an SSH private key";
 const EXPORT_TITLE: &str = "Export data sources";
 const IMPORT_TITLE: &str = "Import data sources";
 const CSV_TITLE: &str = "Choose a CSV file to import";
+const OPEN_SQL_TITLE: &str = "Open a SQL file";
+const SAVE_SQL_TITLE: &str = "Save the console as";
 const EXPORT_FILE_NAME: &str = "dbdesk-data-sources.toml";
 
 /// An engine whose databases are files.
@@ -146,6 +148,25 @@ pub fn pick_csv_file() -> Option<PathBuf> {
         .add_filter("CSV", &["csv", "tsv", "txt"])
         .add_filter("All files", &["*"])
         .pick_file()
+}
+
+/// Shows the open-file dialog for a SQL file to open in a console. Files of any extension can
+/// be chosen, as with CSV files: scripts are also kept as `.txt` or `.ddl`.
+pub fn pick_sql_file() -> Option<PathBuf> {
+    rfd::FileDialog::new()
+        .set_title(OPEN_SQL_TITLE)
+        .add_filter("SQL", &["sql"])
+        .add_filter("All files", &["*"])
+        .pick_file()
+}
+
+/// Shows the save dialog for a console's text, suggesting `file_name`.
+pub fn pick_sql_save_path(file_name: &str) -> Option<PathBuf> {
+    rfd::FileDialog::new()
+        .set_title(SAVE_SQL_TITLE)
+        .add_filter("SQL", &["sql"])
+        .set_file_name(file_name)
+        .save_file()
 }
 
 #[cfg(test)]

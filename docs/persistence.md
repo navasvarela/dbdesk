@@ -148,6 +148,20 @@ An id in `lint.disabled` that names no rule is listed in the Settings window, an
 - Closing a console's tab removes its file if nobody typed in it, and keeps it otherwise.
 - Deleting a data source leaves its console folder in place: the SQL in it is the user's.
 
+## `.sql` files
+
+- A console can show a `.sql` file from anywhere instead (**File › Open…**, or **Save as…** on a
+  console, whose file in `consoles/` is then removed once the new file is written). Read whole
+  as UTF-8 (another encoding is refused, not mangled) and written atomically by the engine
+  (`read_sql_file` and `write_sql_file` in `dbdesk-store`) on `OpenSqlFile` and `SaveSqlFile`,
+  only when the user saves.
+- `CheckSqlFiles`, every two seconds and when the window regains focus, compares each open
+  file's modification time with the one last read or written, and sends what a changed file
+  now holds (or that it is gone).
+- Which file each console tab shows, and the ten recent files with the data source each was
+  opened on, are kept in `app.ron` under `sql_files_v1`, next to the layout. A console showing
+  a file has a `file_<n>` name of its own, never written to `consoles/`.
+
 ## Query history
 
 SQLite table, in `history.sqlite`, created on first start. `PRAGMA user_version` is the
@@ -207,4 +221,5 @@ replaced by the default layout; **View → Reset layout** does the same on deman
 
 Console tabs refer to their console's file (data source id and name), so they reopen on start.
 A tab whose file or data source is gone is dropped from the layout instead of failing to start;
-until the engine has read the files, restored tabs show "Loading…".
+until the engine has read the files, restored tabs show "Loading…". A tab that showed a `.sql`
+file is reopened once the engine has read that file, and dropped if it can't be read.
