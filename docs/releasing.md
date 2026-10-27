@@ -4,8 +4,10 @@ Status: **R1 released** as v0.1.0 on 2026-10-23, followed by v0.2.0 (MySQL and M
 the update notice), v0.3.0 (SQL Server), v0.4.0 (projects, and links that open), v0.5.0
 (installing updates, the read-only MCP server), v0.6.0 (DuckDB and ClickHouse), v0.7.0
 (portable configuration, safety levels, MCP permissions), v0.8.0 (SSH tunnels, creating and
-changing tables, indexes, views and schemas) and v0.9.0 (adding and deleting rows, foreign
-keys, sorting and filtering in the database, exporting every row, importing CSV). R3's update
+changing tables, indexes, views and schemas), v0.9.0 (adding and deleting rows, foreign
+keys, sorting and filtering in the database, exporting every row, importing CSV) and v0.10.0
+(PostgreSQL users and roles, the history as an audit trail, .sql files, statement parameters,
+find and replace). R3's update
 notice is built, ahead of R2 (see [R3](#r3--updates)).
 Decisions settled on 2026-10-23 (see [Decisions](#decisions)).
 
