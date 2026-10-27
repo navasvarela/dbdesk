@@ -8,7 +8,7 @@
 use std::time::{Duration, Instant};
 
 use dbdesk_core::{CancelHandle, DriverError, ResultCursor, describe_error};
-use dbdesk_store::{HistoryEntry, HistoryOutcome, HistorySource};
+use dbdesk_store::{HistoryEntry, HistoryOutcome, HistorySource, redact_secrets};
 use jiff::Timestamp;
 
 use dbdesk_sql::{ExplainSetting, controls_transactions};
@@ -151,7 +151,7 @@ async fn run_statements(
             outcome = RunOutcome::Failed;
             break;
         }
-        tracing::info!(data_source = %worker.context.name(), "running {}", preview(sql));
+        tracing::info!(data_source = %worker.context.name(), "running {}", preview(&redact_secrets(sql)));
         let end = run_statement(worker, statement, index == last).await?;
         // Rows still being paged keep the read-only transaction open until they are done.
         if !matches!(end, StatementEnd::Parked(_)) {

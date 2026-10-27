@@ -1,5 +1,5 @@
 //! The history as an audit trail, through the engine on SQLite: where each statement came
-//! from.
+//! from, and no secrets in the file.
 
 use dbdesk_core::TableName;
 use dbdesk_engine::RowsImport;
@@ -111,4 +111,51 @@ fn records_where_each_statement_came_from() {
         ]
     );
     engine.shut_down();
+}
+
+/// No secret reaches the history file, whichever way the statement was sent: a console run
+/// and an object helper's DDL (SQLite refuses `CREATE USER`, which is still recorded).
+#[test]
+fn keeps_secrets_out_of_the_history_file() {
+    const SECRET: &str = "Hunter2Secret";
+    let dir = tempfile::tempdir().unwrap();
+    let (mut engine, id) = engine_with_sqlite(dir.path());
+    let conninfo = format!("SELECT 'host=db user=app password={SECRET}' AS conninfo");
+    execute(&engine, id, 1, &[&conninfo]);
+    finish_run(&mut engine, 1);
+    engine.send(Command::ApplyDdl {
+        data_source: id,
+        statements: vec![format!("CREATE USER app WITH PASSWORD '{SECRET}'")],
+    });
+    loop {
+        match next_answer(&mut engine) {
+            Event::DdlApplied { result, .. } => break assert!(result.is_err()),
+            Event::TransactionChanged { .. } => {}
+            other => panic!("expected DdlApplied, got {other:?}"),
+        }
+    }
+
+    let recorded: Vec<String> = history(&mut engine, id)
+        .into_iter()
+        .map(|entry| entry.sql)
+        .collect();
+    assert_eq!(
+        recorded,
+        [
+            "CREATE USER app WITH PASSWORD '<redacted>'",
+            "SELECT 'host=db user=app password=<redacted>' AS conninfo",
+        ]
+    );
+    engine.shut_down();
+    for name in ["history.sqlite", "history.sqlite-wal"] {
+        let Ok(bytes) = std::fs::read(dir.path().join(name)) else {
+            continue;
+        };
+        assert!(
+            !bytes
+                .windows(SECRET.len())
+                .any(|window| window == SECRET.as_bytes()),
+            "{name} holds the secret"
+        );
+    }
 }

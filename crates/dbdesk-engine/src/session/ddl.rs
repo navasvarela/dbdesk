@@ -8,7 +8,7 @@ use dbdesk_core::{
     RelationName, describe_error,
 };
 use dbdesk_sql::{ColumnSpec, DdlOperation, ObjectName, TableSpec};
-use dbdesk_store::{HistoryEntry, HistoryOutcome, HistorySource};
+use dbdesk_store::{HistoryEntry, HistoryOutcome, HistorySource, redact_secrets};
 use jiff::Timestamp;
 
 use super::{Disconnected, SessionContext, Worker, transaction};
@@ -99,7 +99,7 @@ async fn run_each(
     statements: &[String],
 ) -> Result<Result<(), DdlFailure>, Disconnected> {
     for (index, sql) in statements.iter().enumerate() {
-        tracing::info!(data_source = %worker.context.name(), "{sql}");
+        tracing::info!(data_source = %worker.context.name(), "{}", redact_secrets(sql));
         let started_at = Timestamp::now();
         let started = Instant::now();
         let result = transaction::run_counting(worker, sql, None).await?;
