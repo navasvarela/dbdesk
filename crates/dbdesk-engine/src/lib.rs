@@ -36,8 +36,8 @@ pub use open::{OpenError, open_data_source, open_data_source_for_mcp};
 pub use passwords::PasswordNeeded;
 pub use protocol::{
     Command, ConsoleId, DatabaseFile, DdlFailure, EditFailure, Event, ImportFailure, PasswordKept,
-    PasswordUpdate, RowsImport, RunId, RunOutcome, RunPurpose, SessionState, StatementCheck,
-    StatementFailure, StatementSummary, TransactionEnd, TransactionMode,
+    PasswordUpdate, RowEdit, RowsImport, RunId, RunOutcome, RunPurpose, SessionState,
+    StatementCheck, StatementFailure, StatementSummary, TransactionEnd, TransactionMode,
 };
 pub use releases::{GithubReleases, Release, ReleaseError, ReleaseFeed};
 pub use repaint::Repaint;

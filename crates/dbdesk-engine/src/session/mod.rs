@@ -35,8 +35,8 @@ use crate::passwords::{Prompting, SessionPasswords};
 use crate::read_only;
 use crate::tunnels::Tunnels;
 use crate::{
-    ConsoleId, Event, ExportAll, RowsImport, RunId, RunPurpose, SessionState, TransactionEnd,
-    TransactionMode,
+    ConsoleId, Event, ExportAll, RowEdit, RowsImport, RunId, RunPurpose, SessionState,
+    TransactionEnd, TransactionMode,
 };
 use guard::ReadOnly;
 use loss::{Loss, Watched};
@@ -50,7 +50,7 @@ pub(crate) enum SessionRequest {
     FetchMore(RunId),
     EndTransaction(TransactionEnd),
     DescribeTable(RelationName),
-    ApplyEdits(Vec<String>),
+    ApplyEdits(Vec<RowEdit>),
     ApplyDdl(Vec<String>),
     Ddl(CatalogPath),
     /// Prepares statements without running them; see [`crate::Command::ValidateStatements`].

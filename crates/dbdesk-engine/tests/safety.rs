@@ -121,7 +121,10 @@ fn a_read_only_sqlite_data_source_refuses_changes_and_edits() {
 
     engine.send(Command::ApplyEdits {
         console: READ_ONLY_CONSOLE,
-        statements: vec!["UPDATE t SET id = 2 WHERE id = 1".to_owned()],
+        statements: vec![dbdesk_engine::RowEdit {
+            sql: "UPDATE t SET id = 2 WHERE id = 1".to_owned(),
+            change: None,
+        }],
     });
     assert_eq!(
         next_run_event(&mut engine),

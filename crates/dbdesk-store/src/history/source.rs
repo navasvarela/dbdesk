@@ -3,13 +3,17 @@
 
 use std::path::PathBuf;
 
+use super::change::RowChange;
+
 /// Who sent a statement, and from where in dbdesk.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum HistorySource {
     /// A query console's run.
     Console,
-    /// The grid's Submit: one `UPDATE`, `INSERT` or `DELETE` per row.
-    GridEdit,
+    /// The grid's Submit: one `UPDATE`, `INSERT` or `DELETE` per row, with what it did to the
+    /// row. `None` when the change isn't known: a row whose stored change this dbdesk can't
+    /// read.
+    GridEdit(Option<RowChange>),
     /// One of the explorer's object helpers: creating, changing, renaming, dropping or copying
     /// a table, view or schema.
     ObjectHelper,
@@ -71,7 +75,7 @@ impl HistorySource {
     pub fn kind(&self) -> HistorySourceKind {
         match self {
             Self::Console => HistorySourceKind::Console,
-            Self::GridEdit => HistorySourceKind::GridEdit,
+            Self::GridEdit(_) => HistorySourceKind::GridEdit,
             Self::ObjectHelper => HistorySourceKind::ObjectHelper,
             Self::Import { .. } => HistorySourceKind::Import,
             Self::Export => HistorySourceKind::Export,
@@ -106,11 +110,23 @@ impl HistorySource {
         }
     }
 
-    /// The source a row stores, from `coalesce(origin, source)` and `detail`.
-    pub(super) fn from_stored(kind: &str, detail: Option<String>) -> Option<Self> {
+    /// The `changes` column, as JSON.
+    pub(super) fn changes(&self) -> Option<String> {
+        match self {
+            Self::GridEdit(Some(change)) => Some(change.to_json()),
+            _ => None,
+        }
+    }
+
+    /// The source a row stores, from `coalesce(origin, source)`, `detail` and `changes`.
+    pub(super) fn from_stored(
+        kind: &str,
+        detail: Option<String>,
+        changes: Option<&str>,
+    ) -> Option<Self> {
         Some(match HistorySourceKind::parse(kind)? {
             HistorySourceKind::Console => Self::Console,
-            HistorySourceKind::GridEdit => Self::GridEdit,
+            HistorySourceKind::GridEdit => Self::GridEdit(changes.and_then(RowChange::from_json)),
             HistorySourceKind::ObjectHelper => Self::ObjectHelper,
             HistorySourceKind::Import => Self::Import {
                 file: PathBuf::from(detail.unwrap_or_default()),
@@ -124,13 +140,19 @@ impl HistorySource {
 
 #[cfg(test)]
 mod tests {
+    use super::super::change::RowChangeKind;
     use super::*;
 
     #[test]
     fn every_source_reads_back_as_stored() {
         let sources = [
             HistorySource::Console,
-            HistorySource::GridEdit,
+            HistorySource::GridEdit(None),
+            HistorySource::GridEdit(Some(RowChange {
+                table: "main.people".to_owned(),
+                kind: RowChangeKind::Inserted { values: vec![] },
+                revert: None,
+            })),
             HistorySource::ObjectHelper,
             HistorySource::Import {
                 file: PathBuf::from("/data/orders.csv"),
@@ -145,7 +167,7 @@ mod tests {
         for source in sources {
             let kind = source.origin().unwrap_or(source.legacy_source());
             assert_eq!(
-                HistorySource::from_stored(kind, source.detail()),
+                HistorySource::from_stored(kind, source.detail(), source.changes().as_deref()),
                 Some(source.clone())
             );
         }
@@ -154,7 +176,7 @@ mod tests {
     #[test]
     fn older_readers_see_only_app_and_mcp() {
         for kind in HistorySourceKind::ALL {
-            let source = HistorySource::from_stored(kind.as_str(), None).unwrap();
+            let source = HistorySource::from_stored(kind.as_str(), None, None).unwrap();
             assert!(["app", "mcp"].contains(&source.legacy_source()), "{kind:?}");
         }
     }

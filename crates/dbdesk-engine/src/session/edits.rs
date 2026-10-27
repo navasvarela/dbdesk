@@ -8,7 +8,7 @@ use dbdesk_store::{HistoryEntry, HistoryOutcome, HistorySource, redact_secrets};
 use jiff::Timestamp;
 
 use super::{Disconnected, SessionOwner, Worker, transaction};
-use crate::{EditFailure, Event};
+use crate::{EditFailure, Event, RowEdit};
 
 /// How the edits are wrapped: a transaction of their own, or a savepoint inside the console's
 /// open one (PostgreSQL refuses `SAVEPOINT` outside a transaction, and a nested `BEGIN` would
@@ -29,10 +29,10 @@ fn wrapping(worker: &Worker<'_>) -> Option<Savepoint> {
 
 /// Runs `statements`, each of which must change exactly one row, and reports
 /// [`Event::EditsApplied`]. On any failure, everything they changed is undone. Each statement
-/// sent is recorded in the history, as it runs.
+/// sent is recorded in the history, with its row's change, as it runs.
 pub(super) async fn apply(
     worker: &mut Worker<'_>,
-    statements: &[String],
+    statements: &[RowEdit],
 ) -> Result<(), Disconnected> {
     let SessionOwner::Console(console) = worker.context.owner else {
         return Ok(());
@@ -99,7 +99,7 @@ pub(super) async fn apply(
 async fn run_wrapped(
     worker: &mut Worker<'_>,
     wrapping: &Savepoint,
-    statements: &[String],
+    statements: &[RowEdit],
 ) -> Result<Result<(), EditFailure>, Disconnected> {
     let unwrapped = |error: DriverError| EditFailure {
         statement: None,
@@ -109,12 +109,12 @@ async fn run_wrapped(
         // Nothing was started, so there is nothing to undo; report it as it is.
         return Ok(Err(unwrapped(error)));
     }
-    for (index, sql) in statements.iter().enumerate() {
-        tracing::info!(data_source = %worker.context.name(), "{}", redact_secrets(sql));
+    for (index, edit) in statements.iter().enumerate() {
+        tracing::info!(data_source = %worker.context.name(), "{}", redact_secrets(&edit.sql));
         let started_at = Timestamp::now();
         let started = Instant::now();
-        let result = transaction::run_counting(worker, sql, None).await?;
-        record(worker, sql, &result, (started_at, started));
+        let result = transaction::run_counting(worker, &edit.sql, None).await?;
+        record(worker, edit, &result, (started_at, started));
         let failure = match result {
             Ok(Some(1)) => continue,
             Ok(changed) => format!(
@@ -142,7 +142,7 @@ async fn run_wrapped(
 /// database, which is what the history holds.
 fn record(
     worker: &Worker<'_>,
-    sql: &str,
+    edit: &RowEdit,
     result: &Result<Option<u64>, DriverError>,
     (started_at, started): (Timestamp, Instant),
 ) {
@@ -153,10 +153,10 @@ fn record(
     worker.context.record(HistoryEntry {
         data_source: worker.context.data_source.id,
         executed_at: started_at,
-        sql: sql.to_owned(),
+        sql: edit.sql.clone(),
         duration: Some(started.elapsed()),
         rows,
         outcome,
-        source: HistorySource::GridEdit,
+        source: HistorySource::GridEdit(edit.change.clone()),
     });
 }

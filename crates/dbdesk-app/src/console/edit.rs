@@ -5,7 +5,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use dbdesk_core::{Cell, ColumnInfo, Identifier, RelationName, Row, TableDescription};
+use dbdesk_engine::RowEdit;
 use dbdesk_sql::{ColumnValue, Dialect, RowSql, Token, TokenKind, first_word, tokenize};
+use dbdesk_store::{NamedCell, ReplacedCell, RowChange, RowChangeKind};
 
 /// Words that make a `SELECT` combine, group or deduplicate rows, so a result row no longer
 /// stands for one table row.
@@ -429,54 +431,36 @@ impl PendingEdits {
         self.deleted.clear();
     }
 
-    /// One statement per changed row, with the row it is for: the `DELETE`s, then the
-    /// `UPDATE`s, then the `INSERT`s, so that a key a deleted row frees can be taken by an
-    /// edited or added row. Loaded rows are named by their primary key as loaded.
+    /// One statement per changed row, with the row it is for and, for the history, what it
+    /// does to the row: the `DELETE`s, then the `UPDATE`s, then the `INSERT`s, so that a key a
+    /// deleted row frees can be taken by an edited or added row. Loaded rows are named by their
+    /// primary key as loaded.
     pub fn statements(
         &self,
         target: &EditTarget,
         columns: &[ColumnInfo],
         rows: &[Row],
         dialect: Dialect,
-    ) -> Vec<(RowRef, String)> {
-        let sql = RowSql::new(dialect, &target.table);
-        let named = |values: &BTreeMap<usize, Cell>| -> Vec<(String, Cell)> {
-            values
-                .iter()
-                .filter_map(|(&column, value)| {
-                    Some((columns.get(column)?.name.clone(), value.clone()))
-                })
-                .collect()
+    ) -> Vec<(RowRef, RowEdit)> {
+        let changes = RowChanges {
+            sql: RowSql::new(dialect, &target.table),
+            table: format!("{}.{}", target.table.schema, target.table.name),
+            target,
+            columns,
+            rows,
         };
-        let key_of = |row: usize| -> Option<Vec<(String, Cell)>> {
-            let loaded = rows.get(row)?;
-            target
-                .key
-                .iter()
-                .map(|&column| {
-                    Some((
-                        columns.get(column)?.name.clone(),
-                        loaded.get(column)?.clone(),
-                    ))
-                })
-                .collect()
-        };
-        let deletes = self.deleted.iter().filter_map(|&row| {
-            let key = key_of(row)?;
-            Some((RowRef::Loaded(row), sql.delete(&column_values(&key))))
+        let deletes = self
+            .deleted
+            .iter()
+            .filter_map(|&row| Some((RowRef::Loaded(row), changes.delete(row)?)));
+        let updates = self.changes.iter().filter_map(|(&row, changed)| {
+            Some((RowRef::Loaded(row), changes.update(row, changed)?))
         });
-        let updates = self.changes.iter().filter_map(|(&row, changes)| {
-            let key = key_of(row)?;
-            let set = named(changes);
-            Some((
-                RowRef::Loaded(row),
-                sql.update(&column_values(&set), &column_values(&key)),
-            ))
-        });
-        let inserts = self.inserted.iter().enumerate().map(|(row, values)| {
-            let values = named(values);
-            (RowRef::New(row), sql.insert(&column_values(&values)))
-        });
+        let inserts = self
+            .inserted
+            .iter()
+            .enumerate()
+            .map(|(row, values)| (RowRef::New(row), changes.insert(values)));
         deletes.chain(updates).chain(inserts).collect()
     }
 
@@ -503,10 +487,129 @@ impl PendingEdits {
     }
 }
 
-fn column_values(values: &[(String, Cell)]) -> Vec<ColumnValue<'_>> {
+/// Writes each changed row's statement, and the change it makes with the statement that would
+/// undo it.
+struct RowChanges<'a> {
+    sql: RowSql<'a>,
+    /// As the history shows it.
+    table: String,
+    target: &'a EditTarget,
+    columns: &'a [ColumnInfo],
+    rows: &'a [Row],
+}
+
+impl RowChanges<'_> {
+    fn delete(&self, row: usize) -> Option<RowEdit> {
+        let key = self.key(row, &BTreeMap::new())?;
+        let loaded = self.rows.get(row)?;
+        let whole_row: Vec<NamedCell> = loaded
+            .iter()
+            .enumerate()
+            .filter(|(column, _)| self.target.is_editable(*column))
+            .filter_map(|(column, value)| self.named(column, value.clone()))
+            .collect();
+        Some(self.edit(
+            self.sql.delete(&column_values(&key)),
+            RowChangeKind::Deleted {
+                key,
+                row: whole_row.clone(),
+            },
+            Some(self.sql.insert(&column_values(&whole_row))),
+        ))
+    }
+
+    /// The revert sets the old values back on the row as the edit leaves it: by its new key,
+    /// if the edit changed the key.
+    fn update(&self, row: usize, changed: &BTreeMap<usize, Cell>) -> Option<RowEdit> {
+        let key = self.key(row, &BTreeMap::new())?;
+        let new_key = self.key(row, changed)?;
+        let loaded = self.rows.get(row)?;
+        let set = self.named_all(changed);
+        let cells: Vec<ReplacedCell> = changed
+            .iter()
+            .filter_map(|(&column, new)| {
+                Some(ReplacedCell {
+                    column: self.columns.get(column)?.name.clone(),
+                    old: loaded.get(column)?.clone(),
+                    new: new.clone(),
+                })
+            })
+            .collect();
+        let old: Vec<NamedCell> = cells
+            .iter()
+            .map(|cell| NamedCell {
+                column: cell.column.clone(),
+                value: cell.old.clone(),
+            })
+            .collect();
+        Some(
+            self.edit(
+                self.sql.update(&column_values(&set), &column_values(&key)),
+                RowChangeKind::Updated { key, cells },
+                Some(
+                    self.sql
+                        .update(&column_values(&old), &column_values(&new_key)),
+                ),
+            ),
+        )
+    }
+
+    /// An added row's generated key isn't known, so it has no revert.
+    fn insert(&self, values: &BTreeMap<usize, Cell>) -> RowEdit {
+        let values = self.named_all(values);
+        self.edit(
+            self.sql.insert(&column_values(&values)),
+            RowChangeKind::Inserted { values },
+            None,
+        )
+    }
+
+    /// The row's primary key, with the values in `changed` in place of the loaded ones.
+    fn key(&self, row: usize, changed: &BTreeMap<usize, Cell>) -> Option<Vec<NamedCell>> {
+        let loaded = self.rows.get(row)?;
+        self.target
+            .key
+            .iter()
+            .map(|&column| {
+                let value = changed.get(&column).or(loaded.get(column))?;
+                self.named(column, value.clone())
+            })
+            .collect()
+    }
+
+    fn named_all(&self, values: &BTreeMap<usize, Cell>) -> Vec<NamedCell> {
+        values
+            .iter()
+            .filter_map(|(&column, value)| self.named(column, value.clone()))
+            .collect()
+    }
+
+    fn named(&self, column: usize, value: Cell) -> Option<NamedCell> {
+        Some(NamedCell {
+            column: self.columns.get(column)?.name.clone(),
+            value,
+        })
+    }
+
+    fn edit(&self, sql: String, kind: RowChangeKind, revert: Option<String>) -> RowEdit {
+        RowEdit {
+            sql,
+            change: Some(RowChange {
+                table: self.table.clone(),
+                kind,
+                revert,
+            }),
+        }
+    }
+}
+
+fn column_values(values: &[NamedCell]) -> Vec<ColumnValue<'_>> {
     values
         .iter()
-        .map(|(column, value)| ColumnValue { column, value })
+        .map(|named| ColumnValue {
+            column: &named.column,
+            value: &named.value,
+        })
         .collect()
 }
 
@@ -626,8 +729,86 @@ mod tests {
         target
     }
 
-    fn sql(statements: Vec<(RowRef, String)>) -> Vec<String> {
-        statements.into_iter().map(|(_, sql)| sql).collect()
+    fn sql(statements: Vec<(RowRef, RowEdit)>) -> Vec<String> {
+        statements.into_iter().map(|(_, edit)| edit.sql).collect()
+    }
+
+    fn named(column: &str, value: Option<&str>) -> NamedCell {
+        NamedCell {
+            column: column.to_owned(),
+            value: value.map(str::to_owned),
+        }
+    }
+
+    /// Each statement carries its row's change for the history: the values an update replaced,
+    /// a deleted row's every value, and the statement that would put the row back, keyed by
+    /// the row's new key when the edit changed the key.
+    #[test]
+    fn records_what_each_statement_does_to_its_row() {
+        let columns = [column("id"), column("name"), column("note")];
+        let target = editable(table(&["id", "name"], &["id"]), &columns);
+        let rows = vec![
+            cells(&[Some("1"), Some("ada"), Some("not a table column")]),
+            cells(&[Some("2"), Some("bob"), None]),
+        ];
+        let mut pending = PendingEdits::default();
+        pending.set(&rows, RowRef::Loaded(0), 0, Some("10".to_owned()));
+        pending.set(&rows, RowRef::Loaded(0), 1, None);
+        pending.delete(&[RowRef::Loaded(1)]);
+        pending.add_row();
+        pending.set(&rows, RowRef::New(0), 1, Some("cy".to_owned()));
+
+        let changes: Vec<RowChange> = pending
+            .statements(&target, &columns, &rows, Dialect::Sqlite)
+            .into_iter()
+            .map(|(_, edit)| edit.change.unwrap())
+            .collect();
+        let table = "public.people".to_owned();
+        assert_eq!(
+            changes,
+            [
+                RowChange {
+                    table: table.clone(),
+                    kind: RowChangeKind::Deleted {
+                        key: vec![named("id", Some("2"))],
+                        row: vec![named("id", Some("2")), named("name", Some("bob"))],
+                    },
+                    revert: Some(
+                        r#"INSERT INTO "public"."people" ("id", "name") VALUES ('2', 'bob')"#
+                            .to_owned()
+                    ),
+                },
+                RowChange {
+                    table: table.clone(),
+                    kind: RowChangeKind::Updated {
+                        key: vec![named("id", Some("1"))],
+                        cells: vec![
+                            ReplacedCell {
+                                column: "id".to_owned(),
+                                old: Some("1".to_owned()),
+                                new: Some("10".to_owned()),
+                            },
+                            ReplacedCell {
+                                column: "name".to_owned(),
+                                old: Some("ada".to_owned()),
+                                new: None,
+                            },
+                        ],
+                    },
+                    revert: Some(
+                        r#"UPDATE "public"."people" SET "id" = '1', "name" = 'ada' WHERE "id" = '10'"#
+                            .to_owned()
+                    ),
+                },
+                RowChange {
+                    table,
+                    kind: RowChangeKind::Inserted {
+                        values: vec![named("name", Some("cy"))],
+                    },
+                    revert: None,
+                },
+            ]
+        );
     }
 
     #[test]
@@ -716,7 +897,11 @@ mod tests {
             }
         );
 
-        let statements = pending.statements(&target, &columns, &rows, Dialect::Sqlite);
+        let statements: Vec<(RowRef, String)> = pending
+            .statements(&target, &columns, &rows, Dialect::Sqlite)
+            .into_iter()
+            .map(|(row, edit)| (row, edit.sql))
+            .collect();
         assert_eq!(
             statements,
             [
