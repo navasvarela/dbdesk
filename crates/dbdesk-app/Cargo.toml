@@ -37,6 +37,11 @@ tracing.workspace = true
 tracing-appender.workspace = true
 tracing-subscriber.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+muda.workspace = true
+objc2-app-kit.workspace = true
+objc2-foundation.workspace = true
+
 [dev-dependencies]
 egui_kittest = { workspace = true, features = ["eframe", "snapshot", "wgpu"] }
 rmcp = { workspace = true, features = ["client", "transport-child-process"] }

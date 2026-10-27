@@ -182,7 +182,7 @@ fn keeps_the_history_as_long_as_the_settings_say() {
 
     harness.get_by_label("View").click();
     harness.run_steps(2);
-    harness.get_by_label("Settings…").click();
+    harness.get_by_label_contains("Settings…").click();
     harness.run_steps(2);
     // The window scrolls, and the history comes after formatting, linting and updates.
     let no_limit = |node: &egui_kittest::kittest::AccessKitNode<'_>| {

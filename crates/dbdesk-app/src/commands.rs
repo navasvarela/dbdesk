@@ -1,11 +1,11 @@
-//! What the menus can do. The menu bar is data ([`egui_menu_bar`]) built from [`AppCommand`]s,
-//! and every item runs through `DbDeskApp::run_command`, so a menu that draws it differently
-//! (the native one on macOS) can't make an item do something else. See `docs/macos-look.md`.
+//! What the menus can do. Each menu bar is data ([`egui_menu_bar`], [`macos_menu_bar`]) built
+//! from [`AppCommand`]s, and every item runs through `DbDeskApp::run_command`, so the native menu
+//! on macOS can't make an item do something other than egui's. See `docs/macos-look.md`.
 
 use std::borrow::Cow;
 use std::path::PathBuf;
 
-use egui::ThemePreference;
+use egui::{Event, Key, KeyboardShortcut, Modifiers, ThemePreference};
 
 use crate::{icons, keymap};
 
@@ -27,10 +27,22 @@ pub enum AppCommand {
     FormatAll,
     CheckForUpdates,
     About,
+    #[cfg_attr(
+        not(target_os = "macos"),
+        allow(dead_code, reason = "only the macOS menu bar has it")
+    )]
+    OpenManual,
+    #[cfg_attr(
+        not(target_os = "macos"),
+        allow(dead_code, reason = "only the macOS menu bar has it")
+    )]
+    /// Closes the window the usual way, which asks first about open transactions and unsaved
+    /// files.
+    Quit,
 }
 
 /// What decides whether a command can run and which item is checked, gathered once a frame.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CommandState {
     /// The dock's focused tab is a query console.
     pub console_focused: bool,
@@ -48,6 +60,7 @@ impl AppCommand {
             Self::SaveAs => keymap::Action::SaveAs.id(),
             Self::Format => keymap::Action::Format.id(),
             Self::FormatAll => keymap::Action::FormatAll.id(),
+            Self::ShowSettings => keymap::Action::Settings.id(),
             Self::OpenRecent(_) => "file.open-recent",
             Self::ClearRecentFiles => "file.clear-recent",
             Self::ExportDataSources => "file.export-data-sources",
@@ -56,10 +69,11 @@ impl AppCommand {
             Self::Theme(ThemePreference::Light) => "view.theme.light",
             Self::Theme(ThemePreference::Dark) => "view.theme.dark",
             Self::ShowKeymap => "view.keymap",
-            Self::ShowSettings => "view.settings",
             Self::ResetLayout => "view.reset-layout",
             Self::CheckForUpdates => "help.check-for-updates",
             Self::About => "help.about",
+            Self::OpenManual => "help.manual",
+            Self::Quit => "app.quit",
         }
     }
 
@@ -87,6 +101,8 @@ impl AppCommand {
             Self::FormatAll => "Format all",
             Self::CheckForUpdates => "Check for updates…",
             Self::About => "About dbdesk",
+            Self::OpenManual => "dbdesk manual",
+            Self::Quit => "Quit dbdesk",
         };
         Cow::Borrowed(label)
     }
@@ -99,6 +115,19 @@ impl AppCommand {
             Self::SaveAs => Some(keymap::Action::SaveAs),
             Self::Format => Some(keymap::Action::Format),
             Self::FormatAll => Some(keymap::Action::FormatAll),
+            Self::ShowSettings => Some(keymap::Action::Settings),
+            _ => None,
+        }
+    }
+
+    #[cfg_attr(
+        not(target_os = "macos"),
+        allow(dead_code, reason = "only the macOS menu bar has it")
+    )]
+    /// The key every Mac app gives the command, for those the keymap doesn't bind.
+    pub fn system_shortcut(&self) -> Option<KeyboardShortcut> {
+        match self {
+            Self::Quit => Some(KeyboardShortcut::new(Modifiers::COMMAND, Key::Q)),
             _ => None,
         }
     }
@@ -111,6 +140,7 @@ impl AppCommand {
             keymap::Action::SaveAs => Some(Self::SaveAs),
             keymap::Action::Format => Some(Self::Format),
             keymap::Action::FormatAll => Some(Self::FormatAll),
+            keymap::Action::Settings => Some(Self::ShowSettings),
             _ => None,
         }
     }
@@ -135,7 +165,9 @@ impl AppCommand {
     pub fn disabled_reason(&self) -> Option<&'static str> {
         match self {
             Self::ExportDataSources => Some("There are no data sources to export yet"),
-            _ if self.shortcut().is_some() => Some("Select a query console first"),
+            Self::Save | Self::SaveAs | Self::Format | Self::FormatAll => {
+                Some("Select a query console first")
+            }
             _ => None,
         }
     }
@@ -166,6 +198,102 @@ impl AppCommand {
     }
 }
 
+/// The Edit menu's commands, for the focused egui widget. They become the input the keys would
+/// have produced, so text fields, the editor and the results grid handle them as they handle
+/// the keys.
+#[cfg_attr(
+    not(target_os = "macos"),
+    allow(dead_code, reason = "only the macOS menu bar has it")
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditCommand {
+    Undo,
+    Redo,
+    Cut,
+    Copy,
+    Paste,
+    SelectAll,
+}
+
+#[cfg_attr(
+    not(target_os = "macos"),
+    allow(dead_code, reason = "only the macOS menu bar has it")
+)]
+impl EditCommand {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Undo => "Undo",
+            Self::Redo => "Redo",
+            Self::Cut => "Cut",
+            Self::Copy => "Copy",
+            Self::Paste => "Paste",
+            Self::SelectAll => "Select All",
+        }
+    }
+
+    pub fn shortcut(self) -> KeyboardShortcut {
+        let (modifiers, key) = match self {
+            Self::Undo => (Modifiers::COMMAND, Key::Z),
+            Self::Redo => (Modifiers::COMMAND | Modifiers::SHIFT, Key::Z),
+            Self::Cut => (Modifiers::COMMAND, Key::X),
+            Self::Copy => (Modifiers::COMMAND, Key::C),
+            Self::Paste => (Modifiers::COMMAND, Key::V),
+            Self::SelectAll => (Modifiers::COMMAND, Key::A),
+        };
+        KeyboardShortcut::new(modifiers, key)
+    }
+
+    /// What egui would have received for the key, as egui-winit translates it: clipboard
+    /// events for cut, copy and paste (with `pasted`, the clipboard's text), a key press and
+    /// release for the rest.
+    pub fn events(self, pasted: Option<String>) -> Vec<Event> {
+        match self {
+            Self::Cut => vec![Event::Cut],
+            Self::Copy => vec![Event::Copy],
+            Self::Paste => pasted.into_iter().map(Event::Paste).collect(),
+            Self::Undo | Self::Redo | Self::SelectAll => {
+                let shortcut = self.shortcut();
+                [true, false]
+                    .into_iter()
+                    .map(|pressed| Event::Key {
+                        key: shortcut.logical_key,
+                        physical_key: None,
+                        pressed,
+                        repeat: false,
+                        modifiers: shortcut.modifiers,
+                    })
+                    .collect()
+            }
+        }
+    }
+}
+
+/// Items AppKit provides and runs itself, in the macOS menu bar only.
+#[cfg_attr(
+    not(target_os = "macos"),
+    allow(dead_code, reason = "only the macOS menu bar has it")
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SystemItem {
+    Services,
+    Hide,
+    HideOthers,
+    ShowAll,
+    FullScreen,
+    Minimize,
+    Zoom,
+    BringAllToFront,
+}
+
+/// The titles AppKit gives the Window and Help menus' extra items to (the window list, the
+/// help search field).
+#[cfg_attr(
+    not(target_os = "macos"),
+    allow(dead_code, reason = "only the macOS menu bar has it")
+)]
+pub const WINDOW_MENU: &str = "Window";
+pub const HELP_MENU: &str = "Help";
+
 /// A menu or submenu: its title and what it lists, top to bottom.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Menu {
@@ -176,6 +304,18 @@ pub struct Menu {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Entry {
     Command(AppCommand),
+    #[cfg_attr(
+        not(target_os = "macos"),
+        allow(dead_code, reason = "only the macOS menu bar has it")
+    )]
+    /// Only in the macOS menu bar: elsewhere egui's widgets take the keys directly.
+    Edit(EditCommand),
+    #[cfg_attr(
+        not(target_os = "macos"),
+        allow(dead_code, reason = "only the macOS menu bar has it")
+    )]
+    /// Only in the macOS menu bar.
+    System(SystemItem),
     Separator,
     Submenu(Menu),
     /// Greyed-out text standing in for an empty list.
@@ -211,8 +351,88 @@ pub fn egui_menu_bar(recent_files: impl IntoIterator<Item = PathBuf>) -> Vec<Men
         },
         code(),
         Menu {
-            title: "Help",
+            title: HELP_MENU,
             entries: vec![Command(C::CheckForUpdates), Command(C::About)],
+        },
+    ]
+}
+
+/// The same commands, laid out as Mac apps lay out theirs: About, updates, Settings and Quit in
+/// the app menu, and the Edit and Window menus macOS users expect.
+#[cfg_attr(
+    not(target_os = "macos"),
+    allow(dead_code, reason = "only the macOS menu bar has it")
+)]
+pub fn macos_menu_bar(recent_files: impl IntoIterator<Item = PathBuf>) -> Vec<Menu> {
+    use AppCommand as C;
+    use Entry::{Command, Edit, Separator, Submenu, System};
+    vec![
+        // The first menu is the app menu, which macOS titles with the app's name.
+        Menu {
+            title: "dbdesk",
+            entries: vec![
+                Command(C::About),
+                Command(C::CheckForUpdates),
+                Separator,
+                Command(C::ShowSettings),
+                Separator,
+                System(SystemItem::Services),
+                Separator,
+                System(SystemItem::Hide),
+                System(SystemItem::HideOthers),
+                System(SystemItem::ShowAll),
+                Separator,
+                Command(C::Quit),
+            ],
+        },
+        Menu {
+            title: "File",
+            entries: vec![
+                Command(C::OpenFile),
+                Submenu(open_recent(recent_files)),
+                Separator,
+                Command(C::Save),
+                Command(C::SaveAs),
+                Separator,
+                Command(C::ExportDataSources),
+                Command(C::ImportDataSources),
+            ],
+        },
+        Menu {
+            title: "Edit",
+            entries: vec![
+                Edit(EditCommand::Undo),
+                Edit(EditCommand::Redo),
+                Separator,
+                Edit(EditCommand::Cut),
+                Edit(EditCommand::Copy),
+                Edit(EditCommand::Paste),
+                Edit(EditCommand::SelectAll),
+            ],
+        },
+        Menu {
+            title: "View",
+            entries: vec![
+                Submenu(theme()),
+                Command(C::ShowKeymap),
+                Command(C::ResetLayout),
+                Separator,
+                System(SystemItem::FullScreen),
+            ],
+        },
+        code(),
+        Menu {
+            title: WINDOW_MENU,
+            entries: vec![
+                System(SystemItem::Minimize),
+                System(SystemItem::Zoom),
+                Separator,
+                System(SystemItem::BringAllToFront),
+            ],
+        },
+        Menu {
+            title: HELP_MENU,
+            entries: vec![Command(C::OpenManual)],
         },
     ]
 }
@@ -267,7 +487,7 @@ pub fn commands_in(menus: &[Menu]) -> Vec<&AppCommand> {
             match entry {
                 Entry::Command(command) => found.push(command),
                 Entry::Submenu(menu) => walk(&menu.entries, found),
-                Entry::Separator | Entry::Note(_) => {}
+                Entry::Edit(_) | Entry::System(_) | Entry::Separator | Entry::Note(_) => {}
             }
         }
     }
@@ -299,11 +519,69 @@ mod tests {
 
     #[test]
     fn ids_are_unique() {
-        let menus = egui_menu_bar([PathBuf::from("/tmp/a.sql")]);
-        let mut seen = HashSet::new();
-        for command in commands_in(&menus) {
-            assert!(seen.insert(command.id()), "{} is used twice", command.id());
+        for menus in [
+            egui_menu_bar([PathBuf::from("/tmp/a.sql")]),
+            macos_menu_bar([PathBuf::from("/tmp/a.sql")]),
+        ] {
+            let mut seen = HashSet::new();
+            for command in commands_in(&menus) {
+                assert!(seen.insert(command.id()), "{} is used twice", command.id());
+            }
         }
+    }
+
+    #[test]
+    fn the_macos_menu_bar_has_every_command_of_egui_s() {
+        let recent = || [PathBuf::from("/tmp/a.sql")];
+        let macos_menus = macos_menu_bar(recent());
+        let macos = commands_in(&macos_menus);
+        for command in commands_in(&egui_menu_bar(recent())) {
+            assert!(macos.contains(&command), "{command:?} is missing on macOS");
+        }
+    }
+
+    #[test]
+    fn edit_commands_become_what_their_keys_would_have() {
+        let press = |modifiers, key| {
+            [true, false].map(|pressed| Event::Key {
+                key,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers,
+            })
+        };
+        assert_eq!(EditCommand::Copy.events(None), [Event::Copy]);
+        assert_eq!(EditCommand::Cut.events(None), [Event::Cut]);
+        assert_eq!(
+            EditCommand::Paste.events(Some("id".to_owned())),
+            [Event::Paste("id".to_owned())]
+        );
+        assert_eq!(EditCommand::Paste.events(None), []);
+        assert_eq!(
+            EditCommand::Undo.events(None),
+            press(Modifiers::COMMAND, Key::Z)
+        );
+        assert_eq!(
+            EditCommand::Redo.events(None),
+            press(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z)
+        );
+        assert_eq!(
+            EditCommand::SelectAll.events(None),
+            press(Modifiers::COMMAND, Key::A)
+        );
+    }
+
+    #[test]
+    fn settings_and_quit_have_the_mac_keys() {
+        assert_eq!(
+            AppCommand::ShowSettings.shortcut(),
+            Some(keymap::Action::Settings)
+        );
+        assert_eq!(
+            AppCommand::Quit.system_shortcut(),
+            Some(KeyboardShortcut::new(Modifiers::COMMAND, Key::Q))
+        );
     }
 
     #[test]

@@ -49,6 +49,9 @@ fn entries(
             Entry::Note(text) => {
                 ui.weak(*text);
             }
+            // The Edit and system items are the macOS menu bar's; egui widgets take those keys
+            // directly.
+            Entry::Edit(_) | Entry::System(_) => {}
         }
     }
 }

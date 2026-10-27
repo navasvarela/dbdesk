@@ -30,6 +30,7 @@ use crate::keymap_window::{self, KeymapWindowAction};
 use crate::log_console::{LogConsole, LogFeed};
 use crate::mcp_settings::McpDefaultsEditor;
 use crate::menu_bar;
+use crate::native_menu::{Chosen, NativeMenu};
 use crate::object_dialog::{self, ObjectDialog, ObjectDialogAction, Target};
 use crate::password_prompt::{PasswordPrompt, PromptAction};
 use crate::project_dialog::{
@@ -46,7 +47,7 @@ use crate::unsaved_dialog::{UnsavedChoice, UnsavedConfirmation};
 use crate::update_dialog::{self, UpdateAction};
 use crate::updates::Updates;
 use crate::workspace::{self, Panels, Tab};
-use crate::{fonts, relaunch};
+use crate::{fonts, relaunch, welcome};
 
 /// Where the dock layout is saved. Versioned so a change to the default layout reaches people
 /// who already have one saved: layouts under an older key are ignored once, and the default
@@ -123,6 +124,8 @@ pub struct DbDeskApp {
     /// Set on first launch until the window has been asked to maximize. After that, eframe
     /// restores whatever size the user left it at.
     maximize_window: bool,
+    /// The menu bar macOS draws, when `main` installed one; egui's is drawn only without it.
+    native_menu: Option<NativeMenu>,
 }
 
 impl DbDeskApp {
@@ -193,6 +196,7 @@ impl DbDeskApp {
             pick_sql_file: Box::new(file_picker::pick_sql_file),
             pick_sql_save_path: Box::new(file_picker::pick_sql_save_path),
             maximize_window,
+            native_menu: None,
         })
     }
 
@@ -200,6 +204,16 @@ impl DbDeskApp {
     /// command line.
     pub fn with_files_to_open(mut self, paths: Vec<PathBuf>) -> Self {
         self.files_to_open = paths;
+        self
+    }
+
+    /// Uses the operating system's menu bar instead of drawing egui's, if there is one.
+    #[cfg_attr(
+        not(target_os = "macos"),
+        expect(dead_code, reason = "only macOS has a native menu bar")
+    )]
+    pub fn with_native_menu(mut self, menu: Option<NativeMenu>) -> Self {
+        self.native_menu = menu;
         self
     }
 
@@ -502,6 +516,7 @@ impl DbDeskApp {
                     keymap::Action::OpenFile,
                     keymap::Action::Save,
                     keymap::Action::SaveAs,
+                    keymap::Action::Settings,
                 ],
             )
         });
@@ -1239,6 +1254,22 @@ impl DbDeskApp {
         }
     }
 
+    fn sync_native_menu(&mut self, ctx: &egui::Context) {
+        if self.native_menu.is_none() {
+            return;
+        }
+        let state = self.command_state(ctx);
+        let recent: Vec<_> = self
+            .sql_files
+            .recent()
+            .iter()
+            .map(|file| file.path.clone())
+            .collect();
+        if let Some(menu) = &mut self.native_menu {
+            menu.sync(&state, &self.keymap, &recent);
+        }
+    }
+
     fn command_state(&mut self, ctx: &egui::Context) -> CommandState {
         CommandState {
             console_focused: self.focused_console().is_some(),
@@ -1282,6 +1313,8 @@ impl DbDeskApp {
                 self.send(check);
             }
             AppCommand::About => self.about_open = true,
+            AppCommand::OpenManual => ctx.open_url(egui::OpenUrl::new_tab(welcome::MANUAL_URL)),
+            AppCommand::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
         }
     }
 
@@ -1481,7 +1514,22 @@ impl DbDeskApp {
 }
 
 impl eframe::App for DbDeskApp {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        let chosen = self
+            .native_menu
+            .as_mut()
+            .map(NativeMenu::drain)
+            .unwrap_or_default();
+        for chosen in chosen {
+            match chosen {
+                Chosen::Command(command) => self.run_command(command, ctx),
+                Chosen::Input(events) => raw_input.events.extend(events),
+            }
+        }
+    }
+
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.sync_native_menu(ctx);
         self.maximize_window_once(ctx);
         self.drain_engine_events();
         self.log_console.drain();
@@ -1497,9 +1545,11 @@ impl eframe::App for DbDeskApp {
         let bar = Frame::new()
             .fill(ui.visuals().panel_fill)
             .inner_margin(Margin::symmetric(10, 2));
-        egui::Panel::top("menu_bar")
-            .frame(bar)
-            .show(ui, |ui| self.menu_bar(ui));
+        if self.native_menu.is_none() {
+            egui::Panel::top("menu_bar")
+                .frame(bar)
+                .show(ui, |ui| self.menu_bar(ui));
+        }
         egui::Panel::bottom("status_bar")
             .frame(bar)
             .show(ui, |ui| self.status_bar(ui));
@@ -2255,7 +2305,7 @@ mod tests {
 
         harness.get_by_label("View").click();
         harness.run();
-        harness.get_by_label("Settings…").click();
+        harness.get_by_label_contains("Settings…").click();
         harness.run();
         // The window scrolls, and the MCP section is at its bottom, out of reach of clicks.
         harness.get_by_label("Save MCP defaults").scroll_to_me();
@@ -4003,7 +4053,7 @@ mod tests {
 
         harness.get_by_label("View").click();
         harness.run_steps(2);
-        harness.get_by_label("Settings…").click();
+        harness.get_by_label_contains("Settings…").click();
         harness.run_steps(2);
         harness.get_by_label("lower").click();
         harness.run_steps(2);
