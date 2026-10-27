@@ -25,7 +25,7 @@ use egui::{Id, Ui, Window};
 pub use confirm::Destruction;
 use index::{DropIndex, NewIndex};
 use new_table::NewTable;
-use role::{EditRole, NewRole, RoleKind};
+use role::{DropRole, EditRole, NewRole, RenameRole, RoleKind};
 use schema::{DropSchema, NewSchema};
 use table::{DropTable, RenameTable, TableAt, TruncateTable};
 use view::{DropView, EditView, NewView, RefreshView, RenameView, ViewAt};
@@ -153,6 +153,8 @@ pub fn form(helper: Helper, dialect: Dialect) -> Option<Box<dyn ObjectForm>> {
         Helper::NewUser(path) => Box::new(NewRole::new(&path, RoleKind::User)?),
         Helper::NewRole(path) => Box::new(NewRole::new(&path, RoleKind::Role)?),
         Helper::EditRole(path) => Box::new(EditRole::new(path)?),
+        Helper::RenameRole(path) => Box::new(RenameRole::new(&path)?),
+        Helper::DropRole(path) => Box::new(DropRole::new(path)?),
     })
 }
 

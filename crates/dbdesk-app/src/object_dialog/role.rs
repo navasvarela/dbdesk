@@ -1,14 +1,16 @@
 //! New user…, New role… and Edit…: one form for PostgreSQL's roles, where a user is a role
-//! that may log in. The password is hashed into a SCRAM verifier as it is typed, so the
+//! that may log in; and Rename… and Drop…. The password is hashed into a SCRAM verifier as it is typed, so the
 //! operations only ever hold the verifier.
 
 use std::collections::BTreeSet;
 
 use dbdesk_core::{CatalogPath, FolderKind, NodeKind, RoleAttribute, RoleDescription};
-use dbdesk_sql::{DdlError, DdlOperation, PasswordChange, RoleSpec, ScramVerifier};
+use dbdesk_sql::{
+    DdlError, DdlOperation, Dialect, OwnedObjects, PasswordChange, RoleSpec, ScramVerifier,
+};
 use egui::{DragValue, Grid, TextEdit, Ui, WidgetType};
 
-use super::{FormContext, ObjectForm};
+use super::{Destruction, FormContext, ObjectForm};
 use crate::catalog_tree::CatalogTree;
 use crate::widgets;
 
@@ -418,5 +420,368 @@ impl ObjectForm for EditRole {
 
     fn changed(&self) -> CatalogPath {
         roles_folder()
+    }
+}
+
+/// Gives a role another name.
+pub(crate) struct RenameRole {
+    name: String,
+    new_name: String,
+}
+
+impl RenameRole {
+    /// On a role.
+    pub(crate) fn new(path: &CatalogPath) -> Option<Self> {
+        let name = role_name(path)?.to_owned();
+        Some(Self {
+            new_name: name.clone(),
+            name,
+        })
+    }
+}
+
+impl ObjectForm for RenameRole {
+    fn title(&self) -> String {
+        format!("Rename role {}", self.name)
+    }
+
+    fn show(&mut self, ui: &mut Ui, _context: &FormContext<'_>) {
+        ui.horizontal(|ui| {
+            let label = ui.label("New name");
+            ui.add(TextEdit::singleline(&mut self.new_name))
+                .labelled_by(label.id);
+        });
+        ui.weak(
+            "A password stored as MD5 is cleared, since PostgreSQL salts those with the name; \
+             SCRAM passwords, which dbdesk sets, are kept.",
+        );
+    }
+
+    fn operations(&self) -> Result<Vec<DdlOperation>, DdlError> {
+        Ok(vec![DdlOperation::RenameRole {
+            name: self.name.clone(),
+            new_name: self.new_name.trim().to_owned(),
+        }])
+    }
+
+    fn changed(&self) -> CatalogPath {
+        roles_folder()
+    }
+}
+
+/// What Drop does with what the role owns, as the dialog offers it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OwnedChoice {
+    Keep,
+    Reassign,
+    Drop,
+}
+
+/// Drops a role, after giving away or dropping what it owns in this database if asked. The
+/// confirmation counts what it owns, from its description.
+pub(crate) struct DropRole {
+    path: CatalogPath,
+    name: String,
+    /// `None` until it is described; the drop can go ahead meanwhile, and the database
+    /// refuses it if the role still owns anything.
+    described: Option<Result<RoleDescription, String>>,
+    owned: OwnedChoice,
+    new_owner: String,
+}
+
+impl DropRole {
+    /// On a role.
+    pub(crate) fn new(path: CatalogPath) -> Option<Self> {
+        let name = role_name(&path)?.to_owned();
+        Some(Self {
+            path,
+            name,
+            described: None,
+            owned: OwnedChoice::Keep,
+            new_owner: String::new(),
+        })
+    }
+
+    fn role(&self) -> Option<&RoleDescription> {
+        self.described.as_ref()?.as_ref().ok()
+    }
+
+    /// What goes with the role, for the confirmation.
+    fn consequences(&self, role: &RoleDescription) -> Vec<String> {
+        let mut consequences = Vec::new();
+        let objects = count(role.owned_objects, "object");
+        if role.owned_objects > 0 {
+            consequences.push(match self.owned {
+                OwnedChoice::Keep => format!(
+                    "It owns {objects} in this database, so PostgreSQL refuses to drop it until \
+                     they are given away or dropped."
+                ),
+                OwnedChoice::Reassign => format!(
+                    "REASSIGN OWNED gives the {objects} it owns in this database to {}.",
+                    owner_or_placeholder(&self.new_owner)
+                ),
+                OwnedChoice::Drop => format!(
+                    "DROP OWNED drops the {objects} it owns in this database, with their data."
+                ),
+            });
+        }
+        if role.privileges > 0 {
+            let objects = count(role.privileges, "object");
+            consequences.push(match self.owned {
+                OwnedChoice::Keep => format!(
+                    "It holds privileges on {objects} in this database, which stop the drop too."
+                ),
+                OwnedChoice::Reassign | OwnedChoice::Drop => {
+                    format!("DROP OWNED revokes its privileges on {objects}.")
+                }
+            });
+        }
+        if !role.owned_databases.is_empty() {
+            let databases = role.owned_databases.join(", ");
+            consequences.push(match self.owned {
+                OwnedChoice::Reassign => format!(
+                    "It owns the databases {databases}, which REASSIGN OWNED gives away too."
+                ),
+                OwnedChoice::Keep | OwnedChoice::Drop => format!(
+                    "It owns the databases {databases}, which PostgreSQL won't drop with it: \
+                     give them to another role, or drop them first."
+                ),
+            });
+        }
+        if !role.members.is_empty() {
+            let members: Vec<&str> = role.members.iter().map(String::as_str).collect();
+            consequences.push(format!(
+                "Its members lose its privileges: {}.",
+                members.join(", ")
+            ));
+        }
+        consequences
+    }
+}
+
+fn count(n: u64, noun: &str) -> String {
+    match n {
+        1 => format!("1 {noun}"),
+        n => format!("{n} {noun}s"),
+    }
+}
+
+fn owner_or_placeholder(owner: &str) -> &str {
+    if owner.trim().is_empty() {
+        "the role picked above"
+    } else {
+        owner
+    }
+}
+
+impl ObjectForm for DropRole {
+    fn title(&self) -> String {
+        format!("Drop role {}", self.name)
+    }
+
+    fn show(&mut self, ui: &mut Ui, context: &FormContext<'_>) {
+        match &self.described {
+            None => {
+                ui.weak("Counting what the role owns…");
+            }
+            Some(Err(error)) => {
+                ui.colored_label(
+                    ui.visuals().error_fg_color,
+                    format!("Could not count what the role owns: {error}"),
+                );
+            }
+            Some(Ok(_)) => {}
+        }
+        ui.label("What it owns in this database:");
+        ui.radio_value(
+            &mut self.owned,
+            OwnedChoice::Keep,
+            "Keep it (the drop fails if there is any)",
+        );
+        ui.horizontal(|ui| {
+            ui.radio_value(&mut self.owned, OwnedChoice::Reassign, "Give it to");
+            let roles = other_roles(context.catalog, &self.name);
+            let combo = egui::ComboBox::from_id_salt("drop_role_new_owner")
+                .selected_text(if self.new_owner.is_empty() {
+                    "Choose…"
+                } else {
+                    self.new_owner.as_str()
+                })
+                .show_ui(ui, |ui| {
+                    for role in roles {
+                        let picked = ui.selectable_value(&mut self.new_owner, role.clone(), &role);
+                        if picked.clicked() {
+                            self.owned = OwnedChoice::Reassign;
+                        }
+                    }
+                });
+            widgets::name(combo.response, WidgetType::ComboBox, "New owner", true);
+        });
+        ui.radio_value(&mut self.owned, OwnedChoice::Drop, "Drop it");
+        if self.owned != OwnedChoice::Keep {
+            ui.weak(
+                "REASSIGN OWNED and DROP OWNED act in this database only: what the role owns \
+                 in another one still stops the drop.",
+            );
+        }
+    }
+
+    fn catalog_requests(&self) -> Vec<CatalogPath> {
+        vec![roles_folder()]
+    }
+
+    fn role_request(&self) -> Option<CatalogPath> {
+        Some(self.path.clone())
+    }
+
+    fn role_described(&mut self, result: &Result<RoleDescription, String>) {
+        if let Ok(role) = result
+            && (role.owned_objects > 0 || role.privileges > 0)
+        {
+            self.owned = OwnedChoice::Reassign;
+        }
+        self.described = Some(result.clone());
+    }
+
+    fn operations(&self) -> Result<Vec<DdlOperation>, DdlError> {
+        let owned = match self.owned {
+            OwnedChoice::Keep => OwnedObjects::Keep,
+            OwnedChoice::Reassign => OwnedObjects::ReassignTo(self.new_owner.clone()),
+            OwnedChoice::Drop => OwnedObjects::Drop,
+        };
+        Ok(vec![DdlOperation::DropRole {
+            name: self.name.clone(),
+            owned,
+        }])
+    }
+
+    fn changed(&self) -> CatalogPath {
+        roles_folder()
+    }
+
+    fn destruction(&self, _dialect: Dialect) -> Option<Destruction> {
+        let noun = match self.role() {
+            Some(role) => RoleKind::of(&role.attributes).noun(),
+            None => RoleKind::Role.noun(),
+        };
+        Some(Destruction {
+            name: self.name.clone(),
+            summary: format!("Drops the {noun} {}.", self.name),
+            consequences: self
+                .role()
+                .map(|role| self.consequences(role))
+                .unwrap_or_default(),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn alice(owned_objects: u64, privileges: u64, owned_databases: &[&str]) -> RoleDescription {
+        RoleDescription {
+            name: "alice".to_owned(),
+            attributes: [RoleAttribute::Login].into(),
+            connection_limit: None,
+            valid_until: None,
+            member_of: BTreeSet::new(),
+            members: ["auditors".to_owned()].into(),
+            owned_objects,
+            privileges,
+            owned_databases: owned_databases
+                .iter()
+                .map(|name| (*name).to_owned())
+                .collect(),
+        }
+    }
+
+    fn drop_alice(role: RoleDescription) -> DropRole {
+        let path = roles_folder().child(NodeKind::Role, "alice");
+        let mut form = DropRole::new(path).unwrap();
+        form.role_described(&Ok(role));
+        form
+    }
+
+    #[test]
+    fn opens_on_the_data_source_the_roles_folder_or_a_role() {
+        let role = roles_folder().child(NodeKind::Role, "alice");
+        assert!(NewRole::new(&CatalogPath::root(), RoleKind::User).is_some());
+        assert!(NewRole::new(&roles_folder(), RoleKind::Role).is_some());
+        assert!(NewRole::new(&role, RoleKind::Role).is_none());
+        assert!(EditRole::new(role.clone()).is_some());
+        assert!(RenameRole::new(&roles_folder()).is_none());
+        assert!(DropRole::new(CatalogPath::root().child(NodeKind::Database, "alice")).is_none());
+    }
+
+    #[test]
+    fn a_role_that_owns_nothing_is_dropped_alone() {
+        let form = drop_alice(alice(0, 0, &[]));
+        assert_eq!(form.owned, OwnedChoice::Keep);
+        let destruction = form.destruction(Dialect::Postgres).unwrap();
+        assert_eq!(destruction.summary, "Drops the user alice.");
+        assert_eq!(
+            destruction.consequences,
+            ["Its members lose its privileges: auditors."]
+        );
+    }
+
+    #[test]
+    fn the_confirmation_names_what_goes_with_the_role() {
+        let mut form = drop_alice(alice(3, 1, &["reports"]));
+        assert_eq!(
+            form.owned,
+            OwnedChoice::Reassign,
+            "a role that owns something starts out giving it away"
+        );
+        assert_eq!(
+            form.operations()
+                .and_then(|operations| dbdesk_sql::ddl_statements(&operations, Dialect::Postgres)),
+            Err(DdlError::NoNewOwner),
+            "Execute waits for the new owner"
+        );
+        form.new_owner = "bob".to_owned();
+        let cases = [
+            (
+                OwnedChoice::Keep,
+                [
+                    "It owns 3 objects in this database, so PostgreSQL refuses to drop it until \
+                     they are given away or dropped.",
+                    "It holds privileges on 1 object in this database, which stop the drop too.",
+                    "It owns the databases reports, which PostgreSQL won't drop with it: give \
+                     them to another role, or drop them first.",
+                ],
+            ),
+            (
+                OwnedChoice::Reassign,
+                [
+                    "REASSIGN OWNED gives the 3 objects it owns in this database to bob.",
+                    "DROP OWNED revokes its privileges on 1 object.",
+                    "It owns the databases reports, which REASSIGN OWNED gives away too.",
+                ],
+            ),
+            (
+                OwnedChoice::Drop,
+                [
+                    "DROP OWNED drops the 3 objects it owns in this database, with their data.",
+                    "DROP OWNED revokes its privileges on 1 object.",
+                    "It owns the databases reports, which PostgreSQL won't drop with it: give \
+                     them to another role, or drop them first.",
+                ],
+            ),
+        ];
+        for (choice, expected) in cases {
+            form.owned = choice;
+            let consequences = form.destruction(Dialect::Postgres).unwrap().consequences;
+            assert_eq!(consequences[..3], expected, "{choice:?}");
+        }
+        form.owned = OwnedChoice::Reassign;
+        assert_eq!(
+            form.operations(),
+            Ok(vec![DdlOperation::DropRole {
+                name: "alice".to_owned(),
+                owned: OwnedObjects::ReassignTo("bob".to_owned()),
+            }])
+        );
     }
 }
