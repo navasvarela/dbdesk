@@ -1583,7 +1583,7 @@ checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 
 [[package]]
 name = "dbdesk-app"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "dbdesk-core",
@@ -1617,7 +1617,7 @@ dependencies = [
 
 [[package]]
 name = "dbdesk-core"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "serde",
@@ -1629,7 +1629,7 @@ dependencies = [
 
 [[package]]
 name = "dbdesk-driver-clickhouse"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "clickhouse",
@@ -1647,7 +1647,7 @@ dependencies = [
 
 [[package]]
 name = "dbdesk-driver-duckdb"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "dbdesk-core",
@@ -1660,7 +1660,7 @@ dependencies = [
 
 [[package]]
 name = "dbdesk-driver-mysql"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "dbdesk-core",
@@ -1674,7 +1674,7 @@ dependencies = [
 
 [[package]]
 name = "dbdesk-driver-postgres"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "dbdesk-core",
@@ -1689,7 +1689,7 @@ dependencies = [
 
 [[package]]
 name = "dbdesk-driver-sqlite"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "dbdesk-core",
@@ -1700,7 +1700,7 @@ dependencies = [
 
 [[package]]
 name = "dbdesk-driver-sqlserver"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "dbdesk-core",
@@ -1718,7 +1718,7 @@ dependencies = [
 
 [[package]]
 name = "dbdesk-engine"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "cargo-packager-updater",
@@ -1745,7 +1745,7 @@ dependencies = [
 
 [[package]]
 name = "dbdesk-mcp"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "dbdesk-core",
  "dbdesk-engine",
@@ -1765,7 +1765,7 @@ dependencies = [
 
 [[package]]
 name = "dbdesk-sql"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "base64 0.22.1",
  "dbdesk-core",
@@ -1778,7 +1778,7 @@ dependencies = [
 
 [[package]]
 name = "dbdesk-ssh"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "data-encoding",
  "dbdesk-core",
@@ -1794,7 +1794,7 @@ dependencies = [
 
 [[package]]
 name = "dbdesk-store"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "dbdesk-core",
  "directories",
@@ -1810,7 +1810,7 @@ dependencies = [
 
 [[package]]
 name = "dbdesk-tls"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "dbdesk-core",
  "rustls",
