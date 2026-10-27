@@ -10,11 +10,14 @@ mod fields;
 mod index;
 mod new_table;
 mod review;
+mod role;
 mod schema;
 mod table;
 mod view;
 
-use dbdesk_core::{CatalogPath, DataSource, DataSourceId, NodeKind, SafetyLevel, SourceColor};
+use dbdesk_core::{
+    CatalogPath, DataSource, DataSourceId, NodeKind, RoleDescription, SafetyLevel, SourceColor,
+};
 use dbdesk_engine::{Event, SessionState};
 use dbdesk_sql::{DdlError, DdlOperation, Dialect, ObjectName, ViewKind, ddl_statements};
 use egui::{Id, Ui, Window};
@@ -22,6 +25,7 @@ use egui::{Id, Ui, Window};
 pub use confirm::Destruction;
 use index::{DropIndex, NewIndex};
 use new_table::NewTable;
+use role::{EditRole, NewRole, RoleKind};
 use schema::{DropSchema, NewSchema};
 use table::{DropTable, RenameTable, TableAt, TruncateTable};
 use view::{DropView, EditView, NewView, RefreshView, RenameView, ViewAt};
@@ -80,6 +84,15 @@ pub trait ObjectForm {
     /// The answer to [`ObjectForm::definition_request`].
     fn definition_loaded(&mut self, _result: &Result<String, String>, _dialect: Dialect) {}
 
+    /// The role the form starts from, such as the one Edit changes: described once, when
+    /// the dialog opens.
+    fn role_request(&self) -> Option<CatalogPath> {
+        None
+    }
+
+    /// The answer to [`ObjectForm::role_request`].
+    fn role_described(&mut self, _result: &Result<RoleDescription, String>) {}
+
     /// What the form asks for, or why it can't be written as SQL yet.
     fn operations(&self) -> Result<Vec<DdlOperation>, DdlError>;
 
@@ -137,6 +150,9 @@ pub fn form(helper: Helper, dialect: Dialect) -> Option<Box<dyn ObjectForm>> {
         Helper::DropView(path) => Box::new(DropView::new(ViewAt::new(path)?)),
         Helper::NewSchema(path) => Box::new(NewSchema::new(path)?),
         Helper::DropSchema(path) => Box::new(DropSchema::new(path)?),
+        Helper::NewUser(path) => Box::new(NewRole::new(&path, RoleKind::User)?),
+        Helper::NewRole(path) => Box::new(NewRole::new(&path, RoleKind::Role)?),
+        Helper::EditRole(path) => Box::new(EditRole::new(path)?),
     })
 }
 
@@ -171,6 +187,11 @@ impl ObjectDialog {
         self.form.definition_request()
     }
 
+    /// See [`ObjectForm::role_request`].
+    pub fn role_request(&self) -> Option<CatalogPath> {
+        self.form.role_request()
+    }
+
     /// Follows the engine's answer to Execute. Returns the node to refresh once the change
     /// has been applied, which means the dialog is done.
     pub fn apply(&mut self, event: &Event) -> Option<CatalogPath> {
@@ -187,6 +208,13 @@ impl ObjectDialog {
                 if *id == data_source && Some(path) == self.form.definition_request().as_ref() =>
             {
                 self.form.definition_loaded(result, self.target.dialect);
+            }
+            Event::RoleDescribed {
+                data_source: answered,
+                path,
+                result,
+            } if *answered == data_source && Some(path) == self.form.role_request().as_ref() => {
+                self.form.role_described(result);
             }
             // A request sent while connecting is never answered if the connection fails.
             Event::SessionChanged { id, state } if *id == data_source => match state {

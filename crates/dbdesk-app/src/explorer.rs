@@ -89,6 +89,12 @@ pub enum Helper {
     /// On a database, or on the data source (the root) where its schemas are databases.
     NewSchema(CatalogPath),
     DropSchema(CatalogPath),
+    /// On the data source (the root) or its roles folder, where users are roles, as the next
+    /// one.
+    NewUser(CatalogPath),
+    NewRole(CatalogPath),
+    /// On a role.
+    EditRole(CatalogPath),
 }
 
 /// The explorer's own view settings.
@@ -526,19 +532,21 @@ fn data_source_menu(
         actions.push(ExplorerAction::NewConsole(id));
     }
     saved_consoles_menu(ui, id, tree.saved_consoles, actions);
-    let dialect = Dialect::from(entry.data_source.config.driver());
-    if dialect.capabilities().schema_creation == SchemaCreation::CreateDatabase {
+    let capabilities = Dialect::from(entry.data_source.config.driver()).capabilities();
+    let root = CatalogPath::root();
+    let mut new = Vec::new();
+    if capabilities.schema_creation == SchemaCreation::CreateDatabase {
+        new.push((
+            icons::TREE_STRUCTURE,
+            "Schema…",
+            Helper::NewSchema(root.clone()),
+        ));
+    }
+    new.extend(new_roles(&root, capabilities));
+    if !new.is_empty() {
         ui.separator();
         let label = widgets::icon_text(ui, icons::PLUS, Color32::PLACEHOLDER, "New");
-        let helper = Helper::NewSchema(CatalogPath::root());
-        let menu = ui.menu_button(label, |ui| {
-            helper_items(
-                ui,
-                id,
-                vec![(icons::TREE_STRUCTURE, "Schema…", helper)],
-                actions,
-            );
-        });
+        let menu = ui.menu_button(label, |ui| helper_items(ui, id, new, actions));
         widgets::name(menu.response, WidgetType::Button, "New", true);
     }
     ui.separator();
@@ -878,6 +886,14 @@ fn helpers_menu(
         {
             object.push((icons::TRASH, "Drop index…", Helper::DropIndex(path.clone())));
         }
+        Some(NodeKind::Folder(FolderKind::Roles)) => new.extend(new_roles(path, capabilities)),
+        Some(NodeKind::Role) if capabilities.users == UserModel::Roles => {
+            object.push((
+                icons::PENCIL_SIMPLE,
+                "Edit…",
+                Helper::EditRole(path.clone()),
+            ));
+        }
         Some(NodeKind::View) => object.extend(view_actions(path, capabilities)),
         Some(NodeKind::MaterializedView) if capabilities.materialized_views => {
             object.push((
@@ -925,6 +941,21 @@ fn new_views(
         ));
     }
     items
+}
+
+/// New user and New role, on the data source or its roles folder at `path`, where the
+/// dialect's users are roles.
+fn new_roles(
+    path: &CatalogPath,
+    capabilities: &Capabilities,
+) -> Vec<(&'static str, &'static str, Helper)> {
+    match capabilities.users {
+        UserModel::Roles => vec![
+            (icons::USER, "User…", Helper::NewUser(path.clone())),
+            (icons::USERS, "Role…", Helper::NewRole(path.clone())),
+        ],
+        UserModel::Unsupported => Vec::new(),
+    }
 }
 
 /// What can be done to the view or materialized view at `path`.

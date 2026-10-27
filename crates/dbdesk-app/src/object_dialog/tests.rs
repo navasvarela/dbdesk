@@ -1,9 +1,9 @@
 use dbdesk_core::{
-    ConnectionConfig, DataSource, DataSourceId, FolderKind, NodeKind, SafetyLevel, SourceColor,
-    SqliteConfig,
+    ConnectionConfig, DataSource, DataSourceId, FolderKind, NodeKind, PostgresConfig,
+    RoleAttribute, SafetyLevel, ServerConfig, SourceColor, SqliteConfig, TlsMode,
 };
 use dbdesk_engine::DdlFailure;
-use dbdesk_sql::ObjectName;
+use dbdesk_sql::{ObjectName, RoleSpec, ScramVerifier};
 use egui::accesskit::Role;
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
@@ -66,6 +66,24 @@ fn shop(safety: SafetyLevel, color: Option<SourceColor>) -> DataSource {
     }
 }
 
+/// A PostgreSQL data source, never connected to: the dialogs only build its SQL.
+fn postgres() -> DataSource {
+    DataSource {
+        name: "pg".to_owned(),
+        config: ConnectionConfig::Postgres(PostgresConfig {
+            server: ServerConfig {
+                host: "localhost".to_owned(),
+                port: 5432.into(),
+                database: "app".to_owned(),
+                user: "admin".to_owned(),
+                tls: TlsMode::Disable,
+                ssh: None,
+            },
+        }),
+        ..shop(SafetyLevel::Normal, None)
+    }
+}
+
 struct Open {
     dialog: ObjectDialog,
     actions: Vec<ObjectDialogAction>,
@@ -73,7 +91,7 @@ struct Open {
 
 /// The dialog in a harness, with dbdesk's fonts installed on the first frame (its buttons
 /// draw icons). Every action it returns is kept, in order.
-fn harness(data_source: &DataSource, form: Fixed) -> Harness<'static, Open> {
+fn harness(data_source: &DataSource, form: impl ObjectForm + 'static) -> Harness<'static, Open> {
     let open = Open {
         dialog: ObjectDialog::new(Target::new(data_source), Box::new(form)),
         actions: Vec::new(),
@@ -302,4 +320,105 @@ fn stops_waiting_when_the_connection_fails() {
             .accesskit_node()
             .is_disabled()
     );
+}
+
+/// Types into the field of `role` (`TextInput`, or `PasswordInput` for a password) found by
+/// its label.
+fn type_into(harness: &mut Harness<'static, Open>, role: Role, label: &str, text: &str) {
+    harness.get_by_role_and_label(role, label).focus();
+    harness.run_steps(2);
+    harness.get_by_role_and_label(role, label).type_text(text);
+    harness.run_steps(2);
+}
+
+#[test]
+fn shows_a_password_redacted_and_keeps_it_out_of_the_clipboard_and_consoles() {
+    let pg = postgres();
+    let verifier = ScramVerifier::hash("hunter2");
+    let mut harness = harness(
+        &pg,
+        Fixed {
+            operations: Ok(vec![DdlOperation::CreateRole {
+                name: "alice".to_owned(),
+                spec: RoleSpec {
+                    attributes: [RoleAttribute::Login, RoleAttribute::Inherit].into(),
+                    connection_limit: None,
+                    valid_until: None,
+                    member_of: [].into(),
+                },
+                password: Some(verifier.clone()),
+            }]),
+            destruction: None,
+        },
+    );
+    assert!(
+        harness
+            .query_all_by_value("CREATE ROLE alice WITH LOGIN PASSWORD '<redacted>';\n")
+            .next()
+            .is_some(),
+        "the panel shows the password redacted"
+    );
+    for button in ["Copy", "Open in console"] {
+        assert!(
+            harness.get_by_label(button).accesskit_node().is_disabled(),
+            "{button}"
+        );
+    }
+    harness.get_by_label("Execute").click();
+    harness.run_steps(2);
+    assert_eq!(
+        harness.state().actions,
+        [ObjectDialogAction::Execute {
+            data_source: pg.id,
+            statements: vec![format!(
+                "CREATE ROLE alice WITH LOGIN PASSWORD '{}'",
+                verifier.as_str()
+            )],
+        }],
+        "Execute sends the verifier"
+    );
+}
+
+#[test]
+fn new_user_hashes_the_password_once_it_is_typed_twice() {
+    let pg = postgres();
+    let form = NewRole::new(&CatalogPath::root(), RoleKind::User).unwrap();
+    let mut harness = harness(&pg, form);
+    type_into(&mut harness, Role::TextInput, "Name", "alice");
+    type_into(&mut harness, Role::PasswordInput, "Password", "s3cret");
+    type_into(
+        &mut harness,
+        Role::PasswordInput,
+        "Confirm password",
+        "s3cre",
+    );
+    harness.get_by_label("The two passwords differ.");
+    assert!(
+        harness
+            .get_by_label("Execute")
+            .accesskit_node()
+            .is_disabled()
+    );
+    type_into(&mut harness, Role::PasswordInput, "Confirm password", "t");
+    assert!(
+        harness
+            .query_all_by_value("CREATE ROLE alice WITH LOGIN PASSWORD '<redacted>';\n")
+            .next()
+            .is_some(),
+        "LOGIN is ticked for a user, and the password is redacted"
+    );
+    harness.get_by_label("Execute").click();
+    harness.run_steps(2);
+    let [ObjectDialogAction::Execute { statements, .. }] = harness.state().actions.as_slice()
+    else {
+        panic!("expected Execute, got {:?}", harness.state().actions);
+    };
+    let [statement] = statements.as_slice() else {
+        panic!("expected one statement, got {statements:?}");
+    };
+    assert!(
+        statement.starts_with("CREATE ROLE alice WITH LOGIN PASSWORD 'SCRAM-SHA-256$4096:"),
+        "{statement}"
+    );
+    assert!(!statement.contains("s3cret"), "{statement}");
 }
