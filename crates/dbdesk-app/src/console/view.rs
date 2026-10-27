@@ -232,6 +232,7 @@ fn perform(console: &QueryConsole, action: Action, actions: &mut Vec<ConsoleActi
         actions.push(ConsoleAction::Run(SubmittedRun {
             statements,
             purpose,
+            parameters: dbdesk_sql::ParameterValues::default(),
         }));
     }
 }

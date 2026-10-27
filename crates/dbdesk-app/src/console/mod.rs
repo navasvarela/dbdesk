@@ -29,7 +29,10 @@ use dbdesk_engine::{
     Command, ConsoleId, EditFailure, Event, Export, ExportAll, RunId, RunOutcome, RunPurpose,
     SessionState, StatementFailure, StatementSummary, TransactionEnd, TransactionMode, WatchedFile,
 };
-use dbdesk_sql::{Dialect, FormatOptions, format_ranges, split_statements, statement_at, tokenize};
+use dbdesk_sql::{
+    Dialect, FormatOptions, ParameterValues, format_ranges, split_statements, statement_at,
+    tokenize,
+};
 use dbdesk_store::{ConsoleKey, ExportFormat, SqlFileContents};
 
 use edit::Editability;
@@ -66,11 +69,30 @@ pub struct InDatabase {
     pub filter: String,
 }
 
-/// A run as a console asks for it: its statements, and what running them is for.
+/// A run as a console asks for it: its statements, what running them is for, and the values
+/// of their `:name` parameters.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubmittedRun {
     pub statements: Vec<SubmittedStatement>,
     pub purpose: RunPurpose,
+    /// None yet for a run typed in the editor, which is asked for them; the values the
+    /// statement last ran with for one that runs a shown statement again.
+    pub parameters: ParameterValues,
+}
+
+impl SubmittedRun {
+    /// The `:name` parameters of the run's statements, each once, in order.
+    pub fn parameter_names(&self, dialect: Dialect) -> Vec<String> {
+        let mut names: Vec<String> = Vec::new();
+        for statement in &self.statements {
+            for name in dbdesk_sql::parameter_names(&statement.sql, dialect) {
+                if !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+        }
+        names
+    }
 }
 
 /// Which rows an export writes.
@@ -146,6 +168,9 @@ pub struct QueryConsole {
     /// written.
     exporting: Option<(RunId, usize)>,
     storage: Storage,
+    /// The values the console's parameters last ran with, which the parameters dialog starts
+    /// from, and which running a shown statement again reuses.
+    parameters: ParameterValues,
     /// The data source's name and safety level, kept up to date as it is edited.
     data_source_name: String,
     safety: SafetyLevel,
@@ -297,6 +322,7 @@ impl QueryConsole {
             export_status: None,
             exporting: None,
             storage: Storage::Config(ConfigFile::default()),
+            parameters: ParameterValues::default(),
             data_source_name: String::new(),
             safety: SafetyLevel::Normal,
         }
@@ -317,6 +343,15 @@ impl QueryConsole {
     pub fn follow(&mut self, data_source: &DataSource) {
         data_source.name.clone_into(&mut self.data_source_name);
         self.safety = data_source.safety;
+    }
+
+    pub fn parameters(&self) -> &ParameterValues {
+        &self.parameters
+    }
+
+    /// Keeps the values a run's parameters were given, over those of the same names.
+    pub fn remember_parameters(&mut self, values: &ParameterValues) {
+        self.parameters.extend(values);
     }
 
     pub fn safety(&self) -> SafetyLevel {
@@ -514,6 +549,7 @@ impl QueryConsole {
         Some(SubmittedRun {
             statements: vec![statement],
             purpose: RunPurpose::Run,
+            parameters: self.parameters.clone(),
         })
     }
 
@@ -529,6 +565,7 @@ impl QueryConsole {
         Ok(SubmittedRun {
             statements: vec![statement.resubmission(dialect)?],
             purpose: RunPurpose::Run,
+            parameters: self.parameters.clone(),
         })
     }
 
@@ -577,7 +614,7 @@ impl QueryConsole {
             export: ExportAll {
                 run,
                 sql,
-                parameters: dbdesk_sql::ParameterValues::default(),
+                parameters: self.parameters.clone(),
                 path,
                 format,
             },

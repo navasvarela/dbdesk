@@ -65,6 +65,16 @@ impl ParameterValues {
     pub fn contains(&self, name: &str) -> bool {
         self.0.contains_key(name)
     }
+
+    /// Takes `other`'s values, over any of the same names.
+    pub fn extend(&mut self, other: &Self) {
+        self.0.extend(
+            other
+                .0
+                .iter()
+                .map(|(name, value)| (name.clone(), value.clone())),
+        );
+    }
 }
 
 impl<N: Into<String>> FromIterator<(N, Cell)> for ParameterValues {
