@@ -1,10 +1,13 @@
 //! The query history of one data source, searchable and filtered by where statements came
-//! from, opened from a console to put a past statement back into it. Statements an MCP
-//! client ran are marked.
+//! from, opened from a console to put a past statement back into it. Each statement is marked
+//! with where it came from: a console, the grid, an object helper, an import, an export, or an
+//! MCP client.
 
 use dbdesk_core::DataSourceId;
 use dbdesk_engine::{Command, Event};
-use dbdesk_store::{ConsoleKey, HistoryEntry, HistoryOutcome, HistoryQuery, HistorySource};
+use dbdesk_store::{
+    ConsoleKey, HistoryEntry, HistoryOutcome, HistoryQuery, HistorySource, HistorySourceKind,
+};
 use egui::{ComboBox, Label, RichText, ScrollArea, TextEdit, Ui, Window};
 use jiff::tz::TimeZone;
 
@@ -19,7 +22,7 @@ pub struct HistoryWindow {
     data_source_name: String,
     search: String,
     /// Only statements from there; `None` for all.
-    source: Option<HistorySource>,
+    kind: Option<HistorySourceKind>,
     /// The answer to the latest search; `None` while it is pending.
     results: Option<Result<Vec<HistoryEntry>, String>>,
 }
@@ -43,7 +46,7 @@ impl HistoryWindow {
             console,
             data_source_name,
             search: String::new(),
-            source: None,
+            kind: None,
             results: None,
         };
         let search = window.search_command();
@@ -58,7 +61,7 @@ impl HistoryWindow {
         HistoryQuery {
             data_source: self.data_source(),
             text: self.search.clone(),
-            source: self.source,
+            kind: self.kind,
         }
     }
 
@@ -94,7 +97,7 @@ impl HistoryWindow {
     fn contents(&mut self, ui: &mut Ui) -> Option<HistoryAction> {
         let searched = ui
             .horizontal(|ui| {
-                let filtered = source_filter(ui, &mut self.source);
+                let filtered = kind_filter(ui, &mut self.kind);
                 let typed = ui
                     .add(
                         TextEdit::singleline(&mut self.search)
@@ -151,25 +154,33 @@ impl HistoryWindow {
     }
 }
 
-/// The choices of where statements came from, each with its label.
-const SOURCES: [(Option<HistorySource>, &str); 3] = [
-    (None, "All sources"),
-    (Some(HistorySource::App), "dbdesk"),
-    (Some(HistorySource::Mcp), "MCP clients"),
-];
+const ALL_SOURCES: &str = "All sources";
+
+/// What the filter and the badges call each kind of source.
+fn kind_label(kind: HistorySourceKind) -> &'static str {
+    match kind {
+        HistorySourceKind::Console => "Consoles",
+        HistorySourceKind::GridEdit => "Grid edits",
+        HistorySourceKind::ObjectHelper => "Object helpers",
+        HistorySourceKind::Import => "Imports",
+        HistorySourceKind::Export => "Exports",
+        HistorySourceKind::Mcp => "MCP clients",
+        HistorySourceKind::Dbdesk => "Earlier dbdesk",
+    }
+}
 
 /// Returns whether the choice changed.
-fn source_filter(ui: &mut Ui, source: &mut Option<HistorySource>) -> bool {
-    let selected = SOURCES
-        .iter()
-        .find(|(choice, _)| choice == source)
-        .map_or("All sources", |(_, label)| label);
+fn kind_filter(ui: &mut Ui, kind: &mut Option<HistorySourceKind>) -> bool {
+    let selected = kind.map_or(ALL_SOURCES, kind_label);
     let mut changed = false;
     ComboBox::from_id_salt("history_source")
         .selected_text(selected)
         .show_ui(ui, |ui| {
-            for (choice, label) in SOURCES {
-                changed |= ui.selectable_value(source, choice, label).changed();
+            changed |= ui.selectable_value(kind, None, ALL_SOURCES).changed();
+            for choice in HistorySourceKind::ALL {
+                changed |= ui
+                    .selectable_value(kind, Some(choice), kind_label(choice))
+                    .changed();
             }
         })
         .response
@@ -184,16 +195,7 @@ fn entry_row(ui: &mut Ui, entry: &HistoryEntry, time_zone: &TimeZone) -> bool {
         let time = entry.executed_at.to_zoned(time_zone.clone());
         ui.weak(time.strftime(TIME_FORMAT).to_string());
         outcome_label(ui, entry);
-        if entry.source == HistorySource::Mcp {
-            let palette = Palette::for_visuals(ui.visuals());
-            ui.label(
-                RichText::new("MCP")
-                    .small()
-                    .strong()
-                    .color(palette.secondary),
-            )
-            .on_hover_text("Run by an MCP client, through dbdesk mcp");
-        }
+        source_badge(ui, &entry.source);
         let first_line = entry.sql.lines().next().unwrap_or_default();
         let statement = ui
             .add(
@@ -205,6 +207,54 @@ fn entry_row(ui: &mut Ui, entry: &HistoryEntry, time_zone: &TimeZone) -> bool {
         insert || statement.double_clicked()
     })
     .inner
+}
+
+/// A short tag naming where the statement came from, with the details on hover. Statements
+/// from MCP clients stand out, since nobody at the keyboard ran them.
+fn source_badge(ui: &mut Ui, source: &HistorySource) {
+    let palette = Palette::for_visuals(ui.visuals());
+    let (text, color, hover) = match source {
+        HistorySource::Console => (
+            "Console",
+            palette.text_weak,
+            "Run in a query console".to_owned(),
+        ),
+        HistorySource::GridEdit => (
+            "Grid",
+            palette.text_weak,
+            "Submitted from the grid".to_owned(),
+        ),
+        HistorySource::ObjectHelper => (
+            "Object",
+            palette.text_weak,
+            "Run by an object helper in the explorer".to_owned(),
+        ),
+        HistorySource::Import { file } => (
+            "Import",
+            palette.text_weak,
+            format!("Imported from {}", file.display()),
+        ),
+        HistorySource::Export => (
+            "Export",
+            palette.text_weak,
+            "Read by Export \u{203a} All rows".to_owned(),
+        ),
+        HistorySource::Mcp { client } => (
+            "MCP",
+            palette.secondary,
+            match client {
+                Some(client) => format!("Run by the MCP client {client}, through dbdesk mcp"),
+                None => "Run by an MCP client, through dbdesk mcp".to_owned(),
+            },
+        ),
+        HistorySource::Dbdesk => (
+            "dbdesk",
+            palette.text_weak,
+            "Run by a dbdesk that didn't record where".to_owned(),
+        ),
+    };
+    ui.label(RichText::new(text).small().strong().color(color))
+        .on_hover_text(hover);
 }
 
 fn outcome_label(ui: &mut Ui, entry: &HistoryEntry) {

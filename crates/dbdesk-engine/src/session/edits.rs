@@ -157,6 +157,6 @@ fn record(
         duration: Some(started.elapsed()),
         rows,
         outcome,
-        source: HistorySource::App,
+        source: HistorySource::GridEdit,
     });
 }

@@ -1,7 +1,7 @@
 //! What the server tells the log and the query history about each call, so the user can see
 //! afterwards what an assistant did and what it was refused.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use dbdesk_core::{DataSource, describe_error};
@@ -13,6 +13,9 @@ pub(crate) struct Audit {
     project: String,
     /// `None` when the history couldn't be opened; calls still work, and the log says why.
     history: Option<Arc<Mutex<History>>>,
+    /// The name the client gave when it connected, for the history. Unset until the
+    /// handshake is done, which is before any tool is called.
+    client: OnceLock<String>,
 }
 
 /// A statement that reached the database, for the history.
@@ -41,7 +44,16 @@ impl Audit {
         Self {
             project: project.to_owned(),
             history,
+            client: OnceLock::new(),
         }
+    }
+
+    /// Records statements from now on as run by the client called `name`. Only the first
+    /// name counts: a session has one client.
+    pub(crate) fn set_client(&self, name: &str) {
+        tracing::info!(project = %self.project, client = name, "MCP client connected");
+        // Already set means a second `initialized`, from the same client.
+        let _ = self.client.set(name.to_owned());
     }
 
     /// One info line per call: who asked for what, and what kind of statement it was.
@@ -111,7 +123,7 @@ impl Audit {
         }
     }
 
-    /// Adds the statement to the query history, marked as coming from MCP. Failing to only
+    /// Adds the statement to the query history, marked as coming from MCP and the client. Failing to only
     /// costs the history entry, so it is logged, not reported to the client.
     pub(crate) async fn record(&self, ran: Ran<'_>) {
         let Some(history) = &self.history else {
@@ -124,7 +136,9 @@ impl Audit {
             duration: Some(ran.elapsed),
             rows: ran.rows,
             outcome: ran.outcome,
-            source: HistorySource::Mcp,
+            source: HistorySource::Mcp {
+                client: self.client.get().cloned(),
+            },
         };
         let history = Arc::clone(history);
         let written = tokio::task::spawn_blocking(move || {

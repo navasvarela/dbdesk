@@ -4,6 +4,7 @@
 
 mod common;
 mod grid;
+mod history;
 
 use std::sync::Arc;
 

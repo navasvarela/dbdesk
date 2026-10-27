@@ -1130,7 +1130,9 @@ fn history_mcp(harness: &mut Harness<'static, DbDeskApp>, fixture: &Fixture) {
                 duration: Some(std::time::Duration::from_millis(3)),
                 rows: Some(rows),
                 outcome: HistoryOutcome::Ok,
-                source: HistorySource::Mcp,
+                source: HistorySource::Mcp {
+                    client: Some("claude-ai".to_owned()),
+                },
             })
             .unwrap();
     }

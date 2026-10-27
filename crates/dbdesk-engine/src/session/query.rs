@@ -440,7 +440,7 @@ fn history_entry(
         duration: Some(elapsed),
         rows,
         outcome,
-        source: HistorySource::App,
+        source: HistorySource::Console,
     }
 }
 

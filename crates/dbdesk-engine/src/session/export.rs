@@ -53,7 +53,7 @@ pub(super) async fn write_all(
         duration: Some(started.elapsed()),
         rows,
         outcome,
-        source: HistorySource::App,
+        source: HistorySource::Export,
     });
     let result = written.map_err(|stopped| stopped.message());
     match &result {

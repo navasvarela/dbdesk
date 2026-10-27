@@ -114,7 +114,7 @@ async fn run_each(
             duration: Some(started.elapsed()),
             rows: None,
             outcome,
-            source: HistorySource::App,
+            source: HistorySource::ObjectHelper,
         });
         if let Err(error) = result {
             let message = match &error {

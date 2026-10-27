@@ -1306,6 +1306,7 @@ impl Repaint for EguiRepaint {
 #[cfg(test)]
 mod tests {
     mod grid;
+    mod history;
 
     use std::path::Path;
     use std::sync::Arc;
@@ -2899,7 +2900,9 @@ mod tests {
                 duration: None,
                 rows: Some(1),
                 outcome: dbdesk_store::HistoryOutcome::Ok,
-                source: dbdesk_store::HistorySource::Mcp,
+                source: dbdesk_store::HistorySource::Mcp {
+                    client: Some("claude-ai".to_owned()),
+                },
             })
             .unwrap();
         let (_layer, feed) = log_console::pipeline();
