@@ -154,6 +154,7 @@ fn saves_console_files_in_order_and_reloads_them_after_a_restart() {
     restarted.expect_keymap(Ok(KeymapBindings::new()));
     restarted.expect_settings(Ok(Settings::default()));
     restarted.expect_no_custom_files();
+    restarted.expect_nothing_trusted();
     restarted.expect(Event::ProjectsLoaded(Projects::default()));
     restarted.expect(Event::DataSourcesLoaded(vec![]));
     restarted.expect(Event::ConsolesLoaded(vec![SavedConsole {
@@ -505,6 +506,7 @@ fn never_overwrites_an_unreadable_data_sources_file() {
     engine.expect_keymap(Ok(KeymapBindings::new()));
     engine.expect_settings(Ok(Settings::default()));
     engine.expect_no_custom_files();
+    engine.expect_nothing_trusted();
     engine.expect(Event::ProjectsLoaded(Projects::default()));
     assert!(matches!(
         engine.next_event(),

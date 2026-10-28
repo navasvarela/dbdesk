@@ -162,6 +162,8 @@ impl AppState {
             | Event::ConsolesLoaded(_)
             | Event::KeymapLoaded { .. }
             | Event::CustomFileLoaded { .. }
+            | Event::TrustedCommandsLoaded(_)
+            | Event::ProgramFinished { .. }
             | Event::SettingsLoaded { .. }
             | Event::LatestRelease(_)
             | Event::UpdateProgress { .. }

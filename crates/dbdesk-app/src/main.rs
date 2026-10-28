@@ -66,7 +66,7 @@ mod workspace;
 use std::sync::Arc;
 
 use anyhow::{Context as _, anyhow};
-use dbdesk_engine::{EngineConfig, GithubReleases, PackagerInstaller};
+use dbdesk_engine::{EngineConfig, GithubReleases, PackagerInstaller, ProcessRunner};
 use dbdesk_store::{
     APP_NAME, AppPaths, ConsoleFiles, DataSourceFile, HistoryFile, Keychain, KeymapFile,
     ProjectFile, SettingsFile,
@@ -112,6 +112,8 @@ fn main() -> anyhow::Result<()> {
         keymap: KeymapFile::new(paths.keymap_file()),
         settings: SettingsFile::new(paths.settings_file()),
         custom_files: paths.custom_files(),
+        trusted_commands: paths.trusted_commands_file(),
+        programs: Arc::new(ProcessRunner),
         releases: Arc::new(GithubReleases::new(
             updates::RELEASES_REPOSITORY,
             &format!("dbdesk/{}", version::VERSION),

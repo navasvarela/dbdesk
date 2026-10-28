@@ -9,6 +9,7 @@ mod actions;
 mod commands;
 mod snippets;
 mod theme;
+mod trust;
 
 use std::path::{Path, PathBuf};
 
@@ -18,6 +19,7 @@ pub use actions::{ActionBody, ActionId, ActionTarget, CustomAction, parse_action
 pub use commands::{CommandAction, CommandOutput, DEFAULT_COMMAND_TIMEOUT, StdinFormat};
 pub use snippets::{Snippet, SnippetBody, parse_snippets};
 pub use theme::{Rgb, ThemeOverrides, ThemeToken, parse_theme};
+pub use trust::{TrustError, TrustedCommand, TrustedCommands, TrustedCommandsFile};
 
 use crate::config_text::{create_new, read_if_exists};
 
@@ -211,7 +213,7 @@ fn drivers(names: Option<Vec<String>>) -> Result<Option<Vec<DriverKind>>, String
 }
 
 /// The name `data_sources.toml` gives the driver, as `driver = "postgres"`.
-fn driver_id(driver: DriverKind) -> &'static str {
+pub fn driver_id(driver: DriverKind) -> &'static str {
     match driver {
         DriverKind::Postgres => "postgres",
         DriverKind::Sqlite => "sqlite",

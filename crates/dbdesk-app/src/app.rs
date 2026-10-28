@@ -1965,7 +1965,7 @@ mod tests {
     use dbdesk_core::{DataSourceId, Password};
     use dbdesk_store::{
         ConsoleFiles, ConsoleName, CustomFiles, DataSourceFile, HistoryFile, KeymapFile,
-        ProjectFile, Secret, SecretError, SecretStore, SettingsFile,
+        ProjectFile, Secret, SecretError, SecretStore, SettingsFile, TrustedCommandsFile,
     };
     use egui::accesskit::Role;
     use egui_kittest::Harness;
@@ -2009,6 +2009,8 @@ mod tests {
             keymap: KeymapFile::new(dir.join("keymap.toml")),
             settings: SettingsFile::new(dir.join("settings.toml")),
             custom_files: CustomFiles::new(dir),
+            trusted_commands: TrustedCommandsFile::new(dir.join("trusted_commands.toml")),
+            programs: Arc::new(dbdesk_engine::ProcessRunner),
             releases: Arc::new(releases),
             updater: Arc::new(crate::test_support::FakeInstaller::default()),
             known_hosts: dir.join("known_hosts"),
