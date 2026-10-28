@@ -432,6 +432,11 @@ fn visuals(palette: &Palette, theme: Theme, focus: Focus) -> Visuals {
         stroke: Stroke::new(1.0, focus.accent),
     };
     visuals.text_cursor.stroke = Stroke::new(2.0, focus.accent);
+    // UI tests step egui's clock in fixed amounts, and a blinking cursor asks for a repaint
+    // each time it turns, so a frame with a focused field never lets `Harness::run` settle.
+    // Every install goes through here (the palettes, theme.toml, the accent colour), so a
+    // reload can't turn it back on.
+    visuals.text_cursor.blink = !cfg!(test);
     visuals.striped = true;
     visuals.widgets = widgets(palette, focus);
     visuals
@@ -800,6 +805,17 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn the_cursor_stays_still_in_ui_tests_after_every_install() {
+        let ctx = egui::Context::default();
+        install(&ctx);
+        install_palettes(&ctx, Palettes::BRAND);
+        install_with_accent(&ctx, Some(Color32::from_rgb(0x00, 0x7A, 0xFF)));
+        for theme in [Theme::Light, Theme::Dark] {
+            assert!(!ctx.style_of(theme).visuals.text_cursor.blink, "{theme:?}");
         }
     }
 
