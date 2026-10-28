@@ -8,8 +8,9 @@ changing tables, indexes, views and schemas), v0.9.0 (adding and deleting rows, 
 keys, sorting and filtering in the database, exporting every row, importing CSV), v0.10.0
 (PostgreSQL users and roles, the history as an audit trail, .sql files, statement parameters,
 find and replace), v0.11.0 (a native look on macOS: the menu bar, an integrated title bar,
-the system font and accent colour) and v0.12.0 (modifying tables, custom actions, snippets and
-themes in files). R3's update
+the system font and accent colour), v0.12.0 (modifying tables, custom actions, snippets and
+themes in files, the Windows installer) and v0.13.0 (the rename to DbRover, command actions,
+updates on Windows). R3's update
 notice is built, ahead of R2 (see [R3](#r3--updates)).
 Decisions settled on 2026-10-23 (see [Decisions](#decisions)).
 
