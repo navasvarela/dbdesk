@@ -1,9 +1,8 @@
 # Install and first launch
 
-Download dbdesk from the
+Download dbdesk from [dbdesk.org](https://dbdesk.org/#download), or from the
 [releases page](https://github.com/navasvarela/dbdesk/releases): pick the file for your system
-from the latest release's **Assets**. Until the first release is published, the page is empty;
-build from source instead (see the end of this page).
+from the latest release's **Assets**.
 
 | System | File |
 | --- | --- |
