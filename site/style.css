@@ -391,7 +391,7 @@ h3 { margin: 0 0 8px; font-size: 1.05rem; font-weight: 600; }
 }
 .facts p { margin: 0; color: var(--text-weak); }
 .facts strong { color: var(--text); font-weight: 600; }
-.facts pre {
+.facts pre, .platforms pre {
   margin: 12px 0 0;
   padding: 14px 16px;
   overflow-x: auto;
@@ -399,6 +399,10 @@ h3 { margin: 0 0 8px; font-size: 1.05rem; font-weight: 600; }
   border-radius: 8px;
   background: var(--field);
 }
+/* A card is narrower than the Homebrew command, so commands wrap at their spaces instead of
+   scrolling; copied, they are still one line. min-width: 0 lets the flex item shrink to the
+   card instead of growing to the command's width. */
+.platforms pre { align-self: stretch; min-width: 0; margin: 0; white-space: pre-wrap; }
 .source { margin: 40px 0 0; color: var(--text-weak); text-align: center; }
 
 footer {
