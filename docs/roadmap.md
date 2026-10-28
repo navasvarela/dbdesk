@@ -609,7 +609,52 @@ Customisation without rebuilding dbdesk, from files to commands to plugins. The 
 [ADR 0005](adr/0005-customisation-files-commands-then-wasm.md).
 
 - **H1 — Files:** `actions.toml` (SQL actions on tree nodes and grid selections, bindable in the
-  keymap), `snippets.toml` and `theme.toml`.
+  keymap), `snippets.toml` and `theme.toml`, in layers:
+  - **H1a — Reading the files:** `actions.toml`, `snippets.toml` and `theme.toml` sit next to
+    `keymap.toml` and are read the way it is: at start-up, after `settings.toml`, and again on
+    **Reload**, by the engine on its blocking pool. A missing file adds nothing; a file that
+    isn't TOML is one problem. Each entry is checked on its own, so a broken one is skipped and
+    listed and the rest still apply. The checks are pure functions in `dbdesk-store` (the
+    formats) and `dbdesk-core` (SQL templates), with a unit test for every problem message.
+    The status bar counts each file's problems next to `keymap.toml`'s, with the same link,
+    and one window per file lists them with **Reload**. The five files share one reader and
+    one engine loader, so `keymap.toml` and `settings.toml` lose their copies of it.
+  - **H1b — Actions:** an action appears in the right-click menu of the explorer nodes and
+    grid cells it applies to, for the drivers it lists. Choosing one fills in its SQL and
+    opens it in a new console on the same data source, run at once unless `run = false`.
+    - The run goes through the console's usual path: `:name` parameters are asked for, a
+      `DELETE` without `WHERE` and a careful data source ask first, and a read-only one
+      refuses changes. The history records the statements with a new source, **Action**,
+      and the action's id.
+    - `grid.selection` runs once for the selected cells; `grid.row` runs once per selected
+      row, as one run.
+    - Each action is a keymap id, `custom.<id>`, and a command in a new **Actions** menu,
+      in egui's menu bar and in the macOS one, through `run_command`. From a key or the
+      menu it acts on the focused console's selected cells, or on the explorer's selected
+      node: clicking a node now selects it. A `custom.` id that `actions.toml` doesn't
+      define is a keymap problem.
+  - **H1c — View → Actions…:** every action with its id, what it applies to, its drivers,
+    its shortcut and its SQL, the file's problems, **Reload** and **Create actions.toml**
+    (a commented example, never over an existing file).
+  - **H1d — Snippets:** completion lists the snippets whose trigger starts with the word
+    being typed, for the console's driver, marked as snippets and ranked after exact name
+    matches. Accepting one inserts its body with the first field selected; Tab and ⇧Tab move
+    between fields in order and end at `$0`, and Esc or a click elsewhere leaves them.
+  - **H1e — Theme overrides:** `theme.toml`'s `[light]` and `[dark]` tables override palette
+    tokens for that theme, on top of the D2 palette, and the window's colours change on
+    **Reload**. A token whose text falls below WCAG AA where it is drawn still applies and is
+    listed, by the check the palette's own test runs. On macOS the accent colour still tints
+    selection and focus, unless the file sets that theme's `primary` or `selection`.
+  - **H1f — Manual:** a chapter on the three files, and this demo note.
+
+  Changes to [Hackability](hackability.md) made while planning: `theme.toml` overrides each of
+  the light and dark themes instead of picking a base and adding a fourth theme;
+  `{data_source}` is a string literal, since it names nothing in the database; key-bound and
+  menu actions act on the explorer's selected node, which the explorer didn't have.
+
+  Tested with unit tests of the formats and templates (hostile names in every dialect's
+  quoting among them), and kittest tests of each feature on SQLite with temporary config
+  folders. No engine test server is needed.
 - **H2 — Commands:** actions that run your own programs, with no shell and never a secret,
   getting the selection on stdin and sending output to the viewer, a console or the log.
 - **H3 — WebAssembly plugins (later):** sandboxed and capability-based, over the same extension

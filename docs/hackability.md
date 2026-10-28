@@ -1,8 +1,8 @@
 # Hackability
 
-Status: **planned**, nothing built yet beyond `keymap.toml` and `settings.toml`. Proposed on
-2026-10-24. The decision behind it is
-[ADR 0005](adr/0005-customisation-files-commands-then-wasm.md).
+Status: **H1 in progress** (planned 2026-10-28, in layers H1a–H1f in the
+[roadmap](roadmap.md#hackability-track)); H2 and H3 planned. Proposed on 2026-10-24. The
+decision behind it is [ADR 0005](adr/0005-customisation-files-commands-then-wasm.md).
 
 Personalisation is one of the two reasons dbdesk exists (see [Vision](vision.md)). Today you can
 rebind keys and change how SQL is formatted. This plan makes dbdesk hackable in three steps,
@@ -61,13 +61,22 @@ sql = "SELECT * FROM {qualified_name} ORDER BY {column:created_at} DESC LIMIT 10
 ```
 
 - **Placeholders:**
-  - Names: `{qualified_name}`, `{database}`, `{schema}`, `{table}`, `{column}`, `{data_source}`.
-  - Values from the grid: `{value}`, `{values}` (the selection, as a comma-separated list of
-    literals) and `{row.<column>}`.
+  - Names: `{qualified_name}`, `{database}`, `{schema}`, `{table}`, `{column}`.
+  - `{data_source}`: the data source's name in dbdesk, as a string literal, since it names
+    nothing in the database.
+  - Values from the grid: `{value}` (the first selected cell), `{values}` (the selection, as
+    a comma-separated list of literals) and `{row.<column>}`.
+  - `{{` and `}}` stand for a brace; any other brace that doesn't start a placeholder, as in
+    a JSON literal, is left alone.
 - **Placeholders are never pasted in as raw text.** Names are quoted as identifiers by the
   dialect's own rules, which DB0 gathered in one place. Values become escaped literals. A table
   called `x; DROP TABLE y` stays one quoted name, not a second statement.
 - **`{column:created_at}`** names a column, with a default the action can fall back on.
+- **A placeholder an action can never fill is a problem with the file,** found when it is read:
+  `{value}` on a table, or `{column}` without a default on anything but a column or the grid.
+- **`grid.selection` runs once, `grid.row` once per selected row,** all in one run.
+- **From a key or the Actions menu,** an action acts on the focused console's selected cells,
+  or on the explorer's selected node.
 - **Statements still go through the existing safety checks.** An action's `DELETE` without
   `WHERE` asks first, like one typed by hand.
 - **Problems with the file work like `keymap.toml`:** an action that doesn't parse is skipped
@@ -94,17 +103,23 @@ drivers = ["postgres"]               # optional
 ### `theme.toml`
 
 ```toml
-base = "dark"                        # start from the light or dark theme
-[colors]
+[light]
+primary = "#5b3fe0"
+
+[dark]
 primary = "#7c5cff"
-background = "#14121a"
+base = "#14121a"
 ```
 
 - **It overrides the palette tokens** the theme module already uses (see
-  [Look and feel](features/look-and-feel.md)).
+  [Look and feel](features/look-and-feel.md)), each theme its own: `primary`, `secondary`,
+  `success`, `warning`, `error`, `base`, `panel`, `field`, `control`, `control_hover`,
+  `border`, `text`, `text_weak`, `selection`, `on_primary`, as `#rrggbb`.
+- **Whichever theme shows takes its overrides,** under Match system, Light and Dark alike.
 - **A token with too little contrast still applies,** and is listed as a problem, using the same
   contrast check the palette's test runs.
-- **View → Theme gains "From theme.toml"** next to Match system, Light and Dark.
+- **On macOS the accent colour still tints selection and focus,** unless the file sets that
+  theme's `primary` or `selection`.
 
 **H1 exit:**
 - I add a "Row count" action and a "Last 100 rows" action that uses a column default, and bind
@@ -203,6 +218,8 @@ Recorded in [ADR 0005](adr/0005-customisation-files-commands-then-wasm.md). In s
 | Native plugins (`dylib`) | No: Rust has no stable ABI, and the workspace forbids `unsafe`. |
 | An embedded scripting language (Lua, Rhai) | No: a second API to maintain, with less isolation than WASM and fewer languages to write in. |
 | Who may add command actions | Only the user's own `actions.toml`; never shared or imported files. |
+| A fourth theme from `theme.toml` | No: the file overrides the light and dark themes, so Match system keeps working and View → Theme keeps egui's three choices. |
+| What a key-bound action acts on | The focused console's selected cells, or the explorer's selected node, which clicking a node now sets. |
 
 ## Risks
 
