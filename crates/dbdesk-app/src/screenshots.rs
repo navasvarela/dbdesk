@@ -35,6 +35,8 @@ use crate::log_console::{self, LogConsoleLayer};
 use crate::telemetry;
 use crate::test_support::{MemorySecrets, start_app, step_until_visible};
 
+mod site;
+
 /// A typical laptop window; wide enough for the explorer, a console and its results.
 const WINDOW_SIZE: Vec2 = Vec2::new(1180.0, 740.0);
 /// Rendered at 2x so the images stay sharp on high-density screens.
@@ -468,31 +470,66 @@ fn regenerate_screenshots() {
     let out_dir = output_dir();
     std::fs::create_dir_all(&out_dir).unwrap();
     let themes = themes();
-    for scene in SCENES {
-        if let Some(missing) = scene
-            .needs
-            .iter()
-            .find(|variable| std::env::var_os(variable).is_none())
-        {
-            println!("skipped {}: {missing} is not set", scene.name);
-            continue;
-        }
+    for scene in SCENES.iter().filter(|scene| has_servers_for(scene)) {
         for &theme in &themes {
-            let fixture = Fixture::new(scene.data_sources);
-            let mut harness = fixture.start(theme);
-            (scene.play)(&mut harness, &fixture);
-            if !scene.keeps_pointer {
-                harness.event(egui::Event::PointerGone);
-            }
-            harness.run_steps(SETTLE_STEPS);
             let file_name = match themes.as_slice() {
                 [_] => format!("{}.png", scene.name),
                 _ => format!("{}-{}.png", scene.name, theme_name(theme)),
             };
             let path = out_dir.join(file_name);
-            harness.render().unwrap().save(&path).unwrap();
+            render_scene(scene, theme, WINDOW_SIZE, whole_window)
+                .save(&path)
+                .unwrap();
             println!("wrote {}", path.display());
         }
+    }
+}
+
+/// Picks the part of the window a picture shows, in points; `None` keeps all of it.
+type Region = fn(&Harness<'static, DbDeskApp>) -> Option<egui::Rect>;
+
+/// Plays `scene` in a fresh app with a window of `size` and renders `region` of where it ends.
+fn render_scene(scene: &Scene, theme: Theme, size: Vec2, region: Region) -> image::RgbaImage {
+    let fixture = Fixture::new(scene.data_sources);
+    let mut harness = fixture.start(theme, size);
+    (scene.play)(&mut harness, &fixture);
+    if !scene.keeps_pointer {
+        harness.event(egui::Event::PointerGone);
+    }
+    harness.run_steps(SETTLE_STEPS);
+    let image = harness.render().unwrap();
+    match region(&harness) {
+        Some(rect) => crop(&image, rect),
+        None => image,
+    }
+}
+
+fn whole_window(_: &Harness<'static, DbDeskApp>) -> Option<egui::Rect> {
+    None
+}
+
+/// The pixels under `rect`, in points, kept inside the image.
+fn crop(image: &image::RgbaImage, rect: egui::Rect) -> image::RgbaImage {
+    let pixels = |points: f32, limit: u32| ((points * PIXELS_PER_POINT).max(0.0) as u32).min(limit);
+    let left = pixels(rect.min.x, image.width());
+    let top = pixels(rect.min.y, image.height());
+    let right = pixels(rect.max.x, image.width());
+    let bottom = pixels(rect.max.y, image.height());
+    image::imageops::crop_imm(image, left, top, right - left, bottom - top).to_image()
+}
+
+/// Whether every test server variable `scene` needs is set, saying which isn't.
+fn has_servers_for(scene: &Scene) -> bool {
+    match scene
+        .needs
+        .iter()
+        .find(|variable| std::env::var_os(variable).is_none())
+    {
+        Some(missing) => {
+            println!("skipped {}: {missing} is not set", scene.name);
+            false
+        }
+        None => true,
     }
 }
 
@@ -576,9 +613,9 @@ impl Fixture {
         }
     }
 
-    fn start(&self, theme: Theme) -> Harness<'static, DbDeskApp> {
+    fn start(&self, theme: Theme, size: Vec2) -> Harness<'static, DbDeskApp> {
         let builder = HarnessBuilder::default()
-            .with_size(WINDOW_SIZE)
+            .with_size(size)
             .with_pixels_per_point(PIXELS_PER_POINT)
             .with_theme(theme)
             .wgpu();
