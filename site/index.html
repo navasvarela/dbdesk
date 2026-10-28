@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>dbdesk — Browse and Query databases</title>
-  <meta name="description" content="dbdesk is a desktop database tool written in Rust. Browse and query PostgreSQL, SQLite, MySQL, MariaDB, SQL Server, DuckDB and ClickHouse, with more databases planned.">
+  <title>dbdesk — a fast desktop database tool</title>
+  <meta name="description" content="dbdesk is a native desktop database tool written in Rust, for PostgreSQL, SQLite, MySQL, MariaDB, SQL Server, DuckDB and ClickHouse: SQL consoles with completion, a grid that edits, sorts and filters in the database, schema helpers, safety levels, and an MCP server for AI assistants.">
   <meta property="og:title" content="dbdesk">
-  <meta property="og:description" content="Browse and Query databases. A desktop database tool written in Rust.">
+  <meta property="og:description" content="A native desktop database tool written in Rust, for PostgreSQL, SQLite, MySQL, MariaDB, SQL Server, DuckDB and ClickHouse.">
   <meta property="og:image" content="https://dbdesk.org/assets/brand/social-preview.png">
   <meta property="og:url" content="https://dbdesk.org/">
   <meta name="twitter:card" content="summary_large_image">
@@ -29,24 +29,23 @@
   <main>
     <section class="hero">
       <img class="hero-mark" src="assets/brand/logo.svg" alt="" width="88" height="88">
-      <h1>Browse and Query databases</h1>
+      <h1>Your databases, in one fast native app</h1>
       <p class="lede">
-        dbdesk is a desktop database tool written in Rust. Explore your schemas as a tree,
-        write and run SQL in consoles that remember your work, and page through, sort, export and
-        edit the results.
+        dbdesk is a desktop database tool written in Rust. Explore schemas as a tree, write SQL
+        with completion from your catalog, edit rows in the grid, change tables without writing
+        the DDL, and let an AI assistant in only as far as you allow.
       </p>
       <div class="actions">
-        <a class="button primary" href="https://github.com/navasvarela/dbdesk/releases">Download</a>
+        <a class="button primary" href="#download">Download</a>
         <a class="button" href="manual/">Read the manual</a>
       </div>
       <p class="note">
-        Packages for macOS and Linux come with each release. Until the first one is out,
-        <a href="manual/install.html">build it from source</a>.
+        For macOS and Linux. dbdesk checks for new releases and, on macOS and in the AppImage,
+        installs them itself.
       </p>
     </section>
 
     <figure class="window">
-      <div class="window-bar" aria-hidden="true"><span></span><span></span><span></span></div>
       <img src="manual/images/workspace.png" width="2360" height="1480"
            alt="dbdesk with the explorer on the left, a query console with its results, and the log console">
     </figure>
@@ -61,56 +60,70 @@
         <li><span class="engine-logo duckdb" aria-hidden="true"></span>DuckDB</li>
         <li><span class="engine-logo clickhouse" aria-hidden="true"></span>ClickHouse</li>
       </ul>
-      <p class="planned">Oracle and others are planned.</p>
+      <p class="planned">Oracle is planned.</p>
     </section>
 
     <section class="features" aria-labelledby="features-title">
       <h2 id="features-title">What it does</h2>
       <div class="grid">
         <article>
-          <h3>Explore</h3>
-          <p>Databases, schemas, tables, views, functions and their columns, indexes and
-            triggers, loaded as you open them. Filter by name, and read any object's definition.</p>
-        </article>
-        <article>
           <h3>Write SQL</h3>
-          <p>Consoles with highlighting, completion from your catalog and formatting. Run the
-            statement at the cursor or a whole script, explain it, cancel it. Consoles are saved
-            as <code>.sql</code> files.</p>
+          <p>Consoles with highlighting, formatting and completion that knows your tables,
+            columns and aliases. Problems are marked as you type. Run the statement at the
+            cursor or a whole script, explain it, cancel it. Open and save <code>.sql</code>
+            files, fill in <code>:name</code> parameters, find and replace.</p>
         </article>
         <article>
           <h3>Work with results</h3>
-          <p>Rows arrive 500 at a time. Sort and filter what's loaded, copy a selection, view
-            long values, export to CSV or JSON, and edit a table's rows.</p>
+          <p>Rows arrive 500 at a time. Sort and filter the loaded rows, or every row in the
+            database. Edit cells, add and delete rows, and submit them together. Follow foreign
+            keys, export every row to CSV or JSON, and import a CSV file into a table.</p>
+        </article>
+        <article>
+          <h3>Change the schema</h3>
+          <p>Create and change tables, indexes, views and schemas, and PostgreSQL users and
+            roles, from dialogs that show the SQL before anything runs. Copy any table's DDL.</p>
         </article>
         <article>
           <h3>Stay safe</h3>
-          <p>Manual-commit transactions, a history of every statement, a check before an
-            <code>UPDATE</code> or <code>DELETE</code> without <code>WHERE</code>, and a colour
-            per data source so production stands out.</p>
+          <p>A safety level per data source: normal, careful (every change asks first) or
+            read-only. A check before an <code>UPDATE</code> or <code>DELETE</code> without
+            <code>WHERE</code>, manual-commit transactions, a colour per data source, and a
+            history of every statement, with grid edits' values before and after.</p>
+        </article>
+        <article>
+          <h3>Bring an AI assistant</h3>
+          <p>A built-in MCP server lets Claude, Cursor and other clients list, describe and query
+            a project's data sources, with read, write, schema and admin permissions per project,
+            a row limit and a timeout. It's off until you allow it.</p>
+        </article>
+        <article>
+          <h3>Connect anywhere</h3>
+          <p>SSH tunnels with your agent, a key or a password, and host keys checked against
+            <code>known_hosts</code>. TLS without OpenSSL to install. Passwords stay in your
+            system's keychain. Group data sources into projects, and share them as a file.</p>
         </article>
         <article>
           <h3>Make it yours</h3>
-          <p>Rebind shortcuts in <code>keymap.toml</code>, pick light or dark, and edit the plain
-            files dbdesk keeps its settings in. Passwords stay in your system's keychain.</p>
+          <p>Rebind shortcuts in <code>keymap.toml</code> and pick light or dark. On a Mac, the
+            menus are in the menu bar and text is in the system font and accent colour.</p>
         </article>
         <article>
           <h3>Open source</h3>
-          <p>Written in Rust with egui, MIT or Apache-2.0 licensed. Small enough to read end to
-            end; the <a href="https://github.com/navasvarela/dbdesk/tree/main/docs">design
-            docs</a> explain how it's built.</p>
+          <p>Written in Rust with egui, MIT or Apache-2.0 licensed. The
+            <a href="https://github.com/navasvarela/dbdesk/tree/main/docs">design docs</a>
+            explain how it's built.</p>
         </article>
       </div>
     </section>
 
-    <section class="start" aria-labelledby="start-title">
-      <h2 id="start-title">Build from source</h2>
-      <p>With <a href="https://rustup.rs">Rust</a> 1.95 or newer:</p>
-<pre><code>git clone https://github.com/navasvarela/dbdesk.git
-cd dbdesk
-cargo run --release -p dbdesk-app</code></pre>
-      <p>The <a href="manual/">manual</a> covers installing, adding a data source and everything
-        after.</p>
+    <section class="start" id="download" aria-labelledby="download-title">
+      <h2 id="download-title">Download</h2>
+      <p>Each <a href="https://github.com/navasvarela/dbdesk/releases/latest">release</a> has a
+        universal <code>.dmg</code> for macOS 11 or newer, and an <code>.AppImage</code> and a
+        <code>.deb</code> for 64-bit Linux, with a <code>SHA256SUMS</code> file to check them
+        against. Windows builds aren't published yet.</p>
+      <p>To build it yourself, see <a href="manual/install.html">Install and first launch</a>.</p>
     </section>
   </main>
 
