@@ -22,7 +22,9 @@ fn counts_each_files_problems_and_lists_them_until_a_reload_finds_none() {
     let (_layer, feed) = log_console::pipeline();
     let mut harness = start_app(dir.path(), feed);
     step_until_visible(&mut harness, "actions.toml: 1 problem");
-    harness.get_by_label("theme.toml: 2 problems");
+    // The engine reports each file on its own, so on a slow machine the theme's problems can
+    // arrive a frame after the actions'.
+    step_until_visible(&mut harness, "theme.toml: 2 problems");
     assert!(harness.query_by_label_contains("snippets.toml").is_none());
 
     harness.get_by_label("actions.toml: 1 problem").click();
