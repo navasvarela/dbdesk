@@ -787,23 +787,41 @@ impl ObjectForm for TableForm {
         self.folder.clone()
     }
 
-    /// Dropping columns loses the values in them.
+    /// Dropping columns loses the values in them, and a rebuild drops the table after
+    /// copying its rows: both are spelt out before Execute.
     fn destruction(&self, dialect: Dialect) -> Option<Destruction> {
-        let dropped = self.dropped_columns();
         let table = self.loaded()?;
-        let (first, rest) = dropped.split_first()?;
-        let names = rest
-            .iter()
-            .fold(first.to_string(), |names, name| format!("{names}, {name}"));
-        let noun = if rest.is_empty() { "column" } else { "columns" };
+        let qualified = table.spec.name.to_sql(dialect);
+        let dropped = self.dropped_columns();
+        let rebuilds = self.alteration(table).rebuilds(dialect);
+        let mut parts = Vec::new();
+        if let Some((first, rest)) = dropped.split_first() {
+            let names = rest.iter().fold((*first).to_owned(), |names, name| {
+                format!("{names}, {name}")
+            });
+            let (noun, them) = if rest.is_empty() {
+                ("column", "it")
+            } else {
+                ("columns", "them")
+            };
+            parts.push(format!(
+                "Drops the {noun} {names} of the table {qualified}, with every value in {them}."
+            ));
+        }
+        if rebuilds {
+            parts.push(format!(
+                "{} can't make this change in place, so it rebuilds the table {qualified}: \
+                 creates it again under another name, copies every row into it, drops the old \
+                 one, gives the new one its name, and creates its indexes and triggers again, \
+                 all in one transaction.",
+                dialect.display_name()
+            ));
+        }
+        let (summary, consequences) = parts.split_first()?;
         Some(Destruction {
             name: table.spec.name.name.clone(),
-            summary: format!(
-                "Drops the {noun} {names} of the table {}, with every value in {}.",
-                table.spec.name.to_sql(dialect),
-                if rest.is_empty() { "it" } else { "them" }
-            ),
-            consequences: Vec::new(),
+            summary: summary.clone(),
+            consequences: consequences.to_vec(),
         })
     }
 }

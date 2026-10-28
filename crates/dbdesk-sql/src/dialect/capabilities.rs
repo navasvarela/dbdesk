@@ -27,6 +27,11 @@ pub struct Capabilities {
     pub index_methods: &'static [IndexMethod],
     /// The changes an existing table takes in place.
     pub table_changes: &'static [TableChange],
+    /// Whether a change `table_changes` lacks is made by building the table again and
+    /// copying its rows (SQLite), rather than refused.
+    pub rebuilds_tables: bool,
+    /// How DDL switches foreign keys off around its transaction, where it has to (SQLite).
+    pub foreign_key_switch: Option<ForeignKeySwitch>,
     /// Whether a column's new type can say how to convert its values (`USING`).
     pub converts_with_using: bool,
     /// Whether `ADD COLUMN` only takes a column outside the primary key that takes `NULL` or
@@ -56,6 +61,18 @@ pub struct Capabilities {
     /// How the engine models the users who log in to it, which decides whether the explorer
     /// lists them and offers New user.
     pub users: UserModel,
+}
+
+/// The statements that switch foreign keys off for DDL and check them after, where a dialect
+/// needs them (SQLite).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ForeignKeySwitch {
+    /// Answers one row, `1` while foreign keys are enforced.
+    pub query: &'static str,
+    pub off: &'static str,
+    pub on: &'static str,
+    /// Answers a row for each row whose foreign key points at nothing.
+    pub check: &'static str,
 }
 
 /// How a dialect's users are modelled, for the users and roles helpers.
@@ -166,6 +183,8 @@ const POSTGRES: Capabilities = Capabilities {
         IndexMethod::Brin,
     ],
     table_changes: ALL_TABLE_CHANGES,
+    rebuilds_tables: false,
+    foreign_key_switch: None,
     converts_with_using: true,
     restricted_add_column: false,
     rebuilds_table_ddl: true,
@@ -201,8 +220,18 @@ const POSTGRES: Capabilities = Capabilities {
     users: UserModel::Roles,
 };
 
+/// SQLite enforces foreign keys only while switched on, and can't switch them inside a
+/// transaction. With them on, dropping the table a rebuild replaces would run the `ON DELETE`
+/// actions of other tables' keys on their rows.
+const SQLITE_FOREIGN_KEYS: ForeignKeySwitch = ForeignKeySwitch {
+    query: "PRAGMA foreign_keys",
+    off: "PRAGMA foreign_keys = OFF",
+    on: "PRAGMA foreign_keys = ON",
+    check: "PRAGMA foreign_key_check",
+};
+
 /// SQLite's `ALTER TABLE` renames tables and columns, adds a column that is nullable or has a
-/// default and isn't in a key, and drops columns. `TRUNCATE` is written as `DELETE FROM`.
+/// default and isn't in a key, and drops columns; anything else rebuilds the table. `TRUNCATE` is written as `DELETE FROM`.
 const SQLITE: Capabilities = Capabilities {
     transactional_ddl: true,
     drop_cascade: false,
@@ -217,6 +246,8 @@ const SQLITE: Capabilities = Capabilities {
         TableChange::AddColumn,
         TableChange::DropColumn,
     ],
+    rebuilds_tables: true,
+    foreign_key_switch: Some(SQLITE_FOREIGN_KEYS),
     converts_with_using: false,
     restricted_add_column: true,
     rebuilds_table_ddl: false,
@@ -246,6 +277,8 @@ const MYSQL: Capabilities = Capabilities {
     indexes: true,
     index_methods: &[IndexMethod::BTree, IndexMethod::Hash],
     table_changes: ALL_TABLE_CHANGES,
+    rebuilds_tables: false,
+    foreign_key_switch: None,
     converts_with_using: false,
     restricted_add_column: false,
     rebuilds_table_ddl: false,
@@ -295,6 +328,8 @@ const SQL_SERVER: Capabilities = Capabilities {
     indexes: true,
     index_methods: &[],
     table_changes: ALL_TABLE_CHANGES,
+    rebuilds_tables: false,
+    foreign_key_switch: None,
     converts_with_using: false,
     restricted_add_column: false,
     rebuilds_table_ddl: true,
@@ -347,6 +382,8 @@ const DUCKDB: Capabilities = Capabilities {
         TableChange::ChangeNullability,
         TableChange::ChangeDefault,
     ],
+    rebuilds_tables: false,
+    foreign_key_switch: None,
     converts_with_using: true,
     restricted_add_column: false,
     rebuilds_table_ddl: false,
@@ -400,6 +437,8 @@ const CLICKHOUSE: Capabilities = Capabilities {
         TableChange::AddConstraint,
         TableChange::DropConstraint,
     ],
+    rebuilds_tables: false,
+    foreign_key_switch: None,
     converts_with_using: false,
     restricted_add_column: false,
     rebuilds_table_ddl: false,

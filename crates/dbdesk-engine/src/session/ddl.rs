@@ -6,9 +6,12 @@ use std::time::Instant;
 
 use dbdesk_core::{
     CatalogNode, CatalogPath, Connection, DriverError, FolderKind, Identifier, NodeKind,
-    RelationName, TableDescription, describe_error,
+    RelationName, Row, TableDescription, describe_error,
 };
-use dbdesk_sql::{ColumnSpec, DdlOperation, ExistingTable, ObjectName, RoleSpec, TableSpec};
+use dbdesk_sql::{
+    ColumnSpec, DdlOperation, ExistingTable, ForeignKeySwitch, ObjectName, RoleSpec, TableSpec,
+    rebuild_refusal,
+};
 use dbdesk_store::{HistoryEntry, HistoryOutcome, HistorySource, redact_secrets};
 use jiff::Timestamp;
 
@@ -34,7 +37,10 @@ pub(super) async fn apply(
             applied: 0,
         })
     } else if context.dialect().capabilities().transactional_ddl {
-        in_transaction(worker, statements).await?
+        match context.dialect().capabilities().foreign_key_switch {
+            Some(switch) => with_foreign_keys_off(worker, statements, switch).await?,
+            None => in_transaction(worker, statements, None).await?,
+        }
     } else {
         run_each(worker, statements).await?
     };
@@ -58,11 +64,68 @@ pub(super) async fn apply(
     Ok(())
 }
 
+/// Runs the statements in a transaction with foreign keys switched off, as SQLite's
+/// documentation says to change a table's schema: the switch does nothing inside a
+/// transaction, and with foreign keys on, dropping the table a rebuild replaces would run the
+/// `ON DELETE` actions of other tables' keys. Where they were on, they are checked before
+/// committing, and switched on again afterwards, whatever happened.
+async fn with_foreign_keys_off(
+    worker: &mut Worker<'_>,
+    statements: &[String],
+    switch: ForeignKeySwitch,
+) -> Result<Result<(), DdlFailure>, Disconnected> {
+    let unwrapped = |error: &DriverError| DdlFailure {
+        statement: None,
+        message: describe_error(error),
+        applied: 0,
+    };
+    let enforced = match first_rows(worker, switch.query).await? {
+        Ok(rows) => rows.first().and_then(|row| row.first()).cloned().flatten() == Some("1".into()),
+        Err(error) => return Ok(Err(unwrapped(&error))),
+    };
+    if !enforced {
+        return in_transaction(worker, statements, None).await;
+    }
+    if let Err(error) = transaction::run_counting(worker, switch.off, None).await? {
+        return Ok(Err(unwrapped(&error)));
+    }
+    let result = in_transaction(worker, statements, Some(switch.check)).await?;
+    if let Err(error) = transaction::run_counting(worker, switch.on, None).await? {
+        tracing::warn!(
+            data_source = %worker.context.name(),
+            "could not switch foreign keys on again: {}",
+            describe_error(&error)
+        );
+    }
+    Ok(result)
+}
+
+/// The first page of rows `sql` answers.
+async fn first_rows(
+    worker: &mut Worker<'_>,
+    sql: &str,
+) -> Result<Result<Vec<Row>, DriverError>, Disconnected> {
+    let connection = &mut *worker.connection;
+    let work = async move {
+        let mut cursor = connection.execute(sql).await?;
+        let rows = cursor.next_page(BROKEN_KEYS_SHOWN).await?;
+        cursor.finish().await?;
+        Ok(rows)
+    };
+    worker.signals.guard(work, None, worker.cancel_handle).await
+}
+
+/// How many rows with a broken foreign key a failed check reads: enough to say there are
+/// some, and name the first table.
+const BROKEN_KEYS_SHOWN: usize = 100;
+
 /// Opens a transaction, runs the statements and commits them, or rolls everything back at the
-/// first failure.
+/// first failure. With `check`, a query that answers a row for each row whose foreign key
+/// points at nothing, the transaction is rolled back too if it answers any.
 async fn in_transaction(
     worker: &mut Worker<'_>,
     statements: &[String],
+    check: Option<&str>,
 ) -> Result<Result<(), DdlFailure>, Disconnected> {
     let unwrapped = |error: &DriverError| DdlFailure {
         statement: None,
@@ -74,9 +137,12 @@ async fn in_transaction(
         return Ok(Err(unwrapped(&error)));
     }
     let failure = match run_each(worker, statements).await? {
-        Ok(()) => match transaction::run_counting(worker, "COMMIT", None).await? {
-            Ok(_) => return Ok(Ok(())),
-            Err(error) => unwrapped(&error),
+        Ok(()) => match broken_keys(worker, check).await? {
+            Some(failure) => failure,
+            None => match transaction::run_counting(worker, "COMMIT", None).await? {
+                Ok(_) => return Ok(Ok(())),
+                Err(error) => unwrapped(&error),
+            },
         },
         Err(failure) => failure,
     };
@@ -90,6 +156,38 @@ async fn in_transaction(
     Ok(Err(DdlFailure {
         applied: 0,
         ..failure
+    }))
+}
+
+/// Runs the foreign key `check`, if any, and says why the change can't be kept if a row's key
+/// points at nothing.
+async fn broken_keys(
+    worker: &mut Worker<'_>,
+    check: Option<&str>,
+) -> Result<Option<DdlFailure>, Disconnected> {
+    let Some(check) = check else {
+        return Ok(None);
+    };
+    let message = match first_rows(worker, check).await? {
+        Ok(rows) if rows.is_empty() => return Ok(None),
+        Ok(rows) => {
+            // `PRAGMA foreign_key_check` answers the table, the row, the table it points at.
+            let table = rows
+                .first()
+                .and_then(|row| row.first().cloned().flatten())
+                .unwrap_or_default();
+            format!(
+                "Undone: afterwards, rows of {table} would have foreign keys that point at \
+                 nothing ({} found).",
+                rows.len()
+            )
+        }
+        Err(error) => describe_error(&error),
+    };
+    Ok(Some(DdlFailure {
+        statement: None,
+        message,
+        applied: 0,
     }))
 }
 
@@ -263,11 +361,40 @@ async fn existing_table(
         .describe_constraints(&description.table_name())
         .await
         .map_err(|error| describe_error(&error))?;
-    Ok(ExistingTable::from_catalog(
-        description,
-        constraints,
-        context.dialect(),
-    ))
+    let dialect = context.dialect();
+    let mut table = ExistingTable::from_catalog(description, constraints, dialect);
+    if dialect.capabilities().rebuilds_tables {
+        let definition = connection
+            .definition(path)
+            .await
+            .map_err(|error| describe_error(&error))?;
+        table.rebuild_refusal = rebuild_refusal(&definition);
+        table.dependents = dependents(connection, path).await?;
+    }
+    Ok(table)
+}
+
+/// The `CREATE` statements of the table's indexes and triggers, which a rebuild creates
+/// again. Indexes made for its keys have none: the rebuilt table's keys make them.
+async fn dependents(
+    connection: &mut dyn Connection,
+    table: &CatalogPath,
+) -> Result<Vec<String>, String> {
+    let mut statements = Vec::new();
+    for folder in [FolderKind::Indexes, FolderKind::Triggers] {
+        let nodes = connection
+            .children(&table.child(NodeKind::Folder(folder), folder.label()))
+            .await
+            .map_err(|error| describe_error(&error))?;
+        for node in nodes.iter().filter(|node| node.has_definition) {
+            let definition = connection
+                .definition(&node.path)
+                .await
+                .map_err(|error| describe_error(&error))?;
+            statements.push(definition.trim_end().trim_end_matches(';').to_owned());
+        }
+    }
+    Ok(statements)
 }
 
 /// `CREATE ROLE` for the role at `path`, from its description, through the same builder as

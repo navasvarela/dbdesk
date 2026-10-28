@@ -16,6 +16,7 @@ mod table;
 mod tests;
 mod view;
 
+pub use alter::rebuild_refusal;
 pub use view::view_query;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -112,6 +113,19 @@ pub struct ExistingTable {
     pub primary_key_name: Option<String>,
     /// SQL Server keeps each column's default as a constraint, dropped by name: by column.
     pub default_names: BTreeMap<String, String>,
+    /// What a rebuild creates again once the table is back (SQLite): the `CREATE INDEX` and
+    /// `CREATE TRIGGER` statements of the table's indexes and triggers. Empty elsewhere.
+    pub dependents: Vec<String>,
+    /// Why the table can't be rebuilt, where it can't (see [`rebuild_refusal`]).
+    pub rebuild_refusal: Option<&'static str>,
+}
+
+impl TableAlteration {
+    /// Whether the change rebuilds the table, copying its rows, rather than altering it in
+    /// place: what SQLite's `ALTER TABLE` can't do.
+    pub fn rebuilds(&self, dialect: Dialect) -> bool {
+        alter::rebuilds(self, dialect)
+    }
 }
 
 impl ExistingTable {
@@ -186,6 +200,8 @@ impl ExistingTable {
             spec,
             primary_key_name: constraints.primary_key_name,
             default_names: constraints.default_names,
+            dependents: Vec::new(),
+            rebuild_refusal: None,
         }
     }
 }
@@ -196,6 +212,8 @@ impl From<TableSpec> for ExistingTable {
             spec,
             primary_key_name: None,
             default_names: BTreeMap::new(),
+            dependents: Vec::new(),
+            rebuild_refusal: None,
         }
     }
 }
@@ -507,6 +525,11 @@ pub enum DdlError {
         what: &'static str,
         dialect: Dialect,
     },
+    #[error(
+        "SQLite rebuilds the table to make this change, and the rebuilt table would lose that \
+         it {0}."
+    )]
+    Unrebuildable(&'static str),
     #[error("The column \u{201c}{0}\u{201d} is renamed twice.")]
     RenamedTwice(String),
     #[error("The {0} has no name in the database, so it can't be dropped.")]

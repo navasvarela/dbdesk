@@ -1502,3 +1502,182 @@ fn modifies_a_table_with_rows_on_every_engine() {
     }
     engine.shut_down();
 }
+
+fn sqlite_rows(database: &std::path::Path, sql: &str) -> Vec<Vec<Option<String>>> {
+    let connection = rusqlite::Connection::open(database).unwrap();
+    let mut statement = connection.prepare(sql).unwrap();
+    let width = statement.column_count();
+    statement
+        .query_map([], |row| {
+            (0..width)
+                .map(|index| {
+                    row.get::<_, rusqlite::types::Value>(index)
+                        .map(|value| match value {
+                            rusqlite::types::Value::Null => None,
+                            rusqlite::types::Value::Integer(number) => Some(number.to_string()),
+                            rusqlite::types::Value::Real(number) => Some(number.to_string()),
+                            rusqlite::types::Value::Text(text) => Some(text),
+                            rusqlite::types::Value::Blob(_) => Some("blob".to_owned()),
+                        })
+                })
+                .collect()
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap()
+}
+
+/// SQLite's rebuild, with foreign keys switched on as an application would: the rows, the
+/// index and trigger on the table, a view reading it, `AUTOINCREMENT`, and another table's
+/// cascading foreign key to it all survive, renamed columns renamed in each. A rebuild that
+/// leaves a row's foreign key pointing at nothing is undone.
+#[test]
+fn rebuilds_a_sqlite_table_keeping_what_depends_on_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let database = sqlite_database(dir.path());
+    rusqlite::Connection::open(&database)
+        .unwrap()
+        .execute_batch(
+            "CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT);
+             CREATE TABLE audit (order_id INTEGER);
+             CREATE TABLE orders (id INTEGER PRIMARY KEY AUTOINCREMENT,
+               customer INTEGER REFERENCES customers (id), total TEXT, legacy INTEGER);
+             CREATE INDEX orders_customer ON orders (customer);
+             CREATE TRIGGER orders_audit AFTER INSERT ON orders
+               BEGIN INSERT INTO audit VALUES (NEW.id); END;
+             CREATE VIEW customer_totals AS SELECT customer, total FROM orders;
+             CREATE TABLE lines (order_id INTEGER REFERENCES orders (id) ON DELETE CASCADE,
+               sku TEXT);
+             INSERT INTO customers VALUES (1, 'ada'), (2, 'bob');
+             INSERT INTO orders (customer, total, legacy) VALUES (1, '10.5', 7), (2, '20', 8);
+             INSERT INTO lines VALUES (1, 'a'), (2, 'b');",
+        )
+        .unwrap();
+    let mut engine = start(dir.path());
+    let app = sqlite_data_source(database.clone());
+    save(&mut engine, &app, None);
+    // Ends the transaction ApplyDdl opens, so the switch takes, and opens another for it.
+    let switched = apply(
+        &mut engine,
+        app.id,
+        vec![
+            "COMMIT".to_owned(),
+            "PRAGMA foreign_keys = ON".to_owned(),
+            "BEGIN".to_owned(),
+        ],
+    );
+    assert_eq!(switched, Ok(()));
+
+    let tables = default_schema(&app).child(NodeKind::Folder(FolderKind::Tables), "tables");
+    let orders = load_table(
+        &mut engine,
+        app.id,
+        &tables.child(NodeKind::Table, "orders"),
+    );
+    assert_eq!(orders.dependents.len(), 2, "{:?}", orders.dependents);
+    assert_eq!(orders.rebuild_refusal, None);
+    let mut after = orders.spec.clone();
+    after.columns[1].name = "buyer".to_owned();
+    after.columns[1].nullable = false;
+    after.columns[2].data_type = "REAL".to_owned();
+    after.columns.remove(3);
+    after.foreign_keys[0].columns = vec!["buyer".to_owned()];
+    after.checks.push(Check {
+        name: None,
+        expression: "total >= 0".to_owned(),
+    });
+    let alteration = TableAlteration {
+        table: orders,
+        after,
+        renamed: BTreeMap::from([("buyer".to_owned(), "customer".to_owned())]),
+        conversions: BTreeMap::new(),
+    };
+    assert!(alteration.rebuilds(Dialect::Sqlite));
+    let statements = DdlOperation::AlterTable(Box::new(alteration))
+        .statements(Dialect::Sqlite)
+        .unwrap();
+    assert_eq!(
+        apply(&mut engine, app.id, statements.clone()),
+        Ok(()),
+        "{statements:#?}"
+    );
+
+    let some = |text: &str| Some(text.to_owned());
+    assert_eq!(
+        sqlite_rows(&database, "SELECT id, buyer, total FROM orders ORDER BY id"),
+        [
+            [some("1"), some("1"), some("10.5")],
+            [some("2"), some("2"), some("20")]
+        ]
+    );
+    assert_eq!(
+        sqlite_rows(&database, "SELECT count(*) FROM lines"),
+        [[some("2")]],
+        "dropping the old table ran no ON DELETE CASCADE"
+    );
+    assert_eq!(
+        sqlite_rows(
+            &database,
+            "SELECT name FROM pragma_index_info('orders_customer')"
+        ),
+        [[some("buyer")]]
+    );
+    assert_eq!(
+        sqlite_rows(&database, "SELECT * FROM customer_totals ORDER BY buyer"),
+        [[some("1"), some("10.5")], [some("2"), some("20")]],
+        "the view follows the rename"
+    );
+    let definition = sqlite_rows(
+        &database,
+        "SELECT sql FROM sqlite_schema WHERE name = 'orders'",
+    );
+    let definition = definition[0][0].clone().unwrap_or_default();
+    for part in [
+        "AUTOINCREMENT",
+        "buyer INTEGER NOT NULL",
+        "CHECK (total >= 0)",
+    ] {
+        assert!(definition.contains(part), "{part} in {definition}");
+    }
+    rusqlite::Connection::open(&database)
+        .unwrap()
+        .execute("INSERT INTO orders (buyer, total) VALUES (1, 5)", [])
+        .unwrap();
+    assert_eq!(
+        sqlite_rows(&database, "SELECT order_id FROM audit ORDER BY order_id"),
+        [[some("1")], [some("2")], [some("3")]],
+        "the trigger is back"
+    );
+
+    // Audit row 3's order has no customer 3: a key from audit to customers would point at
+    // nothing, and the rebuild that adds one is undone.
+    let audit = load_table(&mut engine, app.id, &tables.child(NodeKind::Table, "audit"));
+    let mut after = audit.spec.clone();
+    after.foreign_keys.push(ForeignKey {
+        name: None,
+        columns: vec!["order_id".to_owned()],
+        target: ObjectName::new(Some("main"), "customers"),
+        target_columns: vec!["id".to_owned()],
+        on_delete: ReferentialAction::NoAction,
+        on_update: ReferentialAction::NoAction,
+    });
+    let breaking = DdlOperation::AlterTable(Box::new(TableAlteration {
+        table: audit,
+        after,
+        renamed: BTreeMap::new(),
+        conversions: BTreeMap::new(),
+    }))
+    .statements(Dialect::Sqlite)
+    .unwrap();
+    let failure = apply(&mut engine, app.id, breaking).expect_err("a broken key");
+    assert!(failure.message.contains("audit"), "{failure:?}");
+    assert_eq!(
+        sqlite_rows(
+            &database,
+            "SELECT count(*) FROM pragma_foreign_key_list('audit')"
+        ),
+        [[some("0")]],
+        "undone"
+    );
+    engine.shut_down();
+}

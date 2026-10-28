@@ -39,11 +39,11 @@ pub use ddl::{
     Check, ColumnSpec, DdlError, DdlOperation, ExistingTable, ForeignKey, IndexMethod, IndexSpec,
     ObjectName, OwnedObjects, PasswordChange, ReferentialAction, RoleSpec, SchemaSpec,
     TableAlteration, TableSpec, UniqueKey, ViewKind, ViewSpec, ddl_statements, quote_name,
-    view_query,
+    rebuild_refusal, view_query,
 };
 pub use dialect::{
-    Capabilities, Dialect, ExplainSetting, Savepoint, SchemaCreation, TableChange, UserModel,
-    ViewReplacement,
+    Capabilities, Dialect, ExplainSetting, ForeignKeySwitch, Savepoint, SchemaCreation,
+    TableChange, UserModel, ViewReplacement,
 };
 pub use dml::{ColumnValue, RowSql, Table};
 pub use format::{FormatError, FormatOptions, Formatted, KeywordCase, format_ranges, same_meaning};
