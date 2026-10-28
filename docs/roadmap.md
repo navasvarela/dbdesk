@@ -919,6 +919,7 @@ flowchart LR
     D2 --> D3[D3 User manual]
     D3 --> D4
     D2 --> D5[D5 Native look on macOS]
+    D4 --> D6[D6 Front page refresh]
 ```
 
 ### D1 — Logo and brand palette
@@ -1057,3 +1058,68 @@ tooltip, and that items run their commands) and of the title strip (title, room 
 buttons, none in full screen), tests of Edit commands' input events and of shortcut-to-key-
 equivalent conversion, font loading and its fallback, and accent selections against WCAG AA for
 each of macOS's accents.
+
+### D6 — A front page that shows what dbdesk does
+
+D4's page was written before the first release and last changed with ClickHouse (#61). It tells
+visitors to build from source although releases are out and update themselves, misses most of
+what shipped since 0.6 (SSH and TLS, safety levels, the schema helpers and Modify table, the
+grid's database-side sort and filter, export of every row and CSV import, the history, `.sql`
+files and parameters, find and replace, MCP, projects, the macOS look, and H1's files), and
+shows one static screenshot under six equal cards. In layers, one PR each:
+
+- **D6a — Plan:** this section.
+- **D6b — Content:** every stale statement corrected and the copy rewritten on the current
+  layout; the page states facts only, each one backed by the manual.
+- **D6c — Layout:** a hero with a short, specific headline and a download button that names
+  the visitor's platform and the version; a strip of three differentiators; a feature tour in
+  alternating rows, each with its own picture (writing SQL, the results grid, changing the
+  schema, staying safe, AI assistants through MCP, connecting anywhere, making it yours); and a
+  download section for every platform, with the checksums and the updater. Works at phone
+  width, in both themes, in the D1 palette and fonts.
+- **D6d — Clips:** the screenshot machinery records frames while a scene scripts typing and
+  clicks, and `site/clips.sh` encodes them with ffmpeg into WebM (VP9) and MP4 (H.264) with a
+  poster. The hero clip opens a data source, expands the tree, types a query with completion,
+  runs it and filters the results in the database.
+- **D6e — Docs:** regenerating the clips in [testing.md](testing.md), the README, and the demo
+  note.
+
+Decisions:
+
+- **The version is written in at build time.** `site/build.sh` reads the workspace version from
+  `Cargo.toml` and writes it, and the release file names, into the page. No GitHub API call at
+  runtime: the page stays static and works with scripts off, and can't be rate-limited. The
+  cost: the page names the version on `main`, so a release must be merged before the page is
+  rebuilt, which is already how releases land.
+- **Platform detection is a progressive enhancement.** Without scripts, the hero links to the
+  download section; with them, a few lines pick macOS or Linux from the user agent. Windows
+  visitors get the download section, which says Windows builds aren't published yet.
+- **Pictures for the page are rendered, never taken by hand,** like the manual's: a sibling of
+  the screenshot test renders the tour's scenes in both themes at a smaller window, so the UI
+  reads at the size the page shows it, and records the clips. They are encoded once, by hand,
+  into `site/media/` (WebP stills, WebM and MP4 clips, PNG posters) and committed, replaced in
+  place, never versioned by name. Nothing new runs in CI.
+- **Light and dark pictures are chosen with `<picture>` and `prefers-color-scheme`;** clips
+  pick a source the same way with `<source media>`. Under `prefers-reduced-motion` the poster
+  is shown instead of the clip.
+- **Unreleased features are labelled.** The tour describes what is on `main`, and marks what
+  the current release doesn't have yet (Modify table and H1's files when this lands), so a
+  visitor who downloads it isn't promised more than they get. The label comes off with the next
+  release.
+- **The "making it yours" row shows the files themselves** as text, which says more about
+  `actions.toml`, `snippets.toml` and `theme.toml` than a picture of a menu.
+
+Risks:
+
+- **Weight in git.** Every clip lives in the repository forever, and every regeneration adds
+  its bytes again. Budget: the hero clip at most about 2 MB per format, stills under 200 KB
+  each; regenerate only when the UI visibly changes.
+- **Clips go stale** like any picture; regenerating is one test and one script, documented in
+  testing.md.
+- **Claims drift from the app.** The copy links each section into the manual, which is kept in
+  step with the code, so a stale claim has one obvious place to be checked against.
+- **Numbers on the page** (download size) are measured from the release's files and say so;
+  they are updated by hand when a release changes them noticeably.
+
+**Exit:** dbdesk.org says how to download the current release for each platform, shows every
+major feature with a picture or clip in both themes, and reads well on a phone.
