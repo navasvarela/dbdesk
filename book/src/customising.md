@@ -1,7 +1,7 @@
 # Actions, snippets and themes
 
-Three files let you add to dbdesk without rebuilding it: `actions.toml` adds your own SQL to the
-explorer's and the grid's menus, `snippets.toml` adds snippets to completion, and `theme.toml`
+Three files let you add to dbdesk without rebuilding it: `actions.toml` adds your own SQL, or
+your own programs, to the explorer's and the grid's menus, `snippets.toml` adds snippets to completion, and `theme.toml`
 changes the colours. They sit next to `keymap.toml` (see
 [Where dbdesk keeps its files](files.md)), and none of them exists until you write it.
 
@@ -93,8 +93,131 @@ already has stays dbdesk's, and is listed as a problem in **View → Keymap…**
 your actions' ids.
 
 **View → Actions…** lists every action with its id, what it applies to, its drivers, its keys
-and its SQL, and the file's problems. **Create actions.toml** writes the examples above,
-commented out, to start from; it never replaces a file you have.
+and its SQL or command, and the file's problems. **Create actions.toml** writes the examples
+above, commented out, to start from; it never replaces a file you have.
+
+## Commands
+
+An action can run a program instead of SQL: write `command` where an SQL action has `sql`.
+
+```toml
+[[action]]
+id = "rows-to-jq"
+name = "Send rows to jq"
+applies_to = ["grid.selection"]
+command = ["jq", "-r", ".[] | .email"]
+stdin = "json"
+output = "viewer"
+
+[[action]]
+id = "pgcli"
+name = "Open in pgcli"
+applies_to = ["data_source"]
+drivers = ["postgres"]
+command = ["gnome-terminal", "--", "pgcli", "postgres://{user}@{host}:{port}/{database}"]
+output = "none"
+
+[[action]]
+id = "dump-table"
+name = "Dump to SQL"
+applies_to = ["table"]
+drivers = ["postgres"]
+command = ["pg_dump", "--table={qualified_name}", "--host={host}", "--port={port}", "--username={user}", "{database}"]
+output = "console"
+```
+
+- **`command`** is the program, then its arguments, as a list. There is no shell: each item
+  reaches the program as one argument, exactly as written, with its placeholders filled in. A
+  table name with spaces, quotes and semicolons stays one argument. To use a shell anyway, say
+  so: `["sh", "-c", "…"]`. The program itself can't have placeholders, so what runs never
+  depends on what you selected.
+- **`stdin`** sends the grid's selected cells to the program: the selected columns of the
+  selected rows, as `json` (an array of objects, as **Export** writes it), `csv` or `tsv`, each
+  with the column names. Only the grid has a selection, so an action with `stdin` applies only
+  to `grid.selection`. Leave it out, or write `none`, and stdin is empty.
+- **`output`** says where what the program writes goes:
+  - `viewer`, the default: a window like the cell viewer's, with JSON and XML laid out for
+    reading, and **Copy**;
+  - `console`: a new console on the same data source, for a program that writes SQL, to read
+    and run yourself;
+  - `log`: the log console, a line an entry, with what it wrote to stderr as warnings;
+  - `none`: nowhere, for a program that opens a window of its own.
+- **`timeout`** is how long it may run before dbdesk stops it, as `"500ms"`, `"30s"`, `"5m"` or
+  `"1h"`: a minute when left out.
+- `run` is for SQL only, and a command can't apply to `grid.row`: it already gets every
+  selected row at once.
+
+The terminal in the `pgcli` example is GNOME's, which runs what follows `--`. On a Mac, use a
+terminal that takes a command in the same way, such as `["alacritty", "-e", …]` or
+`["kitty", …]`: Terminal and iTerm can't be given a command to run this way.
+
+### What a command gets
+
+Its placeholders are the SQL ones, filled in as plain text, with nothing quoted, plus the data
+source's own settings:
+
+| Placeholder | Becomes |
+| --- | --- |
+| `{qualified_name}` | The name as the database's SQL writes it: `"public"."orders"` |
+| `{database}`, `{schema}`, `{table}`, `{column}` | As for SQL, unquoted. `{database}` is the one connected to where the object has none |
+| `{data_source}` | The data source's name in dbdesk: `shop` |
+| `{value}`, `{row.email}` | The cell's text; nothing for `NULL` |
+| `{host}`, `{port}`, `{user}` | Where a server data source connects, with `${NAME}` variables filled in |
+| `{file}` | A SQLite or DuckDB data source's file |
+
+`{values}` is for SQL only: a command gets the selection on stdin. A placeholder nothing fills
+this time, such as `{host}` on a SQLite data source, opens a window saying so instead of
+running anything.
+
+The program also gets dbdesk's own environment, with `DBDESK_DATA_SOURCE`, `DBDESK_DRIVER`
+(`postgres`, `sqlite`, …), `DBDESK_DATABASE`, `DBDESK_SCHEMA` and `DBDESK_TABLE` where there is
+one, and `DBDESK_FORMAT`, the `stdin` format. It runs in your home folder.
+
+**It never gets a password.** There is no placeholder or variable for one, and none of the
+data source's secrets (its password, its SSH password or passphrase) reach a program in any
+way. A program that needs one reads it from its own configuration, as `~/.pgpass` or
+`~/.my.cnf`, or from the keychain itself.
+
+### The first run
+
+Before a command runs for the first time, dbdesk shows it in full and asks **Run a program?**,
+with what it gets on stdin, where its output goes and its timeout. **Run** runs it, and from
+then on it runs without asking. Change anything in its `command` or `stdin`, even one argument,
+and it asks again. **Cancel**, or Esc, runs nothing.
+
+**View → Actions…** says of each command whether it is trusted or asks before it next runs.
+dbdesk keeps what you trusted in `trusted_commands.toml`, in its window state folder rather
+than beside `actions.toml` (see [Where dbdesk keeps its files](files.md)). So an `actions.toml`
+you copy from someone, or sync from another machine, still asks before each of its commands
+first runs. Delete an entry, or the file, to be asked again.
+
+Actions only ever come from your own `actions.toml`. A data source export never carries any,
+even one someone added to the file by hand.
+
+### While it runs
+
+The status bar says **Running Send rows to jq…** with **Stop**. ⌘. (Ctrl+. on Linux and
+Windows) stops it too, unless the console you are in is running SQL: then ⌘. stops that instead.
+When its timeout passes, it is stopped the same way.
+
+A program that ends with an error opens a window naming it, how it ended (`exit status: 3`)
+and what it wrote to stderr, whatever `output` says. So does one that can't start or runs past
+its timeout. One that writes more than 4 MB is stopped there, and you get what it wrote first,
+with a note.
+
+Stopping a program stops that program only. One that starts programs of its own, as
+`sh -c "… &"` does, may leave them running.
+
+### On a Mac and on Windows
+
+- **A Mac app opened from the Finder doesn't see your shell's `PATH`.** It gets
+  `/usr/bin:/bin:/usr/sbin:/sbin`, without Homebrew's folders, so `jq` may be "not found" even
+  though your terminal finds it. The window says which `PATH` was searched. Write the full path
+  instead: `which jq` in a terminal prints it, such as `/opt/homebrew/bin/jq`.
+- **On Windows,** a program is found on `PATH` with or without `.exe`, and runs without a
+  console window. A `.bat` or `.cmd` file runs through `cmd.exe`, which reads some characters
+  in its arguments as its own; dbdesk refuses to start it with an argument it can't pass
+  safely, rather than let `cmd.exe` read it.
 
 ## Snippets
 

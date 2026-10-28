@@ -193,6 +193,29 @@ against a real server, such as a cancel arriving after the last row.
   a temporary config folder: actions from the explorer, the grid, a key and the Actions menu,
   View → Actions…, snippets in completion, and theme overrides.
 
+## Command actions (H2)
+
+- `dbdesk_core::CommandTemplate` has unit tests of each command it refuses, the data source's
+  fields, and a hostile table name staying one argument. `dbdesk-store` tests every problem
+  message of command actions, the selection written as JSON, CSV and TSV, the trusted commands'
+  file, and that a data source export holding `[[action]]` tables imports none of them.
+- The engine's `tests/programs.rs` runs real processes: `dbdesk-test-program`, a binary of the
+  engine crate (`src/bin/`), which cargo builds for the engine's tests and whose path they get
+  from `CARGO_BIN_EXE_dbdesk-test-program`. It behaves the same on Linux, macOS and Windows, so
+  no test depends on `sh` or `cmd`. Its first argument picks what it does: `dump` writes back its
+  arguments, environment, folder and stdin as JSON; `fail` exits with status 3; `wait` sleeps
+  until killed; `flood` writes until killed. The tests cover the arguments and environment with
+  a hostile table name, a search of everything the program got for the data source's saved
+  password and SSH passphrase, a failing exit, the timeout and a stop, the 4 MB limit, trust
+  (refused until trusted, again once changed, remembered after a restart) and a missing
+  program. None waits for a fixed time: the timeout test's is 300 ms.
+- The app's UI tests in `app/tests/commands.rs` run against `test_support::ScriptedPrograms`,
+  a `ProgramRunner` that plays `echo`, `print`, `fail` and `hang` without starting processes:
+  the question before a first run and Esc to cancel it, each `output`, a failure's window, Stop,
+  ⌘. and a 200 ms timeout, and View → Actions…'s trusted column. The question is a modal that
+  sizes itself over its first frames, so the tests `run()` before clicking **Run**, and pick the
+  last **Run** on screen, since a console's toolbar has one too.
+
 ## MCP server
 
 - `dbdesk_sql::classify` has a corpus per dialect: reads, writes hidden in CTEs, `SELECT …

@@ -109,6 +109,13 @@ skipped, and the rest of the file applies. Click the message to see each problem
 and click **Reload**. For `theme.toml` it can also be a colour that leaves some text too faint to
 read; that colour still applies. See [Actions, snippets and themes](customising.md).
 
+## A command action says its program "was not found"
+
+dbdesk looked for the program in the folders of its `PATH`, which the window lists. A Mac app
+opened from the Finder doesn't get the `PATH` your shell sets, so programs installed with
+Homebrew aren't on it. Write the program's full path in `actions.toml` (`which jq` in a terminal
+prints it) and click **Reload**. See [Commands](customising.md#on-a-mac-and-on-windows).
+
 ## The panels are in a mess
 
 **View → Reset layout** puts every panel back where it started. If you closed the Welcome tab,
