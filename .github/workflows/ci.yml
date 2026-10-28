@@ -29,6 +29,7 @@ jobs:
   # seconds. `book` still builds the manual. Pushes to main always run everything.
   changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       code: ${{ steps.diff.outputs.code }}
     steps:
@@ -58,6 +59,7 @@ jobs:
     # `changes` must never skip the checks. CODE is then empty and every step runs.
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     env:
       CODE: ${{ needs.changes.outputs.code }}
     steps:
@@ -73,6 +75,7 @@ jobs:
   # The user manual in book/. A broken link to a page or an image fails the build.
   book:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
       - uses: taiki-e/install-action@v2
@@ -93,6 +96,10 @@ jobs:
         # machine yet; see docs/releasing.md.
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    # The 30 most recent green runs took at most 6 minutes on Linux, 5 on macOS and 11 on Windows.
+    # 30 minutes leaves room for a cold Rust cache and still fails a hung runner fast: a Linux job
+    # once sat in `apt-get update` for 80 minutes, and without a limit GitHub waits 6 hours.
+    timeout-minutes: 30
     env:
       CODE: ${{ needs.changes.outputs.code }}
     # Every step but the last runs unless `changes` said documentation only.
