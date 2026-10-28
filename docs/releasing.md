@@ -273,6 +273,81 @@ checks for open transactions and starts the new copy:
   local `latest.json`, verified the package's signature, and replaced the bundle. A package
   signed with another key was refused, and the old bundle was left as it was.
 
+### R4 — Windows parity
+
+Since v0.12.0 every release has the Windows installer. It was tried on a real Windows machine
+on 2026-10-28: it installs and dbdesk works, but Microsoft Defender SmartScreen blocked the
+unsigned installer at first, until **More info › Run anyway**. A Windows copy is still second
+class: it can't update itself (the dialog sends it to the release page), its installer isn't
+signed, and the website and manual still say Windows builds aren't offered. In layers, one PR
+each:
+
+- **R4a — Plan:** this section.
+- **R4b — Updates on Windows:** **Install and restart** downloads the new installer and checks
+  its signature, then **Restart now** quits the usual way and runs the installer, which replaces
+  dbdesk and starts the new version. A copy the installer didn't put there (a portable copy, a
+  build from source) keeps the release page.
+- **R4c — The signed installer in the manifest:** the release workflow signs the installer with
+  the update key, as it does the macOS and Linux packages, and `latest.json` gains a
+  `windows-x86_64` entry.
+- **R4d — Authenticode signing, after the rename:** not in this stack. Signing is set up once
+  the app has its new name, so the certificate carries it from the start, most likely through
+  SignPath Foundation or an OV certificate kept in a vendor's cloud. Until then releases stay
+  unsigned. The options, their costs and a recommendation are an [open decision](#decisions)
+  for the maintainer.
+- **R4e — Site and manual:** the Windows download card, the hero's download button for Windows
+  visitors, the manual's Install chapter with what SmartScreen shows for an unsigned installer,
+  this document's Windows notes, and the demo note.
+
+Decisions:
+
+- **The installer runs after dbdesk has quit.** `cargo-packager-updater` installs an NSIS
+  update by starting the installer and calling `std::process::exit` straight away, from the
+  engine's thread. That would skip the questions about open transactions and unsaved consoles,
+  and the saving of the layout. So on Windows dbdesk does the download and signature check with
+  the updater, keeps the installer, and starts it from `main` once the app has stopped, the
+  same place it already restarts the new copy on macOS and Linux.
+- **Passive mode, then restart:** the installer runs with `/P /R`, the arguments
+  `cargo-packager-updater` itself uses by default. `/P` shows only a progress bar and asks
+  nothing; `/R` starts dbdesk when it's done.
+- **Per-user installs.** The installer already installs for the current user, into
+  `%LOCALAPPDATA%\dbdesk`, without administrator rights (cargo-packager's default). This is now
+  written in `Cargo.toml`, because updates depend on it: an update needs no elevation, and the
+  installer finds the previous location in the registry and installs over it.
+- **Installed or portable** is decided by the uninstaller the installer writes beside
+  `dbdesk.exe`. Without one, the copy says it can't replace itself and offers the release page.
+- **Order of signatures.** The update signature comes last, over the bytes users download.
+  When Authenticode arrives (R4d), it goes first, since it changes the file it signs: the
+  binary before it is packaged, the installer after.
+- **Windows visitors to dbdesk.org get the installer** from the hero's download button, as Mac
+  and Linux visitors get theirs.
+
+Risks:
+
+- **The install itself can't run in CI.** CI can't click through a restart on a desktop, so the
+  updater's logic is tested with fixed feeds and fake installers, the staging and the check for
+  an installed copy with unit tests, and the release job keeps installing silently and starting
+  the installed copy. The full update is tried by hand on a Windows machine before it is relied
+  on (the exit below).
+- **Copies from v0.12.0 and earlier can't update themselves.** They predate this, so each
+  needs one new installer from the release page; the manual says so.
+- **The passive installer closes every running `dbdesk.exe`,** other windows of dbdesk
+  included, without asking them about open transactions. dbdesk has one window per process
+  and quits its own first, so this only matters with two copies open at once.
+- **SmartScreen keeps blocking the first run of a downloaded installer,** as it did on the first
+  real Windows machine. Unsigned, every release starts again from no reputation; signing only
+  lets the warning fade over weeks, as the certificate builds reputation (see R4d). Updates
+  aren't affected: the installer dbdesk downloads itself carries no "downloaded from the
+  internet" mark, so Windows doesn't stop it.
+- **The kept installer stays in the temporary folder** after the update. Each update overwrites
+  the last one, so there is only ever one.
+
+**Exit:** on a Windows machine, a copy installed from a release's installer is offered the next
+release, **Install and restart** downloads it, **Restart now** asks about open transactions
+first, then the installer's progress bar shows and the new version starts. A portable copy
+says why it can't update and links to the release page. dbdesk.org offers Windows visitors the
+installer, and the manual says what SmartScreen shows and how to get past it.
+
 ## Decisions
 
 Settled on 2026-10-23:
