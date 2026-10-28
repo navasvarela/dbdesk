@@ -23,7 +23,7 @@ use dbdesk_engine::{
     RunId, RunOrigin, RunOutcome, RunPurpose, SessionState, TransactionEnd, TransactionMode,
 };
 use dbdesk_sql::{ProblemSource, Severity};
-use dbdesk_store::{ActionId, CustomAction, ExportFormat};
+use dbdesk_store::{ActionId, CustomAction, ExportFormat, Snippet};
 
 use crate::custom_actions::GridCells;
 
@@ -96,6 +96,8 @@ pub struct ConsoleContext<'a> {
     pub recent: &'a RecentCompletions,
     /// The custom actions the grid's cell menu offers, for this console's driver.
     pub cell_actions: &'a [&'a CustomAction],
+    /// The snippets completion offers, for this console's driver.
+    pub snippets: &'a [&'a Snippet],
 }
 
 pub fn show(
@@ -183,6 +185,7 @@ fn shortcuts(
         return;
     }
     completion_popup::handle_keys(ui, console);
+    snippet_keys(ui, console);
     for action in ui.input_mut(|input| keymap.consume(input, &EDITOR_ACTIONS)) {
         match action {
             Action::Complete => console.open_completion(true),
@@ -194,6 +197,22 @@ fn shortcuts(
             Action::FindPrevious => console.find_next(false),
             action => perform(console, action, actions),
         }
+    }
+}
+
+/// Tab and ⇧Tab move through the fields of the snippet just inserted, and Esc leaves them.
+/// The completion list, when it has something to pick, takes Tab first.
+fn snippet_keys(ui: &mut Ui, console: &mut QueryConsole) {
+    if !console.in_snippet() {
+        return;
+    }
+    let pressed = |modifiers, key| ui.input_mut(|input| input.consume_key(modifiers, key));
+    if pressed(egui::Modifiers::SHIFT, egui::Key::Tab) {
+        console.next_snippet_field(false);
+    } else if pressed(egui::Modifiers::NONE, egui::Key::Tab) {
+        console.next_snippet_field(true);
+    } else if pressed(egui::Modifiers::NONE, egui::Key::Escape) {
+        console.leave_snippet();
     }
 }
 
@@ -714,8 +733,9 @@ fn editor(
             if let Some(cursor) = output.cursor_range {
                 console.selection = byte_range(&console.text, &cursor);
             }
+            console.follow_snippet(output.response.changed(), output.response.clicked());
             completion_popup::follow_editor(ui, console, &output);
-            let missing = console.refresh_completion(catalog, context.recent);
+            let missing = console.refresh_completion(catalog, context.recent, context.snippets);
             if !missing.is_empty() {
                 actions.push(ConsoleAction::LoadCatalog(missing));
             }

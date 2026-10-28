@@ -82,6 +82,11 @@ pub fn keyword() -> Icon {
     Icon::new(glyph::TEXT_AA, Role::Secondary)
 }
 
+/// A snippet from `snippets.toml`, in the completion list.
+pub fn snippet() -> Icon {
+    Icon::new(glyph::BRACKETS_CURLY, Role::Success)
+}
+
 /// A table's alias in a statement, in the completion list.
 pub fn alias() -> Icon {
     Icon::new(glyph::TAG, Role::Weak)
