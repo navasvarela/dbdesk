@@ -66,8 +66,8 @@ sql = "SELECT * FROM {qualified_name} ORDER BY {column:created_at} DESC LIMIT 10
     nothing in the database.
   - Values from the grid: `{value}` (the first selected cell), `{values}` (the selection, as
     a comma-separated list of literals) and `{row.<column>}`.
-  - `{{` and `}}` stand for a brace; any other brace that doesn't start a placeholder, as in
-    a JSON literal, is left alone.
+  - A brace that doesn't start a placeholder, as in a JSON literal, is left alone; `{{` stands
+    for a `{` that would.
 - **Placeholders are never pasted in as raw text.** Names are quoted as identifiers by the
   dialect's own rules, which DB0 gathered in one place. Values become escaped literals. A table
   called `x; DROP TABLE y` stays one quoted name, not a second statement.

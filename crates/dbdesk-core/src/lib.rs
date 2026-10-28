@@ -12,6 +12,7 @@ mod password;
 mod placeholder;
 mod quoting;
 mod role;
+mod sql_template;
 mod table;
 
 #[cfg(feature = "conformance")]
@@ -32,6 +33,9 @@ pub use placeholder::{
 };
 pub use quoting::Quoting;
 pub use role::{RoleAttribute, RoleDescription};
+pub use sql_template::{
+    Placeholder, RenderError, SelectedCells, SqlTemplate, TemplateError, TemplateValues,
+};
 pub use table::{
     CheckConstraint, ColumnDescription, ForeignKey, ForeignKeyConstraint, Identifier, Identity,
     IdentityGeneration, ReferentialAction, RelationName, TableConstraints, TableDescription,

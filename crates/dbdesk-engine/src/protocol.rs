@@ -9,7 +9,7 @@ use dbdesk_core::{
 };
 use dbdesk_sql::{ExistingTable, ParameterValues};
 use dbdesk_store::{
-    ConsoleKey, ExportFormat, HistoryEntry, HistoryQuery, ImportPlan, ImportPreview,
+    ConsoleKey, CustomFile, ExportFormat, HistoryEntry, HistoryQuery, ImportPlan, ImportPreview,
     KeymapBindings, McpOverrides, McpPermissions, Project, Projects, RowChange, SavedConsole,
     Secret, Separator, Settings, SqlFileContents,
 };
@@ -276,6 +276,9 @@ pub enum Command {
     /// Replaces `settings.toml` with these settings, then reads it. Answered by
     /// [`Event::SettingsLoaded`].
     SaveSettings(Settings),
+    /// Reads `actions.toml`, `snippets.toml` and `theme.toml` again. Answered by an
+    /// [`Event::CustomFileLoaded`] for each.
+    ReloadCustomFiles,
     /// Writes rows a console shows to a file. Answered by [`Event::ExportFinished`].
     ExportRows {
         console: ConsoleId,
@@ -400,6 +403,13 @@ pub enum Event {
     SettingsLoaded {
         path: PathBuf,
         result: Result<Settings, String>,
+    },
+    /// One of `actions.toml`, `snippets.toml` and `theme.toml`, read at start-up (after the
+    /// settings, before the data sources) and on request: what it holds that can be used, and
+    /// its problems. Empty if there is no file.
+    CustomFileLoaded {
+        path: PathBuf,
+        file: CustomFile,
     },
     /// The answer to [`Command::CheckForUpdates`]: the newest published release, or why it
     /// couldn't be found out.

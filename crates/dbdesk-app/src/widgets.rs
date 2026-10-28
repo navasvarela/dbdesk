@@ -113,6 +113,15 @@ pub fn toolbar<R>(ui: &mut Ui, add_contents: impl FnOnce(&mut Ui) -> R) -> R {
 }
 
 /// The muted number after a tree label, like "tables 4".
+/// The status bar's link to a config file's problems: `keymap.toml: 2 problems`.
+pub fn problems_link(ui: &mut Ui, file_name: &str, count: usize, color: Color32) -> Response {
+    let text = match count {
+        1 => format!("{file_name}: 1 problem"),
+        n => format!("{file_name}: {n} problems"),
+    };
+    ui.link(RichText::new(text).small().color(color))
+}
+
 pub fn count_badge(ui: &mut Ui, count: usize) {
     ui.label(
         RichText::new(count.to_string())

@@ -4,8 +4,10 @@
 //! blocking pool, never from an async worker or the UI thread.
 
 mod atomic;
+mod config_text;
 mod consoles;
 mod csv;
+mod custom;
 mod data_sources;
 mod export;
 mod history;
@@ -21,6 +23,10 @@ pub use consoles::{
     ConsoleFiles, ConsoleKey, ConsoleName, ConsoleStoreError, InvalidConsoleName, SavedConsole,
 };
 pub use csv::{CsvError, CsvReader, CsvRecord, Separator};
+pub use custom::{
+    ActionId, ActionTarget, Checked, CustomAction, CustomFile, CustomFileKind, CustomFiles, Rgb,
+    Snippet, SnippetBody, ThemeOverrides, ThemeToken, parse_actions, parse_snippets, parse_theme,
+};
 pub use data_sources::{DataSourceFile, StoreError};
 pub use export::{ExportError, ExportFormat, ExportWriter, export_rows};
 pub use history::{

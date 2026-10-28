@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::atomic::write_atomically;
+use crate::config_text::read_if_exists;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -142,17 +143,12 @@ impl SettingsFile {
     /// [`SettingsError::Read`] or [`SettingsError::Parse`] if the file exists but can't be
     /// used.
     pub fn load(&self) -> Result<Settings, SettingsError> {
-        let text = match std::fs::read_to_string(&self.path) {
-            Ok(text) => text,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                return Ok(Settings::default());
-            }
-            Err(source) => {
-                return Err(SettingsError::Read {
-                    path: self.path.clone(),
-                    source,
-                });
-            }
+        let read = read_if_exists(&self.path).map_err(|source| SettingsError::Read {
+            path: self.path.clone(),
+            source,
+        })?;
+        let Some(text) = read else {
+            return Ok(Settings::default());
         };
         toml::from_str(&text).map_err(|source| SettingsError::Parse {
             path: self.path.clone(),

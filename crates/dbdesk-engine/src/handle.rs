@@ -3,7 +3,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dbdesk_store::{
-    ConsoleFiles, DataSourceFile, HistoryFile, KeymapFile, ProjectFile, SecretStore, SettingsFile,
+    ConsoleFiles, CustomFiles, DataSourceFile, HistoryFile, KeymapFile, ProjectFile, SecretStore,
+    SettingsFile,
 };
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender, error::TryRecvError};
@@ -40,6 +41,8 @@ pub struct EngineConfig {
     pub history: HistoryFile,
     pub keymap: KeymapFile,
     pub settings: SettingsFile,
+    /// `actions.toml`, `snippets.toml` and `theme.toml`.
+    pub custom_files: CustomFiles,
     pub releases: Arc<dyn ReleaseFeed>,
     pub updater: Arc<dyn UpdateInstaller>,
     /// OpenSSH's `known_hosts`, which SSH tunnels check host keys against.
