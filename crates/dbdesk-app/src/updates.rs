@@ -1,7 +1,7 @@
 //! Whether a newer dbdesk has been released, and installing it: what Help › Check for updates
 //! shows, and the notice in the status bar.
 
-use dbdesk_engine::{Command, Event, InstallSupport, Release};
+use dbdesk_engine::{Command, Event, InstallSupport, InstalledUpdate, Release, Restart};
 use dbdesk_store::Settings;
 use semver::Version;
 
@@ -46,10 +46,8 @@ pub enum InstallState {
         downloaded: u64,
         total: Option<u64>,
     },
-    /// Installed over this copy; it starts at the next launch.
-    Installed {
-        version: String,
-    },
+    /// Installed over this copy, or its installer kept for when dbdesk quits.
+    Installed(InstalledUpdate),
     Failed(String),
 }
 
@@ -125,7 +123,7 @@ impl Updates {
                 Some(fraction) => format!("Downloading dbdesk {version}… {:.0}%", fraction * 100.0),
                 None => format!("Downloading dbdesk {version}…"),
             },
-            InstallState::Installed { .. } => "Restart to finish updating".to_owned(),
+            InstallState::Installed(_) => "Restart to finish updating".to_owned(),
         })
     }
 
@@ -148,7 +146,7 @@ impl Updates {
     /// Restart now: true when an installed update is waiting for the app to start again. The
     /// app then quits through its usual checks for open transactions.
     pub fn request_restart(&mut self) -> bool {
-        self.restart_after_quit = matches!(self.install, InstallState::Installed { .. });
+        self.restart_after_quit = matches!(self.install, InstallState::Installed(_));
         self.restart_after_quit
     }
 
@@ -158,8 +156,12 @@ impl Updates {
         self.restart_after_quit = false;
     }
 
-    pub fn restart_after_quit(&self) -> bool {
-        self.restart_after_quit
+    /// What to do once the app has quit, when the user chose to restart into an update.
+    pub fn restart_after_quit(&self) -> Option<&Restart> {
+        match &self.install {
+            InstallState::Installed(update) if self.restart_after_quit => Some(&update.restart),
+            _ => None,
+        }
     }
 
     /// The check at start-up, once, when the settings allow it. Its outcome only shows if
@@ -189,10 +191,8 @@ impl Updates {
                     total: *total,
                 };
             }
-            Event::UpdateInstalled(Ok(version)) => {
-                self.install = InstallState::Installed {
-                    version: version.clone(),
-                };
+            Event::UpdateInstalled(Ok(update)) => {
+                self.install = InstallState::Installed(update.clone());
             }
             Event::UpdateInstalled(Err(error)) => {
                 self.install = InstallState::Failed(error.clone())
@@ -393,11 +393,15 @@ mod tests {
             "a failed install can't be retried"
         );
 
-        updates.apply(&Event::UpdateInstalled(Ok("99.0.0".to_owned())));
+        updates.apply(&Event::UpdateInstalled(Ok(InstalledUpdate {
+            version: "99.0.0".to_owned(),
+            restart: Restart::Relaunch,
+        })));
+        assert_eq!(updates.restart_after_quit(), None, "restarted unasked");
         assert!(updates.request_restart());
-        assert!(updates.restart_after_quit());
+        assert_eq!(updates.restart_after_quit(), Some(&Restart::Relaunch));
         updates.cancel_restart();
-        assert!(!updates.restart_after_quit());
+        assert_eq!(updates.restart_after_quit(), None);
     }
 
     #[test]

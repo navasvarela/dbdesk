@@ -18,8 +18,8 @@ use dbdesk_core::{
     TlsMode,
 };
 use dbdesk_engine::{
-    Command, EngineConfig, EngineHandle, Event, InstallError, InstallSupport, Release,
-    ReleaseError, ReleaseFeed, Repaint, SessionState, UpdateInstaller,
+    Command, EngineConfig, EngineHandle, Event, InstallError, InstallSupport, InstalledUpdate,
+    Release, ReleaseError, ReleaseFeed, Repaint, Restart, SessionState, UpdateInstaller,
 };
 use dbdesk_store::{
     ConsoleFiles, CustomFile, CustomFileKind, CustomFiles, DataSourceFile, HistoryFile,
@@ -113,12 +113,18 @@ impl UpdateInstaller for FakeInstaller {
         InstallSupport::Supported
     }
 
-    fn install(&self, progress: &dyn Fn(u64, Option<u64>)) -> Result<String, InstallError> {
+    fn install(
+        &self,
+        progress: &dyn Fn(u64, Option<u64>),
+    ) -> Result<InstalledUpdate, InstallError> {
         for downloaded in [0, 50, 100] {
             progress(downloaded, Some(100));
         }
         match self {
-            Self::Installs(version) => Ok((*version).to_owned()),
+            Self::Installs(version) => Ok(InstalledUpdate {
+                version: (*version).to_owned(),
+                restart: Restart::Relaunch,
+            }),
             Self::Fails(reason) => Err(InstallError::Unsupported((*reason).to_owned())),
         }
     }

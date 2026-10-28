@@ -1,33 +1,44 @@
-//! Starting dbdesk again once it has quit, so an installed update takes over.
+//! Starting dbdesk again once it has quit, so an installed update takes over, or running the
+//! Windows installer that does both.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
+
+use dbdesk_engine::Restart;
 
 /// Process-wide, because the request is made inside the app (when the window closes) but must
 /// be acted on in `main`, after eframe has returned and the engine has stopped. Starting the
-/// new copy any earlier would have two copies writing the same files.
-static REQUESTED: AtomicBool = AtomicBool::new(false);
+/// new copy, or the installer that replaces this one's files, any earlier would have two
+/// programs writing the same files.
+static REQUESTED: OnceLock<Restart> = OnceLock::new();
 
-pub fn request() {
-    REQUESTED.store(true, Ordering::SeqCst);
+pub fn request(restart: Restart) {
+    // The app asks once, as its window closes; a second request could only repeat the first.
+    if REQUESTED.set(restart).is_err() {
+        tracing::warn!("a restart was already requested");
+    }
 }
 
-/// Starts the installed copy, if a restart was requested. Failing to start it is logged, not
-/// fatal: the update is installed either way and starts at the next launch.
+/// Starts the installed copy, or the kept installer, if a restart was requested. Failing to is
+/// logged, not fatal: an installed update starts at the next launch either way, and a kept
+/// installer is downloaded again by the next update.
 pub fn start_if_requested() {
-    if !REQUESTED.load(Ordering::SeqCst) {
+    let Some(restart) = REQUESTED.get() else {
         return;
-    }
-    let target = match std::env::current_exe() {
-        Ok(exe) => target(&exe, std::env::var_os("APPIMAGE").map(PathBuf::from)),
-        Err(error) => {
-            tracing::error!("could not find dbdesk to restart it: {error}");
-            return;
-        }
     };
-    match target.command().spawn() {
-        Ok(_) => tracing::info!("restarting into the installed update"),
+    let mut command = match restart {
+        Restart::Relaunch => match std::env::current_exe() {
+            Ok(exe) => target(&exe, std::env::var_os("APPIMAGE").map(PathBuf::from)).command(),
+            Err(error) => {
+                tracing::error!("could not find dbdesk to restart it: {error}");
+                return;
+            }
+        },
+        Restart::RunInstaller(installer) => installer.command(),
+    };
+    match command.spawn() {
+        Ok(_) => tracing::info!("restarting into the update ({restart:?})"),
         Err(error) => tracing::error!("could not restart dbdesk: {error}"),
     }
 }

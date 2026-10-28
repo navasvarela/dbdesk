@@ -8,7 +8,8 @@ use std::time::{Duration, Instant};
 
 use dbdesk_core::{DataSourceId, Password};
 use dbdesk_engine::{
-    EngineConfig, InstallError, InstallSupport, Release, ReleaseError, ReleaseFeed, UpdateInstaller,
+    EngineConfig, InstallError, InstallSupport, InstalledUpdate, Release, ReleaseError,
+    ReleaseFeed, Restart, UpdateInstaller,
 };
 use dbdesk_store::{
     ConsoleFiles, CustomFiles, DataSourceFile, HistoryFile, KeymapFile, ProjectFile, Secret,
@@ -97,10 +98,16 @@ impl UpdateInstaller for FakeInstaller {
         InstallSupport::Supported
     }
 
-    fn install(&self, progress: &dyn Fn(u64, Option<u64>)) -> Result<String, InstallError> {
+    fn install(
+        &self,
+        progress: &dyn Fn(u64, Option<u64>),
+    ) -> Result<InstalledUpdate, InstallError> {
         progress(0, Some(100));
         progress(100, Some(100));
-        Ok(self.version.to_owned())
+        Ok(InstalledUpdate {
+            version: self.version.to_owned(),
+            restart: Restart::Relaunch,
+        })
     }
 }
 
