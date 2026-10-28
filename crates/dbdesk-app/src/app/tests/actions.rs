@@ -158,3 +158,40 @@ fn an_action_on_rows_runs_once_per_row_and_a_change_to_every_row_asks_first() {
         order_ids(dir.path()) == [3]
     });
 }
+
+#[test]
+fn view_actions_creates_the_file_once_and_lists_every_action_after_a_reload() {
+    let dir = tempfile::tempdir().unwrap();
+    save_shop(dir.path(), "CREATE TABLE orders (id INTEGER PRIMARY KEY)");
+    let (_layer, feed) = log_console::pipeline();
+    let mut harness = start_app(dir.path(), feed);
+    step_until_visible(&mut harness, "Expand shop");
+    harness.get_by_label("View").click();
+    harness.run();
+    harness.get_by_label("Actions…").click();
+    harness.run();
+    harness.get_by_label("No actions yet. Add [[action]] tables to actions.toml, then Reload.");
+
+    harness.get_by_label("Create actions.toml").click();
+    let file = dir.path().join("actions.toml");
+    step_until(&mut harness, "actions.toml being written", |_| {
+        file.exists()
+    });
+    harness.get_by_label("No problems.");
+
+    std::fs::write(&file, ACTIONS).unwrap();
+    harness.get_by_label("Reload").click();
+    step_until_visible(&mut harness, "4 actions");
+    harness.get_by_label("custom.row-count");
+    harness.get_by_label("table, view");
+    harness.get_by_label("SELECT count(*) AS n FROM {qualified_name}");
+
+    harness.get_by_label("Create actions.toml").click();
+    step_until(&mut harness, "the second create being refused", |harness| {
+        harness
+            .query_by_label_contains("could not create actions.toml")
+            .is_some()
+    });
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), ACTIONS);
+    harness.get_by_label("actions.toml: 1 problem");
+}

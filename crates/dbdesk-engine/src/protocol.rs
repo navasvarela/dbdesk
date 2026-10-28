@@ -9,9 +9,9 @@ use dbdesk_core::{
 };
 use dbdesk_sql::{ExistingTable, ParameterValues};
 use dbdesk_store::{
-    ActionId, ConsoleKey, CustomFile, ExportFormat, HistoryEntry, HistoryQuery, ImportPlan,
-    ImportPreview, KeymapBindings, McpOverrides, McpPermissions, Project, Projects, RowChange,
-    SavedConsole, Secret, Separator, Settings, SqlFileContents,
+    ActionId, ConsoleKey, CustomFile, CustomFileKind, ExportFormat, HistoryEntry, HistoryQuery,
+    ImportPlan, ImportPreview, KeymapBindings, McpOverrides, McpPermissions, Project, Projects,
+    RowChange, SavedConsole, Secret, Separator, Settings, SqlFileContents,
 };
 
 use crate::{Export, ExportAll, HostKey, PasswordNeeded, Release, WatchedFile};
@@ -280,6 +280,12 @@ pub enum Command {
     /// Reads `actions.toml`, `snippets.toml` and `theme.toml` again. Answered by an
     /// [`Event::CustomFileLoaded`] for each.
     ReloadCustomFiles,
+    /// Writes a new customisation file holding `text`, unless one exists, then reads it.
+    /// Answered by [`Event::CustomFileLoaded`], with a problem if it couldn't be written.
+    CreateCustomFile {
+        kind: CustomFileKind,
+        text: String,
+    },
     /// Writes rows a console shows to a file. Answered by [`Event::ExportFinished`].
     ExportRows {
         console: ConsoleId,

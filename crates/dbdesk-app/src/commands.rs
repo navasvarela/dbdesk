@@ -24,6 +24,7 @@ pub enum AppCommand {
     ImportDataSources,
     Theme(ThemePreference),
     ShowKeymap,
+    ShowActions,
     ShowSettings,
     ResetLayout,
     Format,
@@ -77,6 +78,7 @@ impl AppCommand {
             Self::Theme(ThemePreference::Light) => "view.theme.light",
             Self::Theme(ThemePreference::Dark) => "view.theme.dark",
             Self::ShowKeymap => "view.keymap",
+            Self::ShowActions => "view.actions",
             Self::ResetLayout => "view.reset-layout",
             Self::CheckForUpdates => "help.check-for-updates",
             Self::About => "help.about",
@@ -105,6 +107,7 @@ impl AppCommand {
             Self::Theme(ThemePreference::Light) => "Light",
             Self::Theme(ThemePreference::Dark) => "Dark",
             Self::ShowKeymap => "Keymap…",
+            Self::ShowActions => "Actions…",
             Self::ShowSettings => "Settings…",
             Self::ResetLayout => "Reset layout",
             Self::Format => "Format",
@@ -176,6 +179,9 @@ impl AppCommand {
             )),
             Self::ImportDataSources => Some(Cow::Borrowed(
                 "Add or update data sources from an exported file",
+            )),
+            Self::ShowActions => Some(Cow::Borrowed(
+                "The custom actions in actions.toml, and what it got wrong",
             )),
             Self::RunAction(action) => {
                 let targets: Vec<&str> = action
@@ -379,6 +385,7 @@ pub fn egui_menu_bar(
             entries: vec![
                 Submenu(theme()),
                 Command(C::ShowKeymap),
+                Command(C::ShowActions),
                 Command(C::ShowSettings),
                 Command(C::ResetLayout),
             ],
@@ -453,6 +460,7 @@ pub fn macos_menu_bar(
             entries: vec![
                 Submenu(theme()),
                 Command(C::ShowKeymap),
+                Command(C::ShowActions),
                 Command(C::ResetLayout),
                 Separator,
                 System(SystemItem::FullScreen),

@@ -63,7 +63,7 @@ impl CustomFiles {
         }
     }
 
-    fn path(&self, kind: CustomFileKind) -> Option<&Path> {
+    pub fn path(&self, kind: CustomFileKind) -> Option<&Path> {
         match kind {
             CustomFileKind::Actions => self.actions.path.as_deref(),
             CustomFileKind::Snippets => self.snippets.path.as_deref(),
@@ -72,7 +72,7 @@ impl CustomFiles {
     }
 
     /// What the file adds, in a few words.
-    fn summary(&self, kind: CustomFileKind) -> String {
+    pub fn summary(&self, kind: CustomFileKind) -> String {
         match kind {
             CustomFileKind::Actions => count(self.actions.checked.value.len(), "action"),
             CustomFileKind::Snippets => count(self.snippets.checked.value.len(), "snippet"),

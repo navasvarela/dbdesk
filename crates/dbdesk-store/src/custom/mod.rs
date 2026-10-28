@@ -17,7 +17,7 @@ pub use actions::{ActionId, ActionTarget, CustomAction, parse_actions};
 pub use snippets::{Snippet, SnippetBody, parse_snippets};
 pub use theme::{Rgb, ThemeOverrides, ThemeToken, parse_theme};
 
-use crate::config_text::read_if_exists;
+use crate::config_text::{create_new, read_if_exists};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum CustomFileKind {
@@ -66,13 +66,17 @@ impl CustomFile {
 
     /// A file that couldn't be read: nothing from it, and why.
     fn unreadable(kind: CustomFileKind, problem: String) -> Self {
-        let mut file = Self::parse(kind, "");
-        match &mut file {
+        Self::parse(kind, "").with_problem(problem)
+    }
+
+    /// The file with one more problem, about the file as a whole.
+    pub fn with_problem(mut self, problem: String) -> Self {
+        match &mut self {
             Self::Actions(checked) => checked.problems.push(problem),
             Self::Snippets(checked) => checked.problems.push(problem),
             Self::Theme(checked) => checked.problems.push(problem),
         }
-        file
+        self
     }
 
     pub fn kind(&self) -> CustomFileKind {
@@ -116,6 +120,15 @@ impl CustomFiles {
                 CustomFile::unreadable(kind, format!("could not read {}: {error}", path.display()))
             }
         }
+    }
+
+    /// Writes `text` as a new file of this kind. Never replaces an existing one.
+    ///
+    /// # Errors
+    ///
+    /// If the file exists or can't be written.
+    pub fn create(&self, kind: CustomFileKind, text: &str) -> std::io::Result<()> {
+        create_new(&self.path(kind), text)
     }
 
     pub fn dir(&self) -> &Path {
