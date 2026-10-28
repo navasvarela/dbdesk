@@ -306,19 +306,6 @@ h3 { margin: 0 0 8px; font-size: 1.05rem; font-weight: 600; }
 .more::after { content: " →"; }
 .more:hover { text-decoration: underline; }
 
-.chip {
-  display: inline-block;
-  padding: 0 8px;
-  border: 1px solid var(--secondary);
-  border-radius: 999px;
-  color: var(--secondary);
-  font-size: 0.75rem;
-  font-weight: 600;
-  line-height: 1.6;
-  white-space: nowrap;
-  vertical-align: 1px;
-}
-
 /* The files' examples, coloured like the app's editor: keys in the primary, strings in the
    secondary, comments weak. */
 .code-card {

@@ -1137,8 +1137,8 @@ AppImage and `.deb` beside it; three differentiators follow, then seven rows: wr
 grid, changing the schema, staying safe, MCP, connecting, and the files that make it yours, each
 with a picture cropped to what it shows (the last shows the files themselves), in light or dark
 to match the page. The download section covers macOS, Linux and Windows, the checksums and the
-updater. Modify table and H1's files carry a **Next release** label until the release after
-0.11.0. The pictures and clip are rendered by `screenshots::site::record_site_media` and encoded
+updater. Modify table and H1's files carried a **Next release** label until v0.12.0 shipped
+them. The pictures and clip are rendered by `screenshots::site::record_site_media` and encoded
 by `site/clips.sh` (see [testing.md](testing.md#website-pictures-and-clips)): 2.6 MB in all,
 the clip about 0.3 MB as MP4 and 0.4 MB as WebM per theme, each still under 60 KB. Download
 sizes on the page were read from the v0.11.0 release's assets (`gh release view v0.11.0 --json
