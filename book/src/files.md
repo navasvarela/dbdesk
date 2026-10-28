@@ -25,6 +25,10 @@ DbRover keeps everything in one folder per platform:
 Passwords are not in any of these files: they are in your system's keychain, under the service
 name `dbrover`. See [Data sources](data-sources.md#passwords-and-the-keychain).
 
+Before version 0.13 the folders and the keychain entries were named `dbdesk`. DbRover copies
+the folders on its first start, and moves each password the first time it is used; see
+[Coming from dbdesk](install.md#coming-from-dbdesk).
+
 SSH tunnels share `~/.ssh/known_hosts` with `ssh`: DbRover reads it to check SSH servers' host
 keys, and adds a line when you trust a new one. See
 [SSH tunnels](data-sources.md#ssh-tunnels).

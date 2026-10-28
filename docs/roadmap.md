@@ -303,6 +303,28 @@ update to DbRover from the app, through GitHub's redirect from the old repositor
 migration, updates, the domain steps and the maintainer's steps:
 [Renaming to DbRover](releasing.md#renaming-to-dbrover).
 
+**Rename demo note:** built, waiting for the repository rename and 0.13.0. Start DbRover on a
+machine where dbdesk ran: a window says your data was copied from dbdesk's folder, and the
+explorer shows the same data sources, projects and consoles, the history has every statement,
+and `actions.toml`, `snippets.toml`, `theme.toml` and the keymap apply. dbdesk's folder is left
+as it was, with `copied-to-dbrover.txt` in it. Connecting to a data source with a saved
+password finds it under the old keychain name and moves it to `dbrover`. If the copy fails,
+the window says why and the session runs on dbdesk's folder; the next start tries again. An MCP
+client still configured with `/Applications/dbdesk.app/Contents/MacOS/dbdesk` starts the
+server, which says in the client's log that the name goes away in 0.16. The window title, menus,
+About and Welcome say DbRover; the command, crates, packages, folders, keychain service and MCP
+server are `dbrover`; the macOS bundle is `DbRover.app` (`io.github.navasvarela.dbrover`),
+with a `dbdesk` link beside the binary. dbrover.org serves the site and the manual, dbdesk.org
+redirects to it path for path, and the download buttons keep linking 0.12.0's `dbdesk-*`
+files until 0.13.0 is out. Covered by the migration's tests against temporary folders (every
+file and the consoles tree, history rows still in the write-ahead log, the logs left behind,
+nothing done twice, a crash's staging folder replaced, a failed copy leaving no new folder, two
+processes taking turns), the password fallback's tests, the notice's UI test, the alias check,
+and tests against a local stand-in for GitHub that the release notice and the updater follow a
+renamed repository's redirects and still check the package's signature. Not checked yet: the
+update from a real 0.12.0 install, on macOS and with the AppImage, which needs the 0.13.0
+release (the plan's exit).
+
 ## Database track
 
 More engines, in order of how many people use them. The full plan, with the rankings, what

@@ -779,6 +779,11 @@ it comes, covers the link as part of the bundle.
 - **Search results and old links** point at dbdesk.org and the old repository for a while;
   both redirect.
 
+**Status:** built, in five layers (plan, migration, rename, site, manual), waiting for the
+repository rename and 0.13.0. The domain steps are done. In the
+code: `APP_NAME` is `dbrover` and `PREVIOUS_APP_NAME` `dbdesk` in `dbrover-store`. What the
+manual tells users is in its Install chapter, under "Coming from dbdesk".
+
 ### Exit
 
 A Mac running dbdesk 0.12.0 with saved data sources, a saved password, a console, history,
