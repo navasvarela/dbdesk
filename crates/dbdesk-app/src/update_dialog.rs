@@ -1,4 +1,4 @@
-use dbdesk_engine::InstallSupport;
+use dbdesk_engine::{InstallSupport, Restart};
 use egui::{Align, Id, Layout, Modal, OpenUrl, ProgressBar, RichText};
 
 use crate::theme::Palette;
@@ -99,9 +99,17 @@ fn describe_install(
             };
             ui.add(bar);
         }
-        InstallState::Installed { version } => {
-            ui.label(format!("dbdesk {version} is installed."));
-            ui.label(RichText::new("Restart dbdesk to start using it.").color(palette.text_weak));
+        InstallState::Installed(update) => {
+            let (done, next) = match update.restart {
+                Restart::Relaunch => ("is installed", "Restart dbdesk to start using it."),
+                Restart::RunInstaller(_) => (
+                    "is downloaded",
+                    "Restart dbdesk to install it: its installer runs once dbdesk has quit, \
+                     then starts the new version.",
+                ),
+            };
+            ui.label(format!("dbdesk {} {done}.", update.version));
+            ui.label(RichText::new(next).color(palette.text_weak));
         }
         InstallState::Failed(error) => {
             ui.label("Couldn't install the update.");
@@ -141,14 +149,16 @@ fn primary_button(updates: &Updates) -> Option<PrimaryButton> {
     match updates.install_state() {
         InstallState::Idle if installable => Some(PrimaryButton::Install),
         InstallState::Failed(_) if installable => Some(PrimaryButton::TryAgain),
-        InstallState::Installed { .. } => Some(PrimaryButton::Restart),
+        InstallState::Installed(_) => Some(PrimaryButton::Restart),
         _ => None,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use dbdesk_engine::{Event, Release};
+    use std::path::PathBuf;
+
+    use dbdesk_engine::{Event, InstalledUpdate, Release, StagedInstaller};
     use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
 
@@ -205,7 +215,10 @@ mod tests {
         assert!(harness.query_by_label("Install and restart").is_none());
         drop(harness);
 
-        updates.apply(&Event::UpdateInstalled(Ok("9.0.0".to_owned())));
+        updates.apply(&Event::UpdateInstalled(Ok(InstalledUpdate {
+            version: "9.0.0".to_owned(),
+            restart: Restart::Relaunch,
+        })));
         let mut action = None;
         let mut harness = Harness::new_ui(|ui| action = action.or(show(ui.ctx(), &updates)));
         harness.run();
@@ -214,5 +227,24 @@ mod tests {
         harness.run();
         drop(harness);
         assert_eq!(action, Some(UpdateAction::Restart));
+    }
+
+    #[test]
+    fn says_a_windows_update_installs_on_restart() {
+        let mut updates = with_update(InstallSupport::Supported);
+        let _ = updates.install();
+        updates.apply(&Event::UpdateInstalled(Ok(InstalledUpdate {
+            version: "9.0.0".to_owned(),
+            restart: Restart::RunInstaller(StagedInstaller::from(PathBuf::from(
+                "dbdesk-setup.exe",
+            ))),
+        })));
+        let mut harness = Harness::new_ui(|ui| {
+            show(ui.ctx(), &updates);
+        });
+        harness.run();
+        harness.get_by_label("dbdesk 9.0.0 is downloaded.");
+        harness.get_by_label_contains("its installer runs once dbdesk has quit");
+        harness.get_by_label("Restart now");
     }
 }

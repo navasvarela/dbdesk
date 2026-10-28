@@ -17,8 +17,8 @@ use dbdesk_core::{
     PostgresConfig, ServerConfig, SshConfig, SshLogin, TlsMode,
 };
 use dbdesk_engine::{
-    Command, ConsoleId, DatabaseFile, Event, Export, PasswordUpdate, Release, SessionState,
-    WatchedFile,
+    Command, ConsoleId, DatabaseFile, Event, Export, InstalledUpdate, PasswordUpdate, Release,
+    Restart, SessionState, WatchedFile,
 };
 use dbdesk_store::{
     ConsoleKey, ConsoleName, CustomFile, DataSourceFile, ExportFormat, FormatSettings,
@@ -406,7 +406,13 @@ fn installs_an_update_reporting_progress_or_why_it_failed() {
     let dir = tempfile::tempdir().unwrap();
     let data_sources = dir.path().join("data_sources.toml");
     let cases = [
-        (FakeInstaller::Installs("9.9.9"), Ok("9.9.9".to_owned())),
+        (
+            FakeInstaller::Installs("9.9.9"),
+            Ok(InstalledUpdate {
+                version: "9.9.9".to_owned(),
+                restart: Restart::Relaunch,
+            }),
+        ),
         (
             FakeInstaller::Fails("not from an app bundle"),
             Err("not from an app bundle".to_owned()),

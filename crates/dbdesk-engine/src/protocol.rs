@@ -14,7 +14,7 @@ use dbdesk_store::{
     RowChange, SavedConsole, Secret, Separator, Settings, SqlFileContents,
 };
 
-use crate::{Export, ExportAll, HostKey, PasswordNeeded, Release, WatchedFile};
+use crate::{Export, ExportAll, HostKey, InstalledUpdate, PasswordNeeded, Release, WatchedFile};
 
 /// Identifies a query console. Chosen by the UI, unique for the app's lifetime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -426,9 +426,9 @@ pub enum Event {
         downloaded: u64,
         total: Option<u64>,
     },
-    /// The answer to [`Command::InstallUpdate`]: the version now installed, which starts at
-    /// the next launch, or why it couldn't be installed.
-    UpdateInstalled(Result<String, String>),
+    /// The answer to [`Command::InstallUpdate`]: the update now in place, and what restarting
+    /// dbdesk does to finish it, or why it couldn't be installed.
+    UpdateInstalled(Result<InstalledUpdate, String>),
     ConsoleSaveFailed {
         key: ConsoleKey,
         error: String,
