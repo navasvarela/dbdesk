@@ -41,7 +41,8 @@
       <div class="hero-actions">
         <a class="button primary" id="download-button" href="#download"
            data-mac="https://github.com/navasvarela/dbdesk/releases/download/v{{version}}/dbdesk-{{version}}-macos-universal.dmg"
-           data-linux="https://github.com/navasvarela/dbdesk/releases/download/v{{version}}/dbdesk-{{version}}-x86_64.AppImage">
+           data-linux="https://github.com/navasvarela/dbdesk/releases/download/v{{version}}/dbdesk-{{version}}-x86_64.AppImage"
+           data-windows="https://github.com/navasvarela/dbdesk/releases/download/v{{version}}/dbdesk-{{version}}-windows-x64-setup.exe">
           <span id="download-label">Download</span> <span class="version">v{{version}}</span>
         </a>
         <a class="button" href="manual/">Read the manual</a>
@@ -327,10 +328,11 @@
         </article>
         <article id="platform-windows">
           <h3>Windows</h3>
-          <p>Built with every release, and offered once it's been tried on a real Windows
-            machine.</p>
-          <p class="small">Until then, <a href="manual/install.html#build-from-source">build it
-            from source</a>.</p>
+          <p>An installer for Windows 10 and 11 on 64-bit Intel and AMD. It installs dbdesk for
+            you alone, without administrator rights.</p>
+          <a class="button primary" href="https://github.com/navasvarela/dbdesk/releases/download/v{{version}}/dbdesk-{{version}}-windows-x64-setup.exe">Installer</a>
+          <p class="small">Not signed yet, so SmartScreen blocks the first run:
+            <a href="manual/install.html#windows">More info, then Run anyway</a>.</p>
         </article>
       </div>
       <div class="facts">
@@ -338,8 +340,9 @@
           <h3>It updates itself</h3>
           <p>dbdesk asks GitHub for a newer release when it starts, or from <strong>Help ›
             Check for updates…</strong>. On macOS and in the AppImage, <strong>Install and
-            restart</strong> checks the update's signature and puts it in place; the
-            <code>.deb</code> opens the release page instead. The check sends nothing about you,
+            restart</strong> checks the update's signature and puts it in place, and installed
+            Windows copies do the same from the next release; the <code>.deb</code> opens the
+            release page instead. The check sends nothing about you,
             and can be turned off.</p>
         </div>
         <div>
@@ -376,12 +379,17 @@
       // iPads report a Mac platform, but have a touch screen.
       var mac = platform.indexOf("mac") !== -1 && navigator.maxTouchPoints < 2;
       var linux = platform.indexOf("linux") !== -1 && !/android/i.test(navigator.userAgent);
+      // "Win32" from navigator.platform, "Windows" from the others.
+      var windows = platform.indexOf("win") === 0 || platform.indexOf("windows") !== -1;
       if (mac) {
         button.href = button.dataset.mac;
         label.textContent = "Download for macOS ·";
       } else if (linux) {
         button.href = button.dataset.linux;
         label.textContent = "Download for Linux ·";
+      } else if (windows) {
+        button.href = button.dataset.windows;
+        label.textContent = "Download for Windows ·";
       }
 
       // The clip plays muted and loops; a visitor who asks for less motion gets its last frame
