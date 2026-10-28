@@ -27,6 +27,8 @@ pub struct Capabilities {
     pub index_methods: &'static [IndexMethod],
     /// The changes an existing table takes in place.
     pub table_changes: &'static [TableChange],
+    /// Whether a column's new type can say how to convert its values (`USING`).
+    pub converts_with_using: bool,
     /// Whether `ADD COLUMN` only takes a column outside the primary key that takes `NULL` or
     /// has a default, for the rows already there (SQLite).
     pub restricted_add_column: bool,
@@ -164,6 +166,7 @@ const POSTGRES: Capabilities = Capabilities {
         IndexMethod::Brin,
     ],
     table_changes: ALL_TABLE_CHANGES,
+    converts_with_using: true,
     restricted_add_column: false,
     rebuilds_table_ddl: true,
     common_types: &[
@@ -214,6 +217,7 @@ const SQLITE: Capabilities = Capabilities {
         TableChange::AddColumn,
         TableChange::DropColumn,
     ],
+    converts_with_using: false,
     restricted_add_column: true,
     rebuilds_table_ddl: false,
     common_types: &["integer", "real", "text", "blob", "numeric"],
@@ -242,6 +246,7 @@ const MYSQL: Capabilities = Capabilities {
     indexes: true,
     index_methods: &[IndexMethod::BTree, IndexMethod::Hash],
     table_changes: ALL_TABLE_CHANGES,
+    converts_with_using: false,
     restricted_add_column: false,
     rebuilds_table_ddl: false,
     common_types: &[
@@ -290,6 +295,7 @@ const SQL_SERVER: Capabilities = Capabilities {
     indexes: true,
     index_methods: &[],
     table_changes: ALL_TABLE_CHANGES,
+    converts_with_using: false,
     restricted_add_column: false,
     rebuilds_table_ddl: true,
     common_types: &[
@@ -341,6 +347,7 @@ const DUCKDB: Capabilities = Capabilities {
         TableChange::ChangeNullability,
         TableChange::ChangeDefault,
     ],
+    converts_with_using: true,
     restricted_add_column: false,
     rebuilds_table_ddl: false,
     common_types: &[
@@ -393,6 +400,7 @@ const CLICKHOUSE: Capabilities = Capabilities {
         TableChange::AddConstraint,
         TableChange::DropConstraint,
     ],
+    converts_with_using: false,
     restricted_add_column: false,
     rebuilds_table_ddl: false,
     common_types: &[
