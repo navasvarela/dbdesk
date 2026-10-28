@@ -504,7 +504,13 @@ and users, from a **New** submenu and object actions in the explorer. The full p
   panel tests of the redaction; and an app test on the PostgreSQL server that creates, edits,
   renames and drops a user through the dialogs and finds no password or verifier anywhere in
   the history store.
-- **E4 — Modify table:** `ALTER TABLE` from a changed table, with SQLite's table rebuild last.
+- **E4 — Modify table:**
+  - **Modify table…** opens the New table dialog filled from the live table, and writes the
+    `ALTER TABLE` statements that turn it into the changed one, shown before they run;
+  - renames tracked by the dialog's rows, never read as a drop and an add;
+  - each dialect's own statements, and what it can't do refused in the dialog with the reason;
+  - identity and auto-increment columns, kept by Modify table and written by Copy DDL;
+  - SQLite's table rebuild last, in its own layer.
 
 ## MCP track
 
