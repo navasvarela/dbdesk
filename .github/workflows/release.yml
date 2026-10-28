@@ -213,6 +213,17 @@ jobs:
     runs-on: windows-2022
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      # Authenticode signing with Azure Artifact Signing, once the maintainer has set it up
+      # (docs/releasing.md, "Signing the Windows installer"): the app registration's tenant,
+      # client and secret as repository secrets, and the account's endpoint, name and
+      # certificate profile as repository variables. Until all six exist, releases are built
+      # unsigned and the signing steps are skipped. Pull requests never sign, so code nobody
+      # has reviewed yet doesn't go out under dbdesk's name.
+      AUTHENTICODE: >-
+        ${{ github.event_name != 'pull_request'
+        && secrets.AZURE_TENANT_ID != '' && secrets.AZURE_CLIENT_ID != ''
+        && secrets.AZURE_CLIENT_SECRET != '' && vars.ARTIFACT_SIGNING_ENDPOINT != ''
+        && vars.ARTIFACT_SIGNING_ACCOUNT != '' && vars.ARTIFACT_SIGNING_PROFILE != '' }}
     defaults:
       run:
         shell: bash
@@ -225,6 +236,22 @@ jobs:
           tool: cargo-packager@${{ env.CARGO_PACKAGER_VERSION }}
       - run: packaging/duckdb/fetch.sh x86_64-pc-windows-msvc "$RUNNER_TEMP/duckdb" | tee -a "$GITHUB_ENV"
       - run: cargo build --release --locked -p dbdesk-app
+      # Before packaging, so the installer carries the signed dbdesk.exe. Pinned to a commit
+      # (v2.0.0) because it is handed the signing secrets.
+      - name: Sign dbdesk.exe (Authenticode)
+        if: env.AUTHENTICODE == 'true'
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          files: ${{ github.workspace }}\target\release\dbdesk.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
       # dbdesk.exe loads duckdb.dll from its own folder. cargo-packager's resources apply to
       # every platform, so the Windows package gets a configuration of its own: the one in
       # Cargo.toml plus the DLL, written beside Cargo.toml so its relative paths still resolve.
@@ -241,11 +268,37 @@ jobs:
           cargo packager --config crates/dbdesk-app/packager-windows.json --release --formats nsis \
             --out-dir "$(cygpath -m "$GITHUB_WORKSPACE/dist")"
           mv dist/*-setup.exe "dist/dbdesk-$VERSION-windows-x64-setup.exe"
+      # After packaging, and before the update signature: Authenticode changes the file it
+      # signs. The uninstaller the installer writes stays unsigned, since NSIS builds it
+      # inside the installer.
+      - name: Sign the installer (Authenticode)
+        if: env.AUTHENTICODE == 'true'
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          files: ${{ github.workspace }}\dist\dbdesk-${{ env.VERSION }}-windows-x64-setup.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - name: Check the Authenticode signatures
+        if: env.AUTHENTICODE == 'true'
+        shell: pwsh
+        run: |
+          foreach ($file in "target/release/dbdesk.exe", "dist/dbdesk-$env:VERSION-windows-x64-setup.exe") {
+            $signature = Get-AuthenticodeSignature $file
+            "${file}: $($signature.Status), $($signature.SignerCertificate.Subject)"
+            if ($signature.Status -ne 'Valid') { throw "${file} isn't signed: $($signature.StatusMessage)" }
+          }
       # The installer is also the Windows update: installed copies download it, check this
       # signature, and run it once dbdesk has quit. It's signed in a step of its own, after
-      # the rename, so the signature names the file users download and nothing changes the
-      # bytes after it. Pull requests from forks get no secrets and skip it; the release job
-      # refuses a release without it.
+      # the rename and any Authenticode signature, so the signature names the file users
+      # download and nothing changes the bytes after it. Pull requests from forks get no
+      # secrets and skip it; the release job refuses a release without it.
       - name: Sign the update package
         env:
           CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}

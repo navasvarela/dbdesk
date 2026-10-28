@@ -77,7 +77,10 @@ flowchart LR
    layout is lost.
 4. **Sign** when the signing secrets are configured, and skip with a note in the release
    otherwise. macOS: Developer ID signing, then notarization with `notarytool` and stapling.
-   Windows: Authenticode.
+   Windows: Authenticode, built and waiting for a signing service (see
+   [Signing the Windows installer](#signing-the-windows-installer)). Separately, every update
+   package, the Windows installer included, is signed with the update key (see
+   [R3](#r3--updates)).
 5. **Smoke test** every packaged artifact on its own runner by starting the binary inside it
    with `--version`, a new flag that prints the version and exits before opening a window. It
    catches broken bundles, missing libraries and a binary that won't start, cheaply. The Windows
@@ -208,6 +211,80 @@ To start attaching the Windows installer, after it has been tried on a real Wind
 set the repository variable `WINDOWS_RELEASES` to `true`
 (**Settings › Secrets and variables › Actions › Variables**).
 
+## Signing the Windows installer
+
+An unsigned installer installs and runs, but Microsoft Defender SmartScreen blocks its first
+run with "Windows protected your PC" until the user clicks **More info › Run anyway**. That is
+what happened when v0.12.0's installer was first tried on a real Windows machine. Where Windows
+11's Smart App Control is on, it blocks unsigned programs that have no reputation outright, and
+in managed companies a policy can take **Run anyway** away.
+
+**What signing changes,** according to Microsoft's
+[SmartScreen reputation](https://learn.microsoft.com/windows/apps/package-and-deploy/smartscreen-reputation)
+page (read on 2026-10-28):
+
+- SmartScreen looks at two things: the publisher's certificate and the file's hash. A file is
+  warned about until one of them has enough positive reputation, whether it is signed or not.
+- **Unsigned,** every release starts from no reputation, so each new version warns again.
+- **Signed,** the warning names the verified publisher, and reputation builds on the
+  certificate, so later releases signed by the same identity can stop being warned about.
+  Microsoft gives no threshold; for a new app it speaks of several weeks and hundreds of clean
+  installs from a wide audience. Changing the certificate or the identity starts it again.
+- **EV certificates no longer skip the warning.** Microsoft says paying for EV to avoid
+  SmartScreen is no longer justified, so it isn't among the options.
+- **Only the Microsoft Store removes the warning** from the first download, for MSIX packages,
+  which Microsoft signs itself. An EXE or MSI installer submitted to the Store is not
+  re-signed and must already be signed.
+
+So none of the signing options below removes the warning for the first releases. Each one puts
+a name on it, lets it fade over weeks of downloads, and lets Smart App Control allow dbdesk
+once that reputation exists. Since 2023 a public code-signing key must live in a hardware
+module, so the options are signing services, certificates kept in a vendor's cloud, or a
+smart card, which a GitHub-hosted runner can't use.
+
+The release workflow has the steps for **Azure Artifact Signing** (formerly Trusted Signing).
+They sign `dbdesk.exe` before it is packaged and the installer after, check both signatures,
+and only then sign the installer as an update. They run on tags and manual runs once the
+secrets below exist, never on pull requests, and are skipped until then, so releases go out
+unsigned as before. The uninstaller stays unsigned: NSIS builds it inside the installer.
+
+| Option | Cost | Open to an individual in Spain? | SmartScreen | Fit |
+| --- | --- | --- | --- | --- |
+| [Azure Artifact Signing](https://learn.microsoft.com/azure/artifact-signing/) (formerly Trusted Signing) | $9.99 a month (Basic: 5,000 signatures; see the [pricing page](https://azure.microsoft.com/pricing/details/artifact-signing/)), on a paid Azure subscription | **No.** Individuals must be in the US or Canada. Organizations may be in the EU (Spain included), the UK, the US, Canada and a few more, with a business identifier; validation takes 1–20 business days. | Names the validated organization; reputation builds with downloads. | Built: six values to set, nothing else to change. The key never leaves Microsoft's hardware. |
+| [SignPath Foundation](https://signpath.org) | Free for open source | Yes: its terms set no country or individual limits. It accepts OSI-licensed projects it chooses, asks executables to have "a certain verifiable reputation", wants a "Code signing policy" page on dbdesk.org and multi-factor authentication for the team, and someone approves each release's signing by hand. | Names **SignPath Foundation**, not dbdesk. Its certificate is shared with the other projects it signs; Microsoft doesn't say how that affects a new file, so don't count on it. | Not built: the two signing steps would become submissions to SignPath through its GitHub Action. |
+| An OV certificate in a vendor's cloud (for example Certum's or SSL.com's cloud signing) | Roughly €50–€150 a year, plus a per-signature or cloud fee with some vendors | Yes, after identity validation. Certum's cheaper Open Source certificate (from €69) comes on a smart card, which CI can't use. | Names the maintainer; reputation builds with downloads and carries over while the same identity signs. | Not built: each vendor has its own signing tool, and unattended CI signing often needs a one-time-password secret or a paid tier. |
+| [Microsoft Store](https://learn.microsoft.com/windows/apps/package-and-deploy/code-signing-options) with an MSIX package | Free for individual developers since 2025 | Yes. | **No warning** for copies installed from the Store. | Not built, and a project of its own: a new MSIX package, Store certification for every release, and Store updates instead of dbdesk's for those copies. The installer on GitHub would stay unsigned. |
+
+**Recommendation**, for a maintainer who is an individual in Spain: apply to **SignPath
+Foundation**. It is free, takes no key or account to look after, and its terms don't exclude
+anyone by country. The cost is its name on the signature instead of dbdesk's, an approval for
+each release, and the risk that it turns down a new program with little reputation yet. If it
+does, or to have dbdesk's own name on the installer, buy an **OV certificate kept in a
+vendor's cloud**, the paid option open to an individual in Spain. **Azure Artifact Signing**,
+which the workflow is built for and costs the least of the paid options, becomes the choice if
+dbdesk is ever published by a registered organization. Whatever is chosen, expect SmartScreen
+to keep warning for the first weeks; the manual tells users how to get past it, and only the
+Store would remove it. Decided by the maintainer; nothing has been bought or signed up for
+(see [Decisions](#decisions)).
+
+**Setting up Azure Artifact Signing**, once chosen:
+
+1. In a paid Azure subscription, register the `Microsoft.CodeSigning` resource provider and
+   create an Artifact Signing account on the Basic tier, in a region near the runners (its
+   endpoint, for example `https://weu.codesigning.azure.net`, goes in a variable below).
+2. Complete a public identity validation, then create a **Public Trust** certificate profile
+   from it.
+3. Create a Microsoft Entra app registration with a client secret, and give it the
+   **Artifact Signing Certificate Profile Signer** role on the account.
+4. In **Settings › Secrets and variables › Actions**, add the secrets `AZURE_TENANT_ID`,
+   `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET`, and the variables `ARTIFACT_SIGNING_ENDPOINT`,
+   `ARTIFACT_SIGNING_ACCOUNT` and `ARTIFACT_SIGNING_PROFILE`.
+5. Run **Actions › Release › Run workflow** and check that **Check the Authenticode
+   signatures** prints `Valid` with the certificate's subject for both files.
+
+Client secrets expire (after two years at most); renew the secret before then, or signing fails
+the release.
+
 ## Milestones
 
 ### R1 — First downloadable build
@@ -233,7 +310,9 @@ installs dbdesk from the release page and opens a SQLite file.
 - macOS Developer ID signing and notarization, Windows signing, and the Homebrew cask in a tap.
 - Release notes and `CHANGELOG.md` from `git-cliff`.
 
-**Exit:** installing shows no Gatekeeper or SmartScreen warning, and an update doesn't
+**Exit:** installing shows no Gatekeeper warning, the Windows installer names its publisher
+and SmartScreen's warning fades as its reputation builds (no date can be promised; see
+[Signing the Windows installer](#signing-the-windows-installer)), and an update doesn't
 re-prompt for Keychain access.
 
 ### R3 — Updates
@@ -349,12 +428,13 @@ installer, and the manual says what SmartScreen shows and how to get past it.
 
 ## Decisions
 
-Settled on 2026-10-23:
+Settled on 2026-10-23, except the row marked open:
 
 | Question | Decision | Consequence |
 | --- | --- | --- |
 | Where the downloads live | **A public repository.** It was made public on 2026-10-23. | Releases, the Homebrew tap and the D4 website all work on GitHub's free plan. It went public before the licence files existed, so adding them is R1's first and most urgent step: until then the code is visible but nobody may use it. |
 | Licence | **MIT OR Apache-2.0**, the Rust ecosystem's usual pair. | `LICENSE-MIT` and `LICENSE-APACHE` at the root, `license = "MIT OR Apache-2.0"` in the workspace manifest, and the README says so. Bundled fonts keep their own licences (OFL for JetBrains Mono, Inter's licence). |
 | macOS signing | **Unsigned in R1, signed and notarized in R2.** | R1's release notes and Install chapter explain how to open an unsigned app, and warn that updates re-ask for saved passwords. Enrol in the Apple Developer Program ($99 a year) before R2. |
-| Windows | **CI job now, installer once tried on a real machine.** | R1 adds Windows to CI and the release workflow builds the installer, but it is attached to releases only after someone has run it on Windows. Signing (around $10 a month) is decided then. |
+| Windows | **CI job now, installer once tried on a real machine.** | R1 adds Windows to CI and the release workflow builds the installer, but it is attached to releases only after someone has run it on Windows. Attached since v0.12.0. Tried on a real Windows machine on 2026-10-28: it installs and works, and SmartScreen blocked the unsigned installer at first. |
+| Windows signing | **Open**, for the maintainer. Recommended for an individual in Spain: SignPath Foundation, then an OV certificate in a vendor's cloud if it declines; Azure Artifact Signing only for an organization (see [Signing the Windows installer](#signing-the-windows-installer)). | The workflow signs with Azure Artifact Signing once its secrets exist and skips signing until then, so releases keep working unsigned. Choosing SignPath or a certificate means replacing the two signing steps. |
 | Homebrew | Not asked yet; planned for R2. | `navasvarela/homebrew-tap`, once the repository is public. |
