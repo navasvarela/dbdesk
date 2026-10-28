@@ -20,7 +20,11 @@ pub use view::view_query;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use dbdesk_core::{Identity, RoleAttribute, RoleDescription};
+pub use dbdesk_core::ReferentialAction;
+use dbdesk_core::{
+    ColumnDescription, Identity, RoleAttribute, RoleDescription, TableConstraints,
+    TableDescription, TableName,
+};
 
 use crate::{Dialect, ScramVerifier};
 
@@ -74,6 +78,18 @@ pub struct ColumnSpec {
     pub identity: Option<Identity>,
 }
 
+impl From<ColumnDescription> for ColumnSpec {
+    fn from(column: ColumnDescription) -> Self {
+        Self {
+            name: column.name,
+            data_type: column.data_type,
+            nullable: column.nullable,
+            default: column.default,
+            identity: column.identity,
+        }
+    }
+}
+
 /// A new table: its columns and constraints.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableSpec {
@@ -96,6 +112,77 @@ pub struct ExistingTable {
     pub primary_key_name: Option<String>,
     /// SQL Server keeps each column's default as a constraint, dropped by name: by column.
     pub default_names: BTreeMap<String, String>,
+}
+
+impl ExistingTable {
+    /// The table as the catalog describes it, in `dialect`'s terms: ClickHouse's nullable
+    /// types lose their `Nullable(…)`, which says the same as the column's nullability, and
+    /// each constraint keeps the name the database gave it.
+    pub fn from_catalog(
+        description: TableDescription,
+        constraints: TableConstraints,
+        dialect: Dialect,
+    ) -> Self {
+        let schema = description.schema.clone();
+        let columns = description
+            .columns
+            .into_iter()
+            .map(|column| {
+                let mut spec = ColumnSpec::from(column);
+                if dialect == Dialect::ClickHouse
+                    && let Some(inner) = spec
+                        .data_type
+                        .strip_prefix("Nullable(")
+                        .and_then(|rest| rest.strip_suffix(')'))
+                {
+                    spec.data_type = inner.to_owned();
+                }
+                spec
+            })
+            .collect();
+        let target = |table: TableName| ObjectName {
+            schema: Some(table.schema),
+            name: table.name,
+        };
+        let spec = TableSpec {
+            name: ObjectName::new(Some(&schema), &description.name),
+            columns,
+            primary_key: description.primary_key,
+            unique_keys: constraints
+                .unique_keys
+                .into_iter()
+                .map(|key| UniqueKey {
+                    name: key.name,
+                    columns: key.columns,
+                })
+                .collect(),
+            foreign_keys: constraints
+                .foreign_keys
+                .into_iter()
+                .map(|key| ForeignKey {
+                    name: key.name,
+                    columns: key.columns,
+                    target: target(key.referenced),
+                    target_columns: key.referenced_columns,
+                    on_delete: key.on_delete,
+                    on_update: key.on_update,
+                })
+                .collect(),
+            checks: constraints
+                .checks
+                .into_iter()
+                .map(|check| Check {
+                    name: check.name,
+                    expression: check.expression,
+                })
+                .collect(),
+        };
+        Self {
+            spec,
+            primary_key_name: constraints.primary_key_name,
+            default_names: constraints.default_names,
+        }
+    }
 }
 
 impl From<TableSpec> for ExistingTable {
@@ -142,32 +229,6 @@ pub struct ForeignKey {
     pub target_columns: Vec<String>,
     pub on_delete: ReferentialAction,
     pub on_update: ReferentialAction,
-}
-
-/// What a foreign key does when the row it points at is deleted or its key updated.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub enum ReferentialAction {
-    /// Refuse the change, checked at the end of the statement. Every dialect's default, so
-    /// it is never written.
-    #[default]
-    NoAction,
-    /// Refuse the change at once.
-    Restrict,
-    Cascade,
-    SetNull,
-    SetDefault,
-}
-
-impl ReferentialAction {
-    pub fn sql(self) -> &'static str {
-        match self {
-            Self::NoAction => "NO ACTION",
-            Self::Restrict => "RESTRICT",
-            Self::Cascade => "CASCADE",
-            Self::SetNull => "SET NULL",
-            Self::SetDefault => "SET DEFAULT",
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

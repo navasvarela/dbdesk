@@ -14,8 +14,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use dbdesk_core::{
     BoxError, CancelHandle, CatalogNode, CatalogPath, Cell, Connection, DriverError, MysqlConfig,
-    Password, Quoting, Rejection, RelationName, ResultCursor, Route, ServerInfo, TableDescription,
-    TransactionStatus,
+    Password, Quoting, Rejection, RelationName, ResultCursor, Route, ServerInfo, TableConstraints,
+    TableDescription, TableName, TransactionStatus,
 };
 use mysql_async::consts::StatusFlags;
 use mysql_async::prelude::Queryable;
@@ -123,11 +123,31 @@ fn base_opts(
         .connect_attribute("program_name", APPLICATION_NAME)
 }
 
+const MARIADB: &str = "MariaDB";
+
+/// Which of the two servers the driver talks to, where they answer the same question
+/// differently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Flavour {
+    Mysql,
+    MariaDb,
+}
+
+impl Flavour {
+    fn of(server: &ServerInfo) -> Self {
+        if server.product == MARIADB {
+            Self::MariaDb
+        } else {
+            Self::Mysql
+        }
+    }
+}
+
 /// `VERSION()` is `8.4.3` on MySQL and `11.4.4-MariaDB-…` on MariaDB.
 fn server_info(version: String) -> ServerInfo {
     match version.split_once("-MariaDB") {
         Some((number, _)) => ServerInfo {
-            product: "MariaDB".to_owned(),
+            product: MARIADB.to_owned(),
             version: number.to_owned(),
         },
         None => ServerInfo {
@@ -202,7 +222,16 @@ impl Connection for MysqlConnection {
         &mut self,
         table: &RelationName,
     ) -> Result<Option<TableDescription>, DriverError> {
-        table::describe_table(&mut *self.conn.lock().await, table).await
+        let flavour = Flavour::of(&self.server_info);
+        table::describe_table(&mut *self.conn.lock().await, table, flavour).await
+    }
+
+    async fn describe_constraints(
+        &mut self,
+        table: &TableName,
+    ) -> Result<TableConstraints, DriverError> {
+        let flavour = Flavour::of(&self.server_info);
+        table::describe_constraints(&mut *self.conn.lock().await, table, flavour).await
     }
 
     async fn validate(&mut self, sql: &str) -> Result<Option<Rejection>, DriverError> {

@@ -5,7 +5,10 @@
 //! read from its catalog view and written out here, for Show definition and for Copy DDL,
 //! which adds them after a `CREATE TABLE` rebuilt from the table's description.
 
-use dbdesk_core::DriverError;
+use dbdesk_core::{
+    CheckConstraint, DriverError, ForeignKeyConstraint, ReferentialAction, TableConstraints,
+    TableName, UniqueConstraint,
+};
 
 use crate::{SQL_SERVER_QUOTING, SqlClient, column, connection_error};
 
@@ -174,4 +177,99 @@ fn quote(name: &str) -> String {
 fn column_list(columns: &[String]) -> String {
     let names: Vec<String> = columns.iter().map(|column| quote(column)).collect();
     format!("({})", names.join(", "))
+}
+
+/// The table's keys, foreign keys, checks and defaults, by name: SQL Server drops each by its
+/// name, defaults included.
+pub(crate) async fn describe_constraints(
+    client: &mut SqlClient,
+    table: &TableName,
+) -> Result<TableConstraints, DriverError> {
+    let object = format!("{}.{}", quote(&table.schema), quote(&table.name));
+    let of_table = "parent_object_id = OBJECT_ID(@P1, N'U')";
+    let mut constraints = TableConstraints::default();
+    let keys = format!(
+        "SELECT k.name, RTRIM(k.type), c.name FROM sys.key_constraints k \
+         JOIN sys.index_columns ic \
+         ON ic.object_id = k.parent_object_id AND ic.index_id = k.unique_index_id \
+         JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id \
+         WHERE k.{of_table} ORDER BY k.name, ic.key_ordinal"
+    );
+    for [name, kind, column] in fixed_rows(rows(client, &keys, &object, 3).await?) {
+        if kind == "PK" {
+            constraints.primary_key_name = Some(name);
+            continue;
+        }
+        match constraints.unique_keys.last_mut() {
+            Some(key) if key.name.as_deref() == Some(name.as_str()) => key.columns.push(column),
+            _ => constraints.unique_keys.push(UniqueConstraint {
+                name: Some(name),
+                columns: vec![column],
+            }),
+        }
+    }
+    let foreign = format!(
+        "SELECT fk.name, pc.name, rs.name, rt.name, rc.name, \
+         fk.delete_referential_action_desc, fk.update_referential_action_desc \
+         FROM sys.foreign_keys fk \
+         JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id \
+         JOIN sys.columns pc \
+         ON pc.object_id = fkc.parent_object_id AND pc.column_id = fkc.parent_column_id \
+         JOIN sys.columns rc \
+         ON rc.object_id = fkc.referenced_object_id AND rc.column_id = fkc.referenced_column_id \
+         JOIN sys.objects rt ON rt.object_id = fk.referenced_object_id \
+         JOIN sys.schemas rs ON rs.schema_id = rt.schema_id \
+         WHERE fk.{of_table} ORDER BY fk.name, fkc.constraint_column_id"
+    );
+    for [
+        name,
+        column,
+        schema,
+        referenced,
+        referenced_column,
+        on_delete,
+        on_update,
+    ] in fixed_rows(rows(client, &foreign, &object, 7).await?)
+    {
+        match constraints.foreign_keys.last_mut() {
+            Some(key) if key.name.as_deref() == Some(name.as_str()) => {
+                key.columns.push(column);
+                key.referenced_columns.push(referenced_column);
+            }
+            _ => constraints.foreign_keys.push(ForeignKeyConstraint {
+                name: Some(name),
+                columns: vec![column],
+                referenced: TableName {
+                    schema,
+                    name: referenced,
+                },
+                referenced_columns: vec![referenced_column],
+                on_delete: ReferentialAction::from_catalog(&on_delete).unwrap_or_default(),
+                on_update: ReferentialAction::from_catalog(&on_update).unwrap_or_default(),
+            }),
+        }
+    }
+    let checks = format!(
+        "SELECT name, definition FROM sys.check_constraints WHERE {of_table} ORDER BY name"
+    );
+    constraints.checks = fixed_rows(rows(client, &checks, &object, 2).await?)
+        .map(|[name, expression]| CheckConstraint {
+            name: Some(name),
+            expression,
+        })
+        .collect();
+    let defaults = format!(
+        "SELECT c.name, d.name FROM sys.default_constraints d \
+         JOIN sys.columns c ON c.object_id = d.parent_object_id AND c.column_id = d.parent_column_id \
+         WHERE d.{of_table}"
+    );
+    constraints.default_names = fixed_rows(rows(client, &defaults, &object, 2).await?)
+        .map(|[column, name]| (column, name))
+        .collect();
+    Ok(constraints)
+}
+
+fn fixed_rows<const N: usize>(rows: Vec<Vec<String>>) -> impl Iterator<Item = [String; N]> {
+    rows.into_iter()
+        .filter_map(|row| <[String; N]>::try_from(row).ok())
 }

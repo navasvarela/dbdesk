@@ -6,7 +6,7 @@ use async_trait::async_trait;
 
 use crate::{
     CancelHandle, CatalogNode, CatalogPath, Cell, DriverError, RelationName, ResultCursor,
-    RoleDescription, TableDescription, TransactionStatus,
+    RoleDescription, TableConstraints, TableDescription, TableName, TransactionStatus,
 };
 
 /// What a server reported about itself when the connection was opened.
@@ -119,6 +119,17 @@ pub trait Connection: Send {
         &mut self,
         table: &RelationName,
     ) -> Result<Option<TableDescription>, DriverError>;
+
+    /// The constraints of `table`, a table [`Connection::describe_table`] found, by the
+    /// names the catalog gives them, for changing the table.
+    ///
+    /// # Errors
+    ///
+    /// [`DriverError::Connection`] if the catalog query fails.
+    async fn describe_constraints(
+        &mut self,
+        table: &TableName,
+    ) -> Result<TableConstraints, DriverError>;
 
     /// Describes the role at `path`, a node the roles folder lists, on engines whose users
     /// are roles (see `dbdesk_sql::Capabilities::users`).

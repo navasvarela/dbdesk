@@ -19,7 +19,7 @@ use async_trait::async_trait;
 use dbdesk_core::{
     BoxError, CancelHandle, CatalogNode, CatalogPath, Cell, Connection, DriverError, Password,
     Quoting, Rejection, RelationName, ResultCursor, Route, ServerInfo, SqlServerConfig,
-    TableDescription, TransactionStatus,
+    TableConstraints, TableDescription, TableName, TransactionStatus,
 };
 use tiberius::{AuthMethod, Client, Config};
 use tokio::net::TcpStream;
@@ -248,6 +248,13 @@ impl Connection for SqlServerConnection {
         table: &RelationName,
     ) -> Result<Option<TableDescription>, DriverError> {
         table::describe_table(&mut *self.client().await?, table).await
+    }
+
+    async fn describe_constraints(
+        &mut self,
+        table: &TableName,
+    ) -> Result<TableConstraints, DriverError> {
+        constraint::describe_constraints(&mut *self.client().await?, table).await
     }
 
     async fn validate(&mut self, sql: &str) -> Result<Option<Rejection>, DriverError> {

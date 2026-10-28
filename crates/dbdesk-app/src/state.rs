@@ -176,6 +176,7 @@ impl AppState {
             | Event::RoleDescribed { .. }
             | Event::DdlApplied { .. }
             | Event::DdlLoaded { .. }
+            | Event::TableLoaded { .. }
             | Event::TransactionChanged { .. }
             | Event::TransactionEnded { .. }
             | Event::ConsoleSaveFailed { .. }

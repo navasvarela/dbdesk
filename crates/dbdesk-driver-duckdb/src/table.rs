@@ -5,8 +5,9 @@
 //! and otherwise the table in the current schema of the current database.
 
 use dbdesk_core::{
-    ColumnDescription, DriverError, ForeignKey, Identifier, RelationName, TableDescription,
-    TableName,
+    CheckConstraint, ColumnDescription, DriverError, ForeignKey, ForeignKeyConstraint, Identifier,
+    ReferentialAction, RelationName, TableConstraints, TableDescription, TableName,
+    UniqueConstraint,
 };
 
 use crate::connection_error;
@@ -174,4 +175,91 @@ fn columns(
         })
         .map_err(connection_error)?;
     rows.collect::<Result<_, _>>().map_err(connection_error)
+}
+
+/// The table's keys and checks, from `duckdb_constraints()`, one row per column of each. A
+/// foreign key points into the table's own schema, with no actions: DuckDB has none.
+pub(crate) fn describe_constraints(
+    connection: &duckdb::Connection,
+    table: &TableName,
+) -> Result<TableConstraints, DriverError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT c.constraint_index, c.constraint_type, c.constraint_name, c.expression, \
+             c.referenced_table, c.constraint_column_names[i], c.referenced_column_names[i] \
+             FROM duckdb_constraints() c \
+             CROSS JOIN range(1, greatest(len(c.constraint_column_names), 1) + 1) r(i) \
+             WHERE c.database_name = current_database() AND c.schema_name = ? \
+             AND c.table_name = ? \
+             AND c.constraint_type IN ('PRIMARY KEY', 'UNIQUE', 'FOREIGN KEY', 'CHECK') \
+             ORDER BY c.constraint_index, i",
+        )
+        .map_err(connection_error)?;
+    type ConstraintColumn = (
+        i64,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    );
+    let rows = statement
+        .query_map([&table.schema, &table.name], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                row.get(6)?,
+            ))
+        })
+        .map_err(connection_error)?
+        .collect::<Result<Vec<ConstraintColumn>, _>>()
+        .map_err(connection_error)?;
+    let mut constraints = TableConstraints::default();
+    let mut last = None;
+    for (index, kind, name, expression, referenced, column, referenced_column) in rows {
+        let first_column = last != Some(index);
+        last = Some(index);
+        match kind.as_str() {
+            "PRIMARY KEY" => constraints.primary_key_name = name,
+            "UNIQUE" if first_column => constraints.unique_keys.push(UniqueConstraint {
+                name,
+                columns: column.into_iter().collect(),
+            }),
+            "UNIQUE" => {
+                if let Some(key) = constraints.unique_keys.last_mut() {
+                    key.columns.extend(column);
+                }
+            }
+            "FOREIGN KEY" if first_column => {
+                constraints.foreign_keys.push(ForeignKeyConstraint {
+                    name,
+                    columns: column.into_iter().collect(),
+                    referenced: TableName {
+                        schema: table.schema.clone(),
+                        name: referenced.unwrap_or_default(),
+                    },
+                    referenced_columns: referenced_column.into_iter().collect(),
+                    on_delete: ReferentialAction::NoAction,
+                    on_update: ReferentialAction::NoAction,
+                });
+            }
+            "FOREIGN KEY" => {
+                if let Some(key) = constraints.foreign_keys.last_mut() {
+                    key.columns.extend(column);
+                    key.referenced_columns.extend(referenced_column);
+                }
+            }
+            _ if first_column => constraints.checks.push(CheckConstraint {
+                name,
+                expression: expression.unwrap_or_default(),
+            }),
+            _ => {}
+        }
+    }
+    Ok(constraints)
 }

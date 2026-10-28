@@ -1,5 +1,7 @@
 //! Tables as a statement names them, and what editing their rows needs to know.
 
+use std::collections::BTreeMap;
+
 use crate::Quoting;
 
 /// A name as written in SQL. Whether it was quoted matters: PostgreSQL folds unquoted names
@@ -127,6 +129,89 @@ impl Identity {
             increment: 1,
         }
     }
+}
+
+/// What a foreign key does when the row it points at is deleted or its key updated.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum ReferentialAction {
+    /// Refuse the change, checked at the end of the statement. Every dialect's default, so
+    /// it is never written.
+    #[default]
+    NoAction,
+    /// Refuse the change at once.
+    Restrict,
+    Cascade,
+    SetNull,
+    SetDefault,
+}
+
+impl ReferentialAction {
+    pub fn sql(self) -> &'static str {
+        match self {
+            Self::NoAction => "NO ACTION",
+            Self::Restrict => "RESTRICT",
+            Self::Cascade => "CASCADE",
+            Self::SetNull => "SET NULL",
+            Self::SetDefault => "SET DEFAULT",
+        }
+    }
+
+    /// The action a catalog names, as SQL writes it (`SET NULL`) or with an underscore
+    /// (SQL Server's `SET_NULL`), in any case. `None` for anything else.
+    pub fn from_catalog(name: &str) -> Option<Self> {
+        let name = name.trim().replace('_', " ").to_ascii_uppercase();
+        [
+            Self::NoAction,
+            Self::Restrict,
+            Self::Cascade,
+            Self::SetNull,
+            Self::SetDefault,
+        ]
+        .into_iter()
+        .find(|action| action.sql() == name)
+    }
+}
+
+/// A table's constraints as its catalog names them, which [`TableDescription`] leaves out:
+/// what changing the table needs to keep, or to drop by name.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TableConstraints {
+    /// The primary key constraint's name, where the database gives it one.
+    pub primary_key_name: Option<String>,
+    pub unique_keys: Vec<UniqueConstraint>,
+    /// The table's own foreign keys.
+    pub foreign_keys: Vec<ForeignKeyConstraint>,
+    pub checks: Vec<CheckConstraint>,
+    /// Column → the name of its default's constraint, on SQL Server, which keeps each default
+    /// as a constraint.
+    pub default_names: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UniqueConstraint {
+    /// `None` where the database keeps no name (SQLite).
+    pub name: Option<String>,
+    /// In key order.
+    pub columns: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForeignKeyConstraint {
+    /// `None` where the database keeps no name (SQLite).
+    pub name: Option<String>,
+    pub columns: Vec<String>,
+    pub referenced: TableName,
+    /// The columns of `referenced` each of `columns` refers to, in the same order.
+    pub referenced_columns: Vec<String>,
+    pub on_delete: ReferentialAction,
+    pub on_update: ReferentialAction,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckConstraint {
+    pub name: Option<String>,
+    /// The condition as the database keeps it, without `CHECK`.
+    pub expression: String,
 }
 
 impl TableDescription {

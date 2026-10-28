@@ -17,7 +17,7 @@ use async_trait::async_trait;
 use dbdesk_core::{
     CancelHandle, CatalogNode, CatalogPath, Connection, DriverError, NodeKind, Password,
     PostgresConfig, Rejection, RelationName, ResultCursor, RoleDescription, Route, ServerInfo,
-    TableDescription, TransactionStatus,
+    TableConstraints, TableDescription, TableName, TransactionStatus,
 };
 use tokio::task::{JoinError, JoinHandle};
 use tokio_postgres::tls::MakeTlsConnect;
@@ -279,6 +279,13 @@ impl Connection for PostgresConnection {
         table: &RelationName,
     ) -> Result<Option<TableDescription>, DriverError> {
         table::describe_table(&self.primary.client, table).await
+    }
+
+    async fn describe_constraints(
+        &mut self,
+        table: &TableName,
+    ) -> Result<TableConstraints, DriverError> {
+        table::describe_constraints(&self.primary.client, table).await
     }
 
     async fn validate(&mut self, sql: &str) -> Result<Option<Rejection>, DriverError> {

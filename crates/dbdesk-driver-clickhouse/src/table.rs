@@ -5,7 +5,10 @@
 //! table's rows read-only.
 
 use clickhouse::Client;
-use dbdesk_core::{ColumnDescription, DriverError, RelationName, TableDescription};
+use dbdesk_core::{
+    CheckConstraint, ColumnDescription, DriverError, RelationName, TableConstraints,
+    TableDescription, TableName,
+};
 
 use crate::CLICKHOUSE_QUOTING;
 use crate::execution::rows;
@@ -89,4 +92,75 @@ fn described_column(row: Vec<Option<String>>) -> Option<ColumnDescription> {
 /// wrap in turn.
 fn is_nullable(data_type: &str) -> bool {
     data_type.starts_with("Nullable(") || data_type.starts_with("LowCardinality(Nullable(")
+}
+
+/// The table's checks, from the statement `SHOW CREATE TABLE` writes, one constraint per line:
+/// ClickHouse has no catalog table of them. Its other constraints (`ASSUME`) aren't checks,
+/// and it has no unique or foreign keys.
+pub(crate) async fn describe_constraints(
+    session: &Client,
+    table: &TableName,
+) -> Result<TableConstraints, DriverError> {
+    let statement = crate::execution::single_value(
+        session,
+        &format!(
+            "SHOW CREATE TABLE {}.{}",
+            CLICKHOUSE_QUOTING.identifier(&table.schema),
+            CLICKHOUSE_QUOTING.identifier(&table.name)
+        ),
+    )
+    .await
+    .map_err(crate::connection_error)?;
+    Ok(TableConstraints {
+        checks: statement.lines().filter_map(check).collect(),
+        ..TableConstraints::default()
+    })
+}
+
+/// A line `CONSTRAINT name CHECK condition,` of `SHOW CREATE TABLE`, the name backquoted when
+/// it needs to be.
+fn check(line: &str) -> Option<CheckConstraint> {
+    let rest = line.trim().strip_prefix("CONSTRAINT ")?;
+    let (name, rest) = match rest.strip_prefix('`') {
+        Some(quoted) => {
+            let end = quoted.find('`')?;
+            (quoted[..end].to_owned(), &quoted[end + 1..])
+        }
+        None => {
+            let (name, rest) = rest.split_once(' ')?;
+            (name.to_owned(), rest)
+        }
+    };
+    let expression = rest.trim_start().strip_prefix("CHECK ")?;
+    Some(CheckConstraint {
+        name: Some(name),
+        expression: expression.trim_end().trim_end_matches(',').to_owned(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_checks_from_the_create_statement() {
+        let lines = [
+            "    `id` Int32,",
+            "    CONSTRAINT positive CHECK `Total Sum` > 0,",
+            "    CONSTRAINT `Long name` CHECK id IN (1, 2),",
+            "    CONSTRAINT a1 ASSUME id > 0",
+        ];
+        let checks: Vec<(String, String)> = lines
+            .into_iter()
+            .filter_map(check)
+            .map(|check| (check.name.unwrap_or_default(), check.expression))
+            .collect();
+        assert_eq!(
+            checks,
+            [
+                ("positive".to_owned(), "`Total Sum` > 0".to_owned()),
+                ("Long name".to_owned(), "id IN (1, 2)".to_owned()),
+            ]
+        );
+    }
 }

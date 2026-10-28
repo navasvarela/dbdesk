@@ -17,8 +17,8 @@ use std::sync::{Arc, LazyLock, Mutex, Weak};
 use async_trait::async_trait;
 use dbdesk_core::{
     BoxError, CancelHandle, CatalogNode, CatalogPath, Cell, Connection, DriverError, DuckDbConfig,
-    DuckDbDatabase, Rejection, RelationName, ResultCursor, ServerInfo, TableDescription,
-    TransactionStatus,
+    DuckDbDatabase, Rejection, RelationName, ResultCursor, ServerInfo, TableConstraints,
+    TableDescription, TableName, TransactionStatus,
 };
 use duckdb::AccessMode;
 
@@ -243,6 +243,15 @@ impl Connection for DuckDbConnection {
     ) -> Result<Option<TableDescription>, DriverError> {
         let table = table.clone();
         self.run_blocking(move |connection| table::describe_table(connection, &table))
+            .await
+    }
+
+    async fn describe_constraints(
+        &mut self,
+        table: &TableName,
+    ) -> Result<TableConstraints, DriverError> {
+        let table = table.clone();
+        self.run_blocking(move |connection| table::describe_constraints(connection, &table))
             .await
     }
 

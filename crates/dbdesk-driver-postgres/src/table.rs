@@ -1,8 +1,9 @@
 //! Describing a table for editing its rows.
 
 use dbdesk_core::{
-    ColumnDescription, DriverError, ForeignKey, Identity, IdentityGeneration, Quoting,
-    RelationName, TableDescription, TableName,
+    CheckConstraint, ColumnDescription, DriverError, ForeignKey, ForeignKeyConstraint, Identity,
+    IdentityGeneration, Quoting, ReferentialAction, RelationName, TableConstraints,
+    TableDescription, TableName, UniqueConstraint,
 };
 use tokio_postgres::Client;
 
@@ -158,4 +159,80 @@ async fn foreign_keys(client: &Client, written: &str) -> Result<Vec<ForeignKey>,
             })
         })
         .collect()
+}
+
+/// The table's primary key, unique, foreign key and check constraints, by name. A partition's
+/// copies of its parent's constraints are its own as far as changing it goes.
+pub(crate) async fn describe_constraints(
+    client: &Client,
+    table: &TableName,
+) -> Result<TableConstraints, DriverError> {
+    let written = format!(
+        "{}.{}",
+        Quoting::STANDARD.identifier(&table.schema),
+        Quoting::STANDARD.identifier(&table.name)
+    );
+    let rows = client
+        .query(
+            "SELECT c.conname::text, c.contype::text, \
+             ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY k(attnum, i) \
+               JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum \
+               ORDER BY k.i), \
+             rn.nspname::text, r.relname::text, \
+             ARRAY(SELECT a.attname::text FROM unnest(c.confkey) WITH ORDINALITY k(attnum, i) \
+               JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = k.attnum \
+               ORDER BY k.i), \
+             c.confdeltype::text, c.confupdtype::text, pg_get_expr(c.conbin, c.conrelid) \
+             FROM pg_constraint c \
+             LEFT JOIN pg_class r ON r.oid = c.confrelid \
+             LEFT JOIN pg_namespace rn ON rn.oid = r.relnamespace \
+             WHERE c.conrelid = to_regclass($1) AND c.contype IN ('p', 'u', 'f', 'c') \
+             ORDER BY c.conname",
+            &[&written],
+        )
+        .await
+        .map_err(connection_error)?;
+    let mut constraints = TableConstraints::default();
+    for row in &rows {
+        let text = |index| {
+            row.try_get::<_, Option<String>>(index)
+                .map_err(connection_error)
+        };
+        let name: String = row.try_get(0).map_err(connection_error)?;
+        let columns: Vec<String> = row.try_get(2).map_err(connection_error)?;
+        match text(1)?.as_deref() {
+            Some("p") => constraints.primary_key_name = Some(name),
+            Some("u") => constraints.unique_keys.push(UniqueConstraint {
+                name: Some(name),
+                columns,
+            }),
+            Some("f") => constraints.foreign_keys.push(ForeignKeyConstraint {
+                name: Some(name),
+                columns,
+                referenced: TableName {
+                    schema: text(3)?.unwrap_or_default(),
+                    name: text(4)?.unwrap_or_default(),
+                },
+                referenced_columns: row.try_get(5).map_err(connection_error)?,
+                on_delete: referential_action(text(6)?.as_deref()),
+                on_update: referential_action(text(7)?.as_deref()),
+            }),
+            _ => constraints.checks.push(CheckConstraint {
+                name: Some(name),
+                expression: text(8)?.unwrap_or_default(),
+            }),
+        }
+    }
+    Ok(constraints)
+}
+
+/// `pg_constraint`'s one-letter code for a foreign key's action.
+fn referential_action(code: Option<&str>) -> ReferentialAction {
+    match code {
+        Some("r") => ReferentialAction::Restrict,
+        Some("c") => ReferentialAction::Cascade,
+        Some("n") => ReferentialAction::SetNull,
+        Some("d") => ReferentialAction::SetDefault,
+        _ => ReferentialAction::NoAction,
+    }
 }

@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex, PoisonError, Weak};
 use async_trait::async_trait;
 use dbdesk_core::{
     CancelHandle, CatalogNode, CatalogPath, Cell, Connection, DataSourceId, DriverError, Rejection,
-    RelationName, ResultCursor, RoleDescription, ServerInfo, SshConfig, TableDescription,
-    TransactionStatus,
+    RelationName, ResultCursor, RoleDescription, ServerInfo, SshConfig, TableConstraints,
+    TableDescription, TableName, TransactionStatus,
 };
 use dbdesk_ssh::{SshError, Tunnel, TunnelRequest};
 
@@ -130,6 +130,13 @@ impl Connection for Tunnelled {
         table: &RelationName,
     ) -> Result<Option<TableDescription>, DriverError> {
         self.connection.describe_table(table).await
+    }
+
+    async fn describe_constraints(
+        &mut self,
+        table: &TableName,
+    ) -> Result<TableConstraints, DriverError> {
+        self.connection.describe_constraints(table).await
     }
 
     async fn describe_role(&mut self, path: &CatalogPath) -> Result<RoleDescription, DriverError> {

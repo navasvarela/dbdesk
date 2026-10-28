@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use async_trait::async_trait;
 use dbdesk_core::{
     CancelHandle, CatalogNode, CatalogPath, Cell, ColumnInfo, Connection, DriverError, Rejection,
-    RelationName, ResultCursor, RoleDescription, Row, ServerInfo, TableDescription,
-    TransactionStatus, describe_error,
+    RelationName, ResultCursor, RoleDescription, Row, ServerInfo, TableConstraints,
+    TableDescription, TableName, TransactionStatus, describe_error,
 };
 
 use super::{SessionContext, SessionOwner, SessionRequest};
@@ -99,6 +99,14 @@ impl Connection for Watched {
         table: &RelationName,
     ) -> Result<Option<TableDescription>, DriverError> {
         self.loss.watch(self.connection.describe_table(table).await)
+    }
+
+    async fn describe_constraints(
+        &mut self,
+        table: &TableName,
+    ) -> Result<TableConstraints, DriverError> {
+        self.loss
+            .watch(self.connection.describe_constraints(table).await)
     }
 
     async fn describe_role(&mut self, path: &CatalogPath) -> Result<RoleDescription, DriverError> {
@@ -230,6 +238,11 @@ pub(super) fn refuse(context: &SessionContext, request: SessionRequest, reason: 
             }),
         },
         (SessionRequest::Ddl(path), _) => Event::DdlLoaded {
+            data_source: id,
+            path,
+            result: Err(message),
+        },
+        (SessionRequest::LoadTable(path), _) => Event::TableLoaded {
             data_source: id,
             path,
             result: Err(message),
