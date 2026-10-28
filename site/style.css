@@ -169,7 +169,8 @@ main > * { min-width: 0; }
 .button.primary { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
 .note { margin-top: 14px; color: var(--text-weak); font-size: 0.9rem; }
 
-/* The screenshot, framed as a window. */
+/* The screenshot, framed as a window. The app draws its own menu bar, so there is no title
+   bar here. */
 .window {
   margin: 0;
   border-radius: var(--radius);
@@ -178,8 +179,6 @@ main > * { min-width: 0; }
   overflow: hidden;
   box-shadow: 0 24px 60px rgb(0 0 0 / 0.35);
 }
-.window-bar { display: flex; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
-.window-bar span { width: 12px; height: 12px; border-radius: 50%; background: var(--border); }
 .window img { display: block; width: 100%; height: auto; }
 
 h2 { margin: 0 0 20px; font-size: 1.6rem; font-weight: 600; letter-spacing: -0.01em; }
@@ -234,16 +233,7 @@ h3 { margin: 0 0 8px; font-size: 1.05rem; font-weight: 600; }
 }
 .grid p { margin: 0; color: var(--text-weak); }
 
-.start pre {
-  margin: 12px 0;
-  padding: 16px 18px;
-  overflow-x: auto;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--field);
-  line-height: 1.5;
-}
-.start p { margin: 0; }
+.start p { margin: 0 0 12px; max-width: 70ch; }
 
 footer {
   max-width: 1080px;
