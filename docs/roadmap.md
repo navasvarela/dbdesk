@@ -1088,11 +1088,10 @@ shows one static screenshot under six equal cards. In layers, one PR each:
 
 Decisions:
 
-- **The version is written in at build time.** `site/build.sh` reads the workspace version from
-  `Cargo.toml` and writes it, and the release file names, into the page. No GitHub API call at
-  runtime: the page stays static and works with scripts off, and can't be rate-limited. The
-  cost: the page names the version on `main`, so a release must be merged before the page is
-  rebuilt, which is already how releases land.
+- **The version is written in at build time.** `site/build.sh` writes the version, and the
+  release file names, into the page. No GitHub API call at runtime: the page stays static and
+  works with scripts off, and can't be rate-limited. The Pages workflow passes the latest
+  published release; a local build uses the workspace version from `Cargo.toml`.
 - **Platform detection is a progressive enhancement.** Without scripts, the hero links to the
   download section; with them, a few lines pick macOS or Linux from the user agent. Windows
   visitors get the download section, which says Windows builds aren't published yet.
@@ -1122,9 +1121,10 @@ Risks:
   step with the code, so a stale claim has one obvious place to be checked against.
 - **Numbers on the page** (download size) are measured from the release's files and say so;
   they are updated by hand when a release changes them noticeably.
-- **A version bump goes live before its release.** Merging the bump to `main` redeploys the
-  page with the new version's download links, which 404 until the tag's release is published.
-  Tag and publish right after merging the bump.
+- **A version bump went live before its release.** Merging the bump to `main` redeployed the
+  page with the new version's download links, which 404ed until the tag's release was
+  published. Now the Pages workflow takes the latest published release instead, and publishing
+  a release redeploys the page.
 
 **Exit:** dbdesk.org says how to download the current release for each platform, shows every
 major feature with a picture or clip in both themes, and reads well on a phone.

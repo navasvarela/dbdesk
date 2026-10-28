@@ -296,8 +296,10 @@ Install both with `cargo install mdbook --version 0.5.4` and
 
 ## Website
 
-`site/build.sh` assembles the website (`site/` plus the manual) into `target/site`, writing the
-workspace version from `Cargo.toml` into the page's download links; preview it with
+`site/build.sh` assembles the website (`site/` plus the manual) into `target/site`, writing a
+version into the page's download links: `DBDESK_SITE_VERSION` if set (the Pages workflow sets it
+to the latest published release), otherwise the workspace version from `Cargo.toml`. Preview it
+with
 `python3 -m http.server -d target/site`. The Pages workflow checks the landing page's links
 with `lychee --offline`, which fails on a link to a file the build didn't produce.
 
