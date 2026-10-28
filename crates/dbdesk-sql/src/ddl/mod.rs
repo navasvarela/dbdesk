@@ -6,6 +6,7 @@
 //! the dialect requires (see [`quote_name`]), and refuses what the dialect can't do, as its
 //! [`Capabilities`](crate::Capabilities) say.
 
+mod alter;
 mod index;
 mod reserved;
 mod role;
@@ -17,7 +18,7 @@ mod view;
 
 pub use view::view_query;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use dbdesk_core::{Identity, RoleAttribute, RoleDescription};
 
@@ -83,6 +84,45 @@ pub struct TableSpec {
     pub unique_keys: Vec<UniqueKey>,
     pub foreign_keys: Vec<ForeignKey>,
     pub checks: Vec<Check>,
+}
+
+/// An existing table as Modify table loads it: the spec of what it is, and what the database
+/// keeps about it that a new table's spec doesn't say but changing it needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExistingTable {
+    /// Every constraint in it has the name the database gave it, where it has one.
+    pub spec: TableSpec,
+    /// The primary key constraint's name, which PostgreSQL and SQL Server drop it by.
+    pub primary_key_name: Option<String>,
+    /// SQL Server keeps each column's default as a constraint, dropped by name: by column.
+    pub default_names: BTreeMap<String, String>,
+}
+
+impl From<TableSpec> for ExistingTable {
+    fn from(spec: TableSpec) -> Self {
+        Self {
+            spec,
+            primary_key_name: None,
+            default_names: BTreeMap::new(),
+        }
+    }
+}
+
+/// An existing table and what the user wants it to become, which Modify table writes as the
+/// statements that change one into the other.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableAlteration {
+    pub table: ExistingTable,
+    /// The new definition. A column keeps its data when it has the name it had, or is in
+    /// `renamed`; any other column is new, and the table's columns missing here are dropped.
+    pub after: TableSpec,
+    /// Columns of `after` that had another name in the table: new name → old name. Only
+    /// these are renames, so a column is never dropped and added again for having a new
+    /// name.
+    pub renamed: BTreeMap<String, String>,
+    /// How to convert a retyped column's values, as an SQL expression of the old column
+    /// (PostgreSQL's and DuckDB's `USING`), by the column's new name.
+    pub conversions: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -287,6 +327,9 @@ pub enum OwnedObjects {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DdlOperation {
     CreateTable(TableSpec),
+    /// Changes an existing table into a new definition, in place where the dialect can; see
+    /// [`Capabilities::table_changes`](crate::Capabilities::table_changes).
+    AlterTable(Box<TableAlteration>),
     RenameTable {
         table: ObjectName,
         /// The table stays in its schema.
@@ -393,6 +436,15 @@ pub enum DdlError {
     NoNewOwner,
     #[error("A role's objects can't be given to the role itself.")]
     ReassignToItself,
+    #[error("{dialect} can't {what}.", dialect = .dialect.display_name())]
+    CantAlter {
+        what: &'static str,
+        dialect: Dialect,
+    },
+    #[error("The column \u{201c}{0}\u{201d} is renamed twice.")]
+    RenamedTwice(String),
+    #[error("The {0} has no name in the database, so it can't be dropped.")]
+    UnnamedConstraint(&'static str),
     #[error("{dialect} has no {what}.", dialect = .dialect.display_name())]
     Unsupported {
         what: &'static str,
@@ -411,6 +463,7 @@ impl DdlOperation {
     pub fn statements(&self, dialect: Dialect) -> Result<Vec<String>, DdlError> {
         match self {
             Self::CreateTable(spec) => table::create(spec, dialect).map(|sql| vec![sql]),
+            Self::AlterTable(alteration) => alter::alter(alteration, dialect),
             Self::RenameTable { table, new_name } => {
                 table::rename(table, new_name, dialect).map(|sql| vec![sql])
             }

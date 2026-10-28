@@ -27,6 +27,9 @@ pub struct Capabilities {
     pub index_methods: &'static [IndexMethod],
     /// The changes an existing table takes in place.
     pub table_changes: &'static [TableChange],
+    /// Whether `ADD COLUMN` only takes a column outside the primary key that takes `NULL` or
+    /// has a default, for the rows already there (SQLite).
+    pub restricted_add_column: bool,
     /// Whether Copy DDL rebuilds a table's `CREATE TABLE` from its description and the
     /// constraints in the catalog, because the database keeps no such statement (PostgreSQL,
     /// SQL Server). Elsewhere the catalog's table definition is the statement.
@@ -90,7 +93,7 @@ pub enum SchemaCreation {
 }
 
 /// A change to an existing table that the dialect makes without rebuilding it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TableChange {
     RenameTable,
     RenameColumn,
@@ -99,8 +102,30 @@ pub enum TableChange {
     ChangeColumnType,
     ChangeNullability,
     ChangeDefault,
+    /// Drops the primary key, adds one, or both.
+    ChangePrimaryKey,
+    /// Adds a unique key, foreign key or check.
     AddConstraint,
+    /// Drops a unique key, foreign key or check.
     DropConstraint,
+}
+
+impl TableChange {
+    /// What a dialect without it can't do, completing "{dialect} can't …".
+    pub fn refusal(self) -> &'static str {
+        match self {
+            Self::RenameTable => "rename a table",
+            Self::RenameColumn => "rename a column",
+            Self::AddColumn => "add this column to an existing table",
+            Self::DropColumn => "drop a column",
+            Self::ChangeColumnType => "change an existing column's type",
+            Self::ChangeNullability => "change whether an existing column takes NULL",
+            Self::ChangeDefault => "change an existing column's default",
+            Self::ChangePrimaryKey => "change an existing table's primary key",
+            Self::AddConstraint => "add keys or checks to an existing table",
+            Self::DropConstraint => "drop keys or checks from an existing table",
+        }
+    }
 }
 
 const ALL_TABLE_CHANGES: &[TableChange] = &[
@@ -111,6 +136,7 @@ const ALL_TABLE_CHANGES: &[TableChange] = &[
     TableChange::ChangeColumnType,
     TableChange::ChangeNullability,
     TableChange::ChangeDefault,
+    TableChange::ChangePrimaryKey,
     TableChange::AddConstraint,
     TableChange::DropConstraint,
 ];
@@ -138,6 +164,7 @@ const POSTGRES: Capabilities = Capabilities {
         IndexMethod::Brin,
     ],
     table_changes: ALL_TABLE_CHANGES,
+    restricted_add_column: false,
     rebuilds_table_ddl: true,
     common_types: &[
         "integer",
@@ -171,8 +198,8 @@ const POSTGRES: Capabilities = Capabilities {
     users: UserModel::Roles,
 };
 
-/// SQLite's `ALTER TABLE` renames tables and columns and adds or drops simple columns; any
-/// other change rebuilds the table (E4). `TRUNCATE` is written as `DELETE FROM`.
+/// SQLite's `ALTER TABLE` renames tables and columns, adds a column that is nullable or has a
+/// default and isn't in a key, and drops columns. `TRUNCATE` is written as `DELETE FROM`.
 const SQLITE: Capabilities = Capabilities {
     transactional_ddl: true,
     drop_cascade: false,
@@ -187,6 +214,7 @@ const SQLITE: Capabilities = Capabilities {
         TableChange::AddColumn,
         TableChange::DropColumn,
     ],
+    restricted_add_column: true,
     rebuilds_table_ddl: false,
     common_types: &["integer", "real", "text", "blob", "numeric"],
     materialized_views: false,
@@ -214,6 +242,7 @@ const MYSQL: Capabilities = Capabilities {
     indexes: true,
     index_methods: &[IndexMethod::BTree, IndexMethod::Hash],
     table_changes: ALL_TABLE_CHANGES,
+    restricted_add_column: false,
     rebuilds_table_ddl: false,
     common_types: &[
         "int",
@@ -261,6 +290,7 @@ const SQL_SERVER: Capabilities = Capabilities {
     indexes: true,
     index_methods: &[],
     table_changes: ALL_TABLE_CHANGES,
+    restricted_add_column: false,
     rebuilds_table_ddl: true,
     common_types: &[
         "int",
@@ -293,7 +323,7 @@ const SQL_SERVER: Capabilities = Capabilities {
 };
 
 /// DuckDB's foreign keys only refuse: it has no `ON DELETE` or `ON UPDATE` actions. Its
-/// `ALTER TABLE` can't add or drop constraints.
+/// `ALTER TABLE` can't add or drop constraints, nor change the primary key.
 const DUCKDB: Capabilities = Capabilities {
     transactional_ddl: true,
     drop_cascade: false,
@@ -311,6 +341,7 @@ const DUCKDB: Capabilities = Capabilities {
         TableChange::ChangeNullability,
         TableChange::ChangeDefault,
     ],
+    restricted_add_column: false,
     rebuilds_table_ddl: false,
     common_types: &[
         "integer",
@@ -350,7 +381,19 @@ const CLICKHOUSE: Capabilities = Capabilities {
     referential_actions: &[],
     indexes: false,
     index_methods: &[],
-    table_changes: ALL_TABLE_CHANGES,
+    // Checks are the only constraints it has; its key is the order rows are stored in.
+    table_changes: &[
+        TableChange::RenameTable,
+        TableChange::RenameColumn,
+        TableChange::AddColumn,
+        TableChange::DropColumn,
+        TableChange::ChangeColumnType,
+        TableChange::ChangeNullability,
+        TableChange::ChangeDefault,
+        TableChange::AddConstraint,
+        TableChange::DropConstraint,
+    ],
+    restricted_add_column: false,
     rebuilds_table_ddl: false,
     common_types: &[
         "UInt8",

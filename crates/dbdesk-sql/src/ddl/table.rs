@@ -135,7 +135,7 @@ fn constraint_name(name: Option<&str>, dialect: Dialect) -> String {
     }
 }
 
-fn unique_key(key: &UniqueKey, dialect: Dialect) -> String {
+pub(super) fn unique_key(key: &UniqueKey, dialect: Dialect) -> String {
     format!(
         "{}UNIQUE {}",
         constraint_name(key.name.as_deref(), dialect),
@@ -143,7 +143,7 @@ fn unique_key(key: &UniqueKey, dialect: Dialect) -> String {
     )
 }
 
-fn foreign_key(key: &ForeignKey, dialect: Dialect) -> String {
+pub(super) fn foreign_key(key: &ForeignKey, dialect: Dialect) -> String {
     let target = match dialect {
         // SQLite's foreign keys point into the table's own schema, and refuse a qualified
         // name; `validate` checked the target is there.
@@ -164,7 +164,7 @@ fn foreign_key(key: &ForeignKey, dialect: Dialect) -> String {
     sql
 }
 
-fn check(spec: &TableSpec, index: usize, check: &Check, dialect: Dialect) -> String {
+pub(super) fn check(spec: &TableSpec, index: usize, check: &Check, dialect: Dialect) -> String {
     let expression = check.expression.trim();
     match dialect {
         // ClickHouse requires a name, and takes the condition without parentheses.
@@ -186,7 +186,7 @@ fn check(spec: &TableSpec, index: usize, check: &Check, dialect: Dialect) -> Str
 }
 
 /// Checks the spec is complete and consistent, and that the dialect has what it asks for.
-fn validate(spec: &TableSpec, dialect: Dialect) -> Result<(), DdlError> {
+pub(super) fn validate(spec: &TableSpec, dialect: Dialect) -> Result<(), DdlError> {
     require_name(&spec.name.name, "table")?;
     if spec.columns.is_empty() {
         return Err(DdlError::NoColumns);
