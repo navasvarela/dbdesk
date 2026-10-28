@@ -256,11 +256,6 @@ struct Recorder {
 
 impl Recorder {
     fn new(harness: Harness<'static, DbDeskApp>, dir: &Path) -> Self {
-        // Each step advances the harness's clock by a fixed amount, unrelated to the clip's
-        // frames, so a blinking cursor would come and go at random.
-        harness
-            .ctx
-            .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
         if dir.exists() {
             std::fs::remove_dir_all(dir).unwrap();
         }
