@@ -33,5 +33,6 @@ pub use placeholder::{
 pub use quoting::Quoting;
 pub use role::{RoleAttribute, RoleDescription};
 pub use table::{
-    ColumnDescription, ForeignKey, Identifier, RelationName, TableDescription, TableName,
+    ColumnDescription, ForeignKey, Identifier, Identity, IdentityGeneration, RelationName,
+    TableDescription, TableName,
 };

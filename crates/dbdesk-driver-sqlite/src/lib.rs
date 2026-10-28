@@ -420,4 +420,40 @@ mod tests {
         )
         .await;
     }
+
+    #[tokio::test]
+    async fn describes_an_autoincrement_key_as_an_identity_column() {
+        let file = database_file();
+        rusqlite::Connection::open(file.path())
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE tickets (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT)",
+            )
+            .unwrap();
+        let mut connection = connect(&SqliteConfig {
+            path: file.path().to_owned(),
+            read_only: false,
+        })
+        .await
+        .unwrap();
+        let name = |name: &str| RelationName {
+            schema: None,
+            name: dbdesk_core::Identifier {
+                name: name.to_owned(),
+                quoted: false,
+            },
+        };
+        let numbered = |table: Option<TableDescription>| -> Vec<bool> {
+            table
+                .unwrap()
+                .columns
+                .iter()
+                .map(|column| column.identity.is_some())
+                .collect()
+        };
+        let tickets = connection.describe_table(&name("tickets")).await.unwrap();
+        let plain = connection.describe_table(&name("t")).await.unwrap();
+        assert_eq!(numbered(tickets), [true, false]);
+        assert_eq!(numbered(plain), [false], "a rowid key isn't AUTOINCREMENT");
+    }
 }

@@ -7,7 +7,8 @@
 //! table's stored name is known: temporary tables can't have any.
 
 use dbdesk_core::{
-    ColumnDescription, DriverError, ForeignKey, RelationName, TableDescription, TableName,
+    ColumnDescription, DriverError, ForeignKey, Identity, IdentityGeneration, RelationName,
+    TableDescription, TableName,
 };
 use mysql_async::Conn;
 use mysql_async::prelude::Queryable;
@@ -154,6 +155,9 @@ async fn columns(conn: &mut Conn, sql: &str) -> Result<Vec<ColumnDescription>, D
                 data_type: text("Type").ok_or_else(|| missing("Type"))?,
                 nullable: text("Null").as_deref() == Some("YES"),
                 default: text("Default"),
+                identity: text("Extra")
+                    .is_some_and(|extra| extra.to_lowercase().contains("auto_increment"))
+                    .then_some(Identity::counting(IdentityGeneration::ByDefault)),
             })
         })
         .collect()

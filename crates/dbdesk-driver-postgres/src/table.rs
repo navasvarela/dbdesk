@@ -1,7 +1,8 @@
 //! Describing a table for editing its rows.
 
 use dbdesk_core::{
-    ColumnDescription, DriverError, ForeignKey, Quoting, RelationName, TableDescription, TableName,
+    ColumnDescription, DriverError, ForeignKey, Identity, IdentityGeneration, Quoting,
+    RelationName, TableDescription, TableName,
 };
 use tokio_postgres::Client;
 
@@ -38,10 +39,12 @@ pub(crate) async fn describe_table(
         .query(
             "SELECT a.attname, array_position(i.indkey::int2[], a.attnum), \
              format_type(a.atttypid, a.atttypmod), NOT a.attnotnull, \
-             pg_get_expr(d.adbin, d.adrelid) \
+             pg_get_expr(d.adbin, d.adrelid), a.attidentity::text, s.seqstart, s.seqincrement \
              FROM pg_attribute a \
              LEFT JOIN pg_index i ON i.indrelid = a.attrelid AND i.indisprimary \
              LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum \
+             LEFT JOIN pg_sequence s ON a.attidentity <> '' \
+               AND s.seqrelid = pg_get_serial_sequence($1, a.attname)::regclass \
              WHERE a.attrelid = to_regclass($1) AND a.attnum > 0 AND NOT a.attisdropped \
              ORDER BY a.attnum",
             &[&written],
@@ -68,6 +71,7 @@ pub(crate) async fn describe_table(
             data_type: column.try_get(2).map_err(connection_error)?,
             nullable: column.try_get(3).map_err(connection_error)?,
             default: column.try_get(4).map_err(connection_error)?,
+            identity: identity(column)?,
         });
     }
     key.sort();
@@ -82,6 +86,28 @@ pub(crate) async fn describe_table(
         }
     }
     Ok(Some(description))
+}
+
+/// An identity column's `attidentity` (`a` for `ALWAYS`, `d` for `BY DEFAULT`, empty for a
+/// column that isn't one) and its sequence's start and increment.
+fn identity(column: &tokio_postgres::Row) -> Result<Option<Identity>, DriverError> {
+    let generation = match column
+        .try_get::<_, String>(5)
+        .map_err(connection_error)?
+        .as_str()
+    {
+        "a" => IdentityGeneration::Always,
+        "d" => IdentityGeneration::ByDefault,
+        _ => return Ok(None),
+    };
+    let start: Option<i64> = column.try_get(6).map_err(connection_error)?;
+    let increment: Option<i64> = column.try_get(7).map_err(connection_error)?;
+    let counting = Identity::counting(generation);
+    Ok(Some(Identity {
+        start: start.unwrap_or(counting.start),
+        increment: increment.unwrap_or(counting.increment),
+        ..counting
+    }))
 }
 
 /// The foreign keys from or to the table, each column list in key order.

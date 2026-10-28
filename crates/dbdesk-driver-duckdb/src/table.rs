@@ -169,6 +169,7 @@ fn columns(
                 data_type: row.get(1)?,
                 nullable: row.get(2)?,
                 default: row.get(3)?,
+                identity: None,
             })
         })
         .map_err(connection_error)?;

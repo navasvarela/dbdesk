@@ -151,6 +151,7 @@ impl NewTable {
                     data_type: column.data_type.trim().to_owned(),
                     nullable: column.nullable && !column.primary_key,
                     default: optional(&column.default),
+                    identity: None,
                 })
                 .collect(),
             primary_key: self

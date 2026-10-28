@@ -206,6 +206,7 @@ mod tests {
             data_type: data_type.to_owned(),
             nullable,
             default: None,
+            identity: None,
         }
     }
 

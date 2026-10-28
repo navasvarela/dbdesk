@@ -637,6 +637,7 @@ mod tests {
                     data_type: "text".to_owned(),
                     nullable: true,
                     default: None,
+                    identity: None,
                 })
                 .collect(),
             primary_key: key.iter().map(|c| (*c).to_owned()).collect(),

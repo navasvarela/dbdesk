@@ -1,7 +1,8 @@
 //! Describing a table for editing its rows.
 
 use dbdesk_core::{
-    ColumnDescription, DriverError, ForeignKey, RelationName, TableDescription, TableName,
+    ColumnDescription, DriverError, ForeignKey, Identity, IdentityGeneration, Quoting,
+    RelationName, TableDescription, TableName,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -42,6 +43,7 @@ pub(crate) fn describe_table(
                 data_type: row.get(1)?,
                 nullable: !not_null,
                 default: row.get(3)?,
+                identity: None,
             };
             Ok((column, row.get(4)?))
         })
@@ -56,6 +58,14 @@ pub(crate) fn describe_table(
         .collect();
     key.sort();
     let primary_key: Vec<String> = key.into_iter().map(|(_, name)| name).collect();
+    let mut columns: Vec<ColumnDescription> =
+        columns.into_iter().map(|(column, _)| column).collect();
+    if let [key] = primary_key.as_slice()
+        && autoincrements(connection, &schema, &name)?
+        && let Some(column) = columns.iter_mut().find(|column| &column.name == key)
+    {
+        column.identity = Some(Identity::counting(IdentityGeneration::ByDefault));
+    }
     let me = TableName {
         schema: schema.clone(),
         name: name.clone(),
@@ -65,11 +75,27 @@ pub(crate) fn describe_table(
     Ok(Some(TableDescription {
         schema,
         name,
-        columns: columns.into_iter().map(|(column, _)| column).collect(),
+        columns,
         primary_key,
         foreign_keys,
         referenced_by,
     }))
+}
+
+/// Whether the table's key says `AUTOINCREMENT`, which only an `INTEGER PRIMARY KEY` may: its
+/// numbers then never repeat one a deleted row had. SQLite keeps no flag for it, only the
+/// statement that created the table.
+fn autoincrements(connection: &Connection, schema: &str, table: &str) -> Result<bool, DriverError> {
+    let sql = format!(
+        "SELECT sql FROM {}.sqlite_schema WHERE type = 'table' AND name = ?1",
+        Quoting::STANDARD.identifier(schema)
+    );
+    let definition: Option<String> = connection
+        .query_row(&sql, [table], |row| row.get(0))
+        .optional()
+        .map_err(connection_error)?
+        .flatten();
+    Ok(definition.is_some_and(|sql| sql.to_ascii_uppercase().contains("AUTOINCREMENT")))
 }
 
 /// One row of `pragma_foreign_key_list`, with the table it belongs to: a column of key `id`.

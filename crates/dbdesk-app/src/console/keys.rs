@@ -197,6 +197,7 @@ mod tests {
                     data_type: "integer".to_owned(),
                     nullable: true,
                     default: None,
+                    identity: None,
                 })
                 .collect(),
             primary_key: strings(&["id"]),

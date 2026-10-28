@@ -17,8 +17,8 @@ use common::{
 };
 use dbdesk_core::{
     CatalogNode, CatalogPath, ConnectionConfig, DataSource, DataSourceId, DuckDbConfig,
-    DuckDbDatabase, FolderKind, Identifier, NodeKind, Password, PostgresConfig, RelationName,
-    RoleAttribute, RoleDescription, SafetyLevel, TableDescription,
+    DuckDbDatabase, FolderKind, Identifier, Identity, IdentityGeneration, NodeKind, Password,
+    PostgresConfig, RelationName, RoleAttribute, RoleDescription, SafetyLevel, TableDescription,
 };
 use dbdesk_engine::{Command, DdlFailure, Event, PasswordUpdate, SessionState};
 use dbdesk_sql::{
@@ -217,6 +217,7 @@ fn round_trip_tables(dialect: Dialect, suffix: &str) -> (TableSpec, TableSpec) {
         data_type: data_type.to_owned(),
         nullable,
         default: default.map(str::to_owned),
+        identity: None,
     };
     let names = |names: &[&str]| names.iter().map(|name| (*name).to_owned()).collect();
     let parent_name = format!("dbdesk_parent_{suffix}");
@@ -399,11 +400,13 @@ fn check_rebuilt_ddl(engine: &mut TestEngine, data_source: &DataSource, password
     let dialect = Dialect::from(data_source.config.driver());
     let schema = unique("dbdesk_copy", data_source);
     let suffix = &schema["dbdesk_copy_".len()..];
-    let (parent, mut child) = round_trip_tables(dialect, suffix);
-    let parent = TableSpec {
-        name: ObjectName::new(Some(&schema), &parent.name.name),
-        ..parent
-    };
+    let (mut parent, mut child) = round_trip_tables(dialect, suffix);
+    parent.name.schema = Some(schema.clone());
+    parent.columns[0].identity = Some(Identity {
+        generation: IdentityGeneration::Always,
+        start: 100,
+        increment: 5,
+    });
     child.name.schema = Some(schema.clone());
     child.foreign_keys[0].target = parent.name.clone();
     let operations = [
@@ -427,6 +430,18 @@ fn check_rebuilt_ddl(engine: &mut TestEngine, data_source: &DataSource, password
         .child(NodeKind::Schema, schema.clone())
         .child(NodeKind::Folder(FolderKind::Tables), "tables")
         .child(NodeKind::Table, child.name.name.clone());
+    let parent_ddl = load_ddl(
+        engine,
+        data_source.id,
+        path.parent()
+            .unwrap()
+            .child(NodeKind::Table, parent.name.name.clone()),
+    );
+    let identity = match dialect {
+        Dialect::SqlServer => "id int IDENTITY(100, 5) NOT NULL",
+        _ => "id integer GENERATED ALWAYS AS IDENTITY (START WITH 100 INCREMENT BY 5) NOT NULL",
+    };
+    assert!(parent_ddl.contains(identity), "{parent_ddl}");
     let ddl = load_ddl(engine, data_source.id, path);
     assert!(
         ddl.starts_with(&format!("CREATE TABLE {schema}.{} (", child.name.name)),
@@ -848,6 +863,7 @@ fn check_schema_round_trip(
             data_type: capabilities.common_types[0].to_owned(),
             nullable: false,
             default: None,
+            identity: None,
         }],
         primary_key: vec!["id".to_owned()],
         unique_keys: vec![],

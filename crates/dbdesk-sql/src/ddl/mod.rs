@@ -19,7 +19,7 @@ pub use view::view_query;
 
 use std::collections::BTreeSet;
 
-use dbdesk_core::{RoleAttribute, RoleDescription};
+use dbdesk_core::{Identity, RoleAttribute, RoleDescription};
 
 use crate::{Dialect, ScramVerifier};
 
@@ -69,6 +69,8 @@ pub struct ColumnSpec {
     pub nullable: bool,
     /// An SQL expression, written as typed after `DEFAULT`.
     pub default: Option<String>,
+    /// Whether the database numbers the column itself; `None` for an ordinary column.
+    pub identity: Option<Identity>,
 }
 
 /// A new table: its columns and constraints.

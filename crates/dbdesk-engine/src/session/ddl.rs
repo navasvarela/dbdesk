@@ -200,6 +200,7 @@ async fn rebuild(
                 data_type: column.data_type,
                 nullable: column.nullable,
                 default: column.default,
+                identity: column.identity,
             })
             .collect(),
         primary_key: description.primary_key,
