@@ -111,6 +111,39 @@ The check sends nothing about you or your data: it reads the public list of rele
 the check at start-up, untick **Check for a new release when DbRover starts** in **View →
 Settings…**.
 
+## Coming from dbdesk
+
+DbRover was called dbdesk until version 0.12. Another database client called DBDesk was there
+first, so this one has a name of its own; nothing else changed.
+
+**Your data comes along.** The first time DbRover starts, it copies dbdesk's folders (the same
+places as in [Where DbRover keeps its files](files.md), with `dbdesk` instead of `dbrover`):
+your data sources, projects, consoles, history, settings, shortcuts, actions, snippets and
+theme. A window then says where they were copied from. dbdesk's folder is left as it was, with
+a note in it; DbRover doesn't read it again, so once DbRover shows everything you had, you can
+delete it. If the copy fails, DbRover uses dbdesk's folder for that session, says why, and
+tries again the next time it starts.
+
+**Saved passwords** move to DbRover's keychain entries the first time each one is used. On
+macOS, choose **Always Allow** when asked.
+
+**Updating from dbdesk:**
+
+- **macOS and the AppImage:** update from the app, as above. On macOS the app keeps the name
+  `dbdesk.app` in Finder, because the update replaces what is inside it; the menu bar and the
+  window say DbRover. To rename it, quit DbRover, rename `dbdesk.app` to `DbRover.app` in
+  Applications, and copy the MCP configuration again (below).
+- **The `.deb`:** install `dbrover_<version>_amd64.deb`, then remove dbdesk with
+  `sudo apt remove dbdesk`.
+- **Windows:** install DbRover with its installer, then uninstall dbdesk in **Settings › Apps**.
+  Uninstalling dbdesk leaves its data, which DbRover has copied.
+
+**MCP clients** start the server from the path in their configuration. Copy it again from each
+project ([Copy the configuration](mcp.md#2-copy-the-configuration)) and replace the dbdesk
+entry. On macOS the old path, `…/Contents/MacOS/dbdesk`, keeps working until DbRover 0.16, and
+the server says so in the client's log. Elsewhere the old path runs the old dbdesk, with its own
+copy of your data, until you remove it.
+
 ## Build from source
 
 For contributors, or to run the latest unreleased code. You need:
