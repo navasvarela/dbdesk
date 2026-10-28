@@ -70,6 +70,8 @@ pub enum ExplorerAction {
 pub enum Helper {
     /// On a schema, or its tables folder.
     NewTable(CatalogPath),
+    /// On a table, as are the next three.
+    ModifyTable(CatalogPath),
     RenameTable(CatalogPath),
     TruncateTable(CatalogPath),
     DropTable(CatalogPath),
@@ -862,6 +864,11 @@ fn helpers_menu(
             new.push((icons::LIST_DASHES, "Index…", Helper::NewIndex(path.clone())));
         }
         Some(NodeKind::Table) => {
+            object.push((
+                icons::PENCIL_SIMPLE,
+                "Modify table…",
+                Helper::ModifyTable(path.clone()),
+            ));
             if capabilities.indexes {
                 object.push((
                     icons::LIST_DASHES,

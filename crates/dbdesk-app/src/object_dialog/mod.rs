@@ -8,26 +8,28 @@
 mod confirm;
 mod fields;
 mod index;
-mod new_table;
 mod review;
 mod role;
 mod schema;
 mod table;
+mod table_form;
 mod view;
 
 use dbdesk_core::{
     CatalogPath, DataSource, DataSourceId, NodeKind, RoleDescription, SafetyLevel, SourceColor,
 };
 use dbdesk_engine::{Event, SessionState};
-use dbdesk_sql::{DdlError, DdlOperation, Dialect, ObjectName, ViewKind, ddl_statements};
+use dbdesk_sql::{
+    DdlError, DdlOperation, Dialect, ExistingTable, ObjectName, ViewKind, ddl_statements,
+};
 use egui::{Id, Ui, Window};
 
 pub use confirm::Destruction;
 use index::{DropIndex, NewIndex};
-use new_table::NewTable;
 use role::{DropRole, EditRole, NewRole, RenameRole, RoleKind};
 use schema::{DropSchema, NewSchema};
 use table::{DropTable, RenameTable, TableAt, TruncateTable};
+use table_form::TableForm;
 use view::{DropView, EditView, NewView, RefreshView, RenameView, ViewAt};
 
 use crate::catalog_tree::CatalogTree;
@@ -93,6 +95,15 @@ pub trait ObjectForm {
     /// The answer to [`ObjectForm::role_request`].
     fn role_described(&mut self, _result: &Result<RoleDescription, String>) {}
 
+    /// The table the form starts from, such as the one Modify table changes: loaded once,
+    /// when the dialog opens.
+    fn table_request(&self) -> Option<CatalogPath> {
+        None
+    }
+
+    /// The answer to [`ObjectForm::table_request`].
+    fn table_loaded(&mut self, _result: &Result<ExistingTable, String>) {}
+
     /// What the form asks for, or why it can't be written as SQL yet.
     fn operations(&self) -> Result<Vec<DdlOperation>, DdlError>;
 
@@ -136,7 +147,10 @@ pub enum ObjectDialogAction {
 pub fn form(helper: Helper, dialect: Dialect) -> Option<Box<dyn ObjectForm>> {
     let first_type = dialect.capabilities().common_types.first().copied();
     Some(match helper {
-        Helper::NewTable(path) => Box::new(NewTable::new(path, first_type.unwrap_or_default())?),
+        Helper::NewTable(path) => {
+            Box::new(TableForm::new_table(path, first_type.unwrap_or_default())?)
+        }
+        Helper::ModifyTable(path) => Box::new(TableForm::modify(path)?),
         Helper::RenameTable(path) => Box::new(RenameTable::new(TableAt::new(path)?)),
         Helper::TruncateTable(path) => Box::new(TruncateTable::new(TableAt::new(path)?)),
         Helper::DropTable(path) => Box::new(DropTable::new(TableAt::new(path)?)),
@@ -194,6 +208,11 @@ impl ObjectDialog {
         self.form.role_request()
     }
 
+    /// See [`ObjectForm::table_request`].
+    pub fn table_request(&self) -> Option<CatalogPath> {
+        self.form.table_request()
+    }
+
     /// Follows the engine's answer to Execute. Returns the node to refresh once the change
     /// has been applied, which means the dialog is done.
     pub fn apply(&mut self, event: &Event) -> Option<CatalogPath> {
@@ -217,6 +236,13 @@ impl ObjectDialog {
                 result,
             } if *answered == data_source && Some(path) == self.form.role_request().as_ref() => {
                 self.form.role_described(result);
+            }
+            Event::TableLoaded {
+                data_source: answered,
+                path,
+                result,
+            } if *answered == data_source && Some(path) == self.form.table_request().as_ref() => {
+                self.form.table_loaded(result);
             }
             // A request sent while connecting is never answered if the connection fails.
             Event::SessionChanged { id, state } if *id == data_source => match state {

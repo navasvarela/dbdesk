@@ -862,6 +862,12 @@ impl DbDeskApp {
                             path,
                         });
                     }
+                    if let Some(path) = dialog.table_request() {
+                        self.send(Command::LoadTable {
+                            data_source: id,
+                            path,
+                        });
+                    }
                     self.object_dialog = Some(dialog);
                 }
             }
@@ -1737,6 +1743,7 @@ mod tests {
     mod grid;
     mod history;
     mod menus;
+    mod modify_table;
     mod parameters;
     mod title_bar;
 

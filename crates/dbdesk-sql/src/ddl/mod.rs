@@ -116,8 +116,10 @@ pub struct ExistingTable {
 
 impl ExistingTable {
     /// The table as the catalog describes it, in `dialect`'s terms: ClickHouse's nullable
-    /// types lose their `Nullable(…)`, which says the same as the column's nullability, and
-    /// each constraint keeps the name the database gave it.
+    /// types lose their `Nullable(…)`, which says the same as the column's nullability; a
+    /// key column is never nullable, as a spec's isn't (SQLite reports its `INTEGER PRIMARY
+    /// KEY` as nullable, though it never holds NULL); and each constraint keeps the name the
+    /// database gave it.
     pub fn from_catalog(
         description: TableDescription,
         constraints: TableConstraints,
@@ -136,6 +138,9 @@ impl ExistingTable {
                         .and_then(|rest| rest.strip_suffix(')'))
                 {
                     spec.data_type = inner.to_owned();
+                }
+                if description.primary_key.contains(&spec.name) {
+                    spec.nullable = false;
                 }
                 spec
             })

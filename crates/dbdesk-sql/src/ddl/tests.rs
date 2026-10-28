@@ -1683,7 +1683,8 @@ fn reads_an_existing_table_from_its_catalog_description() {
             ColumnDescription {
                 name: "id".to_owned(),
                 data_type: "Int32".to_owned(),
-                nullable: false,
+                // As SQLite reports an INTEGER PRIMARY KEY.
+                nullable: true,
                 default: None,
                 identity: None,
             },
@@ -1724,6 +1725,7 @@ fn reads_an_existing_table_from_its_catalog_description() {
         Dialect::ClickHouse,
     );
     assert_eq!(clickhouse.spec.columns[1].data_type, "String");
+    assert!(!clickhouse.spec.columns[0].nullable, "a key column");
     assert_eq!(
         clickhouse.spec.name,
         ObjectName::new(Some("shop"), "orders")
