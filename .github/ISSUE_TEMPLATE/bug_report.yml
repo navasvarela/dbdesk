@@ -1,0 +1,95 @@
+name: Bug report
+description: Something in DbRover doesn't work, or works wrongly.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time. Please leave passwords, hostnames and private data out
+        of everything below: issues are public.
+  - type: input
+    id: version
+    attributes:
+      label: DbRover version
+      description: >-
+        Help › About DbRover › Copy version, or `dbrover --version` in a terminal.
+        Help › Report a problem… fills it in.
+      placeholder: dbrover 0.13.0 (1a2b3c4d5e)
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: Its name and version, such as macOS 15.3, Windows 11 24H2 or Ubuntu 24.04.
+      placeholder: macOS 15.3, aarch64
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you installed DbRover
+      options:
+        - macOS .dmg
+        - Homebrew
+        - Windows installer
+        - winget
+        - AppImage
+        - .deb
+        - AUR
+        - Built from source
+        - Something else
+    validations:
+      required: true
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Database engine
+      description: The database the problem happens with, if it happens with one.
+      options:
+        - Not about a database
+        - PostgreSQL
+        - MySQL
+        - MariaDB
+        - SQLite
+        - SQL Server
+        - DuckDB
+        - ClickHouse
+    validations:
+      required: true
+  - type: input
+    id: engine-version
+    attributes:
+      label: Database version
+      placeholder: PostgreSQL 17.2
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Connect to …
+        2. Run …
+        3. Click …
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: A screenshot helps, and so does the exact text of any error.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log lines
+      description: >-
+        Lines from the log console, or from the day's file in DbRover's `logs` folder (see
+        https://dbrover.org/manual/files.html). Check them for anything private first.
+      render: text

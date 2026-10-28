@@ -24,10 +24,10 @@ permissions:
 
 jobs:
   # Whether the pull request touches anything but documentation. A docs-only pull request (only
-  # docs/, book/, site/, Markdown or licence files) skips the Rust steps of `fmt` and `check`, and
-  # runs all three `check` jobs on Linux. The jobs still run and report success, because branch
-  # protection requires them, but they finish in seconds. `book` still builds the manual. Pushes
-  # to main always run everything.
+  # docs/, book/, site/, issue templates, Markdown or licence files) skips the Rust steps of
+  # `fmt` and `check`, and runs all three `check` jobs on Linux. The jobs still run and report
+  # success, because branch protection requires them, but they finish in seconds. `book` still
+  # builds the manual. Pushes to main always run everything.
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -49,7 +49,7 @@ jobs:
             exit 0
           fi
           code=$(git diff --name-only "origin/$GITHUB_BASE_REF...$PR_HEAD" \
-            | grep -vE '^(docs|book|site)/|\.md$|^LICENSE' || true)
+            | grep -vE '^(docs|book|site|\.github/ISSUE_TEMPLATE)/|\.md$|^LICENSE' || true)
           if [[ -n "$code" ]]; then
             echo "code=true" >> "$GITHUB_OUTPUT"
             echo "Changes beyond documentation:"
