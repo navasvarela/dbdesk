@@ -140,5 +140,6 @@ fn kind_icon(kind: CandidateKind) -> Icon {
         CandidateKind::Derived => icons::derived_table(),
         CandidateKind::Alias => icons::alias(),
         CandidateKind::Keyword => icons::keyword(),
+        CandidateKind::Snippet => icons::snippet(),
     }
 }

@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use dbdesk_core::SourceColor;
-use dbdesk_store::{ConsoleKey, CustomAction, Project};
+use dbdesk_store::{ConsoleKey, CustomAction, Project, Snippet};
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Color32, FontId, Id, Ui, WidgetText};
 use egui_dock::tab_viewer::OnCloseResponse;
@@ -128,6 +128,8 @@ pub struct Panels<'a> {
     pub explorer_options: &'a mut ExplorerOptions,
     /// From `actions.toml`, for the explorer's and the grid's menus.
     pub custom_actions: &'a [CustomAction],
+    /// From `snippets.toml`, for completion in the consoles.
+    pub snippets: &'a [Snippet],
     /// What the user asked for in the explorer this frame, for the app to act on.
     pub explorer_actions: &'a mut Vec<ExplorerAction>,
     pub consoles: &'a mut BTreeMap<ConsoleKey, QueryConsole>,
@@ -229,8 +231,16 @@ impl TabViewer for Panels<'_> {
                         .entries()
                         .iter()
                         .find(|entry| entry.data_source.id == data_source);
-                    let cell_actions: Vec<&CustomAction> = entry
-                        .map(|entry| entry.data_source.config.driver())
+                    let driver = entry.map(|entry| entry.data_source.config.driver());
+                    let snippets: Vec<&Snippet> = driver
+                        .map(|driver| {
+                            self.snippets
+                                .iter()
+                                .filter(|snippet| snippet.runs_on(driver))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let cell_actions: Vec<&CustomAction> = driver
                         .map(|driver| {
                             let on_cells = SubjectKind {
                                 driver,
@@ -250,6 +260,7 @@ impl TabViewer for Panels<'_> {
                             TreeCatalog::new(&entry.catalog, &entry.data_source.config)
                         }),
                         cell_actions: &cell_actions,
+                        snippets: &snippets,
                     };
                     let mut actions = Vec::new();
                     console::show(ui, query_console, &context, &mut actions);

@@ -17,6 +17,7 @@ pub(crate) mod highlight;
 mod keys;
 mod problems;
 mod results;
+mod snippet;
 mod view;
 
 use std::ops::Range;
@@ -36,7 +37,7 @@ use dbdesk_sql::{
     Dialect, FormatOptions, ParameterValues, format_ranges, split_statements, statement_at,
     tokenize,
 };
-use dbdesk_store::{ConsoleKey, ExportFormat, SqlFileContents};
+use dbdesk_store::{ConsoleKey, ExportFormat, Snippet, SnippetBody, SqlFileContents};
 
 use edit::Editability;
 
@@ -172,6 +173,8 @@ pub struct QueryConsole {
     viewed_cell: Option<ViewedCell>,
     /// The completion list, while it is open.
     completion: Option<Completion>,
+    /// The fields of the snippet just inserted, while Tab moves through them.
+    snippet_fields: Option<snippet::SnippetFields>,
     /// The candidate accepted last, until the app records it as recent.
     accepted_completion: Option<completion::Candidate>,
     /// How the last export went: where the rows went, or why they didn't.
@@ -325,6 +328,8 @@ struct Completion {
     rect: Option<egui::Rect>,
     /// Catalog levels it needs are still loading.
     loading: bool,
+    /// The bodies of the snippets offered, by trigger.
+    snippets: Vec<(String, SnippetBody)>,
 }
 
 /// A copy of one cell, so the viewer stays open while new rows arrive or a new run starts.
@@ -364,6 +369,7 @@ impl QueryConsole {
             viewed_cell: None,
             completion: None,
             accepted_completion: None,
+            snippet_fields: None,
             export_status: None,
             exporting: None,
             storage: Storage::Config(ConfigFile::default()),
@@ -680,6 +686,7 @@ impl QueryConsole {
                     selected: 0,
                     rect: None,
                     loading: false,
+                    snippets: Vec::new(),
                 });
             }
         }
@@ -696,6 +703,7 @@ impl QueryConsole {
         &mut self,
         catalog: Option<&TreeCatalog<'_>>,
         recent: &completion::RecentCompletions,
+        snippets: &[&Snippet],
     ) -> Vec<dbdesk_core::CatalogPath> {
         let Some(open) = &self.completion else {
             return Vec::new();
@@ -716,7 +724,7 @@ impl QueryConsole {
             .and_then(|range| Some((self.text.get(range.clone())?, range.start)))
             .unwrap_or_default();
         let references = completion::table_references(statement, self.dialect);
-        let candidates = completion::candidates(&completion::CompletionInput {
+        let mut candidates = completion::candidates(&completion::CompletionInput {
             point: &point,
             statement,
             prefix_start: point.replace.start.saturating_sub(statement_start),
@@ -727,6 +735,15 @@ impl QueryConsole {
             },
             recent,
         });
+        let snippets = if point.qualifier.is_none() {
+            snippet::offer(&mut candidates, snippets, &point.prefix);
+            snippets
+                .iter()
+                .map(|snippet| (snippet.trigger.clone(), snippet.body.clone()))
+                .collect()
+        } else {
+            Vec::new()
+        };
         let needed = catalog
             .map(|catalog| catalog.missing(&references))
             .unwrap_or_default();
@@ -745,6 +762,7 @@ impl QueryConsole {
             selected,
             rect,
             loading: needed.is_pending(),
+            snippets,
         });
         needed.unrequested
     }
@@ -780,7 +798,81 @@ impl QueryConsole {
         self.selection = cursor..cursor;
         self.pending_cursor = Some(cursor);
         self.accepted_completion = Some(candidate.clone());
+        if candidate.kind == completion::CandidateKind::Snippet
+            && let Some((_, body)) = open
+                .snippets
+                .iter()
+                .find(|(trigger, _)| *trigger == candidate.label)
+        {
+            self.start_snippet(body, open.replace.start);
+        }
         self.edited(now);
+    }
+
+    /// Selects the first field of a snippet just inserted at `at`, or places the cursor where
+    /// it ends if it has none.
+    fn start_snippet(&mut self, body: &SnippetBody, at: usize) {
+        self.snippet_fields = snippet::SnippetFields::start(body, at, self.text.len());
+        let first = match &self.snippet_fields {
+            Some(fields) => fields.current(),
+            None => {
+                let end = snippet::SnippetFields::end_of(body, at);
+                end..end
+            }
+        };
+        self.select(first);
+    }
+
+    /// Selects `range` in the editor, focusing it.
+    fn select(&mut self, range: Range<usize>) {
+        self.selection = range.clone();
+        self.pending_cursor = Some(range.end);
+        self.pending_selection = Some(range);
+    }
+
+    /// Whether Tab moves through a snippet's fields right now: there are fields, and no
+    /// completion list with something to pick, which takes Tab first.
+    pub fn in_snippet(&self) -> bool {
+        let picking = self
+            .completion
+            .as_ref()
+            .is_some_and(|open| !open.candidates.is_empty());
+        self.snippet_fields.is_some() && !picking
+    }
+
+    /// Selects the snippet's next field, or the previous one. Past the last, at the end, the
+    /// fields are done and Tab is the editor's again.
+    pub fn next_snippet_field(&mut self, forward: bool) {
+        let Some(fields) = &mut self.snippet_fields else {
+            return;
+        };
+        let next = fields.advance(forward);
+        if next.is_none() || fields.at_end() {
+            self.snippet_fields = None;
+        }
+        if let Some(range) = next {
+            self.select(range);
+        }
+    }
+
+    pub fn leave_snippet(&mut self) {
+        self.snippet_fields = None;
+    }
+
+    /// Follows what the editor did this frame: typing in the current field moves the fields
+    /// after it; typing or clicking anywhere else leaves the snippet.
+    pub fn follow_snippet(&mut self, changed: bool, clicked: bool) {
+        let Some(fields) = &mut self.snippet_fields else {
+            return;
+        };
+        let still_in = if changed {
+            fields.follow_edit(self.text.len(), self.selection.end)
+        } else {
+            !clicked || fields.holds(&self.selection)
+        };
+        if !still_in {
+            self.snippet_fields = None;
+        }
     }
 
     /// The candidate accepted since this was last asked, for the app to remember as recent.

@@ -1824,6 +1824,7 @@ impl eframe::App for DbDeskApp {
                     saved_consoles,
                     explorer_options: &mut self.explorer_options,
                     custom_actions: self.custom_files.actions(),
+                    snippets: self.custom_files.snippets(),
                     explorer_actions: &mut explorer_actions,
                     consoles: open_consoles,
                     keymap: &self.keymap,

@@ -100,6 +100,8 @@ pub enum CandidateKind {
     Schema,
     Function,
     Keyword,
+    /// From `snippets.toml`: its label is the trigger, its insert the body.
+    Snippet,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

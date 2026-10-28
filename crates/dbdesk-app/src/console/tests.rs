@@ -192,7 +192,7 @@ fn completion_replaces_the_typed_prefix_and_closes() {
 
     let recent = RecentCompletions::default();
     console.open_completion(false);
-    let _ = console.refresh_completion(None, &recent);
+    let _ = console.refresh_completion(None, &recent, &[]);
     assert!(
         console.completion.is_some(),
         "keywords match without a catalog"
@@ -204,7 +204,7 @@ fn completion_replaces_the_typed_prefix_and_closes() {
     assert_eq!(console.pending_cursor, Some(console.text.len()));
 
     console.open_completion(false);
-    let _ = console.refresh_completion(None, &recent);
+    let _ = console.refresh_completion(None, &recent, &[]);
     assert!(
         console.completion.is_none(),
         "nothing starts with SELECT but SELECT itself"
@@ -275,7 +275,7 @@ fn accepting_a_function_puts_the_cursor_inside_its_parentheses_and_reports_it() 
     let recent = RecentCompletions::default();
 
     console.open_completion(false);
-    let _ = console.refresh_completion(None, &recent);
+    let _ = console.refresh_completion(None, &recent, &[]);
     console.accept_completion(Instant::now());
 
     assert_eq!(console.text, "select coalesce()");
