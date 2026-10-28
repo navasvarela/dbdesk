@@ -195,3 +195,22 @@ fn view_actions_creates_the_file_once_and_lists_every_action_after_a_reload() {
     assert_eq!(std::fs::read_to_string(&file).unwrap(), ACTIONS);
     harness.get_by_label("actions.toml: 1 problem");
 }
+
+#[test]
+fn view_actions_shows_a_command_in_full() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut harness = start_shop(dir.path(), None);
+    let jq = "\n[[action]]\nid = \"rows-to-jq\"\nname = \"Send rows to jq\"\n\
+              applies_to = [\"grid.selection\"]\ncommand = [\"jq\", \"-r\", \".[] | .email\"]\n\
+              stdin = \"json\"\n";
+    std::fs::write(dir.path().join("actions.toml"), format!("{ACTIONS}{jq}")).unwrap();
+    harness.get_by_label("View").click();
+    harness.run();
+    harness.get_by_label("Actions…").click();
+    harness.run();
+    harness.get_by_label("Reload").click();
+
+    step_until_visible(&mut harness, "5 actions");
+    harness.get_by_label(r#"["jq", "-r", ".[] | .email"]"#);
+    harness.get_by_label("stdin json · output viewer · timeout 1m");
+}

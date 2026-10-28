@@ -181,7 +181,7 @@ impl ExportWriter {
 }
 
 /// One record, ended with CRLF as RFC 4180 asks.
-fn write_csv_line<'a>(
+pub(crate) fn write_csv_line<'a>(
     out: &mut impl Write,
     fields: impl Iterator<Item = &'a str>,
 ) -> io::Result<()> {
@@ -200,7 +200,7 @@ fn write_csv_line<'a>(
 
 /// Column names as JSON keys: a repeated name (`SELECT a.id, b.id`) gets `_2`, `_3`, … so no
 /// value overwrites another.
-fn unique_keys(columns: &[String]) -> Vec<String> {
+pub(crate) fn unique_keys(columns: &[String]) -> Vec<String> {
     let mut used = HashSet::new();
     columns
         .iter()
@@ -220,9 +220,9 @@ fn unique_keys(columns: &[String]) -> Vec<String> {
 
 /// Serializes a row as an object with keys in column order. A `serde_json::Map` would sort
 /// them.
-struct RowObject<'a> {
-    keys: &'a [String],
-    row: &'a Row,
+pub(crate) struct RowObject<'a> {
+    pub(crate) keys: &'a [String],
+    pub(crate) row: &'a Row,
 }
 
 impl Serialize for RowObject<'_> {

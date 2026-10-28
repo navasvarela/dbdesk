@@ -7,7 +7,7 @@ use dbdesk_engine::{
 };
 use dbdesk_sql::Dialect;
 use dbdesk_store::{
-    ActionId, ConsoleKey, CustomFileKind, ExportFormat, KeymapBindings, McpPermissions,
+    ActionBody, ActionId, ConsoleKey, CustomFileKind, ExportFormat, KeymapBindings, McpPermissions,
     SqlFileContents,
 };
 use egui::{Frame, Margin, RichText};
@@ -1370,7 +1370,8 @@ impl DbDeskApp {
         match custom_actions::fill(action, &entry.data_source, subject, quoting) {
             Ok(text) => {
                 self.action_problem = None;
-                let run = action.run.then(|| RunOrigin::Action(action.id.clone()));
+                let run = matches!(action.body, ActionBody::Sql { run: true, .. })
+                    .then(|| RunOrigin::Action(action.id.clone()));
                 let (key, command) = self.consoles.open_action(&entry.data_source, text, run);
                 workspace::open_console_tab(&mut self.dock, key);
                 self.send_if(command);
