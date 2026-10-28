@@ -293,6 +293,16 @@ and never the network. Covered by version comparison and state tests, an engine 
 answers, a dialog test, and a UI test that finds a newer release at start-up and an up-to-date
 one on request.
 
+**Renaming to DbRover:** another database client called DBDesk came first, so dbdesk becomes
+**DbRover** (`dbrover` for the command, crates and packages) in 0.13.0, with the site at
+dbrover.org and dbdesk.org redirecting to it. In layers: the plan; the migration, which copies
+the previous install's settings, consoles, history and custom files once on the first start and
+moves saved passwords to the new credential-store name on first use; the mechanical rename;
+the site; and the manual and README. On macOS and the AppImage, copies of 0.12.0 and earlier
+update to DbRover from the app, through GitHub's redirect from the old repository. Names,
+migration, updates, the domain steps and the maintainer's steps:
+[Renaming to DbRover](releasing.md#renaming-to-dbrover).
+
 ## Database track
 
 More engines, in order of how many people use them. The full plan, with the rankings, what

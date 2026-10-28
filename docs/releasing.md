@@ -449,3 +449,336 @@ Settled on 2026-10-23, except the row marked open:
 | Windows | **CI job now, installer once tried on a real machine.** | R1 adds Windows to CI and the release workflow builds the installer, but it is attached to releases only after someone has run it on Windows. Attached since v0.12.0. Tried on a real Windows machine on 2026-10-28: it installs and works, and SmartScreen blocked the unsigned installer at first. |
 | Windows signing | **Open**, for the maintainer. Recommended for an individual in Spain: SignPath Foundation, then an OV certificate in a vendor's cloud if it declines; Azure Artifact Signing only for an organization (see [Signing the Windows installer](#signing-the-windows-installer)). | Planned for after the app's rename. Until then releases are unsigned and SmartScreen blocks the installer's first run; the manual says how to get past it. The chosen option's steps then go in the release workflow's windows job. |
 | Homebrew | Not asked yet; planned for R2. | `navasvarela/homebrew-tap`, once the repository is public. |
+
+## Renaming to DbRover
+
+Another desktop database client called DBDesk (zexahq/dbdesk, created 2025-11-19, which also
+owns `dbdesk` on npm) came first. On 2026-10-28 the maintainer chose a new name, **DbRover**:
+no trademark in TMview, nothing on the web, and `dbrover` is free on crates.io and npm. The
+`dbrover` GitHub account belongs to an inactive user, which doesn't matter for a repository
+under `navasvarela`. dbrover.com is parked for sale and isn't used.
+
+The name is in about 350 files, but most of that is mechanical. The work that needs care is
+making sure nobody loses data or their updates on the way: copies of dbdesk 0.12.0 and earlier
+must be offered DbRover and install it, and the first DbRover must find everything dbdesk
+saved.
+
+### Names
+
+| What | Today | After |
+| --- | --- | --- |
+| Product name in the window title, About, Welcome, menus, the macOS menu bar, the manual and the site | dbdesk | **DbRover** |
+| Binary and command | `dbdesk`, `dbdesk mcp` | `dbrover`, `dbrover mcp` |
+| Crates | `dbdesk-core`, `dbdesk-app`, … | `dbrover-core`, `dbrover-app`, … (folders under `crates/` too) |
+| macOS bundle and identifier | `dbdesk.app`, `io.github.navasvarela.dbdesk` | `DbRover.app`, `io.github.navasvarela.dbrover` |
+| macOS download and update package | `dbdesk-<version>-macos-universal.dmg`, `….app.tar.gz` | `dbrover-<version>-macos-universal.dmg`, `….app.tar.gz` |
+| Linux | `dbdesk-<version>-x86_64.AppImage`, `dbdesk_<version>_amd64.deb`, `/usr/bin/dbdesk` | `dbrover-<version>-x86_64.AppImage`, `dbrover_<version>_amd64.deb`, `/usr/bin/dbrover` |
+| Windows installer and install folder | `dbdesk-<version>-windows-x64-setup.exe`, `%LOCALAPPDATA%\dbdesk` | `dbrover-<version>-windows-x64-setup.exe`, `%LOCALAPPDATA%\DbRover` |
+| Settings and data folders | `dbdesk` (see [Migrating existing installs](#migrating-existing-installs)) | `dbrover` |
+| Keychain / credential store service | `dbdesk` | `dbrover` |
+| MCP server name, and the entries **Copy MCP configuration** writes | `dbdesk`, `dbdesk-<slug>` | `dbrover`, `dbrover-<slug>` |
+| `application_name` sent to PostgreSQL and MySQL | `dbdesk` | `dbrover` |
+| Log files | `dbdesk.<date>.log`, `dbdesk-mcp.<date>.log` | `dbrover.<date>.log`, `dbrover-mcp.<date>.log` |
+| Environment variables and the DuckDB build flag | `DBDESK_*`, `--cfg dbdesk_prebuilt_duckdb` | `DBROVER_*`, `--cfg dbrover_prebuilt_duckdb` |
+| Repository and site | `navasvarela/dbdesk`, dbdesk.org | `navasvarela/dbrover`, dbrover.org |
+
+**Which spelling where.** "DbRover", as the maintainer writes it, is the name people read:
+window title, menus, the macOS menu bar (the bundle's `productName`), dialogs, the manual, the
+site and the release notes. `dbrover`, in lower case, is every name a program reads or a person
+types: the command, crates, packages, folders, the Keychain service, the MCP server, log files.
+dbdesk used the lower-case form for both; the product name now has its own form because it is
+a name, and the identifiers stay lower case because Linux paths, `.deb` package names, crate
+names and Wayland's app id are case-sensitive, and people type them in terminals and MCP client
+configuration.
+
+**The data folders stay lower case** (`~/Library/Application Support/dbrover` on macOS,
+`%APPDATA%\dbrover` on Windows), even though macOS and Windows would allow `DbRover`. The same
+constant, `APP_NAME`, is eframe's app id, which on Wayland must match the `.desktop` file's
+name, and keeping one lower-case name for both is how dbdesk already did it.
+
+**A `dbdesk` command alias, on macOS only, for three minor releases (through 0.15).** An MCP
+client starts dbdesk from the absolute path in its configuration, which the manual and **Copy
+MCP configuration** give as `/Applications/dbdesk.app/Contents/MacOS/dbdesk`. An update replaces
+the bundle's contents but keeps its folder (see [Updates across the
+rename](#updates-across-the-rename)), so without an alias that file disappears and every
+configured client stops working, silently. So the macOS bundle carries `Contents/MacOS/dbdesk`,
+a symbolic link to `dbrover`, and `dbrover mcp` started through it writes one line to standard
+error (which MCP clients log) asking to copy the configuration again. Nowhere else needs one:
+the AppImage is replaced in place, so its path still works, and the `.deb` and the Windows
+installer install DbRover beside dbdesk instead of over it, so the old path keeps running the
+old copy until it is removed. The release notes of 0.15 announce the alias's removal in 0.16.
+
+### Migrating existing installs
+
+Today `dbdesk-store`'s `AppPaths` finds everything through `ProjectDirs::from("", "", "dbdesk")`,
+and eframe keeps `app.ron` in its own folder for the same app id:
+
+| Platform | Settings folder | Window state and logs |
+| --- | --- | --- |
+| macOS | `~/Library/Application Support/dbdesk/` | the same folder |
+| Linux | `$XDG_CONFIG_HOME/dbdesk/`, or `~/.config/dbdesk/` | `$XDG_DATA_HOME/dbdesk/`, or `~/.local/share/dbdesk/` |
+| Windows | `%APPDATA%\dbdesk\config\` | `%APPDATA%\dbdesk\data\` |
+
+The settings folder holds `data_sources.toml`, `projects.toml`, `settings.toml`, `keymap.toml`,
+`actions.toml`, `snippets.toml`, `theme.toml`, `consoles/<data source id>/*.sql` and
+`history.sqlite`; the other holds `app.ron`, `trusted_commands.toml` (H2's trusted command
+actions) and `logs/`. Passwords are in the OS credential store under the service `dbdesk`,
+accounts `<id>`, `<id>/mcp` and `<id>/ssh`. Nothing inside the files depends on the name: the
+history's `source` column says `app`, not `dbdesk`, and the `# dbdesk …` headers are comments.
+H2's command actions get `DBDESK_*` environment variables; they haven't been released, so they
+become `DBROVER_*` with no need to keep the old names.
+
+**On start-up, before anything else,** both `dbrover` and `dbrover mcp` look for the previous
+install, so whichever an MCP client or the user starts first does it:
+
+1. If the new settings folder exists, stop: the migration has run, or this is a new install.
+2. If the old settings folder doesn't exist, stop: nothing to bring over. Otherwise take a
+   lock beside the new folder (`dbrover.migrating.lock`), so the app and an MCP client's
+   server starting at the same moment copy one after the other, and check step 1 again once
+   it is held.
+3. Copy the old settings folder into a staging folder beside the new one
+   (`dbrover.migrating`), removing a staging folder a crash left behind first.
+   `history.sqlite` is copied with SQLite's `VACUUM INTO`, not as a file, so a copy taken while
+   an old `dbdesk mcp` has it open is consistent and includes what is still in its write-ahead
+   log. Everything else is copied file by file.
+4. Rename the staging folder to the new settings folder. The rename is the commit point: a
+   crash before it leaves no new folder, and the next start begins again.
+5. Do the same for the window-state folder where it is a separate one (Linux, Windows), copying
+   `app.ron` and skipping `logs/`: old logs would never be pruned under the new prefix.
+6. Write `copied-to-dbrover.txt` in the old folder: where it was copied to, that DbRover
+   doesn't read it any more, and that it can be deleted once DbRover has everything.
+7. A window says once that the data was copied, and from where. (The Welcome tab was the first
+   idea, but a restored layout may not have it open.)
+
+This runs before telemetry starts, because on macOS the settings folder is also the log
+folder, and creating `logs/` first would make step 1 skip the migration. What it did is logged
+once telemetry is up. A migration that fails (disk full, permissions) leaves the old folder
+untouched, and that session uses the old folders, as dbdesk did, and says why in the window
+and the log. Starting empty instead would create the new settings folder, and step 1 would
+never try again; this way the next start does.
+
+**Copied, not moved.** Nothing of dbdesk's is changed or deleted, so a failed or interrupted
+migration can't lose data, and dbdesk keeps working where it is still installed (the `.deb`
+and Windows install DbRover beside it, and an MCP client may still start it). The price is
+disk space and two copies that drift apart if both are used; the text file in the old folder
+and the release notes say which one is read.
+
+**Passwords move on first use, not at start-up.** The credential store gets a wrapper
+`SecretStore`: reading a secret tries the `dbrover` service, then `dbdesk`; a secret found only
+under `dbdesk` is written under `dbrover` and the old entry is deleted only after that write
+succeeded. Deleting a data source deletes both. Copying every entry at the first start would
+show a Keychain prompt for each saved password at once on unsigned macOS builds, before the
+user has asked for anything; on first use, each prompt comes when connecting, as after any
+unsigned update. The fallback stays for as long as the `dbdesk` alias does.
+
+**Tests**, against temporary folders and the in-memory secret store, never the real ones:
+every file and the consoles tree are copied; rows still in the history's write-ahead log are
+in the copy; `logs/` isn't copied; an existing new folder means nothing is done; a leftover
+staging folder is replaced; the old folder is left byte for byte as it was, apart from the text
+file; a copy that fails half-way leaves no new folder. The wrapper's tests cover a secret found
+under the new name, under the old one (moved, then found under the new one), under neither,
+a failed write (returned, and the old entry kept), and deletion. The paths come from the two
+names, so the migration code exists and is tested before the rename, and does nothing while
+both names are `dbdesk`.
+
+### Updates across the rename
+
+**The old address keeps working.** dbdesk 0.12.0 and earlier read
+`https://github.com/navasvarela/dbdesk/releases/latest/download/latest.json`, and the update
+notice asks `https://api.github.com/repos/navasvarela/dbdesk/releases/latest`. After the
+repository is renamed, GitHub answers both with a permanent redirect to the new name, as it does
+for every web, Git and API address. `cargo-packager-updater` 0.2.3 fetches the manifest and the
+package with `reqwest::blocking::Client::new()`, which follows up to ten redirects, and today's
+download already goes through one (`latest/download` → the release's file). The notice uses
+ureq 3, which follows redirects for `GET` by default. So old copies find and download DbRover.
+The redirect lasts until someone creates a new repository called `navasvarela/dbdesk`, which
+must never happen.
+
+**Tested without the network,** as the update tests already are, but one level lower: a
+server on `127.0.0.1` answers the old manifest path with a 301 to the new one, that with a 302
+to the file, and the package the same way, from the old repository's address. `GithubReleases`
+finds the release through the API's 301, and `cargo-packager-updater`, configured as
+`PackagerInstaller` configures it and given a throwaway key whose public half and signature
+are test fixtures, finds the update, downloads it and accepts its signature, and refuses a
+package with another one. Old copies run this same code, since neither crate changes.
+
+**On macOS the bundle keeps its folder name.** The updater unpacks the archive without its top
+folder into the running bundle's path (`install_inner` in `cargo-packager-updater`), so
+`/Applications/dbdesk.app` gets DbRover's `Info.plist` (new identifier, `CFBundleExecutable`
+`dbrover`, `CFBundleName` DbRover) and binaries, and `touch`es the bundle so LaunchServices sees
+the change. **Restart now** runs `open -n /Applications/dbdesk.app`, which starts DbRover. The
+menu bar, Dock tooltip, window and About say DbRover; Finder and Spotlight show the folder's
+name, dbdesk, until the user renames it. Renaming the bundle from inside the app was ruled out
+for now: it would break the same MCP paths the alias keeps working, and fail where
+`/Applications` isn't writable. The manual says how to rename it by hand, and to copy the MCP
+configuration again afterwards. New installs from the disk image are `DbRover.app`.
+
+**A new identifier and signature** make macOS ask once more for each saved password, as every
+unsigned update already does. The update key stays the same: a package signed with another key
+would be refused by every installed copy.
+
+**Elsewhere:**
+- **The AppImage** replaces itself in place, keeping its file name.
+- **The `.deb`** isn't updated in place; `dbrover` is a new package that installs beside
+  `dbdesk` (cargo-packager can't declare `Replaces` or `Conflicts`). The release notes say to
+  run `sudo apt remove dbdesk` afterwards.
+- **Windows:** copies of 0.12.0 and earlier can't update themselves (see
+  [R4](#r4--windows-parity)), so they install DbRover by hand. Shipping the rename in the same
+  release as R4 means no dbdesk copy ever runs DbRover's installer as an update, which would
+  install it beside dbdesk, in `%LOCALAPPDATA%\DbRover`, and start it. DbRover appears as a
+  new app under **Settings › Apps**, and the release notes say to uninstall dbdesk afterwards.
+  dbdesk's uninstaller doesn't touch `%APPDATA%\dbdesk`: cargo-packager's template only offers
+  to delete the folders listed in `appdataPaths`, and there are none.
+
+### The site and the domain
+
+The site moves to **dbrover.org** on GitHub Pages, and dbdesk.org redirects to it, path for
+path. That matters beyond old bookmarks: dbdesk 0.12.0 and earlier open
+`https://dbdesk.org/manual/` from **Help** and the Welcome tab, and the release notes link into
+the manual. The site keeps its paths (`/`, `/manual/…`), so the redirect only changes the host.
+Fragments (`#…`) aren't sent to the server, and browsers keep them across a redirect.
+
+Set up the new domain before any layer links to it, so its DNS check and GitHub's
+certificate are done by the time the site moves.
+
+**dbrover.org** (the maintainer has it):
+1. In dbrover.org's DNS (on Cloudflare, beside dbdesk.org), **DNS only** (grey cloud), so GitHub
+   can issue the certificate: `A` records for `@` to `185.199.108.153`, `185.199.109.153`,
+   `185.199.110.153` and `185.199.111.153`; `AAAA` records for `@` to `2606:50c0:8000::153`,
+   `2606:50c0:8001::153`, `2606:50c0:8002::153` and `2606:50c0:8003::153`; and `CNAME www` to
+   `navasvarela.github.io`.
+2. On GitHub, **Settings (account) › Pages › Add a domain**: verify dbrover.org with the `TXT`
+   record it shows, so no other account can claim it.
+3. When the site layer merges: **repository Settings › Pages › Custom domain** `dbrover.org`,
+   save, wait for the DNS check and the certificate, then tick **Enforce HTTPS**. There is no
+   `CNAME` file to change: Pages is deployed from Actions, so the custom domain is only this
+   setting.
+
+**dbdesk.org, right after step 3** (from then on, GitHub no longer serves it). The redirect
+rule can be created beforehand: it only acts on proxied traffic, so it does nothing until the
+records change.
+1. **Rules › Redirect Rules › Create rule**, named "dbdesk.org to dbrover.org":
+   - **If incoming requests match** a custom filter expression:
+     `(http.host eq "dbdesk.org") or (http.host eq "www.dbdesk.org")`.
+   - **Then:** URL redirect, type **Dynamic**, expression
+     `concat("https://dbrover.org", http.request.uri.path)`, status code **301**, **Preserve
+     query string** on.
+   - Deploy.
+2. **DNS › Records:** delete the records that point at GitHub Pages (the apex `A` and `AAAA`
+   records and `www`), and add placeholders, **Proxied** (orange cloud): `A @ 192.0.2.1`,
+   `AAAA @ 100::` and `A www 192.0.2.1`. These addresses are reserved and never answer;
+   Cloudflare redirects at its edge before contacting them, and its Universal SSL certificate
+   covers `dbdesk.org` and `www.dbdesk.org`.
+3. Check: `curl -sI https://dbdesk.org/manual/install.html` and
+   `curl -sI http://www.dbdesk.org/manual/` answer `301` with
+   `location: https://dbrover.org/manual/install.html` and `…/manual/`.
+4. Keep dbdesk.org registered and renewed for at least two years: copies of 0.12.0 and earlier
+   link to it for as long as they're used.
+
+### Logo
+
+The Strata mark is a database cylinder with no lettering, so it fits DbRover as it is and needs
+no new wordmark. Only `assets/brand/social-preview.svg` sets the name in text (in Inter), and
+the SVGs' `<title>`s name it. The rename layer changes those, re-exports
+`social-preview.png`, and renames `dbdesk.icns` to `dbrover.icns`; the maintainer uploads the
+new social preview (a repository setting).
+
+### Release notes
+
+The first DbRover release is **0.13.0**, with H2 and R4. Its notes start with the rename,
+before the usual sections:
+
+> **dbdesk is now DbRover.** Another database client called DBDesk was there first, so this
+> one has a name of its own. Nothing else changes: on its first start, DbRover copies your data
+> sources, projects, consoles, history, settings, keymap, actions, snippets and theme from
+> dbdesk's folder, and saved passwords carry over the first time each is used (on macOS,
+> choose **Always Allow** when asked). dbdesk's folder is left as it was.
+>
+> - **macOS and the AppImage:** update from the app as usual. On macOS the app keeps its
+>   `dbdesk.app` name in Finder; rename it to `DbRover.app` if you like.
+> - **The `.deb` and Windows:** install DbRover, then remove dbdesk
+>   (`sudo apt remove dbdesk`, or **Settings › Apps** on Windows).
+> - **MCP clients:** copy the configuration again from each project (**Copy MCP
+>   configuration**). On macOS the old path keeps working until 0.16.
+> - The site is now [dbrover.org](https://dbrover.org), and the repository
+>   [navasvarela/dbrover](https://github.com/navasvarela/dbrover); the old addresses redirect.
+
+### Steps only the maintainer can do
+
+In merge and release order. None of these is done by the sessions building the rename.
+
+| When | Step |
+| --- | --- |
+| Now, before anything links to it | dbrover.org's DNS records and its GitHub domain verification (steps 1–2 above). |
+| After the plan merges, before the rename layer merges | **Rename the repository**: **Settings › General › Repository name** `dbrover`. Open pull requests, issues, releases, secrets, variables and the Pages setting move with it. Then point every checkout and worktree at the new address: `git remote set-url origin https://github.com/navasvarela/dbrover.git`. Never create a new repository named `dbdesk`. |
+| When the site layer merges | The Pages custom domain (step 3 above), then the dbdesk.org redirect on Cloudflare straight after. |
+| After the rename layer merges | Upload the new `assets/brand/social-preview.png` (**Settings › General › Social preview**), and update the repository's description and website field. |
+| Release | Cut 0.13.0 as usual and check the exit below with it. |
+| For two years at least | Renew dbdesk.org. |
+
+### Layers
+
+One stack, one pull request each, each building and passing on its own. The rename layer starts
+from `main` once H2 and R4 have merged, since both touch many of the same files.
+
+- **Plan:** this section, and the track in the roadmap.
+- **Migration:** the copy of the previous install's folders, the passwords' fallback, the
+  one-time window, and the tests above, plus the redirect tests of the updater. Written
+  with both names as constants, so it does nothing until the next layer changes `APP_NAME`.
+- **Rename:** crates and their folders, the binary, `APP_NAME`, the Keychain service, UI text,
+  packaging (`productName`, identifier, icon, file names in `release.yml`, the macOS alias and
+  its smoke test), environment variables, the MCP server name, the brand files, and every
+  document's mention, except the site's address.
+- **Site:** dbrover.org in `site/`, `book/book.toml`, the app's manual link and `homepage`,
+  with the site's and the book's link checks.
+- **Manual, README and demo note:** the Install chapter's "Coming from dbdesk" section (the
+  migration, the macOS bundle name, the `.deb` and Windows steps, MCP clients), the README, and
+  the roadmap's demo note.
+
+The macOS alias: after `cargo packager --formats app`, the release job adds the link
+(`ln -s dbrover Contents/MacOS/dbdesk`), then makes the `.app.tar.gz` from the bundle and signs
+it with `cargo packager signer sign`, as R4's Windows step signs the installer, and the smoke
+test runs `Contents/MacOS/dbdesk --version` too. Signing the bundle with a Developer ID, when
+it comes, covers the link as part of the bundle.
+
+### Decisions
+
+| Question | Recommendation | Why |
+| --- | --- | --- |
+| How the name is written | **DbRover** for people, `dbrover` for programs (settled by the maintainer, 2026-10-28) | See [Names](#names). |
+| Data folders | Lower case `dbrover` everywhere | One name with eframe's app id, which Wayland matches against the `.desktop` file. |
+| Copy or move the old folders | **Copy**, once | Nothing of dbdesk's can be lost, and old installs that are still used keep working. |
+| Passwords | **Moved on first use**, old entry deleted after the new one is written | No burst of Keychain prompts at the first start. |
+| A `dbdesk` alias | **macOS only, a link in the bundle, through 0.15** | Keeps MCP clients working after an in-place update; nothing else needs it. |
+| The macOS bundle's folder after an update | **Leave `dbdesk.app`**; the manual says how to rename it | Renaming it from the app would break MCP paths and fail without write access. Open: the maintainer may prefer the app to rename itself once. |
+| Which release | **0.13.0, with R4** | No dbdesk copy runs DbRover's Windows installer as an update. |
+| macOS identifier | `io.github.navasvarela.dbrover` | Same scheme as today; doesn't depend on owning a domain. |
+| Logo | **Keep the Strata mark**, no wordmark | It has no lettering; only the social preview changes. |
+| dbdesk.org | **Redirect, and renew for two years at least** | Old copies open its manual. |
+
+### Risks
+
+- **Two copies drifting apart.** Where dbdesk stays installed (`.deb`, Windows, an MCP client
+  still pointing at it), it keeps writing to its own folder, which DbRover no longer reads.
+  Statements an old `dbdesk mcp` records after the copy aren't in DbRover's history. The
+  release notes and the file left in the old folder say so.
+- **The redirect is GitHub's to keep.** It holds while no repository takes the old name. If it
+  ever broke, copies of 0.12.0 and earlier would stop seeing updates and need one manual
+  install.
+- **In-place macOS updates keep the dbdesk folder name** until the user renames it.
+- **dbdesk.org down between the Pages switch and the Cloudflare change.** Prepare the rule
+  first and change the records straight after, so the gap is a minute or two.
+- **The certificate takes a while.** GitHub issues it only after its DNS check passes, which
+  can take up to a day, so dbrover.org is set up first, before any layer links to it.
+- **Search results and old links** point at dbdesk.org and the old repository for a while;
+  both redirect.
+
+### Exit
+
+A Mac running dbdesk 0.12.0 with saved data sources, a saved password, a console, history,
+a custom `theme.toml` and an MCP client set up is offered DbRover 0.13.0, installs it from the
+app and restarts into DbRover with all of it there. Its first connection asks for Keychain
+access once and connects, and the MCP client still starts through the old path. An AppImage
+does the same. On Windows and with the `.deb`, a fresh DbRover install finds dbdesk's data the
+same way. `https://dbdesk.org/manual/install.html` lands on
+`https://dbrover.org/manual/install.html`.
