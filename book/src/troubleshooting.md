@@ -120,3 +120,22 @@ prints it) and click **Reload**. See [Commands](customising.md#on-a-mac-and-on-w
 
 **View → Reset layout** puts every panel back where it started. If you closed the Welcome tab,
 this brings it back too.
+
+## Reporting a problem
+
+**Help › Report a problem…** opens a new bug report on GitHub in your browser, with DbRover's
+version, the commit it was built from and your system (such as `macOS, aarch64`) filled in.
+Nothing else goes with it. Add your system's version, what you did, what happened and what you
+expected, and attach the day's log file (see [Where to look first](#where-to-look-first)).
+Issues are public: read the log first and leave out anything you'd rather not post, such as
+host names or the text of your queries.
+
+Without DbRover at hand, open an issue at
+[github.com/navasvarela/dbrover/issues](https://github.com/navasvarela/dbrover/issues/new/choose)
+and copy the version from **Help › About DbRover › Copy version**, or from `dbrover --version`
+in a terminal.
+
+For a question rather than a problem, such as how to do something or whether something is
+expected, **Help › Ask a question…** starts a discussion in the Q&A category of
+[GitHub Discussions](https://github.com/navasvarela/dbrover/discussions). Ideas for new
+features are welcome there too, or as a feature request in the issues.
