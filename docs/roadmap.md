@@ -1071,16 +1071,18 @@ shows one static screenshot under six equal cards. In layers, one PR each:
 - **D6a — Plan:** this section.
 - **D6b — Content:** every stale statement corrected and the copy rewritten on the current
   layout; the page states facts only, each one backed by the manual.
-- **D6c — Layout:** a hero with a short, specific headline and a download button that names
+- **D6c — Pictures and clips:** the screenshot machinery records frames while a scene
+  scripts typing and clicks, and renders the tour's pictures in both themes; `site/clips.sh`
+  encodes them with ffmpeg into WebM (VP9) and MP4 (H.264) with a poster, and the stills into
+  WebP. The hero clip opens a data source, expands the tree, types a query with completion,
+  runs it and filters the results in the database. This lands before the layout, so the
+  layout's first commit already has its pictures and no placeholder images enter the history.
+- **D6d — Layout:** a hero with a short, specific headline and a download button that names
   the visitor's platform and the version; a strip of three differentiators; a feature tour in
   alternating rows, each with its own picture (writing SQL, the results grid, changing the
   schema, staying safe, AI assistants through MCP, connecting anywhere, making it yours); and a
   download section for every platform, with the checksums and the updater. Works at phone
   width, in both themes, in the D1 palette and fonts.
-- **D6d — Clips:** the screenshot machinery records frames while a scene scripts typing and
-  clicks, and `site/clips.sh` encodes them with ffmpeg into WebM (VP9) and MP4 (H.264) with a
-  poster. The hero clip opens a data source, expands the tree, types a query with completion,
-  runs it and filters the results in the database.
 - **D6e — Docs:** regenerating the clips in [testing.md](testing.md), the README, and the demo
   note.
 
@@ -1120,6 +1122,25 @@ Risks:
   step with the code, so a stale claim has one obvious place to be checked against.
 - **Numbers on the page** (download size) are measured from the release's files and say so;
   they are updated by hand when a release changes them noticeably.
+- **A version bump goes live before its release.** Merging the bump to `main` redeploys the
+  page with the new version's download links, which 404 until the tag's release is published.
+  Tag and publish right after merging the bump.
 
 **Exit:** dbdesk.org says how to download the current release for each platform, shows every
 major feature with a picture or clip in both themes, and reads well on a phone.
+
+**Demo note:** built. <https://dbdesk.org> opens on "Seven databases, one native app" and a
+13-second clip of dbdesk opening a SQLite data source, completing `SELECT * FROM orders`,
+running it and having the database filter and sort the rows, in the visitor's theme. The
+download button names the platform and version (**Download for macOS · v0.11.0**), with the
+AppImage and `.deb` beside it; three differentiators follow, then seven rows: writing SQL, the
+grid, changing the schema, staying safe, MCP, connecting, and the files that make it yours, each
+with a picture cropped to what it shows (the last shows the files themselves), in light or dark
+to match the page. The download section covers macOS, Linux and Windows, the checksums and the
+updater. Modify table and H1's files carry a **Next release** label until the release after
+0.11.0. The pictures and clip are rendered by `screenshots::site::record_site_media` and encoded
+by `site/clips.sh` (see [testing.md](testing.md#website-pictures-and-clips)): 2.6 MB in all,
+the clip about 0.3 MB as MP4 and 0.4 MB as WebM per theme, each still under 60 KB. Download
+sizes on the page were read from the v0.11.0 release's assets (`gh release view v0.11.0 --json
+assets`): the AppImage is 38,885,880 bytes, the `.dmg` 78,262,644. No startup time or memory
+figure is claimed, because none was measured.

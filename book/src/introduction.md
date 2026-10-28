@@ -2,10 +2,10 @@
 
 <img src="images/logo.svg" alt="" width="72">
 
-dbdesk is a desktop tool to browse and query databases. It connects to **PostgreSQL** and
-**SQLite** (more engines, such as MySQL, ClickHouse and Oracle, are planned), shows what is
-inside them as a tree, and gives you query consoles to write and run SQL, page through, sort and
-export the results, and edit rows.
+dbdesk is a desktop tool to browse and query databases. It connects to **PostgreSQL**,
+**MySQL**, **MariaDB**, **SQLite**, **SQL Server**, **DuckDB** and **ClickHouse** (Oracle is
+planned), shows what is inside them as a tree, and gives you query consoles to write and run
+SQL, page through, sort and export the results, and edit rows.
 
 ![dbdesk with the explorer, a query console and the log console](images/workspace.png)
 

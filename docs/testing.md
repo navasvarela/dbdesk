@@ -255,6 +255,38 @@ leaving its image as it was: `host-key-prompt` connects through the `ssh` servic
 `console-reconnect` ends its own PostgreSQL session. Every scene's log console shows the time,
 so regenerating changes every image a little; commit only the images whose scene changed.
 
+### Website pictures and clips
+
+The front page's pictures and its hero clip come from the same machinery. A sibling ignored
+test, `screenshots::site::record_site_media`, renders the feature tour's scenes in both themes
+at a smaller window (1024 × 720 points, so the interface reads at the size the page shows it),
+cropped to what each row of the tour is about (a dialog, or the console), and records each
+clip: the scene scripts the pointer, clicks and typing, and a frame is rendered after every
+step, with a pointer and a ring around each click drawn in. Then `site/clips.sh` encodes them
+into `site/media/`, which is committed:
+
+```bash
+cargo test -p dbdesk-app record_site_media -- --ignored
+```
+
+```bash
+site/clips.sh
+```
+
+The test writes into `target/site-media` (`DBDESK_SITE_MEDIA_DIR` elsewhere): each still as
+`<scene>-<theme>.png`, and each clip as numbered frames in `<clip>-<theme>/` with a
+`frames.ffconcat` giving each frame's duration. A clip's time is the script's, not the clock's:
+waiting for the engine adds no frames, so a slow machine records the same clip.
+`DBDESK_SITE_MEDIA=hero` (a comma-separated list of clips and scenes) renders only those.
+
+`site/clips.sh` needs ffmpeg and ffprobe with libvpx-vp9 and libx264, and cwebp (`brew install
+ffmpeg webp`). Each clip becomes a VP9 `.webm`, an H.264 `.mp4` for browsers without VP9, and a
+`-poster.png` of its last frame, shown to visitors who ask for reduced motion; each still
+becomes a `.webp`. The files keep their names, so regenerating replaces them in place: never
+add a second version, since every byte stays in the repository's history. Keep each clip under
+about 2 MB and each still under about 200 KB, and regenerate only when the UI visibly changes.
+Like the screenshots, nothing here runs in CI.
+
 ## User manual
 
 The manual in `book/` is an mdBook. `mdbook build book` builds it into `book/book/html` and,
@@ -264,8 +296,9 @@ Install both with `cargo install mdbook --version 0.5.4` and
 
 ## Website
 
-`site/build.sh` assembles the website (`site/` plus the manual) into `target/site`; preview it
-with `python3 -m http.server -d target/site`. The Pages workflow checks the landing page's links
+`site/build.sh` assembles the website (`site/` plus the manual) into `target/site`, writing the
+workspace version from `Cargo.toml` into the page's download links; preview it with
+`python3 -m http.server -d target/site`. The Pages workflow checks the landing page's links
 with `lychee --offline`, which fails on a link to a file the build didn't produce.
 
 ## CI
