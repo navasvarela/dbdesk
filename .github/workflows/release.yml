@@ -141,7 +141,7 @@ jobs:
           "$binary" --version | tee version.txt
           grep -q "dbdesk $VERSION" version.txt
           hdiutil detach -quiet "$mount"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: macos
           path: |
@@ -198,7 +198,7 @@ jobs:
           dpkg-deb -x "dist/dbdesk_${VERSION}_amd64.deb" deb-root
           deb-root/usr/bin/dbdesk --version | tee deb.txt
           grep -q "dbdesk $VERSION" deb.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux
           path: |
@@ -257,7 +257,7 @@ jobs:
           $version = & "$env:RUNNER_TEMP\dbdesk-installed\dbdesk.exe" --version
           $version
           if ("$version" -notlike "dbdesk $env:VERSION*") { throw "unexpected version: $version" }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows
           path: dist/*-setup.exe
@@ -274,7 +274,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
