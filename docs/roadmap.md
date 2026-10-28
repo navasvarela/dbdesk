@@ -512,6 +512,23 @@ and users, from a **New** submenu and object actions in the explorer. The full p
   - identity and auto-increment columns, kept by Modify table and written by Copy DDL;
   - SQLite's table rebuild last, in its own layer.
 
+  **E4 demo note:** built. Right-click `orders` → **Modify table…**: the dialog loads the
+  table, its keys and checks under their own names. Rename `status` to `state` and add
+  `shipped_at text`, and the panel shows `ALTER TABLE main.orders RENAME COLUMN status TO
+  state;` and `… ADD COLUMN shipped_at text;`; **Execute** keeps every row. Remove a row and
+  the dialog says which column's values go. On PostgreSQL every change happens in place, with
+  a **USING** field for a retyped column; MySQL restates a retyped column with `MODIFY
+  COLUMN`; SQL Server drops and re-adds a column's named default around a change; DuckDB and
+  ClickHouse refuse in the dialog what they can't do ("DuckDB can't add keys or checks to an
+  existing table."). On SQLite, a new type rebuilds the table: a new table, the rows copied,
+  the old one dropped and the new one renamed, its indexes and triggers created again, then
+  columns renamed and dropped in place so SQLite rewrites the views and keys that name them,
+  all in one transaction with foreign keys off and checked before committing. Copy DDL on
+  PostgreSQL and SQL Server now keeps identity columns. Covered by golden tests per dialect,
+  an engine round trip on every engine with a test server that alters a table with rows and
+  loads it back, a SQLite rebuild test that keeps rows, an index, a trigger, a view and a
+  cascading key, and kittest tests of the dialog on SQLite.
+
 ## MCP track
 
 An MCP server, so AI assistants can browse and query dbdesk's data sources, grouped into

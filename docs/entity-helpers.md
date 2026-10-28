@@ -1,7 +1,7 @@
 # Creating and changing database objects
 
-Status: **E0, E1 and E2 built** (2026-10-26), **E3 built** (2026-10-27); E4 planned in
-detail (2026-10-28). Proposed
+Status: **E0, E1 and E2 built** (2026-10-26), **E3 built** (2026-10-27), **E4 built**
+(2026-10-28). Proposed
 on 2026-10-23; on 2026-10-26 indexes moved from Later into E1 and schemas into E2.
 
 Today the explorer only reads: it browses the catalog, opens a table's data and shows
@@ -334,6 +334,25 @@ Changing an existing table is the hardest helper, so it comes last.
 
 **Exit:** I change a column's type and add a foreign key on a table with rows, on both engines,
 and nothing is lost.
+
+**As built:**
+- The layers went as planned. Identity columns came first, so the spec the diff compares was
+  complete before it was written.
+- SQLite's `ALTER TABLE … RENAME TO` checks every view and trigger first, and refuses while one
+  names the table the rebuilt one is about to replace, so the rebuild wraps that one rename in
+  `PRAGMA legacy_alter_table = ON` and `OFF`; the renames and drops in place after it run with
+  it off, so SQLite still rewrites and checks what names their columns.
+- A rebuild is confirmed like a destructive change (the table's name typed on a red data
+  source), since it drops the table after copying it; so is dropping columns.
+- Renaming a column in the grid renames it in the dialog's key lists too, so its keys keep it.
+- Key columns are never nullable in a loaded spec, as in a new one: SQLite reports its
+  `INTEGER PRIMARY KEY` as nullable.
+- SQLite keeps no names for unique and foreign keys outside the `CREATE TABLE` text, so a
+  rebuild writes them unnamed. Its checks are read from that text.
+- ClickHouse's sort key isn't read back, so its tables load without a primary key, and ticking
+  one is refused, as any key change there is.
+- Not built: changing a column's identity, reordering columns, and moving a table to another
+  schema, each refused with the reason.
 
 ## Later
 
