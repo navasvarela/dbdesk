@@ -26,7 +26,6 @@ else. This plan replaces it with downloads that install like any other desktop a
 | Linux x86_64 | `dbrover-<version>-x86_64.AppImage` | Download, `chmod +x`, run; works on most distributions |
 | Linux x86_64, Debian/Ubuntu | `dbrover_<version>_amd64.deb` | `sudo apt install ./dbrover_<version>_amd64.deb` |
 | Windows 10+ x86_64 | `dbrover-<version>-windows-x64-setup.exe` | Run the installer; it installs for the current user, without administrator rights. Or `winget install DbRover.DbRover` |
-| Arch Linux x86_64 | The `.deb`'s files, repackaged | `yay -S dbrover-bin`, or any AUR helper |
 
 Every release also has `SHA256SUMS`, and release notes generated from the Conventional Commits
 since the previous release. ARM Linux and ARM Windows wait until someone asks.
@@ -228,22 +227,25 @@ installer and its `latest.json` entry out of a release.
 Each points at the files of a GitHub release; none builds DbRover again. The in-app updater
 keeps working where it did: the cask installs the same `.app`, so it says `auto_updates true`
 and Homebrew leaves updating to the app, and winget runs the same per-user installer, which
-the updater replaces as before. The AUR package installs the `.deb`'s files, which, like the
-`.deb`, the updater doesn't replace; its dialog points to the release page.
+the updater replaces as before.
 
 | Channel | Where | After each release | Secret |
 | --- | --- | --- | --- |
 | Homebrew | Cask `dbrover` in [navasvarela/homebrew-tap](https://github.com/navasvarela/homebrew-tap): `brew install --cask navasvarela/tap/dbrover` | `packages.yml` sets the version and the `.dmg`'s checksum and pushes | `HOMEBREW_TAP_TOKEN`: fine-grained, Contents read and write on the tap only |
 | winget | `DbRover.DbRover` in [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs) | `packages.yml` runs [komac](https://github.com/russellbanks/Komac) `update`, which opens a pull request; winget's validation pipeline checks it and a moderator merges it | `WINGET_TOKEN`: classic, `public_repo` |
-| AUR | `dbrover-bin` on [aur.archlinux.org](https://aur.archlinux.org/packages/dbrover-bin) | By hand: set `pkgver` and the checksum in `PKGBUILD`, `makepkg --printsrcinfo > .SRCINFO`, push | None; the maintainer's AUR SSH key |
 
 Without its secret, a job says so and does nothing, so a release never fails over a package
 manager. **Actions › Packages › Run workflow** with a tag redoes a release's bumps. The first
-version in each was submitted by hand: the tap repository, its cask, the first winget manifest
-and the AUR package.
+version in each went in by hand on 2026-10-28: the tap repository with its cask, and the first
+winget manifest
+([microsoft/winget-pkgs#464341](https://github.com/microsoft/winget-pkgs/pull/464341)).
 
 **Not yet:**
 
+- **The AUR,** a `dbrover-bin` package repackaging the `.deb`, after the soft launch. It is
+  ready (a `PKGBUILD` that installs the `.deb`'s files) and needs the maintainer's AUR account,
+  with an SSH key, to publish and then update by hand each release. Arch users can run the
+  AppImage meanwhile.
 - **Scoop:** its main bucket takes no GUI apps, and Extras expects an app people already know;
   winget covers Windows meanwhile.
 - **Flathub:** builds from source in its own sandbox, with every crate vendored and the in-app
@@ -477,7 +479,7 @@ Settled on 2026-10-23, except the row marked open:
 | Windows | **CI job now, installer once tried on a real machine.** | R1 adds Windows to CI and the release workflow builds the installer, but it is attached to releases only after someone has run it on Windows. Attached since v0.12.0. Tried on a real Windows machine on 2026-10-28: it installs and works, and SmartScreen blocked the unsigned installer at first. |
 | Windows signing | **Open**, for the maintainer. Recommended for an individual in Spain: SignPath Foundation, then an OV certificate in a vendor's cloud if it declines; Azure Artifact Signing only for an organization (see [Signing the Windows installer](#signing-the-windows-installer)). | Planned for after the app's rename. Until then releases are unsigned and SmartScreen blocks the installer's first run; the manual says how to get past it. The chosen option's steps then go in the release workflow's windows job. |
 | Homebrew | **A tap, `navasvarela/homebrew-tap`**, decided on 2026-10-28. | homebrew/cask has disabled casks that fail Gatekeeper since September 2026, so an unsigned app can't go there; the tap's caveats say how to open it. Move to homebrew/cask once builds are notarized. |
-| Package managers | **Homebrew tap, winget and the AUR**, decided on 2026-10-28. Not Scoop or Flathub yet. | See [Package managers](#package-managers). |
+| Package managers | **Homebrew tap and winget**, decided on 2026-10-28; the AUR after the soft launch. Not Scoop or Flathub yet. | See [Package managers](#package-managers). |
 
 ## Renaming to DbRover
 

@@ -11,8 +11,8 @@ from the latest release's **Assets**.
 | Debian, Ubuntu and derivatives | `dbrover_<version>_amd64.deb` |
 | Windows 10 or 11, 64-bit Intel or AMD | `dbrover-<version>-windows-x64-setup.exe` |
 
-Or install it with your system's package manager: [Homebrew](#with-homebrew) on macOS,
-[winget](#with-winget) on Windows, or the [AUR](#arch-linux-from-the-aur) on Arch Linux.
+Or install it with your system's package manager: [Homebrew](#with-homebrew) on macOS, or
+[winget](#with-winget) on Windows.
 
 ## macOS
 
@@ -50,16 +50,6 @@ chmod +x dbrover-*-x86_64.AppImage
 ```bash
 sudo apt install ./dbrover_*_amd64.deb
 ```
-
-### Arch Linux, from the AUR
-
-`dbrover-bin` installs the files of the `.deb` with pacman. With an AUR helper such as yay:
-
-```bash
-yay -S dbrover-bin
-```
-
-Your AUR helper updates it with the rest of the system.
 
 Saved passwords go to the Secret Service (GNOME Keyring, KWallet), which desktop environments
 already run. On a bare window manager without one, see [Troubleshooting](troubleshooting.md).
@@ -133,11 +123,11 @@ Check for updates…** asks at any time.
   version starts. Windows can't replace a program that is running, so if you carry on instead,
   the update waits until you choose **Restart now**, or is downloaded again next time. The
   installer closes any other DbRover window that is still open.
-- **The `.deb`, the AUR package, a Windows copy that wasn't installed with the installer, and
-  builds from source:** these can't replace themselves, and the dialog says why. **Open release
-  page** leads to the download; install it as above, or update the AUR package with your AUR
-  helper. Copies installed on Windows from version 0.12.0 or earlier are in this group too:
-  install the next version from the release page once, and it updates itself from then on.
+- **The `.deb`, a Windows copy that wasn't installed with the installer, and builds from
+  source:** these can't replace themselves, and the dialog says why. **Open release page**
+  leads to the download; install it as above. Copies installed on Windows from version 0.12.0
+  or earlier are in this group too: install the next version from the release page once, and
+  it updates itself from then on.
 
 An update that isn't signed with DbRover's key is refused before anything is replaced. On macOS,
 until DbRover's builds are signed by Apple, the first launch after an update asks again for
