@@ -698,9 +698,9 @@ Customisation without rebuilding dbdesk, from files to commands to plugins. The 
   recolours selection and buttons on **Reload**; `[dark] text_weak = "#444444"` applies and
   lists each text it makes unreadable. Covered by the tests in
   [Testing](testing.md#actions-snippets-and-themes-h1).
-- **H2 — Commands:** an action in `actions.toml` runs a program instead of SQL, with no shell
-  and never a secret, getting the grid's selection on stdin and sending its output to a viewer,
-  a new console, the log or nowhere. In layers, one PR each:
+- **H2 — Commands:** built (2026-10-28). An action in `actions.toml` runs a program instead of
+  SQL, with no shell and never a secret, getting the grid's selection on stdin and sending its
+  output to a viewer, a new console, the log or nowhere. In layers, one PR each:
   - **H2a — Plan:** this section, and the design points it settles in
     [Hackability](hackability.md#h2--commands).
   - **H2b — Reading command actions:** an action has either `sql` or `command`, never both.
@@ -726,7 +726,8 @@ Customisation without rebuilding dbdesk, from files to commands to plugins. The 
     the exit code and stderr. **View → Actions…** says which commands are trusted. Tested with
     kittest UI tests of each output, against a scripted program runner instead of real
     processes.
-  - **H2e — Manual:** the book's actions chapter, [Testing](testing.md), and the demo note.
+  - **H2e — Manual:** the book's actions chapter, a troubleshooting entry for a program that
+    isn't found, [Testing](testing.md), and the demo note.
 
   Decisions:
 
@@ -817,6 +818,25 @@ Customisation without rebuilding dbdesk, from files to commands to plugins. The 
   in `pgcli`; a program that writes SQL opens its output in a console; a runaway command is
   stopped by its timeout and by ⌘.; a table named with a quote, a space and a semicolon reaches
   the command as one argument; no saved password reaches any command.
+
+  **H2 demo note:** built. Add **Send rows to jq** to `actions.toml` (`applies_to =
+  ["grid.selection"]`, `command = ["/opt/homebrew/bin/jq", "-r", ".[] | .email"]`, `stdin =
+  "json"`). Open a table's data, select some emails, right-click and choose it: **Run a
+  program?** shows the command as written, "the selected cells, as JSON", "shown in a window"
+  and "1m". **Run** opens **Output of Send rows to jq** with one email a line; the next time it
+  runs without asking, and **View → Actions…** says **Trusted: runs without asking**. Change
+  `-r` to `-c` and **Reload**: it asks again. Written as plain `jq`, a Mac app opened from the
+  Finder says "jq was not found in dbdesk's PATH (/usr/bin:/bin:/usr/sbin:/sbin)". **Dump to
+  SQL** (`pg_dump --table={qualified_name} …`, `output = "console"`) on a table opens the dump in
+  a new console, unrun. A command on a table called `it's; DROP TABLE orders; --` gets it as one
+  argument. A `["sleep", "600"]` action shows **Running Sleep…** with **Stop** in the status bar;
+  Stop or ⌘. ends it with **Sleep stopped**, and `timeout = "2s"` opens **Sleep failed**:
+  "stopped after 2s without finishing". `["false"]` opens a window with "false failed (exit
+  status: 1)". The `pgcli` example opens in a terminal that takes a command (`gnome-terminal --`
+  on Linux, `alacritty -e` or `kitty` on a Mac); Terminal.app can't be given one. Covered by the
+  tests in [Testing](testing.md#command-actions-h2): the engine's run real processes, the app's a
+  scripted runner. The programs this note names (`jq`, `pg_dump`, `sleep`, `false`, the
+  terminals) were not run by hand in the app for it.
 - **H3 — WebAssembly plugins (later):** sandboxed and capability-based, over the same extension
   points, started once at least three real needs outgrow H1 and H2.
 

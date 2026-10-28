@@ -1,7 +1,8 @@
 # Hackability
 
 Status: **H1 built** (2026-10-28, in layers H1a–H1f in the
-[roadmap](roadmap.md#hackability-track)); **H2 planned** in layers H2a–H2e there; H3 later. Proposed on 2026-10-24. The
+[roadmap](roadmap.md#hackability-track)); **H2 built** (2026-10-28, in layers H2a–H2e there);
+H3 later. Proposed on 2026-10-24. The
 decision behind it is [ADR 0005](adr/0005-customisation-files-commands-then-wasm.md).
 
 Personalisation is one of the two reasons dbdesk exists (see [Vision](vision.md)). Today you can
