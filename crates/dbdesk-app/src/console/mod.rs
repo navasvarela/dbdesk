@@ -5,7 +5,7 @@
 
 mod catalog_lint;
 mod catalog_source;
-mod cell_viewer;
+pub(crate) mod cell_viewer;
 mod completion;
 mod completion_popup;
 mod edit;

@@ -28,18 +28,22 @@ fn contents(ui: &mut egui::Ui, viewed: &ViewedCell) {
         ui.label(RichText::new("NULL").italics().weak());
         return;
     };
+    text_view(ui, value);
+}
+
+/// Long text laid out for reading, JSON and XML indented, with **Copy** for it as it is. The
+/// cell viewer's, and a command action's output's.
+pub fn text_view(ui: &mut egui::Ui, value: &str) {
     let pretty = pretty(value);
     ui.horizontal(|ui| {
         if ui.button("Copy").clicked() {
-            ui.ctx().copy_text(value.clone());
+            ui.ctx().copy_text(value.to_owned());
         }
         if let Some((structure, _)) = &pretty {
             ui.weak(structure.note());
         }
     });
-    let mut shown = pretty
-        .as_ref()
-        .map_or(value.as_str(), |(_, text)| text.as_str());
+    let mut shown = pretty.as_ref().map_or(value, |(_, text)| text.as_str());
     ScrollArea::both().auto_shrink(false).show(ui, |ui| {
         // A `&str` buffer makes the editor read-only but still selectable.
         ui.add(

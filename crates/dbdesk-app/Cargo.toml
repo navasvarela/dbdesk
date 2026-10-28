@@ -43,6 +43,7 @@ objc2-app-kit.workspace = true
 objc2-foundation.workspace = true
 
 [dev-dependencies]
+async-trait.workspace = true
 egui_kittest = { workspace = true, features = ["eframe", "snapshot", "wgpu"] }
 rmcp = { workspace = true, features = ["client", "transport-child-process"] }
 rusqlite.workspace = true
