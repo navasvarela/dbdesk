@@ -39,6 +39,7 @@ fn run_with(
         parameters: parameters.clone(),
         transactions: TransactionMode::Auto,
         purpose: RunPurpose::Run,
+        origin: RunOrigin::Console,
     });
     let mut rows = Vec::new();
     let mut failure = None;

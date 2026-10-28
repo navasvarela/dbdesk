@@ -19,8 +19,8 @@ use dbdesk_core::{
 };
 use dbdesk_core::{Quoting, RejectionKind, TransactionStatus};
 use dbdesk_engine::{
-    Command, ConsoleId, EditFailure, Event, PasswordUpdate, RowEdit, RunId, RunOutcome, RunPurpose,
-    SessionState, StatementCheck, StatementFailure, TransactionEnd, TransactionMode,
+    Command, ConsoleId, EditFailure, Event, PasswordUpdate, RowEdit, RunId, RunOrigin, RunOutcome,
+    RunPurpose, SessionState, StatementCheck, StatementFailure, TransactionEnd, TransactionMode,
 };
 use dbdesk_store::{HistoryOutcome, HistoryQuery};
 
@@ -71,6 +71,7 @@ fn execute_in(
         parameters: dbdesk_sql::ParameterValues::default(),
         transactions,
         purpose: RunPurpose::Run,
+        origin: RunOrigin::Console,
     });
 }
 
@@ -800,6 +801,7 @@ fn explains_on_sqlserver_with_showplan_and_switches_it_off() {
         parameters: dbdesk_sql::ParameterValues::default(),
         transactions: TransactionMode::Auto,
         purpose: RunPurpose::Explain,
+        origin: RunOrigin::Console,
     };
 
     engine.send(explain(

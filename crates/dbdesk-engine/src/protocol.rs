@@ -9,9 +9,9 @@ use dbdesk_core::{
 };
 use dbdesk_sql::{ExistingTable, ParameterValues};
 use dbdesk_store::{
-    ConsoleKey, CustomFile, ExportFormat, HistoryEntry, HistoryQuery, ImportPlan, ImportPreview,
-    KeymapBindings, McpOverrides, McpPermissions, Project, Projects, RowChange, SavedConsole,
-    Secret, Separator, Settings, SqlFileContents,
+    ActionId, ConsoleKey, CustomFile, ExportFormat, HistoryEntry, HistoryQuery, ImportPlan,
+    ImportPreview, KeymapBindings, McpOverrides, McpPermissions, Project, Projects, RowChange,
+    SavedConsole, Secret, Separator, Settings, SqlFileContents,
 };
 
 use crate::{Export, ExportAll, HostKey, PasswordNeeded, Release, WatchedFile};
@@ -154,6 +154,7 @@ pub enum Command {
         parameters: ParameterValues,
         transactions: TransactionMode,
         purpose: RunPurpose,
+        origin: RunOrigin,
     },
     /// Commits or rolls back the console's open transaction. Answered by
     /// [`Event::TransactionEnded`].
@@ -735,6 +736,16 @@ pub enum RunPurpose {
     /// setting instead (SQL Server's `SHOWPLAN_XML`), the engine switches that on before the
     /// statements and off after them, whatever happens.
     Explain,
+}
+
+/// What started a run, which the history records with its statements.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum RunOrigin {
+    /// Typed in the console, or run again from it.
+    #[default]
+    Console,
+    /// A custom action from `actions.toml`, filled in and run at once.
+    Action(ActionId),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

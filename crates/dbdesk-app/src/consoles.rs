@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use dbdesk_core::{CatalogPath, DataSource, DataSourceId, SafetyLevel};
-use dbdesk_engine::{Command, ConsoleId, Event, RunId, RunPurpose, TransactionMode, WatchedFile};
+use dbdesk_engine::{
+    Command, ConsoleId, Event, RunId, RunOrigin, RunPurpose, TransactionMode, WatchedFile,
+};
 use dbdesk_sql::{Dialect, FormatOptions, ParameterValues};
 use dbdesk_store::{ConsoleKey, ConsoleName, ExportFormat, SqlFileContents};
 
@@ -258,9 +260,36 @@ impl Consoles {
             statements,
             purpose: RunPurpose::Run,
             parameters: ParameterValues::default(),
+            origin: RunOrigin::Console,
         };
         let command = self.start_run(&key, run)?;
         Some((key, command))
+    }
+
+    /// Opens a console holding an action's filled-in SQL. With `run`, runs all of it as typed
+    /// SQL runs: asking for parameters and confirmations first, and recording it as the action's
+    /// in the history.
+    pub fn open_action(
+        &mut self,
+        data_source: &DataSource,
+        text: String,
+        run: Option<RunOrigin>,
+    ) -> (ConsoleKey, Option<Command>) {
+        let key = self.open(data_source, text);
+        let Some(origin) = run else {
+            return (key, None);
+        };
+        let Some(console) = self.open.get(&key) else {
+            return (key, None);
+        };
+        let run = SubmittedRun {
+            statements: console.statements_to_run(RunScope::All),
+            purpose: RunPurpose::Run,
+            parameters: ParameterValues::default(),
+            origin,
+        };
+        let command = self.submit(&key, run);
+        (key, command)
     }
 
     /// Closes the console's tab and connection. Its file is kept, with the latest text, if
@@ -421,7 +450,8 @@ impl Consoles {
             | ConsoleAction::Export(..)
             | ConsoleAction::LoadCatalog(_)
             | ConsoleAction::Format(_)
-            | ConsoleAction::OpenRows(_) => None,
+            | ConsoleAction::OpenRows(_)
+            | ConsoleAction::RunAction(..) => None,
         }
     }
 
@@ -494,6 +524,7 @@ impl Consoles {
                 .map(|statement| statement.sql)
                 .collect(),
             parameters: submitted.parameters,
+            origin: submitted.origin,
         })
     }
 
@@ -579,6 +610,7 @@ mod tests {
                 .collect(),
             purpose: RunPurpose::Run,
             parameters,
+            origin: RunOrigin::Console,
         })
     }
 

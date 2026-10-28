@@ -32,8 +32,9 @@ fn open_submenu(harness: &mut Harness<'_, DbDeskApp>, title: &str) {
 fn item<'h>(harness: &'h Harness<'_, DbDeskApp>, command: &AppCommand) -> egui_kittest::Node<'h> {
     let label = command.label().into_owned();
     let shortcut = command
-        .shortcut()
-        .and_then(|action| Keymap::default().hint(&harness.ctx, action))
+        .shortcuts(&Keymap::default())
+        .first()
+        .map(|shortcut| harness.ctx.format_shortcut(shortcut))
         .unwrap_or_default();
     harness.get_by(move |node| {
         node.label().is_some_and(|text| {
@@ -81,9 +82,10 @@ fn lists_every_command_with_its_shortcut_and_state() {
         console_focused: false,
         has_data_sources: false,
         theme: ThemePreference::System,
+        subject: None,
     };
 
-    for menu in commands::egui_menu_bar([]) {
+    for menu in commands::egui_menu_bar([], &[]) {
         click(&mut harness, menu.title);
         check_entries(&mut harness, &menu.entries, &state);
         // Clicking the title again closes the menu and any submenu it opened.

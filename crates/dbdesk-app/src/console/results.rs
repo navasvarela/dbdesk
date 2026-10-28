@@ -4,16 +4,20 @@
 use dbdesk_core::{Cell, ColumnInfo, Row};
 use dbdesk_engine::{RunId, StatementSummary};
 use dbdesk_sql::first_word;
-use dbdesk_store::ExportFormat;
+use dbdesk_store::{ActionId, CustomAction, ExportFormat};
 use egui::{Align, Label, Layout, RichText, Sense, TextEdit, Ui};
 use egui_extras::{Column, TableBuilder};
 
 use super::edit::{CellEditor, EditSession, Editability, PendingEdits, RowRef};
 use super::grid::{CellPos, GridView, SortKey};
 use super::keys::{KeyLinks, RowsToOpen};
-use super::{ConsoleAction, ExportedRows, QueryConsole, RunState, StatementView, ViewedCell};
+use super::{
+    ConsoleAction, ExportedRows, QueryConsole, RunState, StatementView, ViewedCell, selected_cells,
+};
+use crate::custom_actions::GridCells;
 use crate::keymap::{Action, Keymap};
 use crate::theme::{GRID_HEADER_TINT, Palette};
+use crate::{icons, widgets};
 
 const COLUMN_WIDTH: f32 = 140.0;
 const MIN_COLUMN_WIDTH: f32 = 40.0;
@@ -31,6 +35,7 @@ pub fn show(
     ui: &mut Ui,
     console: &mut QueryConsole,
     keymap: &Keymap,
+    cell_actions: &[&CustomAction],
     actions: &mut Vec<ConsoleAction>,
 ) {
     let dialect = console.dialect;
@@ -62,13 +67,18 @@ pub fn show(
             exporting: console.exporting,
         };
         let rearrange = grid_toolbar(ui, statement, &toolbar, actions);
-        grid_output = grid(ui, run_id, statement, keymap);
+        grid_output = grid(ui, run_id, statement, keymap, cell_actions);
         grid_output.rearrange |= rearrange;
     }
     if let Some(viewed) = grid_output.viewed {
         console.viewed_cell = Some(viewed);
     }
     actions.extend(grid_output.open.map(ConsoleAction::OpenRows));
+    actions.extend(
+        grid_output
+            .action
+            .map(|(action, cells)| ConsoleAction::RunAction(action, cells)),
+    );
     if grid_output.rearrange {
         match console.rearrange() {
             Ok(run) => actions.push(ConsoleAction::Run(run)),
@@ -410,6 +420,8 @@ struct GridOutput {
     open: Option<RowsToOpen>,
     /// The sort changed, for the database to apply by running the statement again.
     rearrange: bool,
+    /// A custom action chosen on the selected cells.
+    action: Option<(ActionId, GridCells)>,
 }
 
 /// What the user did to a cell this frame, applied once the table is drawn.
@@ -433,9 +445,17 @@ enum CellInput {
     /// Unmark a loaded row marked for deletion.
     Restore(usize),
     Open(RowsToOpen),
+    /// A custom action chosen on this cell, which joins the selection if it isn't in it.
+    Action(CellPos, ActionId),
 }
 
-fn grid(ui: &mut Ui, run: RunId, statement: &mut StatementView, keymap: &Keymap) -> GridOutput {
+fn grid(
+    ui: &mut Ui,
+    run: RunId,
+    statement: &mut StatementView,
+    keymap: &Keymap,
+    cell_actions: &[&CustomAction],
+) -> GridOutput {
     let StatementView {
         columns,
         rows,
@@ -511,6 +531,7 @@ fn grid(ui: &mut Ui, run: RunId, statement: &mut StatementView, keymap: &Keymap)
                                     defaults: &defaults,
                                     links,
                                     palette,
+                                    cell_actions,
                                 };
                                 cell(ui, cell_pos, &context)
                             }
@@ -560,6 +581,13 @@ fn grid(ui: &mut Ui, run: RunId, statement: &mut StatementView, keymap: &Keymap)
             CellInput::Delete(row) => edits.delete_rows(&[row]),
             CellInput::Restore(row) => edits.pending.restore(row),
             CellInput::Open(rows) => output.open = Some(rows),
+            CellInput::Action(cell, action) => {
+                if !grid.is_selected(cell) {
+                    grid.select(cell);
+                }
+                output.action =
+                    selected_cells(columns, rows, grid, edits).map(|cells| (action, cells));
+            }
         }
     }
     if let Some(cell) = grid.selected_cell()
@@ -730,6 +758,7 @@ struct CellContext<'a> {
     defaults: &'a [NewCell],
     links: &'a KeyLinks,
     palette: &'a Palette,
+    cell_actions: &'a [&'a CustomAction],
 }
 
 impl CellContext<'_> {
@@ -764,6 +793,7 @@ struct MenuChoice {
     delete: bool,
     restore: bool,
     open: Option<RowsToOpen>,
+    action: Option<ActionId>,
 }
 
 /// Draws a cell, highlighted if selected, and its pending value if it was edited: click
@@ -831,6 +861,8 @@ fn cell(ui: &mut Ui, pos: CellPos, context: &CellContext<'_>) -> Option<CellInpu
         .or_else(|| referenced.filter(|_| command_clicked))
     {
         Some(CellInput::Open(rows))
+    } else if let Some(action) = choice.action {
+        Some(CellInput::Action(pos, action))
     } else if choice.edit || (editable && response.double_clicked()) {
         Some(CellInput::Edit { row, column })
     } else if choice.set_null {
@@ -907,6 +939,14 @@ fn cell_menu(
                 }
                 RowRef::Loaded(_) => choice.delete = ui.button("Delete row").clicked(),
                 RowRef::New(_) => choice.delete = ui.button("Remove row").clicked(),
+            }
+        }
+        if matches!(context.row, RowRef::Loaded(_)) && !context.cell_actions.is_empty() {
+            ui.separator();
+            for action in context.cell_actions {
+                if widgets::menu_item(ui, icons::MAGIC_WAND, &action.name).clicked() {
+                    choice.action = Some(action.id.clone());
+                }
             }
         }
     });

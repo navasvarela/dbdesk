@@ -19,9 +19,13 @@ use crate::theme::Palette;
 use crate::widgets::{self, IconButton};
 use dbdesk_core::{CatalogPath, RelationName};
 use dbdesk_core::{SafetyLevel, TransactionStatus};
-use dbdesk_engine::{RunId, RunOutcome, RunPurpose, SessionState, TransactionEnd, TransactionMode};
+use dbdesk_engine::{
+    RunId, RunOrigin, RunOutcome, RunPurpose, SessionState, TransactionEnd, TransactionMode,
+};
 use dbdesk_sql::{ProblemSource, Severity};
-use dbdesk_store::ExportFormat;
+use dbdesk_store::{ActionId, CustomAction, ExportFormat};
+
+use crate::custom_actions::GridCells;
 
 /// What the console's keys can do while its editor has focus.
 const EDITOR_ACTIONS: [Action; 16] = [
@@ -77,6 +81,8 @@ pub enum ConsoleAction {
     Reconnect,
     /// Opens rows a foreign key leads to, in a new console on the same data source.
     OpenRows(RowsToOpen),
+    /// Runs a custom action from `actions.toml` on the grid's selected cells.
+    RunAction(ActionId, GridCells),
 }
 
 /// What a console draws with besides its own state.
@@ -88,6 +94,8 @@ pub struct ConsoleContext<'a> {
     pub lint: &'a LintOptions,
     /// Completions accepted lately, which rank first.
     pub recent: &'a RecentCompletions,
+    /// The custom actions the grid's cell menu offers, for this console's driver.
+    pub cell_actions: &'a [&'a CustomAction],
 }
 
 pub fn show(
@@ -113,7 +121,7 @@ pub fn show(
     });
     splitter(ui, console);
     ui.allocate_ui(vec2(width, results_height), |ui| {
-        results::show(ui, console, keymap, actions);
+        results::show(ui, console, keymap, context.cell_actions, actions);
     });
     cell_viewer::show(ui.ctx(), console);
     actions.extend(
@@ -247,6 +255,7 @@ fn perform(console: &QueryConsole, action: Action, actions: &mut Vec<ConsoleActi
             statements,
             purpose,
             parameters: dbdesk_sql::ParameterValues::default(),
+            origin: RunOrigin::Console,
         }));
     }
 }

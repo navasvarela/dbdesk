@@ -9,6 +9,8 @@ use egui::KeyboardShortcut;
 use muda::accelerator::{Key, KeyAccelerator, Modifiers, NamedKey};
 use muda::{CheckMenuItem, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu};
 
+use dbdesk_store::CustomAction;
+
 use super::pasteboard;
 use crate::commands::{self, AppCommand, CommandState, EditCommand, Entry, Menu, SystemItem};
 use crate::keymap::Keymap;
@@ -18,6 +20,7 @@ pub struct NativeMenu {
     /// What the menu was last built from; a change rebuilds it.
     recent_files: Vec<PathBuf>,
     keymap: Keymap,
+    actions: Vec<CustomAction>,
     built: Built,
     /// Ids of the items picked since the last frame, from muda's event handler.
     picked: Receiver<MenuId>,
@@ -37,12 +40,13 @@ impl NativeMenu {
             repaint.request_repaint();
         }));
         let keymap = Keymap::default();
-        let built = Built::new(&[], &keymap)
+        let built = Built::new(&[], &keymap, &[])
             .inspect_err(|error| tracing::warn!("couldn't build the macOS menu bar: {error}"))
             .ok()?;
         Some(Self {
             recent_files: Vec::new(),
             keymap,
+            actions: Vec::new(),
             built,
             picked,
         })
@@ -60,16 +64,24 @@ impl NativeMenu {
             .collect()
     }
 
-    /// Brings enabled and checked marks up to date, and rebuilds the menu when the recent files
-    /// or the keymap changed, which happens rarely enough not to track item by item.
-    pub fn sync(&mut self, state: &CommandState, keymap: &Keymap, recent_files: &[PathBuf]) {
-        if self.recent_files != recent_files || self.keymap != *keymap {
-            match Built::new(recent_files, keymap) {
+    /// Brings enabled and checked marks up to date, and rebuilds the menu when the recent files,
+    /// the keymap or the custom actions changed, which happens rarely enough not to track item
+    /// by item.
+    pub fn sync(
+        &mut self,
+        state: &CommandState,
+        keymap: &Keymap,
+        recent_files: &[PathBuf],
+        actions: &[CustomAction],
+    ) {
+        if self.recent_files != recent_files || self.keymap != *keymap || self.actions != actions {
+            match Built::new(recent_files, keymap, actions) {
                 Ok(built) => self.built = built,
                 Err(error) => tracing::warn!("couldn't rebuild the macOS menu bar: {error}"),
             }
             recent_files.clone_into(&mut self.recent_files);
             self.keymap = keymap.clone();
+            actions.clone_into(&mut self.actions);
         }
         for item in &mut self.built.items {
             item.sync(state);
@@ -99,14 +111,18 @@ struct Built {
 }
 
 impl Built {
-    fn new(recent_files: &[PathBuf], keymap: &Keymap) -> muda::Result<Self> {
+    fn new(
+        recent_files: &[PathBuf],
+        keymap: &Keymap,
+        actions: &[CustomAction],
+    ) -> muda::Result<Self> {
         let mut built = Self {
             _menu: muda::Menu::new(),
             items: Vec::new(),
             chosen: HashMap::new(),
         };
         let mut submenus = Vec::new();
-        for menu in commands::macos_menu_bar(recent_files.iter().cloned()) {
+        for menu in commands::macos_menu_bar(recent_files.iter().cloned(), actions) {
             let submenu = built.submenu(&menu, keymap)?;
             built._menu.append(&submenu)?;
             submenus.push((menu.title, submenu));
@@ -184,8 +200,9 @@ impl CommandItem {
     fn new(command: AppCommand, index: usize, keymap: &Keymap) -> muda::Result<Self> {
         let id = format!("{}#{index}", command.id());
         let accelerator = command
-            .shortcut()
-            .and_then(|action| keymap.bindings(action).first().copied())
+            .shortcuts(keymap)
+            .first()
+            .copied()
             .or_else(|| command.system_shortcut())
             .and_then(|shortcut| key_accelerator(&shortcut));
         let label = command.label();

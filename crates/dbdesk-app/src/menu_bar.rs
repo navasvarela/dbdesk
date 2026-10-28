@@ -62,11 +62,8 @@ fn item(ui: &mut Ui, command: &AppCommand, state: &CommandState, keymap: &Keymap
         return choice(ui, command, checked);
     }
     let mut button = Button::new(command.label());
-    if let Some(shortcut) = command
-        .shortcut()
-        .and_then(|action| keymap.hint(ui.ctx(), action))
-    {
-        button = button.shortcut_text(shortcut);
+    if let Some(shortcut) = command.shortcuts(keymap).first() {
+        button = button.shortcut_text(ui.ctx().format_shortcut(shortcut));
     }
     let mut response = ui.add_enabled(command.enabled(state), button);
     if let Some(tooltip) = command.tooltip() {

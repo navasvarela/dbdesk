@@ -23,6 +23,8 @@ pub enum HistorySource {
     Export,
     /// An MCP client, through `dbdesk mcp`, with the name it gave when it connected.
     Mcp { client: Option<String> },
+    /// A custom action from `actions.toml`, by its id.
+    Action { id: String },
     /// dbdesk, before it recorded where a statement came from: rows written before the history
     /// had provenance, or since then by an older dbdesk sharing the file.
     Dbdesk,
@@ -37,17 +39,19 @@ pub enum HistorySourceKind {
     Import,
     Export,
     Mcp,
+    Action,
     Dbdesk,
 }
 
 impl HistorySourceKind {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Console,
         Self::GridEdit,
         Self::ObjectHelper,
         Self::Import,
         Self::Export,
         Self::Mcp,
+        Self::Action,
         Self::Dbdesk,
     ];
 
@@ -62,6 +66,7 @@ impl HistorySourceKind {
             Self::Import => "import",
             Self::Export => "export",
             Self::Mcp => "mcp",
+            Self::Action => "action",
             Self::Dbdesk => "app",
         }
     }
@@ -80,6 +85,7 @@ impl HistorySource {
             Self::Import { .. } => HistorySourceKind::Import,
             Self::Export => HistorySourceKind::Export,
             Self::Mcp { .. } => HistorySourceKind::Mcp,
+            Self::Action { .. } => HistorySourceKind::Action,
             Self::Dbdesk => HistorySourceKind::Dbdesk,
         }
     }
@@ -106,6 +112,7 @@ impl HistorySource {
         match self {
             Self::Import { file } => Some(file.to_string_lossy().into_owned()),
             Self::Mcp { client } => client.clone(),
+            Self::Action { id } => Some(id.clone()),
             _ => None,
         }
     }
@@ -133,6 +140,9 @@ impl HistorySource {
             },
             HistorySourceKind::Export => Self::Export,
             HistorySourceKind::Mcp => Self::Mcp { client: detail },
+            HistorySourceKind::Action => Self::Action {
+                id: detail.unwrap_or_default(),
+            },
             HistorySourceKind::Dbdesk => Self::Dbdesk,
         })
     }
@@ -162,6 +172,9 @@ mod tests {
                 client: Some("claude-ai".to_owned()),
             },
             HistorySource::Mcp { client: None },
+            HistorySource::Action {
+                id: "row-count".to_owned(),
+            },
             HistorySource::Dbdesk,
         ];
         for source in sources {

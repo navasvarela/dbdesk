@@ -5,8 +5,11 @@
 use std::borrow::Cow;
 use std::path::PathBuf;
 
+use dbdesk_store::CustomAction;
 use egui::{Event, Key, KeyboardShortcut, Modifiers, ThemePreference};
 
+use crate::custom_actions::SubjectKind;
+use crate::keymap::Keymap;
 use crate::{icons, keymap};
 
 /// Something a menu item does.
@@ -39,6 +42,8 @@ pub enum AppCommand {
     /// Closes the window the usual way, which asks first about open transactions and unsaved
     /// files.
     Quit,
+    /// A custom action from `actions.toml`, on what is selected.
+    RunAction(Box<CustomAction>),
 }
 
 /// What decides whether a command can run and which item is checked, gathered once a frame.
@@ -48,13 +53,16 @@ pub struct CommandState {
     pub console_focused: bool,
     pub has_data_sources: bool,
     pub theme: ThemePreference,
+    /// What custom actions would act on: the focused console's cells, or the explorer's node.
+    pub subject: Option<SubjectKind>,
 }
 
 impl AppCommand {
     /// A stable name for the command, for native menu items and tests. Commands that are
-    /// keymap actions share the action's id.
-    pub fn id(&self) -> &'static str {
-        match self {
+    /// keymap actions share the action's id, custom actions their `custom.<id>`.
+    pub fn id(&self) -> Cow<'static, str> {
+        let id = match self {
+            Self::RunAction(action) => return Cow::Owned(action.id.keymap_id()),
             Self::OpenFile => keymap::Action::OpenFile.id(),
             Self::Save => keymap::Action::Save.id(),
             Self::SaveAs => keymap::Action::SaveAs.id(),
@@ -74,11 +82,13 @@ impl AppCommand {
             Self::About => "help.about",
             Self::OpenManual => "help.manual",
             Self::Quit => "app.quit",
-        }
+        };
+        Cow::Borrowed(id)
     }
 
     pub fn label(&self) -> Cow<'_, str> {
         let label = match self {
+            Self::RunAction(action) => return Cow::Borrowed(&action.name),
             Self::OpenRecent(path) => {
                 return path.file_name().map_or_else(
                     || Cow::Owned(path.display().to_string()),
@@ -120,6 +130,16 @@ impl AppCommand {
         }
     }
 
+    /// The keys that run the command too, which the menu shows: its keymap action's, or for a
+    /// custom action what `keymap.toml` gives `custom.<id>`.
+    pub fn shortcuts<'k>(&self, keymap: &'k Keymap) -> &'k [KeyboardShortcut] {
+        match (self, self.shortcut()) {
+            (Self::RunAction(action), _) => keymap.custom_bindings(&action.id),
+            (_, Some(action)) => keymap.bindings(action),
+            (_, None) => &[],
+        }
+    }
+
     #[cfg_attr(
         not(target_os = "macos"),
         allow(dead_code, reason = "only the macOS menu bar has it")
@@ -157,6 +177,14 @@ impl AppCommand {
             Self::ImportDataSources => Some(Cow::Borrowed(
                 "Add or update data sources from an exported file",
             )),
+            Self::RunAction(action) => {
+                let targets: Vec<&str> = action
+                    .applies_to
+                    .iter()
+                    .map(|target| target.name())
+                    .collect();
+                Some(Cow::Owned(format!("On {}", targets.join(", "))))
+            }
             _ => None,
         }
     }
@@ -168,6 +196,7 @@ impl AppCommand {
             Self::Save | Self::SaveAs | Self::Format | Self::FormatAll => {
                 Some("Select a query console first")
             }
+            Self::RunAction(_) => Some("Select something the action applies to first"),
             _ => None,
         }
     }
@@ -176,6 +205,7 @@ impl AppCommand {
         match self {
             Self::Save | Self::SaveAs | Self::Format | Self::FormatAll => state.console_focused,
             Self::ExportDataSources => state.has_data_sources,
+            Self::RunAction(action) => state.subject.is_some_and(|subject| subject.offers(action)),
             _ => true,
         }
     }
@@ -323,8 +353,12 @@ pub enum Entry {
 }
 
 /// The menu bar drawn by egui: on Windows and Linux, and wherever there is no native one.
-/// `recent_files` are the files for File › Open recent, most recent first.
-pub fn egui_menu_bar(recent_files: impl IntoIterator<Item = PathBuf>) -> Vec<Menu> {
+/// `recent_files` are the files for File › Open recent, most recent first; `actions` are
+/// `actions.toml`'s.
+pub fn egui_menu_bar(
+    recent_files: impl IntoIterator<Item = PathBuf>,
+    actions: &[CustomAction],
+) -> Vec<Menu> {
     use AppCommand as C;
     use Entry::{Command, Separator, Submenu};
     vec![
@@ -350,6 +384,7 @@ pub fn egui_menu_bar(recent_files: impl IntoIterator<Item = PathBuf>) -> Vec<Men
             ],
         },
         code(),
+        actions_menu(actions),
         Menu {
             title: HELP_MENU,
             entries: vec![Command(C::CheckForUpdates), Command(C::About)],
@@ -363,7 +398,10 @@ pub fn egui_menu_bar(recent_files: impl IntoIterator<Item = PathBuf>) -> Vec<Men
     not(target_os = "macos"),
     allow(dead_code, reason = "only the macOS menu bar has it")
 )]
-pub fn macos_menu_bar(recent_files: impl IntoIterator<Item = PathBuf>) -> Vec<Menu> {
+pub fn macos_menu_bar(
+    recent_files: impl IntoIterator<Item = PathBuf>,
+    actions: &[CustomAction],
+) -> Vec<Menu> {
     use AppCommand as C;
     use Entry::{Command, Edit, Separator, Submenu, System};
     vec![
@@ -421,6 +459,7 @@ pub fn macos_menu_bar(recent_files: impl IntoIterator<Item = PathBuf>) -> Vec<Me
             ],
         },
         code(),
+        actions_menu(actions),
         Menu {
             title: WINDOW_MENU,
             entries: vec![
@@ -479,6 +518,21 @@ fn code() -> Menu {
     }
 }
 
+/// The custom actions, for what is selected.
+fn actions_menu(actions: &[CustomAction]) -> Menu {
+    let mut entries: Vec<Entry> = actions
+        .iter()
+        .map(|action| Entry::Command(AppCommand::RunAction(Box::new(action.clone()))))
+        .collect();
+    if entries.is_empty() {
+        entries.push(Entry::Note("No actions in actions.toml"));
+    }
+    Menu {
+        title: "Actions",
+        entries,
+    }
+}
+
 /// Every command in `menus` and their submenus, in menu order.
 #[cfg(test)]
 pub fn commands_in(menus: &[Menu]) -> Vec<&AppCommand> {
@@ -508,6 +562,7 @@ mod tests {
         console_focused: false,
         has_data_sources: false,
         theme: ThemePreference::System,
+        subject: None,
     };
 
     fn menu<'a>(menus: &'a [Menu], title: &str) -> &'a Menu {
@@ -520,8 +575,8 @@ mod tests {
     #[test]
     fn ids_are_unique() {
         for menus in [
-            egui_menu_bar([PathBuf::from("/tmp/a.sql")]),
-            macos_menu_bar([PathBuf::from("/tmp/a.sql")]),
+            egui_menu_bar([PathBuf::from("/tmp/a.sql")], &[]),
+            macos_menu_bar([PathBuf::from("/tmp/a.sql")], &[]),
         ] {
             let mut seen = HashSet::new();
             for command in commands_in(&menus) {
@@ -533,9 +588,9 @@ mod tests {
     #[test]
     fn the_macos_menu_bar_has_every_command_of_egui_s() {
         let recent = || [PathBuf::from("/tmp/a.sql")];
-        let macos_menus = macos_menu_bar(recent());
+        let macos_menus = macos_menu_bar(recent(), &[]);
         let macos = commands_in(&macos_menus);
-        for command in commands_in(&egui_menu_bar(recent())) {
+        for command in commands_in(&egui_menu_bar(recent(), &[])) {
             assert!(macos.contains(&command), "{command:?} is missing on macOS");
         }
     }
@@ -586,13 +641,16 @@ mod tests {
 
     #[test]
     fn the_menu_bar_has_the_menus_in_order() {
-        let titles: Vec<_> = egui_menu_bar([]).iter().map(|menu| menu.title).collect();
-        assert_eq!(titles, ["File", "View", "Code", "Help"]);
+        let titles: Vec<_> = egui_menu_bar([], &[])
+            .iter()
+            .map(|menu| menu.title)
+            .collect();
+        assert_eq!(titles, ["File", "View", "Code", "Actions", "Help"]);
     }
 
     #[test]
     fn open_recent_lists_the_files_then_clear() {
-        let menus = egui_menu_bar([PathBuf::from("/work/a.sql"), PathBuf::from("b.sql")]);
+        let menus = egui_menu_bar([PathBuf::from("/work/a.sql"), PathBuf::from("b.sql")], &[]);
         let Some(Entry::Submenu(recent)) = menu(&menus, "File").entries.get(1) else {
             panic!("File's second entry is not Open recent");
         };
@@ -612,7 +670,7 @@ mod tests {
 
     #[test]
     fn open_recent_says_when_there_are_none() {
-        let menus = egui_menu_bar([]);
+        let menus = egui_menu_bar([], &[]);
         let Some(Entry::Submenu(recent)) = menu(&menus, "File").entries.get(1) else {
             panic!("File's second entry is not Open recent");
         };
@@ -674,8 +732,52 @@ mod tests {
     }
 
     #[test]
+    fn custom_actions_wait_for_what_they_apply_to() {
+        use dbdesk_core::{DriverKind, NodeKind};
+        use dbdesk_store::{ActionTarget, parse_actions};
+
+        use crate::custom_actions::SubjectOn;
+
+        let actions = parse_actions(
+            "[[action]]\nid = \"row-count\"\nname = \"Row count\"\napplies_to = [\"table\"]\n\
+             sql = \"SELECT count(*) FROM {qualified_name}\"\n",
+        )
+        .value;
+        let menus = egui_menu_bar([], &actions);
+        let [Entry::Command(command)] = menu(&menus, "Actions").entries.as_slice() else {
+            panic!("the Actions menu doesn't hold the one action");
+        };
+        let on = |target| CommandState {
+            subject: Some(SubjectKind {
+                driver: DriverKind::Sqlite,
+                on: SubjectOn::Node(target),
+            }),
+            ..NOTHING_OPEN
+        };
+
+        assert_eq!(command.id(), "custom.row-count");
+        assert_eq!(command.label(), "Row count");
+        assert!(command.enabled(&on(ActionTarget::Node(NodeKind::Table))));
+        assert!(!command.enabled(&on(ActionTarget::Node(NodeKind::Column))));
+        assert!(!command.enabled(&NOTHING_OPEN));
+        let id = actions[0].id.clone();
+        let keymap = Keymap::from_file(
+            &[("custom.row-count".to_owned(), vec!["f6".to_owned()])].into(),
+            &[&id],
+        );
+        assert_eq!(
+            command.shortcuts(&keymap),
+            [KeyboardShortcut::new(Modifiers::NONE, Key::F6)]
+        );
+        assert_eq!(
+            menu(&egui_menu_bar([], &[]), "Actions").entries,
+            [Entry::Note("No actions in actions.toml")]
+        );
+    }
+
+    #[test]
     fn keymap_commands_show_and_answer_to_their_action() {
-        for command in commands_in(&egui_menu_bar([])) {
+        for command in commands_in(&egui_menu_bar([], &[])) {
             if let Some(action) = command.shortcut() {
                 assert_eq!(AppCommand::for_action(action).as_ref(), Some(command));
                 assert_eq!(command.id(), action.id());

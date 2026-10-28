@@ -421,6 +421,11 @@ fn source_badge(ui: &mut Ui, source: &HistorySource) {
                 None => "Run by an MCP client, through dbdesk mcp".to_owned(),
             },
         ),
+        HistorySource::Action { id } => (
+            "Action",
+            palette.text_weak,
+            format!("Run by the action {id} from actions.toml"),
+        ),
         HistorySource::Dbdesk => (
             "dbdesk",
             palette.text_weak,

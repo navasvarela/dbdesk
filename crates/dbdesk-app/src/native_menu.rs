@@ -31,7 +31,13 @@ impl NativeMenu {
         match *self {}
     }
 
-    pub fn sync(&mut self, _: &CommandState, _: &Keymap, _: &[std::path::PathBuf]) {
+    pub fn sync(
+        &mut self,
+        _: &CommandState,
+        _: &Keymap,
+        _: &[std::path::PathBuf],
+        _: &[dbdesk_store::CustomAction],
+    ) {
         match *self {}
     }
 }
