@@ -58,7 +58,7 @@ use crate::unsaved_dialog::{UnsavedChoice, UnsavedConfirmation};
 use crate::update_dialog::{self, UpdateAction};
 use crate::updates::Updates;
 use crate::workspace::{self, Panels, Tab};
-use crate::{fonts, relaunch, welcome, widgets};
+use crate::{feedback, fonts, relaunch, welcome, widgets};
 
 /// Where the dock layout is saved. Versioned so a change to the default layout reaches people
 /// who already have one saved: layouts under an older key are ignored once, and the default
@@ -1592,6 +1592,12 @@ impl DbRoverApp {
             }
             AppCommand::About => self.about_open = true,
             AppCommand::OpenManual => ctx.open_url(egui::OpenUrl::new_tab(welcome::MANUAL_URL)),
+            AppCommand::ReportProblem => {
+                ctx.open_url(egui::OpenUrl::new_tab(feedback::bug_report_url()));
+            }
+            AppCommand::AskQuestion => {
+                ctx.open_url(egui::OpenUrl::new_tab(feedback::new_question_url()));
+            }
             AppCommand::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             AppCommand::RunAction(action) => self.run_action_on_selection(&action.id),
         }

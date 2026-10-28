@@ -24,6 +24,7 @@ egui.workspace = true
 egui_dock.workspace = true
 egui_extras.workspace = true
 egui-phosphor.workspace = true
+form_urlencoded.workspace = true
 image.workspace = true
 jiff.workspace = true
 regex.workspace = true
