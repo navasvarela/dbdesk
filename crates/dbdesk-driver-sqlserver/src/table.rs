@@ -6,7 +6,8 @@
 //! tables apart, so it is looked up there and reported under the name statements use.
 
 use dbdesk_core::{
-    ColumnDescription, DriverError, ForeignKey, RelationName, TableDescription, TableName,
+    ColumnDescription, DriverError, ForeignKey, Identity, IdentityGeneration, RelationName,
+    TableDescription, TableName,
 };
 
 use crate::{SQL_SERVER_QUOTING, SqlClient, column, connection_error};
@@ -177,10 +178,13 @@ async fn columns(
            WHEN TYPE_NAME(c.system_type_id) IN ('decimal', 'numeric') \
              THEN '(' + CAST(c.precision AS varchar(3)) + ', ' + CAST(c.scale AS varchar(3)) + ')' \
            ELSE '' END, \
-         CAST(c.is_nullable AS int), d.definition \
+         CAST(c.is_nullable AS int), d.definition, \
+         CAST(i.seed_value AS bigint), CAST(i.increment_value AS bigint) \
          FROM {catalog}.columns c \
          LEFT JOIN {catalog}.default_constraints d \
            ON d.parent_object_id = c.object_id AND d.parent_column_id = c.column_id \
+         LEFT JOIN {catalog}.identity_columns i \
+           ON i.object_id = c.object_id AND i.column_id = c.column_id \
          WHERE c.object_id = OBJECT_ID(@P1, N'U') ORDER BY c.column_id"
     );
     let rows = client
@@ -202,9 +206,20 @@ async fn columns(
                     .to_owned(),
                 nullable: column::<i32>(row, 2) == Some(1),
                 default: column::<&str>(row, 3).map(str::to_owned),
+                identity: identity(row),
             })
         })
         .collect()
+}
+
+/// An identity column's seed and increment, which SQL Server always numbers itself unless a
+/// session turns `IDENTITY_INSERT` on.
+fn identity(row: &tiberius::Row) -> Option<Identity> {
+    Some(Identity {
+        generation: IdentityGeneration::Always,
+        start: column::<i64>(row, 4)?,
+        increment: column::<i64>(row, 5)?,
+    })
 }
 
 async fn names_of(

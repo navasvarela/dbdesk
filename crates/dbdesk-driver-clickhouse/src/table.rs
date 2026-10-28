@@ -79,6 +79,7 @@ fn described_column(row: Vec<Option<String>>) -> Option<ColumnDescription> {
     Some(ColumnDescription {
         nullable: is_nullable(&data_type),
         default: expression.filter(|_| default_kind.as_deref() == Some("DEFAULT")),
+        identity: None,
         name,
         data_type,
     })

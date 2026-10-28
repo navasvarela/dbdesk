@@ -2,6 +2,8 @@
 
 use std::collections::HashSet;
 
+use dbdesk_core::{Identity, IdentityGeneration};
+
 use super::{
     Check, ColumnSpec, DdlError, ForeignKey, ObjectName, ReferentialAction, TableSpec, UniqueKey,
     column_list, quote_name, require_name,
@@ -18,8 +20,12 @@ pub(super) fn create(spec: &TableSpec, dialect: Dialect) -> Result<String, DdlEr
         .iter()
         .map(|column| column_definition(column, dialect))
         .collect();
-    // ClickHouse's primary key is its sort order, written after the column list.
-    if !spec.primary_key.is_empty() && dialect != Dialect::ClickHouse {
+    // ClickHouse's primary key is its sort order, written after the column list; SQLite's
+    // `AUTOINCREMENT` key is written on its column.
+    if !spec.primary_key.is_empty()
+        && dialect != Dialect::ClickHouse
+        && !(dialect == Dialect::Sqlite && has_identity(spec))
+    {
         lines.push(format!(
             "PRIMARY KEY {}",
             column_list(dialect, &spec.primary_key)
@@ -60,7 +66,11 @@ fn clickhouse_engine(spec: &TableSpec) -> String {
     format!("\nENGINE = MergeTree\nORDER BY {order}")
 }
 
-fn column_definition(column: &ColumnSpec, dialect: Dialect) -> String {
+fn has_identity(spec: &TableSpec) -> bool {
+    spec.columns.iter().any(|column| column.identity.is_some())
+}
+
+pub(super) fn column_definition(column: &ColumnSpec, dialect: Dialect) -> String {
     let name = quote_name(dialect, &column.name);
     let data_type = column.data_type.trim();
     let mut definition = match dialect {
@@ -70,6 +80,9 @@ fn column_definition(column: &ColumnSpec, dialect: Dialect) -> String {
         }
         _ => format!("{name} {data_type}"),
     };
+    if let Some(identity) = column.identity {
+        definition.push_str(&identity_clause(identity, dialect));
+    }
     if let Some(default) = column.default.as_deref().map(str::trim)
         && !default.is_empty()
     {
@@ -85,6 +98,34 @@ fn column_definition(column: &ColumnSpec, dialect: Dialect) -> String {
         (_, true) => {}
     }
     definition
+}
+
+/// How the dialect says the database numbers a column, after its type. `validate` refused
+/// the dialects without identity columns.
+fn identity_clause(identity: Identity, dialect: Dialect) -> String {
+    let counting = Identity::counting(identity.generation);
+    let custom = identity.start != counting.start || identity.increment != counting.increment;
+    match dialect {
+        Dialect::Postgres => {
+            let generation = match identity.generation {
+                IdentityGeneration::Always => "ALWAYS",
+                IdentityGeneration::ByDefault => "BY DEFAULT",
+            };
+            let options = if custom {
+                format!(
+                    " (START WITH {} INCREMENT BY {})",
+                    identity.start, identity.increment
+                )
+            } else {
+                String::new()
+            };
+            format!(" GENERATED {generation} AS IDENTITY{options}")
+        }
+        Dialect::SqlServer => format!(" IDENTITY({}, {})", identity.start, identity.increment),
+        Dialect::Mysql => " AUTO_INCREMENT".to_owned(),
+        Dialect::Sqlite => " PRIMARY KEY AUTOINCREMENT".to_owned(),
+        Dialect::DuckDb | Dialect::ClickHouse => String::new(),
+    }
 }
 
 fn constraint_name(name: Option<&str>, dialect: Dialect) -> String {
@@ -186,6 +227,7 @@ fn validate(spec: &TableSpec, dialect: Dialect) -> Result<(), DdlError> {
     }
     let capabilities = dialect.capabilities();
     let unsupported = |what| DdlError::Unsupported { what, dialect };
+    validate_identity(spec, dialect)?;
     if !spec.unique_keys.is_empty() && !capabilities.unique_keys {
         return Err(unsupported("unique keys"));
     }
@@ -221,6 +263,28 @@ fn validate(spec: &TableSpec, dialect: Dialect) -> Result<(), DdlError> {
         return Err(DdlError::EmptyCheck);
     }
     Ok(())
+}
+
+fn validate_identity(spec: &TableSpec, dialect: Dialect) -> Result<(), DdlError> {
+    let mut numbered = spec
+        .columns
+        .iter()
+        .filter(|column| column.identity.is_some());
+    let Some(first) = numbered.next() else {
+        return Ok(());
+    };
+    let unsupported = |what| DdlError::Unsupported { what, dialect };
+    match dialect {
+        Dialect::DuckDb | Dialect::ClickHouse => Err(unsupported("identity columns")),
+        // Both allow one numbered column per table, which SQLite also needs to be the key.
+        Dialect::Mysql | Dialect::SqlServer | Dialect::Sqlite if numbered.next().is_some() => {
+            Err(unsupported("second identity column in a table"))
+        }
+        Dialect::Sqlite if spec.primary_key != [first.name.clone()] => Err(unsupported(
+            "AUTOINCREMENT on a column that isn't the whole primary key",
+        )),
+        _ => Ok(()),
+    }
 }
 
 fn referential_action_name(action: ReferentialAction) -> &'static str {
