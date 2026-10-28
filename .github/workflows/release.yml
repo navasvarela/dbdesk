@@ -241,6 +241,22 @@ jobs:
           cargo packager --config crates/dbdesk-app/packager-windows.json --release --formats nsis \
             --out-dir "$(cygpath -m "$GITHUB_WORKSPACE/dist")"
           mv dist/*-setup.exe "dist/dbdesk-$VERSION-windows-x64-setup.exe"
+      # The installer is also the Windows update: installed copies download it, check this
+      # signature, and run it once dbdesk has quit. It's signed in a step of its own, after
+      # the rename, so the signature names the file users download and nothing changes the
+      # bytes after it. Pull requests from forks get no secrets and skip it; the release job
+      # refuses a release without it.
+      - name: Sign the update package
+        env:
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [[ -z "$CARGO_PACKAGER_SIGN_PRIVATE_KEY" ]]; then
+            echo "No update signing key, so the installer isn't signed as an update."
+            exit 0
+          fi
+          cargo packager signer sign "dist/dbdesk-$VERSION-windows-x64-setup.exe"
+          test -s "dist/dbdesk-$VERSION-windows-x64-setup.exe.sig"
       - name: Smoke test
         run: |
           target/release/dbdesk.exe --version | tee version.txt
@@ -260,7 +276,9 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: windows
-          path: dist/*-setup.exe
+          path: |
+            dist/*-setup.exe
+            dist/*-setup.exe.sig
           if-no-files-found: error
 
   release:
@@ -278,15 +296,17 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      # The Windows installer is built and tested on every release but only attached once
-      # someone has tried it on a real Windows machine and set the repository variable
-      # WINDOWS_RELEASES to "true" (Settings > Secrets and variables > Actions > Variables).
+      # The Windows installer is built and tested on every release, and attached while the
+      # repository variable WINDOWS_RELEASES is "true" (Settings > Secrets and variables >
+      # Actions > Variables). It has been since v0.12.0, whose installer was then tried on a
+      # real Windows machine. Anything else leaves the installer, and its latest.json entry, out.
       - if: vars.WINDOWS_RELEASES != 'true'
-        run: rm -f dist/*-setup.exe
+        run: rm -f dist/*-setup.exe dist/*-setup.exe.sig
       # The manifest installed copies read to update themselves (crates/dbdesk-app/src/
       # updates.rs reads it through `releases/latest/download/latest.json`). The universal
-      # macOS package serves both Mac architectures. A missing signature fails the release:
-      # a release that can't be installed as an update must not become the latest.
+      # macOS package serves both Mac architectures, and the Windows installer is listed when
+      # it is attached. A missing signature fails the release: a release that can't be
+      # installed as an update must not become the latest.
       - name: Update manifest
         working-directory: dist
         run: |
@@ -307,6 +327,14 @@ jobs:
                 "linux-x86_64": {url: $linux_url, signature: ($linux_sig | rtrimstr("\n")), format: "appimage"}
               }
             }' > latest.json
+          windows="dbdesk-$VERSION-windows-x64-setup.exe"
+          if [[ -f "$windows" ]]; then
+            jq --arg url "$base/$windows" --rawfile sig "$windows.sig" \
+              '.platforms["windows-x86_64"] =
+                {url: $url, signature: ($sig | rtrimstr("\n")), format: "nsis"}' \
+              latest.json > latest-windows.json
+            mv latest-windows.json latest.json
+          fi
           rm -- *.sig
           cat latest.json
       - name: Checksums

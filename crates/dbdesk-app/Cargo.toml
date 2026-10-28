@@ -87,6 +87,12 @@ resources = [
 [package.metadata.packager.macos]
 minimumSystemVersion = "11.0"
 
+# cargo-packager's default, written down because updates depend on it: a per-user install in
+# %LOCALAPPDATA%\dbdesk needs no administrator rights, so the updater can run the installer
+# without elevation, and the installer finds the previous location in HKCU and installs there.
+[package.metadata.packager.nsis]
+installMode = "currentUser"
+
 [package.metadata.packager.deb]
 section = "database"
 # The rest (glibc, Wayland or X11) is on every desktop installation; passwords need a Secret
