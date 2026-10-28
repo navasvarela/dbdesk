@@ -33,6 +33,14 @@ Website: **<https://dbrover.org>**, with the
 [user manual](https://dbrover.org/manual/), which explains how to install and
 use DbRover. Its sources are in `book/`; `mdbook serve book` shows it locally.
 
+## Problems and questions
+
+Something wrong? In DbRover, **Help › Report a problem…** opens a new issue with the version
+and system filled in, or [open one here](https://github.com/navasvarela/dbrover/issues/new/choose).
+Questions and ideas go to [Discussions](https://github.com/navasvarela/dbrover/discussions).
+The manual's [Troubleshooting](https://dbrover.org/manual/troubleshooting.html) chapter covers
+the common problems and where the logs are.
+
 ## Building and running
 
 The everyday commands are recipes in the `justfile`, for [just](https://github.com/casey/just)
