@@ -1,5 +1,7 @@
 /* The dbdesk website. Colours are the app's palette (crates/dbdesk-app/src/theme.rs and
-   docs/brand.md), dark first, with the light theme when the visitor's system asks for it. */
+   docs/brand.md), dark first, with the light theme when the visitor's system asks for it. The
+   pictures follow the same rule: <picture> and <video> pick their light versions with
+   (prefers-color-scheme: light), so a page and its pictures never disagree. */
 
 @font-face {
   font-family: "Inter";
@@ -36,7 +38,10 @@
   --duckdb: #fff000;
   --clickhouse: #ffcc01;
   --glow-strength: 0.22;
+  --shadow: 0 24px 60px rgb(0 0 0 / 0.4);
   --radius: 12px;
+  --width: 1160px;
+  --gutter: max(20px, env(safe-area-inset-left));
   --font: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
   color-scheme: dark;
@@ -60,6 +65,7 @@
     --duckdb: #8a7800;
     --clickhouse: #9a6a00;
     --glow-strength: 0.16;
+    --shadow: 0 24px 60px rgb(29 31 38 / 0.18);
     color-scheme: light;
   }
 }
@@ -82,27 +88,48 @@ body::before {
   content: "";
   position: absolute;
   inset: 0 0 auto;
-  height: 720px;
+  height: 900px;
   z-index: -1;
   background:
-    radial-gradient(40% 80% at 30% 0%, rgb(154 139 255 / var(--glow-strength)), transparent 70%),
-    radial-gradient(40% 80% at 70% 0%, rgb(45 212 191 / var(--glow-strength)), transparent 70%);
+    radial-gradient(40% 70% at 25% 0%, rgb(154 139 255 / var(--glow-strength)), transparent 70%),
+    radial-gradient(40% 70% at 75% 0%, rgb(45 212 191 / var(--glow-strength)), transparent 70%);
   pointer-events: none;
 }
 
 a { color: var(--primary); text-underline-offset: 3px; }
-a:focus-visible, .button:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
 
 code, pre { font-family: var(--mono); font-size: 0.9em; }
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.skip {
+  position: absolute;
+  left: var(--gutter);
+  top: -100px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: var(--primary);
+  color: var(--on-primary);
+  font-weight: 600;
+}
+.skip:focus { top: 12px; }
 
 .topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  max-width: 1080px;
+  max-width: var(--width);
   margin: 0 auto;
-  padding: 16px max(20px, env(safe-area-inset-left));
+  padding: 16px var(--gutter);
 }
 .brand {
   display: flex;
@@ -113,63 +140,84 @@ code, pre { font-family: var(--mono); font-size: 0.9em; }
   font-weight: 600;
   font-size: 1.15rem;
 }
-.topbar nav { display: flex; gap: 20px; flex-wrap: wrap; }
+.topbar nav { display: flex; gap: 20px; flex-wrap: wrap; justify-content: flex-end; }
 .topbar nav a { color: var(--text-weak); text-decoration: none; }
 .topbar nav a:hover { color: var(--text); }
 
 main {
-  max-width: 1080px;
+  max-width: var(--width);
   margin: 0 auto;
-  padding: 0 max(20px, env(safe-area-inset-left)) 64px;
+  padding: 0 var(--gutter) 72px;
   display: grid;
-  gap: 56px;
+  gap: 88px;
 }
 
-/* Grid items don't shrink below their content by default, so the code block's longest line
+/* Grid items don't shrink below their content by default, so a code block's longest line
    would widen the whole page on a phone. */
-main > * { min-width: 0; }
+main > *, .row > * { min-width: 0; }
 
-.hero {
-  text-align: center;
-  padding: 56px 0 8px;
-}
-.hero h1 {
-  margin: 20px 0 12px;
-  font-size: clamp(2.2rem, 6vw, 3.6rem);
-  line-height: 1.1;
+h2 { margin: 0 0 20px; font-size: 1.75rem; line-height: 1.2; font-weight: 600; letter-spacing: -0.01em; }
+h3 { margin: 0 0 8px; font-size: 1.05rem; font-weight: 600; }
+
+.eyebrow {
+  margin: 0 0 10px;
+  color: var(--primary);
+  font-size: 0.8rem;
   font-weight: 600;
-  letter-spacing: -0.02em;
-  text-wrap: balance;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
-.lede {
-  max-width: 62ch;
-  margin: 0 auto;
-  color: var(--text-weak);
-  font-size: 1.1rem;
-  text-wrap: pretty;
-}
-.actions {
-  display: flex;
-  justify-content: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin-top: 28px;
-}
+
 .button {
   display: inline-block;
-  padding: 10px 22px;
+  padding: 11px 22px;
   border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--panel);
   color: var(--text);
   text-decoration: none;
+  font: inherit;
   font-weight: 600;
+  cursor: pointer;
 }
 .button:hover { border-color: var(--primary); }
 .button.primary { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
-.note { margin-top: 14px; color: var(--text-weak); font-size: 0.9rem; }
+.button.primary:hover { filter: brightness(1.08); }
+.version { font-weight: 400; opacity: 0.85; }
 
-/* The screenshot, framed as a window. The app draws its own menu bar, so there is no title
+/* The hero: what dbdesk is, the download, and the clip that shows it working. */
+.hero {
+  text-align: center;
+  padding-top: 48px;
+  margin-bottom: -40px;
+}
+.hero h1 {
+  margin: 0 0 16px;
+  font-size: clamp(2.3rem, 6.5vw, 4rem);
+  line-height: 1.05;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  text-wrap: balance;
+}
+.hero .eyebrow { color: var(--text-weak); letter-spacing: 0.04em; text-transform: none; font-weight: 400; }
+.lede {
+  max-width: 62ch;
+  margin: 0 auto;
+  color: var(--text-weak);
+  font-size: 1.15rem;
+  text-wrap: pretty;
+}
+.hero-actions {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 32px;
+}
+.hero-actions .primary { padding: 13px 26px; font-size: 1.05rem; }
+.alternatives { margin: 14px 0 0; color: var(--text-weak); font-size: 0.9rem; }
+
+/* A picture or clip of the app, framed. The app draws its own menu bar, so there is no title
    bar here. */
 .window {
   margin: 0;
@@ -177,18 +225,125 @@ main > * { min-width: 0; }
   border: 1px solid var(--border);
   background: var(--panel);
   overflow: hidden;
-  box-shadow: 0 24px 60px rgb(0 0 0 / 0.35);
+  box-shadow: var(--shadow);
 }
-.window img { display: block; width: 100%; height: auto; }
+.window img, .window video { display: block; width: 100%; height: auto; }
+/* A tall dialog would tower over its row's copy at the column's full width. */
+.row .window.portrait { justify-self: center; width: min(100%, 440px); }
 
-h2 { margin: 0 0 20px; font-size: 1.6rem; font-weight: 600; letter-spacing: -0.01em; }
-h3 { margin: 0 0 8px; font-size: 1.05rem; font-weight: 600; }
+.hero-clip { overflow: visible; background: none; border: 0; box-shadow: none; }
+.hero-clip .clip {
+  position: relative;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  background: var(--panel);
+  box-shadow: var(--shadow), 0 0 0 6px rgb(45 212 191 / 0.06);
+}
+.hero-clip figcaption {
+  max-width: 70ch;
+  margin: 14px auto 0;
+  color: var(--text-weak);
+  font-size: 0.9rem;
+  text-align: center;
+}
+.hero-clip .still { display: none; }
+.clip-toggle {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  color: var(--text);
+  font: 600 0.85rem var(--font);
+  cursor: pointer;
+}
+.clip-toggle[hidden] { display: none; }
+
+/* Without motion, the clip's last frame stands in for it. */
+@media (prefers-reduced-motion: reduce) {
+  .hero-clip video { display: none; }
+  .hero-clip .still { display: block; }
+  .hero-clip .still img { display: block; width: 100%; height: auto; }
+}
+
+/* Three differentiators under the hero. */
+.strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 16px;
+}
+.strip article {
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--primary);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.strip article:nth-child(2) { border-top-color: var(--secondary); }
+.strip h2 { margin: 0 0 8px; font-size: 1.15rem; }
+.strip p { margin: 0; color: var(--text-weak); }
+
+/* The feature tour: alternating rows of copy and a picture. */
+.tour { display: grid; gap: 96px; }
+.row {
+  display: grid;
+  grid-template-columns: 5fr 7fr;
+  gap: 48px;
+  align-items: center;
+}
+.row:nth-child(even of .row) { grid-template-columns: 7fr 5fr; }
+.row:nth-child(even of .row) .copy { order: 2; }
+.row h3 { font-size: clamp(1.5rem, 3vw, 1.9rem); line-height: 1.2; letter-spacing: -0.01em; margin-bottom: 14px; }
+.row p { margin: 0 0 14px; color: var(--text-weak); }
+.row strong { color: var(--text); font-weight: 600; }
+.row ul { margin: 0 0 18px; padding-left: 1.2em; color: var(--text-weak); }
+.row li { margin: 6px 0; }
+.row li::marker { color: var(--primary); }
+.more { font-weight: 600; text-decoration: none; }
+.more::after { content: " →"; }
+.more:hover { text-decoration: underline; }
+
+.chip {
+  display: inline-block;
+  padding: 0 8px;
+  border: 1px solid var(--secondary);
+  border-radius: 999px;
+  color: var(--secondary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.6;
+  white-space: nowrap;
+  vertical-align: 1px;
+}
+
+/* The files' examples, coloured like the app's editor: keys in the primary, strings in the
+   secondary, comments weak. */
+.code-card {
+  margin: 0;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--field);
+  box-shadow: var(--shadow);
+}
+.code-card pre {
+  margin: 0;
+  padding: 24px 26px;
+  overflow-x: auto;
+  line-height: 1.55;
+  font-size: 0.92rem;
+}
+.code-card .c { color: var(--text-weak); }
+.code-card .k { color: var(--primary); }
+.code-card .s { color: var(--secondary); }
 
 .databases { text-align: center; }
 .engine-list {
   display: flex;
   justify-content: center;
-  gap: 16px;
+  gap: 14px;
   flex-wrap: wrap;
   list-style: none;
   margin: 0;
@@ -198,7 +353,7 @@ h3 { margin: 0 0 8px; font-size: 1.05rem; font-weight: 600; }
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 14px 22px;
+  padding: 12px 20px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--panel);
@@ -207,8 +362,8 @@ h3 { margin: 0 0 8px; font-size: 1.05rem; font-weight: 600; }
 /* The logos are white SVGs (see assets/icons/databases/README.md), so they're used as masks
    and take each theme's shade from the background colour, as the app tints them. */
 .engine-logo {
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   -webkit-mask: var(--logo) center / contain no-repeat;
   mask: var(--logo) center / contain no-repeat;
 }
@@ -220,34 +375,70 @@ h3 { margin: 0 0 8px; font-size: 1.05rem; font-weight: 600; }
 .engine-logo.clickhouse { --logo: url("assets/databases/clickhouse.svg"); background: var(--clickhouse); }
 .planned { color: var(--text-weak); margin: 16px 0 0; }
 
-.grid {
+/* Downloads for every platform, then how updates and checksums work. */
+.download h2 { text-align: center; margin-bottom: 28px; }
+.platforms {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
   gap: 16px;
 }
-.grid article {
-  padding: 22px;
+.platforms article {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 24px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--panel);
 }
-.grid p { margin: 0; color: var(--text-weak); }
-
-.start p { margin: 0 0 12px; max-width: 70ch; }
+.platforms h3 { margin: 0; font-size: 1.2rem; }
+.platforms p { margin: 0; color: var(--text-weak); }
+.platforms .small { font-size: 0.9rem; margin-top: auto; }
+.pair { display: flex; gap: 10px; flex-wrap: wrap; }
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  gap: 32px;
+  margin-top: 40px;
+}
+.facts p { margin: 0; color: var(--text-weak); }
+.facts strong { color: var(--text); font-weight: 600; }
+.facts pre {
+  margin: 12px 0 0;
+  padding: 14px 16px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--field);
+}
+.source { margin: 40px 0 0; color: var(--text-weak); text-align: center; }
 
 footer {
-  max-width: 1080px;
+  max-width: var(--width);
   margin: 0 auto;
-  padding: 24px max(20px, env(safe-area-inset-left)) 40px;
+  padding: 24px var(--gutter) 40px;
   border-top: 1px solid var(--border);
   color: var(--text-weak);
   font-size: 0.85rem;
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .button { transition: border-color 120ms ease; }
+  .button, .clip-toggle { transition: border-color 120ms ease, filter 120ms ease; }
+  html { scroll-behavior: smooth; }
+}
+
+@media (max-width: 860px) {
+  main { gap: 64px; }
+  .tour { gap: 64px; }
+  .row, .row:nth-child(even of .row) { grid-template-columns: 1fr; gap: 24px; }
+  .row:nth-child(even of .row) .copy { order: 0; }
+  .hero { margin-bottom: -24px; }
 }
 
 @media (max-width: 480px) {
   .topbar nav { gap: 14px; font-size: 0.95rem; }
+  .topbar nav a[href="#tour"] { display: none; }
+  .hero { padding-top: 24px; }
+  .code-card pre { padding: 18px; font-size: 0.82rem; }
 }
