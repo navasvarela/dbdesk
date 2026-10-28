@@ -954,3 +954,21 @@ layers, one PR each:
 **Exit:** on a Mac, dbdesk's menus are in the menu bar, ⌘, opens Settings, ⌘Q still asks before
 rolling back an open transaction, the window has no separate title bar, and text is in the
 system font with the user's accent colour; Windows and Linux look and behave as before.
+
+**Demo note:** built; the native parts are still to be tried by eye on a Mac (see
+[As built](macos-look.md#as-built)). What to try: on a Mac, the menu bar at the top of the screen has **dbdesk** (About,
+Check for updates…, Settings… ⌘,, Services, Hide, Quit ⌘Q), File, Edit, View, Code, Window and
+Help (**dbdesk manual**); there is no egui menu in the window. Open a console, type, and
+**Edit → Undo** should undo in the editor; select cells and **Edit → Copy** copies them as TSV. In
+manual commit mode, run an `INSERT` and press ⌘Q: dbdesk should ask before rolling back. **File → Save**
+is greyed out until a console's tab is selected, and rebinding `file.save` in `keymap.toml`
+changes the menu's key after **Reload**. The window has no title bar of its own: the traffic
+lights sit on dbdesk's top strip, which moves the window when dragged and zooms it when
+double-clicked. Text is SF Pro and SF Mono, and selections are tinted with the system accent
+colour; switch the accent in System Settings and dbdesk follows when you return. On Linux and
+Windows nothing changes but **Settings…** showing its new key, Ctrl+Comma. Covered by tests of the command list
+and both menu layouts, kittest tests of the egui menu (every item, shortcut, enabled state and
+tooltip, and that items run their commands) and of the title strip (title, room for the window
+buttons, none in full screen), tests of Edit commands' input events and of shortcut-to-key-
+equivalent conversion, font loading and its fallback, and accent selections against WCAG AA for
+each of macOS's accents.

@@ -1,6 +1,6 @@
 # A native look on macOS
 
-Status: **planned** (2026-10-27). This is the design of D5 in the
+Status: **built** (2026-10-27); what changed while building it is under [As built](#as-built). This is the design of D5 in the
 [roadmap](roadmap.md#d5--a-native-look-on-macos).
 
 dbdesk draws everything with egui, so on macOS it looks like an egui app in a Mac window: a
@@ -59,7 +59,7 @@ commands the way Mac apps do:
 | **View** | Theme ›, Keymap…, Reset layout, Enter Full Screen ⌃⌘F |
 | **Code** | Format ⌥⌘L, Format all ⇧⌥⌘L |
 | **Window** | Minimize ⌘M, Zoom, Bring All to Front |
-| **Help** | the manual |
+| **Help** | dbdesk manual (and macOS's menu search) |
 
 A unit test checks that every command in the egui menu is somewhere in the macOS one.
 
@@ -146,4 +146,33 @@ rendered with the bundled fonts.
   to minimize" preference.
 - **No macOS UI tests.** CI's macOS runner has no window server session to drive a menu bar;
   the native parts are checked by running the app, and the pure parts (the command list, the
-  menu layout, shortcut conversion, accent contrast) by unit tests on every system.
+  menu layout, accent contrast) by unit tests on every system.
+
+## As built
+
+- **Menus are data in `commands`**: `egui_menu_bar` and `macos_menu_bar` return `Menu`s of
+  `Entry`s (a command, an Edit command, an AppKit item, a separator, a submenu, or a greyed-out
+  note). `menu_bar.rs` draws the first with egui; `macos/menu.rs` builds the second with muda.
+  `native_menu.rs` and `system_look.rs` are the cross-platform faces of the macOS code: on other
+  systems their types have no values, so `app.rs` needs no `cfg`s.
+- **The native menu is rebuilt** when the recent files or the keymap change, which is rare;
+  enabled and checked marks are compared every frame and only changes reach AppKit.
+- **Edit input goes in through `raw_input_hook`**, before the frame, with the rest of the
+  picked commands. Converting egui shortcuts to menu key equivalents (`macos::menu`) is tested
+  on macOS only, where muda is built.
+- **Settings… is the keymap action `app.settings`**, so the egui menu shows its key too: ⌘, on a
+  Mac, "Ctrl+Comma" (egui's spelling) elsewhere.
+- **egui 0.36 spells the transparent title bar `with_titlebar_shown(false)`**; egui-winit turns
+  it into winit's `with_titlebar_transparent(true)`.
+- **The system faces need coordinates for every family**, not only semibold: `SFNS.ttf`
+  defaults to its display optical size (28) and `SFNSMono.ttf` to its lightest weight
+  (294.67). The text cut (optical size 17) and weights 400 and 590 are set explicitly, and a
+  file without a weight axis is refused, so the bundled faces stay.
+- **The accent selection isn't a fixed tint.** A fixed 20 % (light) or 30 % (dark) left SQL
+  strings, keywords and comments below WCAG AA for most of macOS's accents, so the fill takes at
+  most that much and fades further until every text colour on it passes; a test also keeps it
+  visibly different from the field.
+- **Not tried by eye yet:** the session that built this had no screen-recording or
+  accessibility access, so the native menu bar, the window buttons over the strip, and dragging
+  and zooming were not seen running; the app started and installed the menu without errors, and
+  the fonts and accent colour were checked in an image rendered with them.
