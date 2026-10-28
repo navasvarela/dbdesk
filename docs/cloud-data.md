@@ -1,7 +1,8 @@
 # Cloud and big data
 
 Status: **planned**, not scheduled. Proposed on 2026-10-27; the order and the decisions below are
-confirmed when the track starts.
+confirmed when the track starts. The providers' priority was set on 2026-10-28: AWS, then Google
+Cloud, then Azure.
 
 dbdesk connects to databases you run or reach by host and port. Much of the data people query
 today lives elsewhere: managed databases signed into with a cloud account instead of a password,
@@ -35,26 +36,41 @@ What is new is shared by all of them, and is built once:
 
 ## Which services, and in what order
 
-1. **Managed versions of the engines dbdesk already has.** Amazon RDS and Aurora, Google Cloud
-   SQL, Azure Database for PostgreSQL and MySQL, Azure SQL, Neon, Supabase, ClickHouse Cloud
-   and Amazon Redshift (which speaks PostgreSQL's protocol with its own catalog). They
-   need no new protocol, only cloud sign-in and fixes for what each catalog does differently.
-   The cheapest step, and it reaches the most users.
+The providers come in this order: **AWS, then Google Cloud, then Azure.** Within each milestone,
+AWS's services are built and tried first, Google Cloud's next and Azure's last, and a warehouse
+that belongs to one of them comes before the ones that run on any cloud. Services that aren't
+tied to a provider (Neon, Supabase, ClickHouse Cloud, MotherDuck, Snowflake, Databricks) aren't
+ranked by it.
+
+1. **Managed versions of the engines dbdesk already has.** They need no new protocol, only
+   cloud sign-in and fixes for what each catalog does differently. The cheapest step, and it
+   reaches the most users.
+   - AWS: Amazon RDS and Aurora (PostgreSQL and MySQL), and Amazon Redshift, which speaks
+     PostgreSQL's protocol with its own catalog.
+   - Google Cloud: Cloud SQL for PostgreSQL, MySQL and SQL Server.
+   - Azure: Azure Database for PostgreSQL and MySQL, Azure SQL, and Azure's warehouses that
+     speak SQL Server's protocol: Synapse's dedicated and serverless SQL pools, and Microsoft
+     Fabric's warehouse and SQL analytics endpoint.
+   - Not tied to a provider: Neon, Supabase and ClickHouse Cloud.
 2. **Object storage through DuckDB.** DuckDB, already compiled into dbdesk, reads Parquet, CSV
-   and JSON from S3, Google Cloud Storage and Azure Blob Storage, and Iceberg and Delta tables,
-   through its own extensions. That is a data lake console with no new driver, plus MotherDuck
-   (hosted DuckDB) through the same engine.
-3. **Snowflake.** The most used cloud warehouse among the tools dbdesk is compared with.
-   Its SQL API is HTTPS with JSON or Arrow results, which fits the ClickHouse driver's shape.
+   and JSON from S3, Google Cloud Storage and Azure Blob Storage, in that order, and Iceberg and
+   Delta tables, through its own extensions. That is a data lake console with no new driver,
+   plus MotherDuck (hosted DuckDB) through the same engine.
+3. **Athena and Trino.** Athena is AWS's own query service and needs only C0's AWS sign-in;
+   it speaks Trino's dialect through AWS's API, with results written to S3. Trino's HTTP
+   protocol (submit, then follow `nextUri`) then covers Trino, Starburst and Presto with the same
+   dialect.
 4. **BigQuery.** Google's warehouse, with a REST jobs API, GoogleSQL, and a dry run that says
    how many bytes a query will scan before it runs.
-5. **Databricks SQL.** A SQL warehouse over Unity Catalog's three-level names, through the
-   Statement Execution API (HTTPS, like Snowflake's).
-6. **Trino and Athena.** Trino's HTTP protocol (submit, then follow `nextUri`) covers Trino,
-   Starburst and Presto; Athena speaks Trino's dialect through AWS's API, with results written
-   to S3.
+5. **Snowflake.** The most used cloud warehouse among the tools dbdesk is compared with, and
+   available on all three clouds. Its SQL API is HTTPS with JSON or Arrow results, which fits the
+   ClickHouse driver's shape.
+6. **Databricks SQL.** A SQL warehouse over Unity Catalog's three-level names, through the
+   Statement Execution API (HTTPS, like Snowflake's), also on all three clouds.
 
-The order between Snowflake, BigQuery and Databricks is a proposal; it is checked against
+Azure's warehouses don't need a milestone of their own: Synapse and Fabric answer over SQL
+Server's protocol, so they come in C1 through the SQL Server driver, with Fabric signing in only
+with Entra ID. The order between Snowflake and Databricks is a proposal; it is checked against
 current usage numbers, as [More databases](databases.md) did for its engines, when the track
 starts.
 
@@ -74,13 +90,14 @@ Left out on purpose:
 
 The groundwork every later milestone needs.
 
-- **Credential providers** in a new `dbdesk-cloud` crate, chosen per data source:
+- **Credential providers** in a new `dbdesk-cloud` crate, chosen per data source, built in the
+  providers' order:
   - AWS: an IAM authentication token for RDS and Aurora (PostgreSQL and MySQL), from the
     user's AWS profile (including SSO);
   - Google Cloud: an access token from Application Default Credentials, for Cloud SQL's IAM
     database authentication;
-  - Microsoft Entra ID: an access token for Azure SQL and Azure Database for PostgreSQL and
-    MySQL, which also completes SQL Server's planned Entra ID sign-in (see
+  - Microsoft Entra ID: an access token for Azure SQL, Synapse, Fabric and Azure Database for
+    PostgreSQL and MySQL, which also completes SQL Server's planned Entra ID sign-in (see
     [More databases](databases.md#decisions)).
   Tokens are fetched when connecting and refreshed before they expire; none is stored,
   logged or written to the history.
@@ -97,29 +114,36 @@ working past the token's 15-minute lifetime.
 
 ### C1 — Managed databases
 
-- Try each managed service in [Which services](#which-services-and-in-what-order), item 1, and
-  fix what its catalog or defaults do differently (Redshift's system tables, Azure SQL's gateway
-  redirect, Neon's and Supabase's poolers, ClickHouse Cloud's TLS).
+- Try each managed service in [Which services](#which-services-and-in-what-order), item 1, in
+  the providers' order, and fix what its catalog or defaults do differently (Redshift's system
+  tables, Azure SQL's gateway redirect, Neon's and Supabase's poolers, ClickHouse Cloud's TLS).
+- Synapse and Fabric through the SQL Server driver: their warehouses support only part of
+  T-SQL's catalog views and DDL, so the explorer and the object helpers check what each
+  supports, and Fabric connects only with an Entra ID token.
 - The data source dialog offers each as a preset: the right driver, port, TLS mode and sign-in.
 - **Exit:** each service on the list connects, browses and runs the conformance suite where an
   account is available; a short page in the manual per provider.
 
 ### C2 — Object storage and table formats (DuckDB)
 
-- An **object storage** data source (or a DuckDB option): S3, Google Cloud Storage or Azure Blob
-  Storage, with C0's credentials passed to DuckDB as secrets, and the bucket browsable in the
-  explorer.
+- An **object storage** data source (or a DuckDB option): S3, then Google Cloud Storage, then
+  Azure Blob Storage, with C0's credentials passed to DuckDB as secrets, and the bucket
+  browsable in the explorer.
 - Iceberg and Delta tables, through DuckDB's extensions.
 - MotherDuck, through DuckDB's `md:` databases.
 - **Exit:** query `s3://bucket/path/*.parquet` and an Iceberg table from a MinIO container in CI
   with no AWS account.
 
-### C3 — Snowflake
+### C3 — Athena and Trino
 
-- A driver over Snowflake's SQL API: key-pair (JWT) and OAuth sign-in, asynchronous statements,
-  partitioned results, cancel.
-- The Snowflake dialect, catalog (databases, schemas, tables, views, stages), and the warehouse
-  and role per console.
+- Athena, through AWS's API with C0's AWS credentials and its workgroup's output location:
+  the Glue Data Catalog's databases and tables in the explorer, the bytes each query scanned,
+  and C0's cost limit as the workgroup's per-query limit where one isn't set.
+- Then a driver over Trino's HTTP protocol, with catalogs as the top level, sharing Athena's
+  dialect.
+- **Exit:** Athena tested with recorded exchanges and tried live; the conformance suite against
+  Trino's container, in a job that runs nightly if the container is too large for every pull
+  request.
 
 ### C4 — BigQuery
 
@@ -127,17 +151,17 @@ working past the token's 15-minute lifetime.
   a dry run before every statement that shows the bytes it will scan, and
   `maximumBytesBilled` from C0's limit.
 
-### C5 — Databricks SQL
+### C5 — Snowflake
+
+- A driver over Snowflake's SQL API: key-pair (JWT) and OAuth sign-in, asynchronous statements,
+  partitioned results, cancel.
+- The Snowflake dialect, catalog (databases, schemas, tables, views, stages), and the warehouse
+  and role per console.
+
+### C6 — Databricks SQL
 
 - A driver over the Statement Execution API, with Unity Catalog's catalog, schema and table
   levels, and a personal access token or OAuth.
-
-### C6 — Trino and Athena
-
-- A driver over Trino's HTTP protocol, with catalogs as the top level; then Athena, through
-  AWS's API with C0's credentials and its workgroup's output location.
-- **Exit:** the conformance suite against Trino's container, in a job that runs nightly if the
-  container is too large for every pull request.
 
 ## Decisions
 
@@ -145,6 +169,7 @@ Proposed defaults; each is confirmed when its milestone starts.
 
 | Question | Proposed | Consequence |
 | --- | --- | --- |
+| Which provider first | **AWS, then Google Cloud, then Azure.** Settled on 2026-10-28, not only proposed. | Each milestone builds and tries AWS's services first, and Athena moves ahead of the warehouses that run on any cloud. Azure's services come last in each milestone, but its SQL Server-protocol warehouses (Synapse, Fabric) join C1 instead of waiting for a driver of their own. |
 | How dbdesk gets cloud credentials | **From the provider's own sign-in on the machine first:** AWS profiles and SSO cache, Google Application Default Credentials, Azure CLI's sign-in, read or invoked (`aws`, `gcloud`, `az`) without a shell. A browser OAuth flow later, for warehouses that need it. | Uses the login people already have, and no cloud secret ever lives in dbdesk's files. Users without the CLIs need them installed, or a key file. |
 | Cloud SDKs | **No full SDKs.** Small HTTP clients on the hyper and rustls stack the ClickHouse driver already uses, plus request signing (AWS SigV4) where needed. | Keeps CI build times and download size close to today's; each new API call is a little more code to write and test. |
 | Warehouse protocols | **Their HTTPS APIs** (Snowflake SQL API, BigQuery REST, Databricks Statement Execution, Trino HTTP), not ODBC or JDBC. | Pure Rust, no drivers to install, works through proxies; some services' fastest result paths (BigQuery's Storage Read API, Arrow Flight) come later if needed. |
