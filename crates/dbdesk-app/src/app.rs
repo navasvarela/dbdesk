@@ -3370,7 +3370,7 @@ mod tests {
             .next()
             .unwrap()
             .click();
-        harness.run();
+        step_until_editor(&mut harness);
         harness
             .get_by(|node| {
                 node.role() == Role::ComboBox && node.value().as_deref() == Some("Auto-commit")
@@ -3500,18 +3500,7 @@ mod tests {
         let (_layer, feed) = log_console::pipeline();
         let mut harness = start_app(dir.path(), feed);
         step_until_visible(&mut harness, "keymap.toml: 1 problem");
-        step_until_visible(&mut harness, "Expand shop");
-        harness.get_by_label("shop").click_secondary();
-        harness.run();
-        // The Welcome tab has a card of the same name; the context menu comes first.
-        harness
-            .get_all_by_label("New query console")
-            .next()
-            .unwrap()
-            .click();
-        harness.run();
-        harness.get_by_role(Role::MultilineTextInput).focus();
-        harness.run();
+        open_console(&mut harness);
         harness
             .get_by_role(Role::MultilineTextInput)
             .type_text("SELECT 42 AS answer");
@@ -3538,18 +3527,7 @@ mod tests {
         );
         let (_layer, feed) = log_console::pipeline();
         let mut harness = start_app(dir.path(), feed);
-        step_until_visible(&mut harness, "Expand shop");
-        harness.get_by_label("shop").click_secondary();
-        harness.run();
-        // The Welcome tab has a card of the same name; the context menu comes first.
-        harness
-            .get_all_by_label("New query console")
-            .next()
-            .unwrap()
-            .click();
-        harness.run();
-        harness.get_by_role(Role::MultilineTextInput).focus();
-        harness.run();
+        open_console(&mut harness);
 
         harness
             .get_by_role(Role::MultilineTextInput)
@@ -3991,7 +3969,7 @@ mod tests {
             .next()
             .unwrap()
             .click();
-        harness.run_steps(2);
+        step_until_editor(&mut harness);
         harness.get_by_role(Role::MultilineTextInput).focus();
         harness.run_steps(2);
         harness
@@ -4057,9 +4035,17 @@ mod tests {
             .next()
             .unwrap()
             .click();
-        harness.run();
+        step_until_editor(harness);
         harness.get_by_role(Role::MultilineTextInput).focus();
         harness.run();
+    }
+
+    /// Waits for the editor of a console just opened: one frame wasn't always enough on a busy
+    /// macOS runner, and the editor wasn't there yet to focus.
+    fn step_until_editor(harness: &mut Harness<'_, DbDeskApp>) {
+        step_until(harness, "the console's editor appearing", |harness| {
+            harness.query_by_role(Role::MultilineTextInput).is_some()
+        });
     }
 
     fn editor_text(harness: &Harness<'_, DbDeskApp>) -> String {
