@@ -24,6 +24,8 @@ pub mod read_write;
 mod registry;
 mod releases;
 mod repaint;
+#[cfg(test)]
+mod repository_rename_tests;
 mod session;
 mod settings;
 mod sql_files;
