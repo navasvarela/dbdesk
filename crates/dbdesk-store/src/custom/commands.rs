@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use dbdesk_core::{CommandTemplate, Row, SelectedCells};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::export::{RowObject, unique_keys, write_csv_line};
 
@@ -23,7 +23,7 @@ pub struct CommandAction {
 }
 
 /// What a program gets on stdin.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum StdinFormat {
     /// An array of objects keyed by column name, as Export writes it.

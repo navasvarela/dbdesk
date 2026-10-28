@@ -6,9 +6,10 @@ use std::time::Duration;
 use dbdesk_core::{DataSource, DataSourceId, Password, ProjectId, describe_error};
 use dbdesk_store::{
     ConsoleFiles, CustomFiles, ImportPlan, KeymapFile, Project, Secret, SecretError, SecretStore,
-    SettingsFile,
+    SettingsFile, TrustedCommand, TrustedCommands, TrustedCommandsFile,
 };
 use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::oneshot;
 use tokio::task::{JoinError, JoinSet};
 
 use crate::config_files;
@@ -19,6 +20,7 @@ use crate::history::{HistoryExport, HistoryLog};
 use crate::keymap;
 use crate::open::{TypedSecrets, create_database_file, test_connection};
 use crate::passwords::SessionPasswords;
+use crate::programs::{self, ProgramFailure, ProgramId, ProgramRequest, ProgramRunner};
 use crate::projects::{ProjectError, ProjectRegistry};
 use crate::registry::{Registry, RegistryError};
 use crate::releases::{self, ReleaseFeed};
@@ -30,7 +32,7 @@ use crate::tunnels::Tunnels;
 use crate::updater::{self, UpdateInstaller};
 use crate::{
     Command, ConsoleId, EditFailure, EngineConfig, Event, HostKey, PasswordKept, PasswordUpdate,
-    RunOutcome, StatementCheck,
+    ProcessEnvironment, RunOutcome, StatementCheck,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -58,6 +60,8 @@ pub(crate) async fn run(
     for event in config_files::load_custom(&config.custom_files).await {
         events.send(event);
     }
+    let trusted = programs::load_trusted(&config.trusted_commands).await;
+    events.send(Event::TrustedCommandsLoaded(trusted.clone()));
     let projects = ProjectRegistry::load(config.projects).await;
     events.send(projects.loaded_event());
     let registry = Registry::load(config.data_sources).await;
@@ -80,6 +84,10 @@ pub(crate) async fn run(
         keymap_file: config.keymap,
         settings_file: config.settings,
         custom_files: config.custom_files,
+        trusted_file: config.trusted_commands,
+        trusted,
+        program_runner: config.programs,
+        programs: HashMap::new(),
         releases: config.releases,
         updater: config.updater,
         events,
@@ -118,6 +126,13 @@ struct Engine {
     keymap_file: KeymapFile,
     settings_file: SettingsFile,
     custom_files: CustomFiles,
+    trusted_file: TrustedCommandsFile,
+    /// The command actions the user trusted; the engine runs no others.
+    trusted: TrustedCommands,
+    program_runner: Arc<dyn ProgramRunner>,
+    /// How to stop each program that may still be running. Dropping one stops its program,
+    /// which is how shutting down stops them all.
+    programs: HashMap<ProgramId, oneshot::Sender<()>>,
     releases: Arc<dyn ReleaseFeed>,
     updater: Arc<dyn UpdateInstaller>,
     events: EventSink,
@@ -298,6 +313,14 @@ impl Engine {
             Command::LoadTable { data_source, path } => {
                 self.request(data_source, SessionRequest::LoadTable(path));
             }
+            Command::RunProgram(request) => self.run_program(*request),
+            Command::StopProgram(program) => {
+                if let Some(stop) = self.programs.remove(&program) {
+                    // The program may have ended already, taking its receiver with it.
+                    let _ = stop.send(());
+                }
+            }
+            Command::TrustCommand(command) => self.trust_command(command).await,
             Command::ImportRows {
                 data_source,
                 import,
@@ -797,6 +820,54 @@ impl Engine {
         if let Some(console) = self.consoles.get(&console) {
             console.session.request(SessionRequest::Execute(script));
         }
+    }
+
+    fn run_program(&mut self, request: ProgramRequest) {
+        let program = request.program;
+        let invocation = self.prepare_program(&request);
+        let invocation = match invocation {
+            Ok(invocation) => invocation,
+            Err(failure) => {
+                tracing::warn!("{}: {failure}", request.action);
+                self.events.send(Event::ProgramFinished {
+                    program,
+                    result: Err(failure),
+                });
+                return;
+            }
+        };
+        let (stop, stopped) = oneshot::channel();
+        self.programs.retain(|_, stop| !stop.is_closed());
+        self.programs.insert(program, stop);
+        tokio::spawn(programs::run(
+            program,
+            invocation,
+            request.command.timeout,
+            stopped,
+            Arc::clone(&self.program_runner),
+            self.events.clone(),
+        ));
+    }
+
+    fn prepare_program(
+        &self,
+        request: &ProgramRequest,
+    ) -> Result<programs::Invocation, ProgramFailure> {
+        if !programs::is_trusted(&self.trusted, request) {
+            return Err(ProgramFailure::NotTrusted);
+        }
+        let data_source = self
+            .registry
+            .get(request.data_source)
+            .ok_or(ProgramFailure::NoDataSource)?;
+        programs::invocation(request, data_source, &ProcessEnvironment)
+    }
+
+    async fn trust_command(&mut self, command: TrustedCommand) {
+        self.trusted.trust(command);
+        programs::save_trusted(&self.trusted_file, &self.trusted).await;
+        self.events
+            .send(Event::TrustedCommandsLoaded(self.trusted.clone()));
     }
 
     fn services(&self) -> Services {

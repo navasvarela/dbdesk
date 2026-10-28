@@ -19,12 +19,13 @@ use dbdesk_core::{
 };
 use dbdesk_engine::{
     Command, EngineConfig, EngineHandle, Event, InstallError, InstallSupport, InstalledUpdate,
-    Release, ReleaseError, ReleaseFeed, Repaint, Restart, SessionState, UpdateInstaller,
+    ProcessRunner, Release, ReleaseError, ReleaseFeed, Repaint, Restart, SessionState,
+    UpdateInstaller,
 };
 use dbdesk_store::{
     ConsoleFiles, CustomFile, CustomFileKind, CustomFiles, DataSourceFile, HistoryFile,
     KeymapBindings, KeymapFile, ProjectFile, Projects, Secret, SecretError, SecretStore, Settings,
-    SettingsFile,
+    SettingsFile, TrustedCommands, TrustedCommandsFile,
 };
 
 pub const EVENT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -225,6 +226,8 @@ impl TestEngine {
             keymap: KeymapFile::new(dir.join("keymap.toml")),
             settings: SettingsFile::new(dir.join("settings.toml")),
             custom_files: CustomFiles::new(dir),
+            trusted_commands: TrustedCommandsFile::new(dir.join("trusted_commands.toml")),
+            programs: Arc::new(ProcessRunner),
             releases: Arc::new(releases),
             updater: Arc::new(installer),
             known_hosts: dir.join("known_hosts"),
@@ -271,6 +274,7 @@ impl TestEngine {
         self.expect_keymap(Ok(KeymapBindings::new()));
         self.expect_settings(Ok(Settings::default()));
         self.expect_no_custom_files();
+        self.expect_nothing_trusted();
         self.expect(Event::ProjectsLoaded(projects));
         self.expect(Event::DataSourcesLoaded(data_sources));
         self.expect(Event::ConsolesLoaded(vec![]));
@@ -319,6 +323,11 @@ impl TestEngine {
         for file in self.expect_custom_files() {
             assert_eq!(file, CustomFile::parse(file.kind(), ""));
         }
+    }
+
+    /// Expects the start-up report of the trusted commands, with none trusted yet.
+    pub fn expect_nothing_trusted(&mut self) {
+        self.expect(Event::TrustedCommandsLoaded(TrustedCommands::default()));
     }
 
     pub fn expect_session(&mut self, id: DataSourceId) -> SessionState {

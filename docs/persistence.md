@@ -15,8 +15,17 @@ dbdesk/
 ├── consoles/             # M4
 │   └── <data-source-id>/<console-name>.sql
 ├── history.sqlite        # M4, query history
+├── trusted_commands.toml # H2, command actions trusted to run (data folder, see below)
 └── logs/dbdesk.<date>.log # daily rolling file log, last 7 kept
 ```
+
+`logs/` and `trusted_commands.toml` are in the data directory: the same folder as the rest on
+macOS, `~/.local/share/dbdesk` on Linux (the config is in `~/.config/dbdesk`), and
+`%APPDATA%\dbdesk\data` on Windows (the config is in `%APPDATA%\dbdesk\config`).
+`trusted_commands.toml` lists each command action the user chose **Run** for, by its id,
+command as written and stdin, written atomically by the engine. It is kept apart from
+`actions.toml` so a config folder copied from elsewhere brings its actions but no trust: each
+command asks before its first run on every machine. A file that can't be read trusts nothing.
 
 ## Data sources
 

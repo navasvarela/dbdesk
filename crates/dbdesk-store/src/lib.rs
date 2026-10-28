@@ -26,7 +26,8 @@ pub use csv::{CsvError, CsvReader, CsvRecord, Separator};
 pub use custom::{
     ActionBody, ActionId, ActionTarget, Checked, CommandAction, CommandOutput, CustomAction,
     CustomFile, CustomFileKind, CustomFiles, DEFAULT_COMMAND_TIMEOUT, Rgb, Snippet, SnippetBody,
-    StdinFormat, ThemeOverrides, ThemeToken, parse_actions, parse_snippets, parse_theme,
+    StdinFormat, ThemeOverrides, ThemeToken, TrustError, TrustedCommand, TrustedCommands,
+    TrustedCommandsFile, driver_id, parse_actions, parse_snippets, parse_theme,
 };
 pub use data_sources::{DataSourceFile, StoreError};
 pub use export::{ExportError, ExportFormat, ExportWriter, export_rows};

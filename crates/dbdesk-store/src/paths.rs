@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use directories::{BaseDirs, ProjectDirs};
 
-use crate::CustomFiles;
+use crate::{CustomFiles, TrustedCommandsFile};
 
 /// The application name used for platform directories. Also the eframe app id, so the
 /// window/layout state eframe persists lands in the same folder.
@@ -64,6 +64,12 @@ impl AppPaths {
     /// keymap.
     pub fn custom_files(&self) -> CustomFiles {
         CustomFiles::new(self.dirs.config_dir())
+    }
+
+    /// The command actions the user chose to run. In the data folder rather than beside
+    /// `actions.toml`, so a config folder copied from elsewhere brings no trust with it.
+    pub fn trusted_commands_file(&self) -> TrustedCommandsFile {
+        TrustedCommandsFile::new(self.dirs.data_dir().join("trusted_commands.toml"))
     }
 
     /// The query history database. Not guaranteed to exist yet.

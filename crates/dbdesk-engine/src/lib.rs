@@ -16,6 +16,7 @@ mod history;
 mod keymap;
 mod open;
 mod passwords;
+mod programs;
 mod projects;
 mod protocol;
 pub mod read_only;
@@ -36,6 +37,10 @@ pub use export::{Export, ExportAll};
 pub use handle::{EngineConfig, EngineError, EngineHandle, IDLE_PING_AFTER};
 pub use open::{OpenError, open_data_source, open_data_source_for_mcp};
 pub use passwords::PasswordNeeded;
+pub use programs::{
+    Invocation, ProcessRunner, ProgramFailure, ProgramId, ProgramOutput, ProgramRequest,
+    ProgramRunner,
+};
 pub use protocol::{
     Command, ConsoleId, DatabaseFile, DdlFailure, EditFailure, Event, ImportFailure, PasswordKept,
     PasswordUpdate, RowEdit, RowsImport, RunId, RunOrigin, RunOutcome, RunPurpose, SessionState,

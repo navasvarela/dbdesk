@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use dbdesk_store::{
     ConsoleFiles, CustomFiles, DataSourceFile, HistoryFile, KeymapFile, ProjectFile, SecretStore,
-    SettingsFile,
+    SettingsFile, TrustedCommandsFile,
 };
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender, error::TryRecvError};
@@ -12,7 +12,7 @@ use tokio::task::{JoinError, JoinHandle};
 
 use crate::command_loop;
 use crate::events::EventSink;
-use crate::{Command, Event, ReleaseFeed, Repaint, UpdateInstaller};
+use crate::{Command, Event, ProgramRunner, ReleaseFeed, Repaint, UpdateInstaller};
 
 /// How long [`EngineHandle::shutdown`] waits for in-flight work before abandoning it.
 ///
@@ -43,6 +43,10 @@ pub struct EngineConfig {
     pub settings: SettingsFile,
     /// `actions.toml`, `snippets.toml` and `theme.toml`.
     pub custom_files: CustomFiles,
+    /// The command actions the user trusted to run.
+    pub trusted_commands: TrustedCommandsFile,
+    /// What starts command actions' programs, normally [`crate::ProcessRunner`].
+    pub programs: Arc<dyn ProgramRunner>,
     pub releases: Arc<dyn ReleaseFeed>,
     pub updater: Arc<dyn UpdateInstaller>,
     /// OpenSSH's `known_hosts`, which SSH tunnels check host keys against.

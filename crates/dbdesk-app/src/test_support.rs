@@ -8,12 +8,12 @@ use std::time::{Duration, Instant};
 
 use dbdesk_core::{DataSourceId, Password};
 use dbdesk_engine::{
-    EngineConfig, InstallError, InstallSupport, InstalledUpdate, Release, ReleaseError,
-    ReleaseFeed, Restart, UpdateInstaller,
+    EngineConfig, InstallError, InstallSupport, InstalledUpdate, ProcessRunner, Release,
+    ReleaseError, ReleaseFeed, Restart, UpdateInstaller,
 };
 use dbdesk_store::{
     ConsoleFiles, CustomFiles, DataSourceFile, HistoryFile, KeymapFile, ProjectFile, Secret,
-    SecretError, SecretStore, SettingsFile,
+    SecretError, SecretStore, SettingsFile, TrustedCommandsFile,
 };
 use egui_kittest::kittest::Queryable;
 use egui_kittest::{Harness, HarnessBuilder};
@@ -127,6 +127,8 @@ pub fn start_app(
         keymap: KeymapFile::new(dir.join("keymap.toml")),
         settings: SettingsFile::new(dir.join("settings.toml")),
         custom_files: CustomFiles::new(dir),
+        trusted_commands: TrustedCommandsFile::new(dir.join("trusted_commands.toml")),
+        programs: Arc::new(ProcessRunner),
         releases: Arc::new(FixedReleases::current()),
         updater: Arc::new(FakeInstaller::default()),
         known_hosts: dir.join("known_hosts"),

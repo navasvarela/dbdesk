@@ -11,10 +11,14 @@ use dbdesk_sql::{ExistingTable, ParameterValues};
 use dbdesk_store::{
     ActionId, ConsoleKey, CustomFile, CustomFileKind, ExportFormat, HistoryEntry, HistoryQuery,
     ImportPlan, ImportPreview, KeymapBindings, McpOverrides, McpPermissions, Project, Projects,
-    RowChange, SavedConsole, Secret, Separator, Settings, SqlFileContents,
+    RowChange, SavedConsole, Secret, Separator, Settings, SqlFileContents, TrustedCommand,
+    TrustedCommands,
 };
 
-use crate::{Export, ExportAll, HostKey, InstalledUpdate, PasswordNeeded, Release, WatchedFile};
+use crate::{
+    Export, ExportAll, HostKey, InstalledUpdate, PasswordNeeded, ProgramFailure, ProgramId,
+    ProgramOutput, ProgramRequest, Release, WatchedFile,
+};
 
 /// Identifies a query console. Chosen by the UI, unique for the app's lifetime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -286,6 +290,15 @@ pub enum Command {
         kind: CustomFileKind,
         text: String,
     },
+    /// Runs a command action's program on the node or cells it was chosen on, if the user has
+    /// trusted it, with what the request names filled in. It runs until it ends, its timeout
+    /// passes or [`Command::StopProgram`] stops it. Answered by [`Event::ProgramFinished`].
+    RunProgram(Box<ProgramRequest>),
+    /// Stops a running program, killing it. Answered by its [`Event::ProgramFinished`].
+    StopProgram(ProgramId),
+    /// Lets the command run without asking from now on, in place of whatever its action ran
+    /// before, and saves that. Answered by [`Event::TrustedCommandsLoaded`].
+    TrustCommand(TrustedCommand),
     /// Writes rows a console shows to a file. Answered by [`Event::ExportFinished`].
     ExportRows {
         console: ConsoleId,
@@ -417,6 +430,15 @@ pub enum Event {
     CustomFileLoaded {
         path: PathBuf,
         file: CustomFile,
+    },
+    /// The command actions the user trusted to run, read at start-up right after the
+    /// customisation files, and again after each [`Command::TrustCommand`].
+    TrustedCommandsLoaded(TrustedCommands),
+    /// A program from [`Command::RunProgram`] ended: what it wrote, or why there is nothing to
+    /// use.
+    ProgramFinished {
+        program: ProgramId,
+        result: Result<ProgramOutput, ProgramFailure>,
     },
     /// The answer to [`Command::CheckForUpdates`]: the newest published release, or why it
     /// couldn't be found out.
