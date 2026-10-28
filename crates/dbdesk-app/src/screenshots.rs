@@ -285,6 +285,13 @@ const SCENES: &[Scene] = &[
         needs: &[],
     },
     Scene {
+        name: "modify-table",
+        data_sources: FixtureSources::Shop,
+        play: modify_table,
+        keeps_pointer: false,
+        needs: &[],
+    },
+    Scene {
         name: "drop-table",
         data_sources: FixtureSources::Shop,
         play: drop_table,
@@ -1041,6 +1048,22 @@ fn new_table(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
         .unwrap()
         .click();
     harness.run_ok();
+}
+
+/// Modify table on `orders`: a column renamed and one added, and the `ALTER TABLE`
+/// statements that make the change.
+fn modify_table(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
+    expand(harness, &["shop", "main", "tables"]);
+    step_until_visible(harness, "Expand orders");
+    harness.get_by_label("orders").click_secondary();
+    harness.run_ok();
+    harness.get_by_label("Modify table…").click();
+    step_until_visible(harness, "Column 4 name");
+    retype(harness, "Column 4 name", "state");
+    harness.get_by_label("Add column").click();
+    harness.run_ok();
+    retype(harness, "Column 5 name", "shipped_at");
+    retype(harness, "Column 5 type", "text");
 }
 
 /// Drop… on a data source coloured red, which wants the table's name typed.

@@ -14,7 +14,7 @@ database can do:
 | Right-click on | Menu items |
 | --- | --- |
 | A schema, or its **tables** folder | **New › Table…** |
-| A table | **New index…**, **Rename…**, **Copy DDL**, **Truncate…**, **Drop…** |
+| A table | **Modify table…**, **New index…**, **Rename…**, **Copy DDL**, **Truncate…**, **Drop…** |
 | A table's **indexes** folder | **New › Index…** |
 | An index | **Drop index…** |
 
@@ -119,6 +119,70 @@ What differs between databases:
 - **SQL Server** gets an explicit `NULL` on nullable columns, since whether a column is
   nullable by default there depends on the connection's settings.
 
+## Modify table
+
+**Modify table…** on a table opens the New table dialog filled from the table as it is: its
+columns with their types, nullability and defaults, its primary key, and its unique keys,
+foreign keys and checks under the names the database gave them. Change what you like; the SQL
+below shows the statements that turn the table into what the dialog now says.
+
+![Modify table, with a column renamed and one added](images/modify-table.png)
+
+- **Rename a column** by typing its new name. dbdesk remembers which row each column came
+  from, so this is always a rename that keeps the column's values, never a drop and an add.
+  Keys that list the column follow its new name.
+- **Drop a column** with the ✕ at the end of its row, and **add one** with **Add column**.
+  Dropping a column loses its values, so the dialog says which columns go before **Execute**,
+  and on a red data source asks for the table's name.
+- **Change a column's type, nullability or default** in its row. On **PostgreSQL** and
+  **DuckDB**, a retyped column gets a **USING** field below the grid, for an expression that
+  converts the old values (`CASE status WHEN 'new' THEN 0 ELSE 1 END`); left empty, the
+  database converts them its own way, or refuses.
+- **Keys and checks**: tick or untick primary key columns, and add or remove unique keys,
+  foreign keys and checks in their tabs. One you leave alone is kept, even if one of its
+  columns is renamed; one you change is dropped and added again.
+- **Rename the table** with **Name**. The table stays in its schema.
+- A column the database numbers itself (an identity or `AUTO_INCREMENT` column) says
+  **identity** beside its type, and stays so.
+
+The column order doesn't change: a new column goes at the end. Statements run in an order that
+works everywhere: constraints that go are dropped first, then columns are dropped, renamed,
+added and changed, then the new keys and checks are added, and the table is renamed last.
+
+Not every database can make every change in place. What one can't do, the dialog says instead
+of showing SQL, and **Execute** waits; the rest of the change can still go to a console.
+
+| Database | In place | Refused |
+| --- | --- | --- |
+| PostgreSQL | everything | — |
+| MySQL, MariaDB | everything; a new type or nullability restates the column (`MODIFY COLUMN`), so its comment and character set go back to the defaults | — |
+| SQL Server | everything; a column's default is a named constraint, dropped and added again around a change to the column | — |
+| DuckDB | columns: rename, add, drop, type, nullability, default | keys and checks, the primary key |
+| ClickHouse | columns (nullability is its `Nullable(…)` type) and checks | the primary key, which is the table's sort order |
+| SQLite | rename, add a nullable column or one with a default, drop | — (see below) |
+
+### SQLite's table rebuild
+
+SQLite's `ALTER TABLE` does little in place, so for anything else (a new type, a column made
+`NOT NULL`, a new key or check) dbdesk rebuilds the table the way SQLite's documentation
+describes, in one transaction, and says so before **Execute**:
+
+1. It creates the new table as `new_orders`, copies every row into it, drops the old table and
+   gives the new one its name.
+2. It creates the table's indexes and triggers again, from their definitions.
+3. Only then does it rename and drop columns, in place, so that SQLite itself updates the
+   indexes, triggers, views and other tables' foreign keys that name a renamed column, and
+   refuses to drop a column one of them still uses.
+
+Foreign keys are switched off while it runs, so dropping the old table can't delete rows that
+point at it (`ON DELETE CASCADE`). If your connection had them on, dbdesk checks them before
+committing: a change that would leave a row pointing at nothing is undone, and the dialog
+names the table.
+
+A rebuild writes the table from what dbdesk reads of it, so a table with something it can't
+read back is refused, with the reason: a column with its own `COLLATE`, a generated column, a
+`WITHOUT ROWID` or a `STRICT` table. Make those changes in a console.
+
 ## New index
 
 **New index…** on a table, or **New › Index…** on its **indexes** folder.
@@ -154,6 +218,6 @@ says so.
   table's columns (their types, defaults and `NOT NULL`) and primary key, the same way New
   table does, followed by an `ALTER TABLE … ADD CONSTRAINT …` for each of its unique keys,
   foreign keys, checks and (on PostgreSQL) exclusion constraints, as the database defines
-  them. Running it recreates the table. What it leaves out: indexes that aren't constraints,
-  comments, storage parameters, partitioning, and an identity column's identity (PostgreSQL's
-  `GENERATED … AS IDENTITY`, SQL Server's `IDENTITY`), which is written as a plain column.
+  them. Running it recreates the table, identity columns included (PostgreSQL's
+  `GENERATED … AS IDENTITY`, SQL Server's `IDENTITY(seed, increment)`). What it leaves out:
+  indexes that aren't constraints, comments, storage parameters and partitioning.

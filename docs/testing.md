@@ -115,6 +115,18 @@ against a real server, such as a cancel arriving after the last row.
   `TableSpec` on every engine with a test server, describes the child, and compares its
   columns, nullability, default and primary key with the spec, then drops both. Copy DDL on
   PostgreSQL and SQL Server is checked by running what it copied after dropping the table.
+- Modify table (E4): the builder's golden tests write each dialect's `ALTER TABLE` for column
+  and constraint changes, renames that stay renames (and the same names without a rename,
+  which drop and add), what each dialect refuses, SQLite's rebuild in full, and what makes a
+  SQLite table unrebuildable. Each driver's `describe_constraints` is covered by the engine's
+  round trip, which on every engine with a test server (SQLite and a DuckDB file too) creates
+  a table with rows, loads it with `LoadTable`, renames, retypes, drops and adds columns and,
+  where the engine can, adds a check and a foreign key, loads it again and compares, reads the
+  rows back through a console, then takes the constraints off again. SQLite's rebuild has its
+  own engine test, with foreign keys switched on: the rows, an index, a trigger, a view,
+  `AUTOINCREMENT` and another table's cascading key survive, and a rebuild that breaks a key is
+  undone. The app's kittest tests modify a SQLite table in place and by a rebuild through the
+  dialog, and see a `STRICT` table refused.
 - The builder's golden tests also write every view and schema statement, and `view_query` is
   checked against a definition as each engine shows it.
 - The engine's view round trip creates a view on every engine with a test server, edits its
