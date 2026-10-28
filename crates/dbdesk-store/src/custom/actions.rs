@@ -1,11 +1,13 @@
-//! `actions.toml`: SQL the user attaches to explorer nodes and grid cells.
+//! `actions.toml`: SQL, or programs, the user attaches to explorer nodes and grid cells.
 
 use std::fmt;
 
-use dbdesk_core::{DriverKind, NodeKind, Placeholder, SqlTemplate};
+use dbdesk_core::{CommandTemplate, DriverKind, NodeKind, Placeholder, SqlTemplate};
 use serde::Deserialize;
 
+use super::commands::{CommandAction, CommandOutput, DEFAULT_COMMAND_TIMEOUT, StdinFormat};
 use super::{Checked, drivers, entries, entry_label, serde_problem};
+use crate::StatementTimeout;
 
 /// An action's stable name: what `keymap.toml` binds as `custom.<id>`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -117,7 +119,14 @@ impl ActionTarget {
         };
         match placeholder {
             Placeholder::Value | Placeholder::Values | Placeholder::Row(_) => false,
-            Placeholder::Database | Placeholder::DataSource => true,
+            // Every action acts on a data source, so whether it has a host or a file is only
+            // known once one is chosen.
+            Placeholder::Database
+            | Placeholder::DataSource
+            | Placeholder::Host
+            | Placeholder::Port
+            | Placeholder::User
+            | Placeholder::File => true,
             Placeholder::Column { default } => default.is_some() || node == Some(K::Column),
             Placeholder::Table => matches!(
                 node,
@@ -148,9 +157,18 @@ pub struct CustomAction {
     pub applies_to: Vec<ActionTarget>,
     /// `None` for every driver.
     pub drivers: Option<Vec<DriverKind>>,
-    pub sql: SqlTemplate,
-    /// Run at once; otherwise open the SQL in a console to edit first.
-    pub run: bool,
+    pub body: ActionBody,
+}
+
+/// What an action does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ActionBody {
+    Sql {
+        sql: SqlTemplate,
+        /// Run at once; otherwise open the SQL in a console to edit first.
+        run: bool,
+    },
+    Command(CommandAction),
 }
 
 impl CustomAction {
@@ -173,13 +191,12 @@ struct RawAction {
     applies_to: Vec<String>,
     #[serde(default)]
     drivers: Option<Vec<String>>,
-    sql: String,
-    #[serde(default = "run_by_default")]
-    run: bool,
-}
-
-fn run_by_default() -> bool {
-    true
+    sql: Option<String>,
+    run: Option<bool>,
+    command: Option<Vec<String>>,
+    stdin: Option<StdinFormat>,
+    output: Option<CommandOutput>,
+    timeout: Option<String>,
 }
 
 /// Checks the text of `actions.toml`.
@@ -231,12 +248,18 @@ fn check(raw: RawAction) -> Result<CustomAction, String> {
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let drivers = drivers(raw.drivers)?;
-    if raw.sql.trim().is_empty() {
-        return Err("the sql is empty".to_owned());
-    }
-    let sql = SqlTemplate::parse(&raw.sql).map_err(|error| error.to_string())?;
-    for placeholder in sql.placeholders() {
+    let drivers = drivers(raw.drivers.clone())?;
+    let body = match (raw.sql.as_deref(), raw.command.as_deref()) {
+        (Some(_), Some(_)) => return Err("an action has sql or a command, not both".to_owned()),
+        (None, None) => return Err("the action has neither sql nor a command".to_owned()),
+        (Some(sql), None) => sql_body(sql, &raw)?,
+        (None, Some(command)) => ActionBody::Command(command_body(command, &raw, &applies_to)?),
+    };
+    let placeholders: Vec<&Placeholder> = match &body {
+        ActionBody::Sql { sql, .. } => sql.placeholders().collect(),
+        ActionBody::Command(command) => command.command.placeholders().collect(),
+    };
+    for placeholder in placeholders {
         if let Some(target) = applies_to
             .iter()
             .find(|target| !target.can_fill(placeholder))
@@ -249,8 +272,64 @@ fn check(raw: RawAction) -> Result<CustomAction, String> {
         name: raw.name,
         applies_to,
         drivers,
-        sql,
-        run: raw.run,
+        body,
+    })
+}
+
+fn sql_body(sql: &str, raw: &RawAction) -> Result<ActionBody, String> {
+    let command_fields = [
+        ("stdin", raw.stdin.is_some()),
+        ("output", raw.output.is_some()),
+        ("timeout", raw.timeout.is_some()),
+    ];
+    if let Some((field, _)) = command_fields.iter().find(|(_, set)| *set) {
+        return Err(format!("{field} is only for actions with a command"));
+    }
+    if sql.trim().is_empty() {
+        return Err("the sql is empty".to_owned());
+    }
+    Ok(ActionBody::Sql {
+        sql: SqlTemplate::parse(sql).map_err(|error| error.to_string())?,
+        run: raw.run.unwrap_or(true),
+    })
+}
+
+fn command_body(
+    command: &[String],
+    raw: &RawAction,
+    applies_to: &[ActionTarget],
+) -> Result<CommandAction, String> {
+    if raw.run.is_some() {
+        return Err("run is only for sql; a command runs when it is chosen".to_owned());
+    }
+    if applies_to.contains(&ActionTarget::GridRow) {
+        return Err(
+            "a command can't apply to grid.row: it gets every selected row on stdin, so use \
+             grid.selection"
+                .to_owned(),
+        );
+    }
+    let stdin = raw.stdin.unwrap_or_default();
+    if stdin != StdinFormat::None
+        && let Some(target) = applies_to.iter().find(|target| !target.is_grid())
+    {
+        return Err(format!(
+            "stdin = {:?} sends the grid's selected cells, which {:?} doesn't have",
+            stdin.name(),
+            target.name()
+        ));
+    }
+    let timeout = match &raw.timeout {
+        Some(text) => StatementTimeout::try_from(text.clone())
+            .map_err(|error| format!("timeout: {error}"))?
+            .duration(),
+        None => DEFAULT_COMMAND_TIMEOUT,
+    };
+    Ok(CommandAction {
+        command: CommandTemplate::parse(command).map_err(|error| error.to_string())?,
+        stdin,
+        output: raw.output.unwrap_or_default(),
+        timeout,
     })
 }
 
@@ -312,8 +391,8 @@ mod tests {
         );
         assert!(count.applies_to(ActionTarget::Node(NodeKind::View), DriverKind::Mysql));
         assert!(!count.applies_to(ActionTarget::Node(NodeKind::View), DriverKind::Sqlite));
-        assert!(count.run);
-        assert!(!latest.run);
+        assert!(matches!(count.body, ActionBody::Sql { run: true, .. }));
+        assert!(matches!(latest.body, ActionBody::Sql { run: false, .. }));
         assert!(latest.runs_on(DriverKind::Sqlite));
         assert!(find.applies_to(ActionTarget::GridRow, DriverKind::DuckDb));
     }
@@ -333,7 +412,7 @@ mod tests {
             (
                 entry("row-count", "nmae = \"x\""),
                 "action \"row-count\": unknown field `nmae`, expected one of `id`, `name`, \
-                 `applies_to`, `drivers`, `sql`, `run`",
+                 `applies_to`, `drivers`, `sql`, `run`, `command`, `stdin`, `output`, `timeout`",
             ),
             (
                 entry("Row Count", ""),
@@ -390,6 +469,125 @@ mod tests {
             let checked = parse_actions(&text);
             assert_eq!(checked.problems, [problem], "{text}");
             assert!(checked.value.len() <= 1, "{text}");
+        }
+    }
+
+    /// The hackability plan's two command examples.
+    const COMMANDS: &str = r#"
+        [[action]]
+        id = "rows-to-jq"
+        name = "Send rows to jq"
+        applies_to = ["grid.selection"]
+        command = ["jq", "-r", ".[] | .email"]
+        stdin = "json"
+        output = "viewer"
+
+        [[action]]
+        id = "pgcli"
+        name = "Open in pgcli"
+        applies_to = ["data_source"]
+        drivers = ["postgres"]
+        command = ["open", "-a", "Terminal", "--args", "pgcli", "postgres://{user}@{host}:{port}/{database}"]
+        output = "none"
+        timeout = "5s"
+    "#;
+
+    #[test]
+    fn reads_the_plans_commands() {
+        let checked = parse_actions(COMMANDS);
+
+        assert!(checked.problems.is_empty(), "{:?}", checked.problems);
+        let [jq, pgcli] = checked.value.as_slice() else {
+            panic!("{:?}", checked.value);
+        };
+        let ActionBody::Command(jq) = &jq.body else {
+            panic!("{jq:?}");
+        };
+        assert_eq!(jq.command.source(), ["jq", "-r", ".[] | .email"]);
+        assert_eq!(jq.stdin, StdinFormat::Json);
+        assert_eq!(jq.output, CommandOutput::Viewer);
+        assert_eq!(jq.timeout, DEFAULT_COMMAND_TIMEOUT);
+        let ActionBody::Command(pgcli) = &pgcli.body else {
+            panic!("{pgcli:?}");
+        };
+        assert_eq!(pgcli.stdin, StdinFormat::None);
+        assert_eq!(pgcli.output, CommandOutput::None);
+        assert_eq!(pgcli.timeout, std::time::Duration::from_secs(5));
+    }
+
+    #[test]
+    fn names_what_a_command_action_gets_wrong() {
+        let entry = |applies_to: &str, fields: &str| {
+            format!("[[action]]\nid = \"c\"\nname = \"C\"\napplies_to = [{applies_to}]\n{fields}\n")
+        };
+        let grid = "\"grid.selection\"";
+        let table = "\"table\"";
+        let cases = [
+            (
+                entry(table, "sql = \"SELECT 1\"\ncommand = [\"jq\"]"),
+                "action \"c\": an action has sql or a command, not both",
+            ),
+            (
+                entry(table, ""),
+                "action \"c\": the action has neither sql nor a command",
+            ),
+            (
+                entry(table, "command = [\"jq\"]\nrun = false"),
+                "action \"c\": run is only for sql; a command runs when it is chosen",
+            ),
+            (
+                entry(table, "sql = \"SELECT 1\"\noutput = \"log\""),
+                "action \"c\": output is only for actions with a command",
+            ),
+            (
+                entry("\"grid.row\"", "command = [\"jq\"]"),
+                "action \"c\": a command can't apply to grid.row: it gets every selected row \
+                 on stdin, so use grid.selection",
+            ),
+            (
+                entry(
+                    &format!("{grid}, {table}"),
+                    "command = [\"jq\"]\nstdin = \"csv\"",
+                ),
+                "action \"c\": stdin = \"csv\" sends the grid's selected cells, which \
+                 \"table\" doesn't have",
+            ),
+            (
+                entry(grid, "command = [\"jq\"]\nstdin = \"xml\""),
+                "action \"c\": unknown variant `xml`, expected one of `json`, `csv`, `tsv`, \
+                 `none`",
+            ),
+            (
+                entry(grid, "command = [\"jq\"]\noutput = \"window\""),
+                "action \"c\": unknown variant `window`, expected one of `viewer`, `console`, \
+                 `log`, `none`",
+            ),
+            (
+                entry(grid, "command = [\"jq\"]\ntimeout = \"30\""),
+                "action \"c\": timeout: \"30\" is not a duration such as \"30s\" or \"2m\" \
+                 greater than zero",
+            ),
+            (
+                entry(grid, "command = []"),
+                "action \"c\": the command is empty; its first item is the program to run",
+            ),
+            (
+                entry(grid, "command = [\"grep\", \"{values}\"]"),
+                "action \"c\": {values} is only for SQL: a command gets the selection on stdin",
+            ),
+            (
+                entry(table, "command = [\"echo\", \"{value}\"]"),
+                "action \"c\": {value} can't be filled for \"table\": only the grid has values",
+            ),
+            (
+                entry(table, "sql = \"SELECT {host}\""),
+                "action \"c\": {host} is only for commands: SQL already runs on the data source",
+            ),
+        ];
+        for (text, problem) in cases {
+            let checked = parse_actions(&text);
+            assert_eq!(checked.problems, [problem], "{text}");
+            assert!(checked.value.is_empty(), "{text}");
         }
     }
 

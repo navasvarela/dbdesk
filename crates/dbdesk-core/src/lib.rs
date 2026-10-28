@@ -4,6 +4,7 @@
 //! connections and the UI only ever sees the plain data types.
 
 mod catalog;
+mod command_template;
 mod connection;
 mod data_source;
 mod error;
@@ -19,6 +20,7 @@ mod table;
 pub mod conformance;
 
 pub use catalog::{CatalogNode, CatalogPath, FolderKind, NodeKind, PathSegment};
+pub use command_template::{CommandTemplate, DataSourceFields};
 pub use connection::{Connection, Rejection, RejectionKind, ServerInfo};
 pub use data_source::{
     ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DriverKind, DuckDbConfig,

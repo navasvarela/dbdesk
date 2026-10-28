@@ -18,7 +18,7 @@ pub struct SqlTemplate {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum Part {
+pub(crate) enum Part {
     Text(String),
     Placeholder(Placeholder),
 }
@@ -45,12 +45,24 @@ pub enum Placeholder {
     Values,
     /// The named column's value in the first selected row.
     Row(String),
+    /// The server's host, for commands only, like the other data source fields: SQL already
+    /// runs on that server.
+    Host,
+    Port,
+    User,
+    /// The database file, for SQLite and DuckDB.
+    File,
 }
 
 impl Placeholder {
     /// Whether the placeholder takes its value from the grid's cells.
     pub fn needs_cells(&self) -> bool {
         matches!(self, Self::Value | Self::Values | Self::Row(_))
+    }
+
+    /// Whether only a command can use it: the data source's own settings.
+    pub fn is_data_source_field(&self) -> bool {
+        matches!(self, Self::Host | Self::Port | Self::User | Self::File)
     }
 }
 
@@ -69,6 +81,10 @@ impl fmt::Display for Placeholder {
             Self::Value => f.write_str("{value}"),
             Self::Values => f.write_str("{values}"),
             Self::Row(column) => write!(f, "{{row.{column}}}"),
+            Self::Host => f.write_str("{host}"),
+            Self::Port => f.write_str("{port}"),
+            Self::User => f.write_str("{user}"),
+            Self::File => f.write_str("{file}"),
         }
     }
 }
@@ -85,6 +101,19 @@ pub enum TemplateError {
     EmptyDefault,
     #[error("{{{0}:…}}: only {{column}} takes a default")]
     DefaultNotAllowed(String),
+    #[error("{0} is only for commands: SQL already runs on the data source")]
+    CommandOnly(Placeholder),
+    #[error("{0} is only for SQL: a command gets the selection on stdin")]
+    SqlOnly(Placeholder),
+    #[error("the command is empty; its first item is the program to run")]
+    EmptyCommand,
+    #[error("the program, the command's first item, is empty")]
+    EmptyProgram,
+    #[error(
+        "the program, the command's first item, can't have placeholders, so what runs never \
+         depends on what was selected"
+    )]
+    PlaceholderInProgram,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -122,7 +151,7 @@ pub struct SelectedCells {
 }
 
 impl SelectedCells {
-    fn first(&self) -> Option<&Cell> {
+    pub(crate) fn first(&self) -> Option<&Cell> {
         self.rows.first()?.get(*self.selected.first()?)
     }
 
@@ -132,7 +161,7 @@ impl SelectedCells {
             .flat_map(|row| self.selected.iter().filter_map(|&column| row.get(column)))
     }
 
-    fn in_first_row(&self, column: &str) -> Result<&Cell, RenderError> {
+    pub(crate) fn in_first_row(&self, column: &str) -> Result<&Cell, RenderError> {
         let index = self
             .columns
             .iter()
@@ -151,31 +180,17 @@ impl SqlTemplate {
     ///
     /// # Errors
     ///
-    /// The first placeholder that is misspelt or malformed.
+    /// The first placeholder that is misspelt or malformed, or that only commands take.
     pub fn parse(text: &str) -> Result<Self, TemplateError> {
-        let mut parts = Vec::new();
-        let mut literal = String::new();
-        let mut rest = text;
-        while let Some(at) = rest.find('{') {
-            literal.push_str(&rest[..at]);
-            let tail = &rest[at..];
-            if let Some(after) = tail.strip_prefix("{{") {
-                literal.push('{');
-                rest = after;
-            } else if let Some((written, after)) = placeholder_at(tail) {
-                if !literal.is_empty() {
-                    parts.push(Part::Text(std::mem::take(&mut literal)));
-                }
-                parts.push(Part::Placeholder(classify(written)?));
-                rest = after;
-            } else {
-                literal.push_str(&tail[..1]);
-                rest = &tail[1..];
+        let parts = parse_parts(text)?;
+        let command_only = parts.iter().find_map(|part| match part {
+            Part::Placeholder(placeholder) if placeholder.is_data_source_field() => {
+                Some(placeholder.clone())
             }
-        }
-        literal.push_str(rest);
-        if !literal.is_empty() {
-            parts.push(Part::Text(literal));
+            Part::Placeholder(_) | Part::Text(_) => None,
+        });
+        if let Some(placeholder) = command_only {
+            return Err(TemplateError::CommandOnly(placeholder));
         }
         Ok(Self {
             source: text.to_owned(),
@@ -213,6 +228,36 @@ impl SqlTemplate {
         }
         Ok(sql)
     }
+}
+
+/// Splits `text` into literal text and placeholders. A brace that doesn't start a placeholder is
+/// kept as written; `{{` stands for a `{` that would.
+pub(crate) fn parse_parts(text: &str) -> Result<Vec<Part>, TemplateError> {
+    let mut parts = Vec::new();
+    let mut literal = String::new();
+    let mut rest = text;
+    while let Some(at) = rest.find('{') {
+        literal.push_str(&rest[..at]);
+        let tail = &rest[at..];
+        if let Some(after) = tail.strip_prefix("{{") {
+            literal.push('{');
+            rest = after;
+        } else if let Some((written, after)) = placeholder_at(tail) {
+            if !literal.is_empty() {
+                parts.push(Part::Text(std::mem::take(&mut literal)));
+            }
+            parts.push(Part::Placeholder(classify(written)?));
+            rest = after;
+        } else {
+            literal.push_str(&tail[..1]);
+            rest = &tail[1..];
+        }
+    }
+    literal.push_str(rest);
+    if !literal.is_empty() {
+        parts.push(Part::Text(literal));
+    }
+    Ok(parts)
 }
 
 /// The text inside a placeholder starting `tail`, and what follows it: `{` then a lowercase
@@ -259,6 +304,10 @@ fn classify(written: &str) -> Result<Placeholder, TemplateError> {
         "data_source" => Some(Placeholder::DataSource),
         "value" => Some(Placeholder::Value),
         "values" => Some(Placeholder::Values),
+        "host" => Some(Placeholder::Host),
+        "port" => Some(Placeholder::Port),
+        "user" => Some(Placeholder::User),
+        "file" => Some(Placeholder::File),
         _ => None,
     };
     match (name, separator, plain) {
@@ -311,6 +360,9 @@ fn fill(
             Ok(all.join(", "))
         }
         Placeholder::Row(column) => Ok(literal(cells()?.in_first_row(column)?, quoting)),
+        Placeholder::Host | Placeholder::Port | Placeholder::User | Placeholder::File => {
+            Err(missing())
+        }
     }
 }
 
@@ -399,6 +451,10 @@ mod tests {
             (
                 "SELECT {table:users}",
                 "{table:…}: only {column} takes a default",
+            ),
+            (
+                "SELECT {host}",
+                "{host} is only for commands: SQL already runs on the data source",
             ),
         ];
         for (sql, message) in cases {

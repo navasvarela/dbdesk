@@ -5,7 +5,7 @@
 use dbdesk_core::{
     CatalogPath, DataSource, DriverKind, NodeKind, Quoting, Row, SelectedCells, TemplateValues,
 };
-use dbdesk_store::{ActionTarget, CustomAction};
+use dbdesk_store::{ActionBody, ActionTarget, CustomAction};
 
 /// The grid's cells an action was chosen on, and the table they come from when the grid knows
 /// it (an editable result's).
@@ -49,6 +49,9 @@ pub enum SubjectOn {
 
 impl SubjectKind {
     pub fn offers(self, action: &CustomAction) -> bool {
+        if !runs_here(action) {
+            return false;
+        }
         match self.on {
             SubjectOn::Node(target) => action.applies_to(target, self.driver),
             SubjectOn::Cells => grid_target(action).is_some() && action.runs_on(self.driver),
@@ -82,7 +85,13 @@ pub fn offered(
 ) -> impl Iterator<Item = &CustomAction> {
     actions
         .iter()
-        .filter(move |action| action.applies_to(target, driver))
+        .filter(move |action| runs_here(action) && action.applies_to(target, driver))
+}
+
+/// Only SQL actions run so far: command actions are read, checked and listed in View →
+/// Actions…, but not offered anywhere they could be chosen.
+fn runs_here(action: &CustomAction) -> bool {
+    matches!(action.body, ActionBody::Sql { .. })
 }
 
 /// The console text an action fills in on `subject`: one statement, or one per selected row,
@@ -97,9 +106,12 @@ pub fn fill(
     subject: &Subject,
     quoting: Quoting,
 ) -> Result<String, String> {
+    let ActionBody::Sql { sql, .. } = &action.body else {
+        return Err(format!("{}: runs a program, not SQL", action.name));
+    };
     let statements = values(action, data_source, subject, quoting)
         .iter()
-        .map(|values| action.sql.render(values, quoting))
+        .map(|values| sql.render(values, quoting))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("{}: {error}", action.name))?;
     Ok(statements

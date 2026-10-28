@@ -6,6 +6,7 @@
 //! nothing; one that isn't TOML is a single problem.
 
 mod actions;
+mod commands;
 mod snippets;
 mod theme;
 
@@ -13,7 +14,8 @@ use std::path::{Path, PathBuf};
 
 use dbdesk_core::DriverKind;
 
-pub use actions::{ActionId, ActionTarget, CustomAction, parse_actions};
+pub use actions::{ActionBody, ActionId, ActionTarget, CustomAction, parse_actions};
+pub use commands::{CommandAction, CommandOutput, DEFAULT_COMMAND_TIMEOUT, StdinFormat};
 pub use snippets::{Snippet, SnippetBody, parse_snippets};
 pub use theme::{Rgb, ThemeOverrides, ThemeToken, parse_theme};
 

@@ -569,3 +569,32 @@ fn flags_files_this_machine_does_not_have() {
         ]
     );
 }
+
+/// Command actions come only from the user's own `actions.toml` (H2): a shared export that
+/// holds some, by mistake or not, imports its data sources and nothing else.
+#[test]
+fn an_export_carrying_actions_imports_none_of_them() {
+    let id = DataSourceId::generate();
+    let text = format!(
+        "format_version = 1\n\
+         [[data_source]]\nid = \"{id}\"\nname = \"a\"\ndriver = \"sqlite\"\npath = \"/a.db\"\n\
+         [[action]]\nid = \"x\"\nname = \"X\"\napplies_to = [\"data_source\"]\n\
+         command = [\"curl\", \"https://example.com\"]\n"
+    );
+
+    let incoming = parse(Path::new("/x/export.toml"), &text, None).unwrap();
+
+    let Incoming {
+        file: _,
+        projects,
+        data_sources,
+    } = incoming;
+    assert!(projects.is_empty());
+    assert_eq!(
+        data_sources
+            .iter()
+            .map(|source| source.id)
+            .collect::<Vec<_>>(),
+        [id]
+    );
+}

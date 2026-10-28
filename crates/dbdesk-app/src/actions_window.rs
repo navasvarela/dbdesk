@@ -5,7 +5,7 @@ use egui::{Grid, RichText, ScrollArea, Window};
 
 use crate::custom_files::{self, CustomFiles};
 use crate::keymap::Keymap;
-use dbdesk_store::{CustomAction, CustomFileKind};
+use dbdesk_store::{ActionBody, CommandAction, CustomAction, CustomFileKind};
 
 const DEFAULT_SIZE: [f32; 2] = [760.0, 420.0];
 
@@ -61,7 +61,7 @@ fn contents(
             .striped(true)
             .num_columns(6)
             .show(ui, |ui| {
-                for heading in ["Action", "Id", "On", "Drivers", "Keys", "SQL"] {
+                for heading in ["Action", "Id", "On", "Drivers", "Keys", "Runs"] {
                     ui.strong(heading);
                 }
                 ui.end_row();
@@ -101,14 +101,45 @@ fn row(ui: &mut egui::Ui, action: &CustomAction, keymap: &Keymap) {
     } else {
         ui.label(keys.join(", "));
     }
-    let sql = RichText::new(action.sql.source()).monospace();
-    if action.run {
-        ui.label(sql);
-    } else {
-        ui.label(sql)
-            .on_hover_text("Opens in a console to edit before running");
+    match &action.body {
+        ActionBody::Sql { sql, run } => {
+            let sql = ui.label(RichText::new(sql.source()).monospace());
+            if !run {
+                sql.on_hover_text("Opens in a console to edit before running");
+            }
+        }
+        ActionBody::Command(command) => {
+            ui.vertical(|ui| command_cell(ui, command));
+        }
     }
     ui.end_row();
+}
+
+/// The command in full, every argument quoted so where one ends is plain, and what goes in
+/// and out of it.
+fn command_cell(ui: &mut egui::Ui, command: &CommandAction) {
+    ui.label(RichText::new(command_text(command.command.source())).monospace());
+    ui.weak(format!(
+        "stdin {} · output {} · timeout {}",
+        command.stdin.name(),
+        command.output.name(),
+        timeout_text(command.timeout)
+    ));
+}
+
+/// As `actions.toml` writes a list of strings.
+fn command_text(source: &[String]) -> String {
+    let items: Vec<String> = source.iter().map(|item| format!("{item:?}")).collect();
+    format!("[{}]", items.join(", "))
+}
+
+/// As `actions.toml` writes a timeout, "30s" or "1m 30s".
+fn timeout_text(timeout: std::time::Duration) -> String {
+    match jiff::SignedDuration::try_from(timeout) {
+        // `#` selects jiff's friendly format ("30s") over ISO 8601 ("PT30S").
+        Ok(duration) => format!("{duration:#}"),
+        Err(_) => format!("{}s", timeout.as_secs()),
+    }
 }
 
 /// A starting `actions.toml`: the plan's examples, commented out, so the file documents the
@@ -126,6 +157,14 @@ pub const TEMPLATE: &str = r#"# dbdesk custom actions. Uncomment and change an a
 #   {data_source} (a string)  {value} {values} {row.<column>} (from the grid)
 # Write {{ for a { that would otherwise start a placeholder.
 #
+# An action can run a program instead of SQL, with command = [program, arguments…]. There is no
+# shell: each placeholder fills one argument, as raw text. Commands also take the data source's
+# {host} {port} {user} {file}, never a password. With a command:
+#   stdin = "json", "csv" or "tsv" sends the grid's selected cells (default "none");
+#   output = "viewer", "console", "log" or "none" says where stdout goes (default "viewer");
+#   timeout = "30s" stops it after that long (default 60s).
+# dbdesk shows each command in full and asks before its first run.
+#
 # Bind an action to a key in keymap.toml as "custom.<id>" = "cmd+shift+c".
 
 # [[action]]
@@ -140,11 +179,27 @@ pub const TEMPLATE: &str = r#"# dbdesk custom actions. Uncomment and change an a
 # applies_to = ["table"]
 # sql = "SELECT * FROM {qualified_name} ORDER BY {column:created_at} DESC LIMIT 100"
 # run = false
+
+# [[action]]
+# id = "rows-to-jq"
+# name = "Send rows to jq"
+# applies_to = ["grid.selection"]
+# command = ["jq", "-r", ".[] | .email"]
+# stdin = "json"
+# output = "viewer"
 "#;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn writes_commands_and_timeouts_as_actions_toml_does() {
+        let source = ["jq".to_owned(), "-r".to_owned(), ".[] | \"x\"".to_owned()];
+        assert_eq!(command_text(&source), r#"["jq", "-r", ".[] | \"x\""]"#);
+        assert_eq!(timeout_text(std::time::Duration::from_secs(90)), "1m 30s");
+        assert_eq!(timeout_text(std::time::Duration::from_millis(500)), "500ms");
+    }
 
     #[test]
     fn the_template_adds_nothing_until_uncommented_and_then_reads_cleanly() {
@@ -158,6 +213,6 @@ mod tests {
             .collect();
         let checked = dbdesk_store::parse_actions(&uncommented);
         assert!(checked.problems.is_empty(), "{:?}", checked.problems);
-        assert_eq!(checked.value.len(), 2);
+        assert_eq!(checked.value.len(), 3);
     }
 }
