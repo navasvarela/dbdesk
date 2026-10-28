@@ -1,12 +1,17 @@
-//! Downloading the newest release and installing it over the running copy of dbdesk.
+//! Downloading the newest release and installing it over the running copy of dbdesk, or, on
+//! Windows, keeping its installer to run once dbdesk has quit.
 
 use std::cell::Cell;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
 use cargo_packager_updater::semver::Version;
 use cargo_packager_updater::url::Url;
-use cargo_packager_updater::{Config, UpdaterBuilder};
+use cargo_packager_updater::{
+    Config, Update, UpdateFormat, UpdaterBuilder, WindowsUpdateInstallMode,
+};
 use dbdesk_core::describe_error;
 
 use crate::Event;
@@ -25,21 +30,73 @@ pub enum InstallSupport {
     Unsupported(String),
 }
 
+/// An update that has been downloaded and checked, and what restarting dbdesk does with it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstalledUpdate {
+    pub version: String,
+    pub restart: Restart,
+}
+
+/// What finishes an update once dbdesk has quit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Restart {
+    /// The new version has replaced this copy's files (the macOS bundle, the AppImage), so
+    /// starting this copy again starts it.
+    Relaunch,
+    /// The new version's installer, kept to run once dbdesk has quit: Windows can't replace
+    /// the files of a running program. The installer starts the new version when it's done.
+    RunInstaller(StagedInstaller),
+}
+
+/// The installer's name in its folder. Fixed rather than versioned, so each update replaces
+/// the last one's installer instead of leaving another behind.
+const STAGED_INSTALLER_NAME: &str = "dbdesk-setup.exe";
+
+/// A downloaded installer whose signature has been checked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StagedInstaller(PathBuf);
+
+impl From<PathBuf> for StagedInstaller {
+    fn from(path: PathBuf) -> Self {
+        Self(path)
+    }
+}
+
+impl StagedInstaller {
+    /// Keeps `bytes` as the installer in `dir`, replacing any kept by an earlier update.
+    fn write(dir: &Path, bytes: &[u8]) -> std::io::Result<Self> {
+        std::fs::create_dir_all(dir)?;
+        let path = dir.join(STAGED_INSTALLER_NAME);
+        std::fs::write(&path, bytes)?;
+        Ok(Self(path))
+    }
+
+    /// Runs the installer the way `cargo-packager-updater` would: in passive mode, which shows
+    /// a progress bar and asks nothing, and starting dbdesk when it's done.
+    pub fn command(&self) -> Command {
+        let mut command = Command::new(&self.0);
+        command.args(WindowsUpdateInstallMode::Passive.nsis_args());
+        command
+    }
+}
+
 /// Installs updates, so the engine can be tested without downloading or replacing anything.
 pub trait UpdateInstaller: Send + Sync {
     /// Whether this copy can update itself. Cheap: only looks at how it was installed.
     fn support(&self) -> InstallSupport;
 
-    /// Downloads the newest release, checks its signature, and installs it over this copy.
-    /// Blocking; the engine calls it on its blocking pool. `progress` gets the bytes downloaded
-    /// so far and the total when the server says. Returns the installed version.
+    /// Downloads the newest release, checks its signature, and installs it over this copy, or
+    /// keeps its installer to run once dbdesk has quit. Blocking; the engine calls it on its
+    /// blocking pool. `progress` gets the bytes downloaded so far and the total when the server
+    /// says.
     ///
     /// # Errors
     ///
     /// When there is nothing newer, this copy can't update itself, or the download, the
     /// signature check or the install fails. A failed install leaves the running copy as it
     /// was.
-    fn install(&self, progress: &dyn Fn(u64, Option<u64>)) -> Result<String, InstallError>;
+    fn install(&self, progress: &dyn Fn(u64, Option<u64>))
+    -> Result<InstalledUpdate, InstallError>;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -54,10 +111,13 @@ pub enum InstallError {
     CurrentVersion(String),
     #[error("could not update dbdesk")]
     Updater(#[from] cargo_packager_updater::Error),
+    #[error("could not keep the downloaded installer")]
+    KeepInstaller(#[source] std::io::Error),
 }
 
 /// Installs the packages the release workflow signs, using cargo-packager's updater: the
-/// macOS `.app.tar.gz` replaces the app bundle, and the AppImage replaces itself.
+/// macOS `.app.tar.gz` replaces the app bundle, the AppImage replaces itself, and the Windows
+/// installer is kept to run once dbdesk has quit.
 ///
 /// The manifest is the `latest.json` attached to each GitHub release, which lists one signed
 /// package per platform (see `.github/workflows/release.yml`). A package whose signature doesn't
@@ -83,7 +143,10 @@ impl UpdateInstaller for PackagerInstaller {
         install_support()
     }
 
-    fn install(&self, progress: &dyn Fn(u64, Option<u64>)) -> Result<String, InstallError> {
+    fn install(
+        &self,
+        progress: &dyn Fn(u64, Option<u64>),
+    ) -> Result<InstalledUpdate, InstallError> {
         if let InstallSupport::Unsupported(reason) = self.support() {
             return Err(InstallError::Unsupported(reason));
         }
@@ -107,13 +170,43 @@ impl UpdateInstaller for PackagerInstaller {
             },
             || {},
         )?;
-        update.install(bytes)?;
-        Ok(update.version.clone())
+        let restart = put_in_place(&update, bytes)?;
+        Ok(InstalledUpdate {
+            version: update.version,
+            restart,
+        })
     }
 }
 
-/// Whether the running copy was installed in a way it can replace: the macOS app bundle, or the
-/// AppImage. A `.deb` belongs to the package manager, and a build from source to its builder.
+/// Where the Windows installer is kept until dbdesk quits.
+fn staging_dir() -> PathBuf {
+    std::env::temp_dir().join("dbdesk-update")
+}
+
+/// Replaces this copy with the downloaded, verified package, or keeps it to run later.
+fn put_in_place(update: &Update, bytes: Vec<u8>) -> Result<Restart, InstallError> {
+    match update.format {
+        UpdateFormat::App | UpdateFormat::AppImage => {
+            update.install(bytes)?;
+            Ok(Restart::Relaunch)
+        }
+        // Not `update.install`: for an installer it starts it and calls `std::process::exit`
+        // at once, from this blocking thread, which would skip the app's checks for open
+        // transactions and unsaved consoles on the way out.
+        UpdateFormat::Nsis => StagedInstaller::write(&staging_dir(), &bytes)
+            .map(Restart::RunInstaller)
+            .map_err(InstallError::KeepInstaller),
+        UpdateFormat::Wix => Err(InstallError::Unsupported(
+            "The update is an .msi package, which dbdesk doesn't install. Download the \
+             installer from the release page."
+                .to_owned(),
+        )),
+    }
+}
+
+/// Whether the running copy was installed in a way it can replace: the macOS app bundle, the
+/// AppImage, or a copy put there by the Windows installer. A `.deb` belongs to the package
+/// manager, and a portable copy or a build from source to whoever put it there.
 fn install_support() -> InstallSupport {
     if cfg!(target_os = "macos") {
         let in_bundle = std::env::current_exe().is_ok_and(|exe| {
@@ -139,6 +232,17 @@ fn install_support() -> InstallSupport {
                     .to_owned(),
             )
         }
+    } else if cfg!(target_os = "windows") {
+        if std::env::current_exe().is_ok_and(|exe| installed_by_installer(&exe)) {
+            InstallSupport::Supported
+        } else {
+            InstallSupport::Unsupported(
+                "This copy wasn't installed with dbdesk's installer (it's a portable copy, or \
+                 was built from source), so it can't replace itself. Download the installer \
+                 from the release page."
+                    .to_owned(),
+            )
+        }
     } else {
         InstallSupport::Unsupported(
             "dbdesk can't update itself on this system yet. Download the new version from the \
@@ -146,6 +250,16 @@ fn install_support() -> InstallSupport {
                 .to_owned(),
         )
     }
+}
+
+/// The uninstaller the NSIS installer writes beside `dbdesk.exe` (cargo-packager's template
+/// names it so). Its presence tells an installed copy from a portable one, which an installer
+/// run would not update: the installer installs over the previous installation it finds in the
+/// registry, not over the running copy.
+const WINDOWS_UNINSTALLER_NAME: &str = "uninstall.exe";
+
+fn installed_by_installer(exe: &Path) -> bool {
+    exe.with_file_name(WINDOWS_UNINSTALLER_NAME).is_file()
 }
 
 /// How often progress is reported: at each whole percent when the size is known, otherwise
@@ -187,12 +301,16 @@ pub(crate) async fn install(installer: Arc<dyn UpdateInstaller>, events: EventSi
         })
     });
     let result = match task.await {
-        Ok(Ok(version)) => Ok(version),
+        Ok(Ok(update)) => Ok(update),
         Ok(Err(error)) => Err(describe_error(&error)),
         Err(error) => Err(describe_error(&error)),
     };
     match &result {
-        Ok(version) => tracing::info!("installed dbdesk {version}; it starts after a restart"),
+        Ok(update) => tracing::info!(
+            "dbdesk {} is ready; restarting finishes the update ({:?})",
+            update.version,
+            update.restart
+        ),
         Err(error) => tracing::error!("could not install the update: {error}"),
     }
     events.send(Event::UpdateInstalled(result));
@@ -217,5 +335,35 @@ mod tests {
             .filter(|&downloaded| throttle.should_report(downloaded, None))
             .collect();
         assert_eq!(reported, [0, UNKNOWN_SIZE_STEP]);
+    }
+
+    #[test]
+    fn keeps_one_installer_replacing_the_last_update_s() {
+        let dir = tempfile::tempdir().unwrap();
+        let staging = dir.path().join("dbdesk-update");
+        let first = StagedInstaller::write(&staging, b"0.13.0").unwrap();
+        let second = StagedInstaller::write(&staging, b"0.14.0").unwrap();
+        assert_eq!(first, second);
+        assert_eq!(std::fs::read(&second.0).unwrap(), b"0.14.0");
+        assert_eq!(std::fs::read_dir(&staging).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn runs_the_installer_passively_then_starts_dbdesk() {
+        let installer = StagedInstaller::from(PathBuf::from("dbdesk-setup.exe"));
+        let command = installer.command();
+        assert_eq!(command.get_program(), "dbdesk-setup.exe");
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(args, ["/P", "/R"]);
+    }
+
+    #[test]
+    fn only_a_copy_beside_its_uninstaller_was_installed() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("dbdesk.exe");
+        std::fs::write(&exe, b"").unwrap();
+        assert!(!installed_by_installer(&exe), "a portable copy");
+        std::fs::write(dir.path().join(WINDOWS_UNINSTALLER_NAME), b"").unwrap();
+        assert!(installed_by_installer(&exe));
     }
 }

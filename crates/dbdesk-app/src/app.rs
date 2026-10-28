@@ -1637,7 +1637,7 @@ impl DbDeskApp {
                 self.send_if(install);
             }
             // Quits the usual way, so open transactions are still confirmed first; `main`
-            // starts the installed copy once this one has stopped.
+            // starts the installed copy, or the Windows installer, once this one has stopped.
             Some(UpdateAction::Restart) if self.updates.request_restart() => {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
@@ -1929,8 +1929,8 @@ impl eframe::App for DbDeskApp {
         let unsaved = self.consoles.unsaved();
         self.send_all(unsaved);
         self.shut_down_engine();
-        if self.updates.restart_after_quit() {
-            relaunch::request();
+        if let Some(restart) = self.updates.restart_after_quit() {
+            relaunch::request(restart.clone());
         }
     }
 }

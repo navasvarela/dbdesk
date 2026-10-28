@@ -45,4 +45,7 @@ pub use releases::{GithubReleases, Release, ReleaseError, ReleaseFeed};
 pub use repaint::Repaint;
 pub use sql_files::WatchedFile;
 pub use tunnels::Tunnels;
-pub use updater::{InstallError, InstallSupport, PackagerInstaller, UpdateInstaller};
+pub use updater::{
+    InstallError, InstallSupport, InstalledUpdate, PackagerInstaller, Restart, StagedInstaller,
+    UpdateInstaller,
+};
