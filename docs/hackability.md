@@ -1,7 +1,7 @@
 # Hackability
 
 Status: **H1 built** (2026-10-28, in layers H1a–H1f in the
-[roadmap](roadmap.md#hackability-track)); H2 and H3 planned. Proposed on 2026-10-24. The
+[roadmap](roadmap.md#hackability-track)); **H2 planned** in layers H2a–H2e there; H3 later. Proposed on 2026-10-24. The
 decision behind it is [ADR 0005](adr/0005-customisation-files-commands-then-wasm.md).
 
 Personalisation is one of the two reasons dbdesk exists (see [Vision](vision.md)). Today you can
@@ -149,29 +149,53 @@ command = ["open", "-a", "Terminal", "--args", "pgcli", "postgres://{user}@{host
 output = "none"
 ```
 
+- **An action has `sql` or `command`, never both.** `stdin`, `output` and `timeout` go with
+  `command`; `run` goes with `sql`.
 - **No shell.** `command` is a list of arguments, run directly. Each placeholder fills exactly
-  one argument, so a table name full of spaces and quotes can't become extra arguments or a
-  second command. A shell is still possible when someone writes `["sh", "-c", …]` deliberately.
+  one argument, as raw text, so a table name full of spaces and quotes can't become extra
+  arguments or a second command. A shell is still possible when someone writes
+  `["sh", "-c", …]` deliberately.
+- **Placeholders:** those of SQL actions, and the data source's own fields:
+  - `{host}`, `{port}` and `{user}` for a server, `{file}` for SQLite and DuckDB, from the
+    saved settings with `${NAME}` variables resolved;
+  - `{database}` is the node's database, or the one the data source connects to;
+  - `{qualified_name}` is the name as the dialect's SQL writes it;
+  - `{values}` is for SQL only: a command gets the selection on stdin.
 - **Never secrets.** There is no `{password}` placeholder, and no password reaches a command
   through its environment either. A program that needs one gets it from its own configuration,
   or from the keychain itself.
-- **Context in the environment:**
-  - `DBDESK_DATA_SOURCE`, `DBDESK_DRIVER`, `DBDESK_DATABASE`, `DBDESK_SCHEMA`, `DBDESK_TABLE`;
+- **Context in the environment,** on top of dbdesk's own:
+  - `DBDESK_DATA_SOURCE`, `DBDESK_DRIVER`, `DBDESK_DATABASE`, `DBDESK_SCHEMA`, `DBDESK_TABLE`,
+    each only when there is one;
   - `DBDESK_FORMAT` for what is on stdin.
-- **Runs in the engine,** on its blocking pool, so the UI never waits:
+- **stdin** is the selected columns of the selected rows: `json` as Export writes it, `csv` with
+  a header line, `tsv` as Copy writes it. Only the grid has a selection, so stdin on any other
+  target is a problem with the file, and `none` (the default) leaves stdin empty.
+- **Commands don't run on `grid.row`:** a command already gets every selected row, so running
+  it once per row would only start more programs with nowhere to put their outputs.
+- **Runs in the engine,** on tokio's process support, so the UI never waits, in the home
+  folder:
   - with a timeout (`timeout = "30s"`, default 60 s);
-  - stoppable with ⌘. like a query;
-  - with output capped at a few megabytes.
+  - stoppable with **Stop** in the status bar or ⌘., like a query;
+  - with stdout capped at 4 MB, past which the program is stopped and what it wrote is shown
+    with a note; stderr is kept up to 64 KB.
 - **Output:**
-  - **viewer** shows stdout in the cell viewer, JSON pretty-printed;
-  - **console** opens it in a new query console, for a program that writes SQL;
+  - **viewer** shows stdout in a window like the cell viewer, JSON pretty-printed;
+  - **console** opens it in a new query console on the same data source, for a program that
+    writes SQL;
   - **log** sends it and stderr to the log console;
-  - a non-zero exit shows stderr in an error.
+  - **none** shows nothing;
+  - a non-zero exit, a timeout or a program that can't start opens a window with what went
+    wrong and stderr, whatever `output` says.
 - **Trust.** Command actions come only from the user's own `actions.toml`. Nothing else may
   add them:
-  - Shared or imported configuration (the planned data source export and import) never carries
+  - Shared or imported configuration (the data source export and import) never carries
     actions.
-  - **View → Actions…** shows each command in full before you first run it.
+  - The first run of each command shows it in full and asks first. **Run** records its
+    definition in `trusted_commands.toml`, in the data folder rather than beside
+    `actions.toml`, so a copied or synced config folder brings no trust with it. A command
+    whose definition changes asks again, and the engine refuses one that isn't trusted.
+  - **View → Actions…** shows each command in full, and whether it is trusted.
 
 **H2 exit:**
 - I send selected rows to `jq` and see the result in the viewer.
@@ -218,6 +242,8 @@ Recorded in [ADR 0005](adr/0005-customisation-files-commands-then-wasm.md). In s
 | Native plugins (`dylib`) | No: Rust has no stable ABI, and the workspace forbids `unsafe`. |
 | An embedded scripting language (Lua, Rhai) | No: a second API to maintain, with less isolation than WASM and fewer languages to write in. |
 | Who may add command actions | Only the user's own `actions.toml`; never shared or imported files. |
+| When a command is trusted | On its first run, by its exact definition, recorded outside the config folder; a changed definition asks again. |
+| How a program runs | Directly, never through a shell, on tokio's process support, killed by dropping it on timeout or stop. |
 | A fourth theme from `theme.toml` | No: the file overrides the light and dark themes, so Match system keeps working and View → Theme keeps egui's three choices. |
 | What a key-bound action acts on | The focused console's selected cells, or the explorer's selected node, which clicking a node now sets. |
 
@@ -225,7 +251,10 @@ Recorded in [ADR 0005](adr/0005-customisation-files-commands-then-wasm.md). In s
 
 - **A command action running something unintended.** There is no shell, each placeholder fills
   exactly one argument, commands come only from the user's own file, and they are shown in full
-  before their first run.
+  and trusted by their exact definition before their first run.
+- **A command outliving dbdesk's interest in it.** Only the program dbdesk started is killed
+  on timeout or stop; children it starts itself may keep running, since killing a process tree
+  needs `unsafe` system calls. dbdesk never waits on them.
 - **Placeholders injecting SQL.** Names are quoted as identifiers and values escaped as
   literals, never pasted in as text, and a test runs every placeholder with hostile names.
 - **A plugin interface that is hard to change once people depend on it.** H3 starts with a
