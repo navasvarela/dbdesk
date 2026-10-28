@@ -40,6 +40,7 @@ mod native_menu;
 mod object_dialog;
 mod parameters_dialog;
 mod password_prompt;
+mod previous_install;
 mod project_dialog;
 mod project_settings;
 mod relaunch;
@@ -69,8 +70,8 @@ use std::sync::Arc;
 use anyhow::{Context as _, anyhow};
 use dbdesk_engine::{EngineConfig, GithubReleases, PackagerInstaller, ProcessRunner};
 use dbdesk_store::{
-    APP_NAME, AppPaths, ConsoleFiles, DataSourceFile, HistoryFile, Keychain, KeymapFile,
-    ProjectFile, SettingsFile,
+    APP_NAME, AppPaths, ConsoleFiles, DataSourceFile, HistoryFile, KeymapFile, ProjectFile,
+    SettingsFile, os_keychain,
 };
 
 use crate::app::DbDeskApp;
@@ -99,15 +100,20 @@ fn main() -> anyhow::Result<()> {
         .into_iter()
         .map(|file| std::path::absolute(&file).unwrap_or(file))
         .collect();
-    let paths = AppPaths::discover()
-        .context("the OS reports no home directory, so dbdesk has nowhere to keep its files")?;
+    let adopted = previous_install::adopt(
+        AppPaths::discover()
+            .context("the OS reports no home directory, so dbdesk has nowhere to keep its files")?,
+    );
+    let paths = &adopted.paths;
     let telemetry = telemetry::init(&paths.logs_dir())?;
     let _file_guard = telemetry.file_guard;
     let log_feed = telemetry.log_feed;
+    adopted.log();
+    let adoption_notice = adopted.notice();
     let engine_config = EngineConfig {
         data_sources: DataSourceFile::new(paths.data_sources_file()),
         projects: ProjectFile::new(paths.projects_file()),
-        secrets: Arc::new(Keychain),
+        secrets: os_keychain(),
         consoles: ConsoleFiles::new(paths.consoles_dir()),
         history: HistoryFile::new(paths.history_file()),
         keymap: KeymapFile::new(paths.keymap_file()),
@@ -145,13 +151,20 @@ fn main() -> anyhow::Result<()> {
         .with_titlebar_shown(false);
     let options = eframe::NativeOptions {
         viewport,
+        // Named so that a session on the previous install's folders (a failed copy, see
+        // `previous_install::adopt`) keeps its window state there too. Left to eframe, it would
+        // create the current folder, and on macOS that is the settings folder, whose existence
+        // means the copy is done.
+        persistence_path: Some(paths.window_state_file()),
         ..Default::default()
     };
     eframe::run_native(
         APP_NAME,
         options,
         Box::new(move |cc| {
-            let app = DbDeskApp::new(cc, log_feed, engine_config)?.with_files_to_open(files);
+            let app = DbDeskApp::new(cc, log_feed, engine_config)?
+                .with_files_to_open(files)
+                .with_adoption_notice(adoption_notice);
             #[cfg(target_os = "macos")]
             let app = app
                 .with_native_menu(native_menu::NativeMenu::install(&cc.egui_ctx))

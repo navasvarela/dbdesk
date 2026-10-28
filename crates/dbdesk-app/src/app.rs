@@ -41,6 +41,7 @@ use crate::menu_bar;
 use crate::native_menu::{Chosen, NativeMenu};
 use crate::object_dialog::{self, ObjectDialog, ObjectDialogAction, Target};
 use crate::password_prompt::{PasswordPrompt, PromptAction};
+use crate::previous_install::AdoptionNotice;
 use crate::project_dialog::{
     DeleteProjectChoice, DeleteProjectConfirmation, ProjectDialogAction, ProjectNameDialog,
 };
@@ -120,6 +121,8 @@ pub struct DbDeskApp {
     action_problem: Option<String>,
     command_runs: CommandRuns,
     about_open: bool,
+    /// What happened to the previous install's files on this first start, until dismissed.
+    adoption_notice: Option<AdoptionNotice>,
     settings: AppSettings,
     updates: Updates,
     /// Asks where to export rows or the history (named by the `&str`). The platform's save
@@ -214,6 +217,7 @@ impl DbDeskApp {
             action_problem: None,
             command_runs: CommandRuns::default(),
             about_open: false,
+            adoption_notice: None,
             settings: AppSettings::default(),
             updates: Updates::new(install_support),
             consoles: Consoles::default(),
@@ -235,6 +239,13 @@ impl DbDeskApp {
     /// command line.
     pub fn with_files_to_open(mut self, paths: Vec<PathBuf>) -> Self {
         self.files_to_open = paths;
+        self
+    }
+
+    /// Tells the user once what happened to the previous install's files (see
+    /// `previous_install`).
+    pub fn with_adoption_notice(mut self, notice: Option<AdoptionNotice>) -> Self {
+        self.adoption_notice = notice;
         self
     }
 
@@ -1678,6 +1689,16 @@ impl DbDeskApp {
         }
     }
 
+    fn show_adoption_notice(&mut self, ctx: &egui::Context) {
+        if self
+            .adoption_notice
+            .as_ref()
+            .is_some_and(|notice| notice.show(ctx))
+        {
+            self.adoption_notice = None;
+        }
+    }
+
     fn show_update_dialog(&mut self, ctx: &egui::Context) {
         if !self.updates.dialog_open {
             return;
@@ -1962,6 +1983,7 @@ impl eframe::App for DbDeskApp {
         let commands = self.command_runs.show(&ctx);
         self.send_all(commands);
         self.show_about(&ctx);
+        self.show_adoption_notice(&ctx);
         self.show_update_dialog(&ctx);
         self.show_settings_window(&ctx);
 

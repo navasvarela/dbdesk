@@ -14,6 +14,7 @@ mod history;
 mod keymap;
 mod paths;
 mod portable;
+mod previous_install;
 mod projects;
 mod secrets;
 mod settings;
@@ -37,16 +38,19 @@ pub use history::{
     RowChangeKind, redact_secrets,
 };
 pub use keymap::{KeymapBindings, KeymapError, KeymapFile};
-pub use paths::{APP_NAME, AppPaths};
+pub use paths::{APP_NAME, AppPaths, PREVIOUS_APP_NAME};
 pub use portable::{
     DataSourceImport, Difference, EntryStatus, ImportChoice, ImportChoices, ImportPlan,
     ImportPreview, Incoming, MissingPath, PortableError, ProjectImport, read_export, write_export,
+};
+pub use previous_install::{
+    Adoption, AdoptionError, CopiedInstall, InstallFolders, adopt_previous_install,
 };
 pub use projects::{
     InvalidSchemaScope, InvalidSlug, InvalidTimeout, McpOverrides, McpPermissions, Project,
     ProjectFile, ProjectSlug, ProjectStoreError, Projects, SchemaScope, StatementTimeout,
 };
-pub use secrets::{Keychain, Secret, SecretError, SecretStore};
+pub use secrets::{Secret, SecretError, SecretStore, os_keychain};
 pub use settings::{
     FormatSettings, HistorySettings, KeywordCase, LintSettings, Settings, SettingsError,
     SettingsFile, UpdateSettings,

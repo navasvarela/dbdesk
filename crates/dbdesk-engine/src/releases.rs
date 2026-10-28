@@ -54,15 +54,20 @@ pub struct GithubReleases {
 impl GithubReleases {
     /// `repository` is `owner/name`; `user_agent` names the app, which GitHub requires.
     pub fn new(repository: &str, user_agent: &str) -> Self {
+        Self::at(
+            format!("https://api.github.com/repos/{repository}/releases/latest"),
+            user_agent,
+        )
+    }
+
+    /// Asks `url`, an address of GitHub's `releases/latest` or a stand-in for it.
+    pub(crate) fn at(url: String, user_agent: &str) -> Self {
         let agent = ureq::Agent::config_builder()
             .timeout_global(Some(TIMEOUT))
             .user_agent(user_agent)
             .build()
             .into();
-        Self {
-            url: format!("https://api.github.com/repos/{repository}/releases/latest"),
-            agent,
-        }
+        Self { url, agent }
     }
 }
 

@@ -2,11 +2,19 @@ use std::path::PathBuf;
 
 use directories::{BaseDirs, ProjectDirs};
 
-use crate::{CustomFiles, TrustedCommandsFile};
+use crate::{CustomFiles, InstallFolders, TrustedCommandsFile};
 
-/// The application name used for platform directories. Also the eframe app id, so the
-/// window/layout state eframe persists lands in the same folder.
+/// The application name used for platform directories and the OS keychain. Also the eframe app
+/// id, so the window/layout state eframe persists lands in the same folder.
 pub const APP_NAME: &str = "dbdesk";
+
+/// The name the app had before [`APP_NAME`], whose folders the first start under the new name
+/// copies and whose keychain entries it moves on first use (see "Renaming to DbRover" in
+/// `docs/releasing.md`). While it equals [`APP_NAME`] there is nothing to bring over.
+pub const PREVIOUS_APP_NAME: &str = "dbdesk";
+
+/// The query history database's file name, in the settings folder.
+pub(crate) const HISTORY_FILE_NAME: &str = "history.sqlite";
 
 /// dbdesk's directories on this machine (`~/Library/Application Support/dbdesk` on macOS).
 #[derive(Debug, Clone)]
@@ -18,16 +26,37 @@ pub struct AppPaths {
 impl AppPaths {
     /// Resolves the platform directories, or `None` if the OS reports no home directory.
     pub fn discover() -> Option<Self> {
+        Self::named(APP_NAME)
+    }
+
+    /// The directories of [`PREVIOUS_APP_NAME`], which may not exist.
+    pub fn discover_previous() -> Option<Self> {
+        Self::named(PREVIOUS_APP_NAME)
+    }
+
+    fn named(name: &str) -> Option<Self> {
         Some(Self {
-            dirs: ProjectDirs::from("", "", APP_NAME)?,
+            dirs: ProjectDirs::from("", "", name)?,
             home: BaseDirs::new()?.home_dir().to_owned(),
         })
+    }
+
+    /// The folders this name keeps its files in.
+    pub fn folders(&self) -> InstallFolders {
+        InstallFolders::of(&self.dirs)
     }
 
     /// OpenSSH's file of trusted host keys, which SSH tunnels share with `ssh`. Not
     /// guaranteed to exist.
     pub fn ssh_known_hosts_file(&self) -> PathBuf {
         self.home.join(".ssh").join("known_hosts")
+    }
+
+    /// eframe's saved state: the window, the layout and open tabs. Where eframe would put it
+    /// for [`APP_NAME`], but following these paths when they are another name's. Not guaranteed
+    /// to exist yet.
+    pub fn window_state_file(&self) -> PathBuf {
+        self.dirs.data_dir().join("app.ron")
     }
 
     /// Rolling log files. Not guaranteed to exist yet.
@@ -74,6 +103,6 @@ impl AppPaths {
 
     /// The query history database. Not guaranteed to exist yet.
     pub fn history_file(&self) -> PathBuf {
-        self.dirs.config_dir().join("history.sqlite")
+        self.dirs.config_dir().join(HISTORY_FILE_NAME)
     }
 }
