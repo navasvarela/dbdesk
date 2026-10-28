@@ -386,8 +386,9 @@ and read-only results.
 ## Cloud and big data track
 
 Managed databases signed into with a cloud account, data in object storage, and the cloud
-warehouses. Planned, not scheduled. The full plan, with the order, the shared groundwork and the
-open decisions, is in [Cloud and big data](cloud-data.md).
+warehouses. Planned, not scheduled. The providers come in this order: AWS, then Google Cloud,
+then Azure, both across the milestones and within each one. The full plan, with the order, the
+shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.md).
 
 - **C0 — Groundwork:**
   - signing in with AWS, Google Cloud and Microsoft Entra ID accounts, reusing the sign-in
@@ -395,15 +396,15 @@ open decisions, is in [Cloud and big data](cloud-data.md).
   - cost guards per data source, so that nothing scans a whole table unasked;
   - queries run as jobs (submit, poll, page, cancel by id);
   - lazy, searchable catalogs for very large ones.
-- **C1 — Managed databases:** RDS and Aurora, Cloud SQL, Azure SQL and Azure Database, Neon,
-  Supabase, ClickHouse Cloud and Redshift, through the drivers dbdesk has, with presets in the
-  data source dialog.
+- **C1 — Managed databases:** RDS, Aurora and Redshift; Cloud SQL; Azure SQL, Azure Database,
+  and Synapse's and Fabric's SQL endpoints; and Neon, Supabase and ClickHouse Cloud, through the
+  drivers dbdesk has, with presets in the data source dialog.
 - **C2 — Object storage:** Parquet, CSV and JSON in S3, Google Cloud Storage and Azure Blob
   Storage, Iceberg and Delta tables, and MotherDuck, all through DuckDB.
-- **C3 — Snowflake**, over its SQL API.
+- **C3 — Athena and Trino**, over AWS's Athena API and then Trino's HTTP protocol.
 - **C4 — BigQuery**, over its jobs API, with a dry run showing the bytes a query will scan.
-- **C5 — Databricks SQL**, over the Statement Execution API and Unity Catalog.
-- **C6 — Trino and Athena**, over Trino's HTTP protocol and AWS's Athena API.
+- **C5 — Snowflake**, over its SQL API.
+- **C6 — Databricks SQL**, over the Statement Execution API and Unity Catalog.
 
 ## Object helpers track
 
