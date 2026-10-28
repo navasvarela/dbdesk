@@ -4,6 +4,7 @@
 //! engine's async workers. Must run inside a tokio runtime.
 
 mod catalog;
+mod constraints;
 mod execution;
 mod table;
 
@@ -13,7 +14,8 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use dbdesk_core::{
     BoxError, CancelHandle, CatalogNode, CatalogPath, Cell, Connection, DriverError, Rejection,
-    RelationName, ResultCursor, ServerInfo, SqliteConfig, TableDescription, TransactionStatus,
+    RelationName, ResultCursor, ServerInfo, SqliteConfig, TableConstraints, TableDescription,
+    TableName, TransactionStatus,
 };
 use rusqlite::OpenFlags;
 
@@ -185,6 +187,15 @@ impl Connection for SqliteConnection {
     ) -> Result<Option<TableDescription>, DriverError> {
         let table = table.clone();
         self.run_blocking(move |connection| table::describe_table(connection, &table))
+            .await
+    }
+
+    async fn describe_constraints(
+        &mut self,
+        table: &TableName,
+    ) -> Result<TableConstraints, DriverError> {
+        let table = table.clone();
+        self.run_blocking(move |connection| constraints::describe_constraints(connection, &table))
             .await
     }
 

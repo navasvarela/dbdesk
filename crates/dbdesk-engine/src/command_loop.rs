@@ -286,6 +286,9 @@ impl Engine {
             Command::LoadDdl { data_source, path } => {
                 self.request(data_source, SessionRequest::Ddl(path));
             }
+            Command::LoadTable { data_source, path } => {
+                self.request(data_source, SessionRequest::LoadTable(path));
+            }
             Command::ImportRows {
                 data_source,
                 import,

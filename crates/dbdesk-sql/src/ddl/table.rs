@@ -74,8 +74,13 @@ pub(super) fn column_definition(column: &ColumnSpec, dialect: Dialect) -> String
     let name = quote_name(dialect, &column.name);
     let data_type = column.data_type.trim();
     let mut definition = match dialect {
-        // ClickHouse's types aren't nullable unless wrapped.
-        Dialect::ClickHouse if column.nullable && !data_type.starts_with("Nullable(") => {
+        // ClickHouse's types aren't nullable unless wrapped, inside `LowCardinality` if
+        // they are in one.
+        Dialect::ClickHouse
+            if column.nullable
+                && !data_type.starts_with("Nullable(")
+                && !data_type.starts_with("LowCardinality(Nullable(") =>
+        {
             format!("{name} Nullable({data_type})")
         }
         _ => format!("{name} {data_type}"),

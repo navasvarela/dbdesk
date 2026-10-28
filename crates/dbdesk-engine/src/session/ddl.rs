@@ -1,13 +1,14 @@
-//! The object helpers' DDL on the explorer's connection: applying generated statements, and
-//! loading a table's, view's or role's `CREATE` statement for Copy DDL.
+//! The object helpers' DDL on the explorer's connection: applying generated statements,
+//! loading a table's, view's or role's `CREATE` statement for Copy DDL, and loading a table
+//! for Modify table.
 
 use std::time::Instant;
 
 use dbdesk_core::{
     CatalogNode, CatalogPath, Connection, DriverError, FolderKind, Identifier, NodeKind,
-    RelationName, describe_error,
+    RelationName, TableDescription, describe_error,
 };
-use dbdesk_sql::{ColumnSpec, DdlOperation, ObjectName, RoleSpec, TableSpec};
+use dbdesk_sql::{ColumnSpec, DdlOperation, ExistingTable, ObjectName, RoleSpec, TableSpec};
 use dbdesk_store::{HistoryEntry, HistoryOutcome, HistorySource, redact_secrets};
 use jiff::Timestamp;
 
@@ -174,34 +175,13 @@ async fn rebuild(
     connection: &mut dyn Connection,
     path: &CatalogPath,
 ) -> Result<String, String> {
-    let not_a_table = || format!("{path} is not a table");
-    let schema = path.name_of(NodeKind::Schema).ok_or_else(not_a_table)?;
-    let table = path.name_of(NodeKind::Table).ok_or_else(not_a_table)?;
-    let exactly = |name: &str| Identifier {
-        name: name.to_owned(),
-        quoted: true,
-    };
-    let relation = RelationName {
-        schema: Some(exactly(schema)),
-        name: exactly(table),
-    };
-    let description = connection
-        .describe_table(&relation)
-        .await
-        .map_err(|error| describe_error(&error))?
-        .ok_or_else(not_a_table)?;
+    let description = describe_at(connection, path).await?;
     let spec = TableSpec {
         name: ObjectName::new(Some(&description.schema), &description.name),
         columns: description
             .columns
             .into_iter()
-            .map(|column| ColumnSpec {
-                name: column.name,
-                data_type: column.data_type,
-                nullable: column.nullable,
-                default: column.default,
-                identity: column.identity,
-            })
+            .map(ColumnSpec::from)
             .collect(),
         primary_key: description.primary_key,
         unique_keys: Vec::new(),
@@ -230,6 +210,64 @@ async fn rebuild(
         .map(|statement| format!("{statement};\n"))
         .collect::<Vec<_>>()
         .join("\n"))
+}
+
+/// Describes the table at `path`, named exactly as the tree shows it.
+async fn describe_at(
+    connection: &mut dyn Connection,
+    path: &CatalogPath,
+) -> Result<TableDescription, String> {
+    let not_a_table = || format!("{path} is not a table");
+    let schema = path.name_of(NodeKind::Schema).ok_or_else(not_a_table)?;
+    let table = path.name_of(NodeKind::Table).ok_or_else(not_a_table)?;
+    let exactly = |name: &str| Identifier {
+        name: name.to_owned(),
+        quoted: true,
+    };
+    let relation = RelationName {
+        schema: Some(exactly(schema)),
+        name: exactly(table),
+    };
+    connection
+        .describe_table(&relation)
+        .await
+        .map_err(|error| describe_error(&error))?
+        .ok_or_else(not_a_table)
+}
+
+/// Reports [`Event::TableLoaded`] for the table at `path`: its description and constraints,
+/// as Modify table starts from them.
+pub(super) async fn load_table(
+    context: &SessionContext,
+    connection: &mut dyn Connection,
+    path: CatalogPath,
+) {
+    let result = existing_table(context, connection, &path).await;
+    if let Err(error) = &result {
+        tracing::warn!(data_source = %context.name(), "could not load the table {path}: {error}");
+    }
+    context.send(Event::TableLoaded {
+        data_source: context.data_source.id,
+        path,
+        result,
+    });
+}
+
+async fn existing_table(
+    context: &SessionContext,
+    connection: &mut dyn Connection,
+    path: &CatalogPath,
+) -> Result<ExistingTable, String> {
+    let description = describe_at(connection, path).await?;
+    let constraints = connection
+        .describe_constraints(&description.table_name())
+        .await
+        .map_err(|error| describe_error(&error))?;
+    Ok(ExistingTable::from_catalog(
+        description,
+        constraints,
+        context.dialect(),
+    ))
 }
 
 /// `CREATE ROLE` for the role at `path`, from its description, through the same builder as

@@ -55,6 +55,7 @@ pub(crate) enum SessionRequest {
     DescribeRole(CatalogPath),
     ApplyDdl(Vec<String>),
     Ddl(CatalogPath),
+    LoadTable(CatalogPath),
     /// Prepares statements without running them; see [`crate::Command::ValidateStatements`].
     Validate(Vec<String>),
     ExportAll(ExportAll),
@@ -592,6 +593,10 @@ impl Worker<'_> {
             SessionRequest::ImportRows(import) => import::import(self, &import).await,
             SessionRequest::Ddl(path) => {
                 let work = ddl::load(self.context, &mut *self.connection, path);
+                self.signals.guard(work, None, self.cancel_handle).await
+            }
+            SessionRequest::LoadTable(path) => {
+                let work = ddl::load_table(self.context, &mut *self.connection, path);
                 self.signals.guard(work, None, self.cancel_handle).await
             }
             SessionRequest::FetchMore(_) | SessionRequest::Validate(_) => Ok(()),

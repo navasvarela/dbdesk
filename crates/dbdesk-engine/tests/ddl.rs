@@ -8,23 +8,28 @@
 
 mod common;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use common::{
     TestEngine, clickhouse_test_server, mysql_test_servers, postgres_test_server,
     sqlite_data_source, sqlite_database, sqlserver_test_server,
 };
 use dbdesk_core::{
-    CatalogNode, CatalogPath, ConnectionConfig, DataSource, DataSourceId, DuckDbConfig,
+    CatalogNode, CatalogPath, ConnectionConfig, DataSource, DataSourceId, DriverKind, DuckDbConfig,
     DuckDbDatabase, FolderKind, Identifier, Identity, IdentityGeneration, NodeKind, Password,
     PostgresConfig, RelationName, RoleAttribute, RoleDescription, SafetyLevel, TableDescription,
 };
-use dbdesk_engine::{Command, DdlFailure, Event, PasswordUpdate, SessionState};
+use dbdesk_engine::{
+    Command, ConsoleId, DatabaseFile, DdlFailure, Event, PasswordUpdate, RunId, RunPurpose,
+    SessionState, TransactionMode,
+};
 use dbdesk_sql::{
-    Check, ColumnSpec, DdlOperation, Dialect, ForeignKey, ObjectName, OwnedObjects, PasswordChange,
-    ReferentialAction, RoleSpec, SchemaCreation, SchemaSpec, ScramVerifier, TableSpec, UniqueKey,
-    ViewKind, ViewSpec, ddl_statements, split_statements, view_query,
+    Check, ColumnSpec, DdlOperation, Dialect, ExistingTable, ForeignKey, ObjectName, OwnedObjects,
+    ParameterValues, PasswordChange, ReferentialAction, RoleSpec, SchemaCreation, SchemaSpec,
+    ScramVerifier, TableAlteration, TableChange, TableSpec, UniqueKey, ViewKind, ViewSpec,
+    ddl_statements, split_statements, view_query,
 };
 use dbdesk_store::{HistoryOutcome, HistoryQuery};
 
@@ -1158,6 +1163,342 @@ fn creates_logs_in_as_changes_and_drops_a_postgres_role() {
         assert!(!entry.sql.contains(&password), "{}", entry.sql);
         assert!(!entry.sql.contains(verifier.as_str()), "{}", entry.sql);
         assert!(!entry.sql.contains("SCRAM-SHA-256"), "{}", entry.sql);
+    }
+    engine.shut_down();
+}
+
+/// Runs one query on a console of its own and returns its rows.
+fn query(
+    engine: &mut TestEngine,
+    data_source: DataSourceId,
+    sql: &str,
+) -> Vec<Vec<Option<String>>> {
+    static RUNS: AtomicU64 = AtomicU64::new(1);
+    let run = RunId(RUNS.fetch_add(1, Ordering::Relaxed));
+    let console = ConsoleId(run.0);
+    engine.send(Command::Execute {
+        console,
+        data_source,
+        run,
+        statements: vec![sql.to_owned()],
+        parameters: ParameterValues::default(),
+        transactions: TransactionMode::Auto,
+        purpose: RunPurpose::Run,
+    });
+    let mut rows = Vec::new();
+    loop {
+        match engine.next_event() {
+            Event::RowsFetched {
+                run: fetched,
+                rows: page,
+                ..
+            } if fetched == run => rows.extend(page),
+            Event::StatementFinished {
+                run: finished,
+                result: Err(failure),
+                ..
+            } if finished == run => panic!("{sql}: {failure:?}"),
+            Event::RunFinished { run: finished, .. } if finished == run => break,
+            _ => {}
+        }
+    }
+    engine.send(Command::CloseConsole(console));
+    loop {
+        if let Event::ConsoleSessionChanged {
+            console: closed,
+            state: SessionState::Disconnected,
+        } = engine.next_event()
+            && closed == console
+        {
+            return rows;
+        }
+    }
+}
+
+fn load_table(
+    engine: &mut TestEngine,
+    data_source: DataSourceId,
+    path: &CatalogPath,
+) -> ExistingTable {
+    engine.send(Command::LoadTable {
+        data_source,
+        path: path.clone(),
+    });
+    loop {
+        match engine.next_event() {
+            Event::TableLoaded {
+                path: loaded,
+                result,
+                ..
+            } if &loaded == path => return result.expect("the table"),
+            Event::SessionChanged { .. } => {}
+            other => panic!("expected TableLoaded, got {other:?}"),
+        }
+    }
+}
+
+/// The table a Modify table round trip starts from, with two rows, and the table its foreign
+/// key may point at.
+fn orders_to_modify(dialect: Dialect, suffix: &str) -> (TableSpec, TableSpec) {
+    let (integer, text) = match dialect {
+        Dialect::ClickHouse => ("Int32", "String"),
+        _ => ("integer", "varchar(20)"),
+    };
+    let column = |name: &str, data_type: &str, nullable: bool, default: Option<&str>| ColumnSpec {
+        name: name.to_owned(),
+        data_type: data_type.to_owned(),
+        nullable,
+        default: default.map(str::to_owned),
+        identity: None,
+    };
+    let customers = TableSpec {
+        name: ObjectName::new(None, &format!("dbdesk_customers_{suffix}")),
+        columns: vec![column("id", integer, false, None)],
+        primary_key: vec!["id".to_owned()],
+        unique_keys: vec![],
+        foreign_keys: vec![],
+        checks: vec![],
+    };
+    let orders = TableSpec {
+        name: ObjectName::new(None, &format!("dbdesk_orders_{suffix}")),
+        columns: vec![
+            column("id", integer, false, None),
+            column("status", text, false, Some("'new'")),
+            column("note", text, true, None),
+            column("legacy", integer, true, None),
+            column("customer", integer, true, None),
+        ],
+        primary_key: vec!["id".to_owned()],
+        unique_keys: vec![],
+        foreign_keys: vec![],
+        checks: vec![],
+    };
+    (customers, orders)
+}
+
+/// Loads the table, then changes it as far as the dialect can in place: renames `status` to
+/// `state` and widens it, gives `note` a default, drops `legacy`, adds `shipped_on`, and where
+/// the dialect adds constraints, a check and a foreign key. Then loads it again, checks it
+/// reads as the new definition and its rows are still there, and takes the constraints off.
+fn check_modify_table(
+    engine: &mut TestEngine,
+    data_source: &DataSource,
+    password: Option<Password>,
+) {
+    save(engine, data_source, password);
+    let dialect = Dialect::from(data_source.config.driver());
+    let capabilities = dialect.capabilities();
+    let suffix = unique("m", data_source);
+    let suffix = &suffix[2..];
+    let (customers, orders) = orders_to_modify(dialect, suffix);
+    let table = orders.name.to_sql(dialect);
+    let mut create = ddl_statements(
+        &[
+            DdlOperation::CreateTable(customers.clone()),
+            DdlOperation::CreateTable(orders.clone()),
+        ],
+        dialect,
+    )
+    .unwrap();
+    create.push(format!(
+        "INSERT INTO {table} (id, status, note) VALUES (1, 'paid', 'first'), (2, 'new', NULL)"
+    ));
+    assert_eq!(apply(engine, data_source.id, create), Ok(()), "{dialect:?}");
+
+    let path = default_schema(data_source)
+        .child(NodeKind::Folder(FolderKind::Tables), "tables")
+        .child(NodeKind::Table, orders.name.name.clone());
+    let loaded = load_table(engine, data_source.id, &path);
+    let shape = |spec: &TableSpec| -> Vec<(String, bool)> {
+        spec.columns
+            .iter()
+            .map(|column| (column.name.clone(), column.nullable))
+            .collect()
+    };
+    assert_eq!(shape(&loaded.spec), shape(&orders), "{dialect:?}");
+    let status_default = loaded.spec.columns[1].default.clone();
+    assert!(
+        status_default.as_deref().is_some_and(|d| d.contains("new")),
+        "{dialect:?}: {status_default:?}"
+    );
+
+    let mut after = loaded.spec.clone();
+    let wide = match dialect {
+        Dialect::ClickHouse => "LowCardinality(String)",
+        _ => "varchar(40)",
+    };
+    after.columns[1].name = "state".to_owned();
+    after.columns[1].data_type = wide.to_owned();
+    after.columns[2].default = Some("'none'".to_owned());
+    after.columns.remove(3);
+    after.columns.push(ColumnSpec {
+        name: "shipped_on".to_owned(),
+        data_type: match dialect {
+            Dialect::ClickHouse => "Date",
+            _ => "date",
+        }
+        .to_owned(),
+        nullable: true,
+        default: None,
+        identity: None,
+    });
+    let constraints = capabilities.changes_in_place(TableChange::AddConstraint);
+    if constraints {
+        after.checks.push(Check {
+            name: Some(format!("dbdesk_positive_{suffix}")),
+            expression: "id > 0".to_owned(),
+        });
+        if capabilities.foreign_keys {
+            after.foreign_keys.push(ForeignKey {
+                name: Some(format!("dbdesk_customer_{suffix}")),
+                columns: vec!["customer".to_owned()],
+                target: customers.name.clone(),
+                target_columns: vec!["id".to_owned()],
+                on_delete: ReferentialAction::SetNull,
+                on_update: ReferentialAction::NoAction,
+            });
+        }
+    }
+    let in_place = [TableChange::ChangeColumnType, TableChange::ChangeDefault]
+        .into_iter()
+        .all(|change| capabilities.changes_in_place(change));
+    if !in_place {
+        after.columns[1].data_type = loaded.spec.columns[1].data_type.clone();
+        after.columns[2].default = None;
+    }
+    let alteration = TableAlteration {
+        table: loaded.clone(),
+        after: after.clone(),
+        renamed: BTreeMap::from([("state".to_owned(), "status".to_owned())]),
+        conversions: BTreeMap::new(),
+    };
+    let statements = DdlOperation::AlterTable(Box::new(alteration))
+        .statements(dialect)
+        .unwrap_or_else(|error| panic!("{dialect:?}: {error}"));
+    assert_eq!(
+        apply(engine, data_source.id, statements.clone()),
+        Ok(()),
+        "{dialect:?}: {statements:#?}"
+    );
+
+    let altered = load_table(engine, data_source.id, &path);
+    assert_eq!(shape(&altered.spec), shape(&after), "{dialect:?}");
+    if in_place {
+        // DuckDB keeps no length for VARCHAR.
+        assert!(
+            altered.spec.columns[1].data_type.contains("40")
+                || altered.spec.columns[1]
+                    .data_type
+                    .starts_with("LowCardinality")
+                || dialect == Dialect::DuckDb,
+            "{dialect:?}: {:?}",
+            altered.spec.columns[1]
+        );
+        assert!(
+            altered.spec.columns[2]
+                .default
+                .as_deref()
+                .is_some_and(|d| d.contains("none")),
+            "{dialect:?}: {:?}",
+            altered.spec.columns[2]
+        );
+    }
+    assert_eq!(
+        altered.spec.primary_key, loaded.spec.primary_key,
+        "{dialect:?}"
+    );
+    assert_eq!(altered.spec.checks.len(), after.checks.len(), "{dialect:?}");
+    let keys: Vec<(&[String], ReferentialAction)> = altered
+        .spec
+        .foreign_keys
+        .iter()
+        .map(|key| (key.target_columns.as_slice(), key.on_delete))
+        .collect();
+    let expected_keys: Vec<(&[String], ReferentialAction)> = after
+        .foreign_keys
+        .iter()
+        .map(|key| (key.target_columns.as_slice(), key.on_delete))
+        .collect();
+    assert_eq!(keys, expected_keys, "{dialect:?}");
+    let rows = query(
+        engine,
+        data_source.id,
+        &format!("SELECT id, state FROM {table} ORDER BY id"),
+    );
+    let some = |text: &str| Some(text.to_owned());
+    assert_eq!(
+        rows,
+        [[some("1"), some("paid")], [some("2"), some("new")]],
+        "{dialect:?}"
+    );
+
+    if constraints {
+        let mut bare = altered.spec.clone();
+        bare.checks.clear();
+        bare.foreign_keys.clear();
+        let undo = DdlOperation::AlterTable(Box::new(TableAlteration {
+            table: altered,
+            after: bare,
+            renamed: BTreeMap::new(),
+            conversions: BTreeMap::new(),
+        }))
+        .statements(dialect)
+        .unwrap();
+        assert_eq!(apply(engine, data_source.id, undo), Ok(()), "{dialect:?}");
+        let undone = load_table(engine, data_source.id, &path);
+        assert!(undone.spec.checks.is_empty(), "{dialect:?}: {undone:?}");
+        assert!(
+            undone.spec.foreign_keys.is_empty(),
+            "{dialect:?}: {undone:?}"
+        );
+    }
+
+    let drop = ddl_statements(
+        &[
+            DdlOperation::DropTable {
+                table: orders.name,
+                cascade: false,
+            },
+            DdlOperation::DropTable {
+                table: customers.name,
+                cascade: false,
+            },
+        ],
+        dialect,
+    )
+    .unwrap();
+    assert_eq!(apply(engine, data_source.id, drop), Ok(()), "{dialect:?}");
+}
+
+#[test]
+fn modifies_a_table_with_rows_on_every_engine() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = start(dir.path());
+    let sqlite = sqlite_data_source(sqlite_database(dir.path()));
+    check_modify_table(&mut engine, &sqlite, None);
+    // A file, which the console reading the rows shares; each connection to an in-memory
+    // database has one of its own.
+    let file = DatabaseFile::DuckDb(dir.path().join("modify.duckdb"));
+    engine.send(Command::CreateDatabaseFile(file.clone()));
+    engine.expect(Event::DatabaseFileCreated {
+        file,
+        result: Ok(()),
+    });
+    let duckdb = data_source(
+        "duckdb",
+        ConnectionConfig::DuckDb(DuckDbConfig {
+            database: DuckDbDatabase::File {
+                path: dir.path().join("modify.duckdb"),
+                read_only: false,
+            },
+        }),
+    );
+    check_modify_table(&mut engine, &duckdb, None);
+    let servers = every_engine()
+        .into_iter()
+        .filter(|(data_source, _)| data_source.config.driver() != DriverKind::DuckDb);
+    for (data_source, password) in servers {
+        check_modify_table(&mut engine, &data_source, password);
     }
     engine.shut_down();
 }

@@ -1669,3 +1669,71 @@ fn duckdb_adds_a_required_column_then_requires_it() {
         ]))
     );
 }
+
+#[test]
+fn reads_an_existing_table_from_its_catalog_description() {
+    use dbdesk_core::{
+        CheckConstraint, ColumnDescription, ForeignKeyConstraint, TableConstraints,
+        TableDescription, TableName,
+    };
+    let description = TableDescription {
+        schema: "shop".to_owned(),
+        name: "orders".to_owned(),
+        columns: vec![
+            ColumnDescription {
+                name: "id".to_owned(),
+                data_type: "Int32".to_owned(),
+                nullable: false,
+                default: None,
+                identity: None,
+            },
+            ColumnDescription {
+                name: "note".to_owned(),
+                data_type: "Nullable(String)".to_owned(),
+                nullable: true,
+                default: Some("'none'".to_owned()),
+                identity: None,
+            },
+        ],
+        primary_key: strings(&["id"]),
+        foreign_keys: vec![],
+        referenced_by: vec![],
+    };
+    let constraints = TableConstraints {
+        primary_key_name: Some("orders_pkey".to_owned()),
+        foreign_keys: vec![ForeignKeyConstraint {
+            name: Some("orders_note_fkey".to_owned()),
+            columns: strings(&["note"]),
+            referenced: TableName {
+                schema: "shop".to_owned(),
+                name: "notes".to_owned(),
+            },
+            referenced_columns: strings(&["text"]),
+            on_delete: ReferentialAction::Cascade,
+            on_update: ReferentialAction::NoAction,
+        }],
+        checks: vec![CheckConstraint {
+            name: Some("positive".to_owned()),
+            expression: "id > 0".to_owned(),
+        }],
+        ..TableConstraints::default()
+    };
+    let clickhouse = ExistingTable::from_catalog(
+        description.clone(),
+        constraints.clone(),
+        Dialect::ClickHouse,
+    );
+    assert_eq!(clickhouse.spec.columns[1].data_type, "String");
+    assert_eq!(
+        clickhouse.spec.name,
+        ObjectName::new(Some("shop"), "orders")
+    );
+    assert_eq!(clickhouse.primary_key_name.as_deref(), Some("orders_pkey"));
+    assert_eq!(
+        clickhouse.spec.foreign_keys[0].target,
+        ObjectName::new(Some("shop"), "notes")
+    );
+    assert_eq!(clickhouse.spec.checks[0].name.as_deref(), Some("positive"));
+    let postgres = ExistingTable::from_catalog(description, constraints, Dialect::Postgres);
+    assert_eq!(postgres.spec.columns[1].data_type, "Nullable(String)");
+}

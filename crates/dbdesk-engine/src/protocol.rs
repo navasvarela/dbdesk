@@ -7,7 +7,7 @@ use dbdesk_core::{
     ProjectId, Rejection, RelationName, RoleDescription, Row, ServerInfo, TableDescription,
     TableName, TransactionStatus,
 };
-use dbdesk_sql::ParameterValues;
+use dbdesk_sql::{ExistingTable, ParameterValues};
 use dbdesk_store::{
     ConsoleKey, ExportFormat, HistoryEntry, HistoryQuery, ImportPlan, ImportPreview,
     KeymapBindings, McpOverrides, McpPermissions, Project, Projects, RowChange, SavedConsole,
@@ -231,6 +231,13 @@ pub enum Command {
         data_source: DataSourceId,
         path: CatalogPath,
     },
+    /// Loads the table at `path` as Modify table starts from it, on the explorer's
+    /// connection: its description and its constraints by name. Answered by
+    /// [`Event::TableLoaded`].
+    LoadTable {
+        data_source: DataSourceId,
+        path: CatalogPath,
+    },
     /// Inserts the rows of a CSV file into a table, on the explorer's connection to the data
     /// source, all in one transaction: in batches of several rows per `INSERT`, and rolled back
     /// at the first failure, which names the line it was on. Refused on a read-only data
@@ -448,6 +455,12 @@ pub enum Event {
         data_source: DataSourceId,
         path: CatalogPath,
         result: Result<String, String>,
+    },
+    /// The answer to [`Command::LoadTable`].
+    TableLoaded {
+        data_source: DataSourceId,
+        path: CatalogPath,
+        result: Result<ExistingTable, String>,
     },
     /// The answer to [`Command::ApplyEdits`].
     EditsApplied {
