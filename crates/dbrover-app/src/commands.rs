@@ -31,6 +31,8 @@ pub enum AppCommand {
     FormatAll,
     CheckForUpdates,
     About,
+    ReportProblem,
+    AskQuestion,
     #[cfg_attr(
         not(target_os = "macos"),
         allow(dead_code, reason = "only the macOS menu bar has it")
@@ -82,6 +84,8 @@ impl AppCommand {
             Self::ResetLayout => "view.reset-layout",
             Self::CheckForUpdates => "help.check-for-updates",
             Self::About => "help.about",
+            Self::ReportProblem => "help.report-problem",
+            Self::AskQuestion => "help.ask-question",
             Self::OpenManual => "help.manual",
             Self::Quit => "app.quit",
         };
@@ -114,6 +118,8 @@ impl AppCommand {
             Self::FormatAll => "Format all",
             Self::CheckForUpdates => "Check for updates…",
             Self::About => "About DbRover",
+            Self::ReportProblem => "Report a problem…",
+            Self::AskQuestion => "Ask a question…",
             Self::OpenManual => "DbRover manual",
             Self::Quit => "Quit DbRover",
         };
@@ -183,6 +189,10 @@ impl AppCommand {
             Self::ShowActions => Some(Cow::Borrowed(
                 "The custom actions in actions.toml, and what it got wrong",
             )),
+            Self::ReportProblem => Some(Cow::Borrowed(
+                "Opens a new GitHub issue with this version and system filled in",
+            )),
+            Self::AskQuestion => Some(Cow::Borrowed("Opens GitHub Discussions")),
             Self::RunAction(action) => {
                 let targets: Vec<&str> = action
                     .applies_to
@@ -394,7 +404,13 @@ pub fn egui_menu_bar(
         actions_menu(actions),
         Menu {
             title: HELP_MENU,
-            entries: vec![Command(C::CheckForUpdates), Command(C::About)],
+            entries: vec![
+                Command(C::ReportProblem),
+                Command(C::AskQuestion),
+                Separator,
+                Command(C::CheckForUpdates),
+                Command(C::About),
+            ],
         },
     ]
 }
@@ -479,7 +495,12 @@ pub fn macos_menu_bar(
         },
         Menu {
             title: HELP_MENU,
-            entries: vec![Command(C::OpenManual)],
+            entries: vec![
+                Command(C::OpenManual),
+                Separator,
+                Command(C::ReportProblem),
+                Command(C::AskQuestion),
+            ],
         },
     ]
 }

@@ -20,6 +20,7 @@ mod delete_dialog;
 mod explorer;
 mod export_dialog;
 mod export_sources_dialog;
+mod feedback;
 mod file_picker;
 mod fonts;
 mod hazard_dialog;

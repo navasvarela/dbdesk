@@ -1,3 +1,5 @@
+# Help › Report a problem… opens this form with `version` and `os` filled in from the query
+# string (crates/dbrover-app/src/feedback.rs). Renaming those ids breaks that.
 name: Bug report
 description: Something in DbRover doesn't work, or works wrongly.
 labels: [bug]

@@ -1598,6 +1598,7 @@ dependencies = [
  "egui_dock",
  "egui_extras",
  "egui_kittest",
+ "form_urlencoded",
  "image",
  "jiff",
  "muda",

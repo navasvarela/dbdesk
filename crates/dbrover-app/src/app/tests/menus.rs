@@ -138,3 +138,30 @@ fn items_run_their_commands() {
     click(&mut harness, "About DbRover");
     harness.get_by_label("Licensed under MIT OR Apache-2.0");
 }
+
+#[test]
+fn help_items_open_the_issue_form_and_discussions() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut harness = start_without_data_sources(dir.path());
+
+    for (command, url) in [
+        (AppCommand::ReportProblem, crate::feedback::bug_report_url()),
+        (AppCommand::AskQuestion, crate::feedback::new_question_url()),
+    ] {
+        click(&mut harness, "Help");
+        item(&harness, &command).click();
+        harness.step();
+        let opened: Vec<_> = harness
+            .output()
+            .platform_output
+            .commands
+            .iter()
+            .filter_map(|output| match output {
+                egui::OutputCommand::OpenUrl(open) => Some(open.url.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(opened, [url.as_str()], "{command:?}");
+        harness.run_steps(2);
+    }
+}
