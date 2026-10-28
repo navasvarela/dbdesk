@@ -655,6 +655,23 @@ Customisation without rebuilding dbdesk, from files to commands to plugins. The 
   Tested with unit tests of the formats and templates (hostile names in every dialect's
   quoting among them), and kittest tests of each feature on SQLite with temporary config
   folders. No engine test server is needed.
+
+  **H1 demo note:** built. Write `actions.toml` with **Row count** (`applies_to = ["table",
+  "view"]`, `SELECT count(*) FROM {qualified_name}`) and **Last 100 rows** (`ORDER BY
+  {column:created_at} DESC LIMIT 100`, `run = false`), and bind `"custom.row-count" =
+  "cmd+shift+c"` in `keymap.toml`. Right-click a table called `it's; DROP TABLE orders; --`:
+  **Row count** opens a console running `SELECT count(*) FROM "main"."it's; DROP TABLE orders;
+  --"` and the history marks it **Action**. Click a table and press ⇧⌘C, or pick it from the new
+  **Actions** menu (in the macOS menu bar too); **Last 100 rows** opens its SQL to edit. A
+  `grid.row` action deletes the selected rows one statement each, and a `DELETE` without
+  `WHERE` still asks **Run anyway?**. A typo (`applies_to = ["tabel"]`) shows **actions.toml: 1
+  problem**; **View → Actions…** lists it, and every action with its keys and SQL; **Create
+  actions.toml** writes the commented examples once. In `snippets.toml`, `trigger = "sel"`
+  shows in completion after `SELECT`; Enter inserts it with `*` selected, Tab moves to the
+  table, then the condition, then the end. `theme.toml` with `[light] primary = "#5b3fe0"`
+  recolours selection and buttons on **Reload**; `[dark] text_weak = "#444444"` applies and
+  lists each text it makes unreadable. Covered by the tests in
+  [Testing](testing.md#actions-snippets-and-themes-h1).
 - **H2 — Commands:** actions that run your own programs, with no shell and never a secret,
   getting the selection on stdin and sending output to the viewer, a console or the log.
 - **H3 — WebAssembly plugins (later):** sandboxed and capability-based, over the same extension

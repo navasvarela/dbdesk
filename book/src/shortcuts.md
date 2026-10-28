@@ -58,6 +58,9 @@ elsewhere; `ctrl` is the Control key everywhere; `alt` (or `option`) and `shift`
 say. Keys are letters, digits, `enter`, `space`, `tab`, `escape`, `f1` to `f35`, `period`,
 `comma`, `pagedown` and so on, or the character itself (`cmd+.`).
 
+Your own actions from `actions.toml` are bound the same way, as `custom.<id>`; see
+[Actions, snippets and themes](customising.md#keys-and-the-actions-menu).
+
 A mistake doesn't cost you the rest of the file: an unknown action, a shortcut that can't be
 read, or one that two actions share, is skipped and listed as a problem in the Keymap window,
 and the status bar shows **keymap.toml: N problems**. A file that isn't valid TOML keeps every

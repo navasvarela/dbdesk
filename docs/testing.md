@@ -182,6 +182,17 @@ against a real server, such as a cancel arriving after the last row.
   SQLite and temporary files. Files changed on disk are noticed by a check every two seconds,
   so that test takes about four.
 
+## Actions, snippets and themes (H1)
+
+- `dbdesk_core::SqlTemplate` has unit tests of every placeholder and problem, and of hostile
+  names in the three kinds of quoting. `dbdesk-store`'s `custom` module tests each file's format
+  and every problem message.
+- The engine test binary's `reloads_the_customisation_files_with_their_problems` reads them from
+  a temporary folder; every start-up test now expects their three events after the settings.
+- The app's UI tests are in `app/tests/actions.rs` and `customisation.rs`, against SQLite with
+  a temporary config folder: actions from the explorer, the grid, a key and the Actions menu,
+  View → Actions…, snippets in completion, and theme overrides.
+
 ## MCP server
 
 - `dbdesk_sql::classify` has a corpus per dialect: reads, writes hidden in CTEs, `SELECT …
