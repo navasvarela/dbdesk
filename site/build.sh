@@ -25,7 +25,14 @@ if [ -z "${version}" ]; then
     echo "no DBROVER_SITE_VERSION and no workspace version in Cargo.toml" >&2
     exit 1
 fi
-sed "s/{{version}}/${version}/g" "${root}/site/index.html" > "${out}/index.html"
+# The release's files start with the app's name, which was dbdesk up to 0.12.0. Until 0.13.0 is
+# published, the newest release is one of those.
+case "${version}" in
+    0.[0-9].* | 0.1[0-2].*) files=dbdesk ;;
+    *) files=dbrover ;;
+esac
+sed -e "s/{{version}}/${version}/g" -e "s/{{files}}/${files}/g" \
+    "${root}/site/index.html" > "${out}/index.html"
 cp "${root}/site/style.css" "${out}/"
 cp -R "${root}/site/media" "${out}/media"
 cp "${root}/assets/brand/logo.svg" "${root}/assets/brand/social-preview.png" \

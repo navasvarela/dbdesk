@@ -272,7 +272,7 @@ starts. A portable copy instead says it wasn't installed with DbRover's installe
 **Open release page**. Releases sign the installer with the update key and list it as
 `windows-x86_64` in `latest.json`. Authenticode signing comes after the app's rename; the choice
 of service is an open decision in
-[Signing the Windows installer](releasing.md#signing-the-windows-installer). dbdesk.org's
+[Signing the Windows installer](releasing.md#signing-the-windows-installer). dbrover.org's
 download button says **Download for Windows** to Windows visitors and links the installer, the
 download section has an **Installer** button, and the manual's Install chapter walks through
 the first-run SmartScreen block (**More info › Run anyway**), as seen when v0.12.0's installer
@@ -1181,8 +1181,8 @@ by one ignored test (`screenshots::regenerate_screenshots`), and CI builds the b
 
 **Exit:** the site is live, linked from the README, and redeploys on every merge to `main`.
 
-**Demo note:** built. <https://dbdesk.org> (first published at `navasvarela.github.io/dbrover`) is
-one hand-written page in `site/` (HTML and CSS, the app's palette and bundled fonts, dark first
+**Demo note:** built. <https://dbrover.org> (first published at `navasvarela.github.io/dbdesk`,
+then dbdesk.org) is one hand-written page in `site/` (HTML and CSS, the app's palette and bundled fonts, dark first
 with a light theme), with the manual under `/manual/`. `site/build.sh` assembles both, copying the logo, fonts and database
 logos from `assets/` rather than keeping second copies. `.github/workflows/pages.yml` builds it
 on pull requests that touch it (checking the landing page's links with lychee, offline, and the
@@ -1299,10 +1299,10 @@ Risks:
   published. Now the Pages workflow takes the latest published release instead, and publishing
   a release redeploys the page.
 
-**Exit:** dbdesk.org says how to download the current release for each platform, shows every
+**Exit:** dbrover.org says how to download the current release for each platform, shows every
 major feature with a picture or clip in both themes, and reads well on a phone.
 
-**Demo note:** built. <https://dbdesk.org> opens on "Seven databases, one native app" and a
+**Demo note:** built. <https://dbrover.org> opens on "Seven databases, one native app" and a
 13-second clip of DbRover opening a SQLite data source, completing `SELECT * FROM orders`,
 running it and having the database filter and sort the rows, in the visitor's theme. The
 download button names the platform and version (**Download for macOS · v0.11.0**), with the

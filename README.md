@@ -26,8 +26,8 @@ assistant can use through DbRover's MCP server with the permissions you give it.
 statement goes to a searchable history. Shortcuts are in `keymap.toml`, and the interface
 comes in light and dark themes, with the macOS menu bar, font and accent colour on a Mac.
 
-Website: **<https://dbdesk.org>**, with the
-[user manual](https://dbdesk.org/manual/), which explains how to install and
+Website: **<https://dbrover.org>**, with the
+[user manual](https://dbrover.org/manual/), which explains how to install and
 use DbRover. Its sources are in `book/`; `mdbook serve book` shows it locally.
 
 ## Building and running
