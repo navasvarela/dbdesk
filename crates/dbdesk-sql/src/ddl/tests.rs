@@ -1231,6 +1231,8 @@ fn existing_orders(dialect: Dialect) -> ExistingTable {
         },
         primary_key_name: Some("orders_pkey".to_owned()),
         default_names,
+        dependents: vec![],
+        rebuild_refusal: None,
     }
 }
 
@@ -1587,11 +1589,13 @@ fn refuses_what_a_dialect_cant_change_in_place() {
         DdlOperation::AlterTable(Box::new(new_check(Dialect::DuckDb))).statements(Dialect::DuckDb),
         cant("add keys or checks to an existing table", Dialect::DuckDb)
     );
+    let mut strict = changed_columns(Dialect::Sqlite);
+    strict.table.rebuild_refusal = rebuild_refusal("CREATE TABLE orders (id INTEGER) STRICT");
     assert_eq!(
-        DdlOperation::AlterTable(Box::new(changed_columns(Dialect::Sqlite)))
-            .statements(Dialect::Sqlite),
-        cant("change an existing column's type", Dialect::Sqlite)
+        DdlOperation::AlterTable(Box::new(strict)).statements(Dialect::Sqlite),
+        Err(DdlError::Unrebuildable("is a STRICT table"))
     );
+
     let mut new_key = new_check(Dialect::ClickHouse);
     new_key.after.checks.clear();
     new_key.after.primary_key = strings(&["id", "status"]);
@@ -1621,7 +1625,7 @@ fn refuses_what_a_dialect_cant_change_in_place() {
 }
 
 #[test]
-fn sqlite_changes_simple_columns_in_place_and_refuses_the_rest() {
+fn sqlite_changes_simple_columns_in_place_and_rebuilds_for_the_rest() {
     let table = existing_orders(Dialect::Sqlite);
     let mut after = table.spec.clone();
     after.columns[1].name = "state".to_owned();
@@ -1641,11 +1645,14 @@ fn sqlite_changes_simple_columns_in_place_and_refuses_the_rest() {
             "ALTER TABLE shop.orders ADD COLUMN shipped_on text",
         ]))
     );
+    assert!(!alteration.rebuilds(Dialect::Sqlite));
+    // A required column without a default needs a value in every row SQLite has.
     alteration.after.columns[3].nullable = false;
-    assert!(matches!(
-        DdlOperation::AlterTable(Box::new(alteration)).statements(Dialect::Sqlite),
-        Err(DdlError::CantAlter { .. })
-    ));
+    assert!(alteration.rebuilds(Dialect::Sqlite));
+    let statements = DdlOperation::AlterTable(Box::new(alteration))
+        .statements(Dialect::Sqlite)
+        .unwrap();
+    assert!(statements[0].starts_with("CREATE TABLE shop.new_orders ("));
 }
 
 #[test]
@@ -1738,4 +1745,82 @@ fn reads_an_existing_table_from_its_catalog_description() {
     assert_eq!(clickhouse.spec.checks[0].name.as_deref(), Some("positive"));
     let postgres = ExistingTable::from_catalog(description, constraints, Dialect::Postgres);
     assert_eq!(postgres.spec.columns[1].data_type, "Nullable(String)");
+}
+
+#[test]
+fn sqlite_rebuilds_the_table_for_what_it_cant_change_in_place() {
+    let mut alteration = changed_columns(Dialect::Sqlite);
+    alteration.table.dependents = strings(&[
+        "CREATE INDEX orders_status ON orders (status);",
+        "CREATE TRIGGER orders_touch AFTER UPDATE ON orders BEGIN SELECT 1; END",
+    ]);
+    alteration.after.unique_keys.push(UniqueKey {
+        name: None,
+        columns: strings(&["state", "note"]),
+    });
+    assert!(alteration.rebuilds(Dialect::Sqlite));
+    let statements = DdlOperation::AlterTable(Box::new(alteration)).statements(Dialect::Sqlite);
+    let expected = [
+        "CREATE TABLE shop.new_orders (
+    id integer NOT NULL,
+    status varchar(40) DEFAULT 'open' NOT NULL,
+    note varchar(20) NOT NULL,
+    shipped_on date,
+    legacy integer,
+    PRIMARY KEY (id),
+    UNIQUE (status, note)
+)",
+        "INSERT INTO shop.new_orders (id, status, note, legacy) \
+         SELECT id, status, note, legacy FROM shop.orders",
+        "DROP TABLE shop.orders",
+        "PRAGMA legacy_alter_table = ON",
+        "ALTER TABLE shop.new_orders RENAME TO orders",
+        "PRAGMA legacy_alter_table = OFF",
+        "CREATE INDEX orders_status ON orders (status)",
+        "CREATE TRIGGER orders_touch AFTER UPDATE ON orders BEGIN SELECT 1; END",
+        "ALTER TABLE shop.orders RENAME COLUMN status TO state",
+        "ALTER TABLE shop.orders DROP COLUMN legacy",
+    ];
+    assert_eq!(statements, Ok(strings(&expected)));
+}
+
+#[test]
+fn sqlite_says_what_a_rebuild_would_lose() {
+    let cases = [
+        (
+            "CREATE TABLE t (id INTEGER, name TEXT COLLATE NOCASE)",
+            Some("COLLATE"),
+        ),
+        (
+            "CREATE TABLE t (a INT, b INT GENERATED ALWAYS AS (a * 2))",
+            Some("generated"),
+        ),
+        (
+            "CREATE TABLE t (a INT, b INT AS (a * 2) STORED)",
+            Some("generated"),
+        ),
+        (
+            "CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT) WITHOUT ROWID",
+            Some("WITHOUT ROWID"),
+        ),
+        ("CREATE TABLE t (id INTEGER, a TEXT) STRICT", Some("STRICT")),
+        (
+            "CREATE TABLE \"as\" (\"collate\" TEXT, note TEXT DEFAULT 'strict')",
+            None,
+        ),
+        (
+            "CREATE TABLE t (id INTEGER, CHECK (id IN (SELECT 1)))",
+            None,
+        ),
+    ];
+    for (sql, refusal) in cases {
+        let found = rebuild_refusal(sql);
+        match refusal {
+            Some(part) => assert!(
+                found.is_some_and(|found| found.contains(part)),
+                "{sql}: {found:?}"
+            ),
+            None => assert_eq!(found, None, "{sql}"),
+        }
+    }
 }

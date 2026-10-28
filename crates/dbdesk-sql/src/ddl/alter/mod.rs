@@ -10,7 +10,11 @@
 //! 6. add the new primary key, then unique keys, checks and foreign keys;
 //! 7. rename the table, so every statement before names it as it was.
 
+mod rebuild;
+
 use std::collections::{BTreeMap, BTreeSet};
+
+pub use rebuild::rebuild_refusal;
 
 use super::table::{self, column_definition};
 use super::{
@@ -24,12 +28,23 @@ pub(super) fn alter(
     dialect: Dialect,
 ) -> Result<Vec<String>, DdlError> {
     let diff = Diff::new(alteration, dialect)?;
-    refuse_what_the_dialect_cant_do(&diff, dialect)?;
-    let statements = Writer::new(&diff, dialect).statements()?;
+    let statements = match refuse_what_the_dialect_cant_do(&diff, dialect) {
+        Ok(()) => Writer::new(&diff, dialect).statements()?,
+        Err(_) if dialect.capabilities().rebuilds_tables => rebuild::statements(&diff, dialect)?,
+        Err(refusal) => return Err(refusal),
+    };
     if statements.is_empty() {
         return Err(DdlError::NothingChanged);
     }
     Ok(statements)
+}
+
+/// Whether the change rebuilds the table rather than altering it in place (SQLite, for what
+/// its `ALTER TABLE` can't do). `false` for a change that can't be written at all.
+pub(super) fn rebuilds(alteration: &TableAlteration, dialect: Dialect) -> bool {
+    dialect.capabilities().rebuilds_tables
+        && Diff::new(alteration, dialect)
+            .is_ok_and(|diff| refuse_what_the_dialect_cant_do(&diff, dialect).is_err())
 }
 
 /// What changes between the table and its new definition, worked out once.

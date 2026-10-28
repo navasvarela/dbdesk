@@ -68,6 +68,8 @@ fn renames_drops_and_adds_columns_keeping_the_rows() {
     );
     harness
         .get_by_label("Drops the column legacy of the table main.orders, with every value in it.");
+    // The window grows by the confirmation's lines over a few frames; Execute moves with it.
+    harness.run_steps(4);
     harness.get_by_label("Execute").click();
     step_until(&mut harness, "the dialog closing", |harness| {
         harness.query_by_label("Execute").is_none()
@@ -90,18 +92,62 @@ fn renames_drops_and_adds_columns_keeping_the_rows() {
 }
 
 #[test]
-fn says_why_sqlite_cant_make_a_change_in_place() {
+fn changes_a_column_type_by_rebuilding_the_table() {
     let dir = tempfile::tempdir().unwrap();
     save_shop(
         dir.path(),
-        "CREATE TABLE orders (id INTEGER PRIMARY KEY, status TEXT, total INTEGER);",
+        "CREATE TABLE orders (id INTEGER PRIMARY KEY, status TEXT, total INTEGER);
+         CREATE INDEX orders_status ON orders (status);
+         INSERT INTO orders VALUES (1, 'paid', 10), (2, 'new', 20);",
     );
     let (_layer, feed) = log_console::pipeline();
     let mut harness = start_app(dir.path(), feed);
     modify_orders(&mut harness);
 
     replace(&mut harness, "Column 3 type", "real");
-    harness.get_by_label_contains("SQLite can't change an existing column's type.");
+    harness.get_by_label_contains("so it rebuilds the table main.orders");
+    // The window grows by the confirmation's lines over a few frames; Execute moves with it.
+    harness.run_steps(4);
+    harness.get_by_label("Execute").click();
+    step_until(&mut harness, "the dialog closing", |harness| {
+        harness.query_by_label("Execute").is_none()
+    });
+
+    let (name, data_type) = columns(dir.path(), "orders").remove(2);
+    assert_eq!(name, "total");
+    assert!(data_type.eq_ignore_ascii_case("real"), "{data_type}");
+    let connection = rusqlite::Connection::open(dir.path().join("shop.db")).unwrap();
+    let totals: Vec<f64> = connection
+        .prepare("SELECT total FROM orders ORDER BY id")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(totals, [10.0, 20.0]);
+    let index: String = connection
+        .query_row(
+            "SELECT name FROM sqlite_schema WHERE type = 'index' AND tbl_name = 'orders'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(index, "orders_status");
+}
+
+#[test]
+fn says_why_sqlite_cant_rebuild_a_strict_table() {
+    let dir = tempfile::tempdir().unwrap();
+    save_shop(
+        dir.path(),
+        "CREATE TABLE orders (id INTEGER PRIMARY KEY, status TEXT, total INTEGER) STRICT;",
+    );
+    let (_layer, feed) = log_console::pipeline();
+    let mut harness = start_app(dir.path(), feed);
+    modify_orders(&mut harness);
+
+    replace(&mut harness, "Column 3 type", "real");
+    harness.get_by_label_contains("the rebuilt table would lose that it is a STRICT table.");
     assert!(
         harness
             .get_by_label("Execute")
