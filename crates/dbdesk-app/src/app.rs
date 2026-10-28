@@ -5,7 +5,7 @@ use dbdesk_core::{CatalogPath, DataSource, DataSourceId};
 use dbdesk_engine::{
     Command, EngineConfig, EngineError, EngineHandle, Event, PasswordKept, Repaint,
 };
-use dbdesk_store::{ConsoleKey, ExportFormat, McpPermissions, SqlFileContents};
+use dbdesk_store::{ConsoleKey, CustomFileKind, ExportFormat, McpPermissions, SqlFileContents};
 use egui::{Frame, Margin, RichText};
 use egui_dock::{DockArea, DockState};
 
@@ -14,6 +14,7 @@ use crate::commands::{self, AppCommand, CommandState};
 use crate::console::{ConsoleAction, ExportedRows, FormatScope, RowsToOpen};
 use crate::consoles::Consoles;
 use crate::csv_import::{CsvImportAction, CsvImportDialog};
+use crate::custom_files::{self, CustomFiles, FileWindowAction};
 use crate::data_source_dialog::{DataSourceDialog, DialogAction};
 use crate::data_source_form::McpPasswordChange;
 use crate::definition_window::DefinitionWindow;
@@ -49,7 +50,7 @@ use crate::unsaved_dialog::{UnsavedChoice, UnsavedConfirmation};
 use crate::update_dialog::{self, UpdateAction};
 use crate::updates::Updates;
 use crate::workspace::{self, Panels, Tab};
-use crate::{fonts, relaunch, welcome};
+use crate::{fonts, relaunch, welcome, widgets};
 
 /// Where the dock layout is saved. Versioned so a change to the default layout reaches people
 /// who already have one saved: layouts under an older key are ignored once, and the default
@@ -102,6 +103,7 @@ pub struct DbDeskApp {
     /// Where `keymap.toml` is, once the engine has reported it.
     keymap_path: Option<PathBuf>,
     keymap_window_open: bool,
+    custom_files: CustomFiles,
     about_open: bool,
     settings: AppSettings,
     updates: Updates,
@@ -190,6 +192,7 @@ impl DbDeskApp {
             keymap: Keymap::default(),
             keymap_path: None,
             keymap_window_open: false,
+            custom_files: CustomFiles::default(),
             about_open: false,
             settings: AppSettings::default(),
             updates: Updates::new(install_support),
@@ -348,6 +351,7 @@ impl DbDeskApp {
             let check = self.updates.start(self.settings.settings());
             self.send_if(check);
         }
+        self.custom_files.apply(event);
         if let Event::KeymapLoaded { path, result } = event {
             self.keymap = match result {
                 Ok(bindings) => Keymap::from_file(bindings),
@@ -1529,21 +1533,7 @@ impl DbDeskApp {
                 .small()
                 .color(palette.text_weak),
             );
-            let problems = self.keymap.problems().len();
-            if problems > 0
-                && ui
-                    .link(
-                        RichText::new(match problems {
-                            1 => "keymap.toml: 1 problem".to_owned(),
-                            n => format!("keymap.toml: {n} problems"),
-                        })
-                        .small()
-                        .color(palette.warning),
-                    )
-                    .clicked()
-            {
-                self.keymap_window_open = true;
-            }
+            self.problem_links(ui, palette.warning);
             if let Some(notice) = self.updates.notice()
                 && ui
                     .link(RichText::new(notice).small().color(palette.primary))
@@ -1552,6 +1542,28 @@ impl DbDeskApp {
                 self.updates.dialog_open = true;
             }
         });
+    }
+
+    /// A link per config file with problems, opening the window that lists them.
+    fn problem_links(&mut self, ui: &mut egui::Ui, color: egui::Color32) {
+        let keymap = self.keymap.problems().len();
+        if keymap > 0 && widgets::problems_link(ui, "keymap.toml", keymap, color).clicked() {
+            self.keymap_window_open = true;
+        }
+        for kind in CustomFileKind::ALL {
+            let count = self.custom_files.problems(kind).len();
+            if count > 0 && widgets::problems_link(ui, kind.file_name(), count, color).clicked() {
+                self.custom_files.window = Some(kind);
+            }
+        }
+    }
+
+    fn show_custom_file_window(&mut self, ctx: &egui::Context) {
+        match custom_files::show(ctx, &self.custom_files) {
+            Some(FileWindowAction::Reload) => self.send(Command::ReloadCustomFiles),
+            Some(FileWindowAction::Close) => self.custom_files.window = None,
+            None => {}
+        }
     }
 
     fn show_keymap_window(&mut self, ctx: &egui::Context) {
@@ -1696,6 +1708,7 @@ impl eframe::App for DbDeskApp {
         }
         self.show_history_window(&ctx);
         self.show_keymap_window(&ctx);
+        self.show_custom_file_window(&ctx);
         self.show_about(&ctx);
         self.show_update_dialog(&ctx);
         self.show_settings_window(&ctx);
@@ -1738,6 +1751,7 @@ impl Repaint for EguiRepaint {
 
 #[cfg(test)]
 mod tests {
+    mod customisation;
     mod files;
     mod find;
     mod grid;
@@ -1753,8 +1767,8 @@ mod tests {
 
     use dbdesk_core::{DataSourceId, Password};
     use dbdesk_store::{
-        ConsoleFiles, ConsoleName, DataSourceFile, HistoryFile, KeymapFile, ProjectFile, Secret,
-        SecretError, SecretStore, SettingsFile,
+        ConsoleFiles, ConsoleName, CustomFiles, DataSourceFile, HistoryFile, KeymapFile,
+        ProjectFile, Secret, SecretError, SecretStore, SettingsFile,
     };
     use egui::accesskit::Role;
     use egui_kittest::Harness;
@@ -1797,6 +1811,7 @@ mod tests {
             history: HistoryFile::new(dir.join("history.sqlite")),
             keymap: KeymapFile::new(dir.join("keymap.toml")),
             settings: SettingsFile::new(dir.join("settings.toml")),
+            custom_files: CustomFiles::new(dir),
             releases: Arc::new(releases),
             updater: Arc::new(crate::test_support::FakeInstaller::default()),
             known_hosts: dir.join("known_hosts"),

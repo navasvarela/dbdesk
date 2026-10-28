@@ -168,8 +168,17 @@ impl CatalogPath {
     /// triggers, and for roles, which belong to no schema. `None` for databases, schemas and
     /// folders.
     pub fn qualified_name(&self, quoting: Quoting) -> Option<String> {
+        self.qualified_with(&|name| quoting.identifier_if_needed(name))
+    }
+
+    /// [`Self::qualified_name`] with every name quoted, even a plain lowercase one, so it holds
+    /// in generated SQL whatever the name spells, a keyword such as `order` included.
+    pub fn quoted_name(&self, quoting: Quoting) -> Option<String> {
+        self.qualified_with(&|name| quoting.identifier(name))
+    }
+
+    fn qualified_with(&self, quote: &dyn Fn(&str) -> String) -> Option<String> {
         let object = self.last()?;
-        let quote = |name: &str| quoting.identifier_if_needed(name);
         match object.kind {
             NodeKind::Table
             | NodeKind::View
@@ -179,9 +188,9 @@ impl CatalogPath {
             | NodeKind::Event
             | NodeKind::Synonym
             | NodeKind::Dictionary
-            | NodeKind::Index => Some(self.schema_qualified(&quote(&object.name), quoting)),
+            | NodeKind::Index => Some(self.schema_qualified(&quote(&object.name), quote)),
             // Function names already carry their argument list, e.g. `add(integer, integer)`.
-            NodeKind::Function => Some(self.schema_qualified(&object.name, quoting)),
+            NodeKind::Function => Some(self.schema_qualified(&object.name, quote)),
             NodeKind::Column | NodeKind::Constraint | NodeKind::Trigger | NodeKind::Role => {
                 Some(quote(&object.name))
             }
@@ -189,9 +198,9 @@ impl CatalogPath {
         }
     }
 
-    fn schema_qualified(&self, object_name: &str, quoting: Quoting) -> String {
+    fn schema_qualified(&self, object_name: &str, quote: &dyn Fn(&str) -> String) -> String {
         match self.name_of(NodeKind::Schema) {
-            Some(schema) => format!("{}.{object_name}", quoting.identifier_if_needed(schema)),
+            Some(schema) => format!("{}.{object_name}", quote(schema)),
             None => object_name.to_owned(),
         }
     }
@@ -239,6 +248,21 @@ mod tests {
                 "{path}"
             );
         }
+    }
+
+    #[test]
+    fn quoted_names_quote_even_plain_ones() {
+        assert_eq!(
+            table_path("public", "order").quoted_name(Quoting::STANDARD),
+            Some("\"public\".\"order\"".to_owned())
+        );
+        assert_eq!(
+            CatalogPath::root()
+                .child(NodeKind::Schema, "public")
+                .child(NodeKind::Function, "add(integer, integer)")
+                .quoted_name(Quoting::STANDARD),
+            Some("\"public\".add(integer, integer)".to_owned())
+        );
     }
 
     #[test]

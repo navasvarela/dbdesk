@@ -1,16 +1,15 @@
 //! Reading and writing `settings.toml` on the blocking pool.
 
-use dbdesk_core::describe_error;
-use dbdesk_store::{HistorySettings, Settings, SettingsError, SettingsFile};
-use tokio::task::JoinError;
+use dbdesk_store::{HistorySettings, Settings, SettingsFile};
 
 use crate::Event;
+use crate::config_files::blocking;
 
 /// Reads the settings and reports them as [`Event::SettingsLoaded`]. A broken file is
 /// reported, not replaced: the UI keeps the defaults and shows why.
 pub(crate) async fn load(file: &SettingsFile) -> Event {
     let task_file = file.clone();
-    let result = flatten(tokio::task::spawn_blocking(move || task_file.load()).await);
+    let result = blocking(move || task_file.load()).await;
     if let Err(error) = &result {
         tracing::error!("could not load the settings: {error}");
     }
@@ -23,8 +22,7 @@ pub(crate) async fn load(file: &SettingsFile) -> Event {
 /// Writes `settings`, then reports what the file holds.
 pub(crate) async fn save(file: &SettingsFile, settings: Settings) -> Event {
     let task_file = file.clone();
-    let saved = tokio::task::spawn_blocking(move || task_file.save(&settings)).await;
-    match flatten(saved) {
+    match blocking(move || task_file.save(&settings)).await {
         Ok(()) => load(file).await,
         Err(error) => {
             tracing::error!("could not save the settings: {error}");
@@ -45,13 +43,5 @@ pub(crate) fn history_retention(loaded: &Event) -> Option<HistorySettings> {
             ..
         } => Some(settings.history),
         _ => None,
-    }
-}
-
-fn flatten<T>(result: Result<Result<T, SettingsError>, JoinError>) -> Result<T, String> {
-    match result {
-        Ok(Ok(value)) => Ok(value),
-        Ok(Err(error)) => Err(describe_error(&error)),
-        Err(error) => Err(describe_error(&error)),
     }
 }

@@ -11,8 +11,8 @@ use dbdesk_engine::{
     EngineConfig, InstallError, InstallSupport, Release, ReleaseError, ReleaseFeed, UpdateInstaller,
 };
 use dbdesk_store::{
-    ConsoleFiles, DataSourceFile, HistoryFile, KeymapFile, ProjectFile, Secret, SecretError,
-    SecretStore, SettingsFile,
+    ConsoleFiles, CustomFiles, DataSourceFile, HistoryFile, KeymapFile, ProjectFile, Secret,
+    SecretError, SecretStore, SettingsFile,
 };
 use egui_kittest::kittest::Queryable;
 use egui_kittest::{Harness, HarnessBuilder};
@@ -119,6 +119,7 @@ pub fn start_app(
         history: HistoryFile::new(dir.join("history.sqlite")),
         keymap: KeymapFile::new(dir.join("keymap.toml")),
         settings: SettingsFile::new(dir.join("settings.toml")),
+        custom_files: CustomFiles::new(dir),
         releases: Arc::new(FixedReleases::current()),
         updater: Arc::new(FakeInstaller::default()),
         known_hosts: dir.join("known_hosts"),

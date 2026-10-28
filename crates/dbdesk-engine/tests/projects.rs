@@ -177,6 +177,7 @@ fn never_overwrites_an_unreadable_projects_file() {
     engine.expect(Event::Started);
     engine.expect_keymap(Ok(KeymapBindings::new()));
     engine.expect_settings(Ok(Settings::default()));
+    engine.expect_no_custom_files();
     assert!(matches!(
         engine.next_event(),
         Event::ProjectsUnavailable { .. }

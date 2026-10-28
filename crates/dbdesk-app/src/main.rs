@@ -8,6 +8,7 @@ mod commands;
 mod console;
 mod consoles;
 mod csv_import;
+mod custom_files;
 mod data_source_dialog;
 mod data_source_form;
 mod database_brand;
@@ -108,6 +109,7 @@ fn main() -> anyhow::Result<()> {
         history: HistoryFile::new(paths.history_file()),
         keymap: KeymapFile::new(paths.keymap_file()),
         settings: SettingsFile::new(paths.settings_file()),
+        custom_files: paths.custom_files(),
         releases: Arc::new(GithubReleases::new(
             updates::RELEASES_REPOSITORY,
             &format!("dbdesk/{}", version::VERSION),

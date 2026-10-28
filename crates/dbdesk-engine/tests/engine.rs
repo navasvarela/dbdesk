@@ -21,8 +21,8 @@ use dbdesk_engine::{
     WatchedFile,
 };
 use dbdesk_store::{
-    ConsoleKey, ConsoleName, DataSourceFile, ExportFormat, FormatSettings, KeymapBindings,
-    KeywordCase, Projects, SavedConsole, Secret, SecretStore, Settings,
+    ConsoleKey, ConsoleName, CustomFile, DataSourceFile, ExportFormat, FormatSettings,
+    KeymapBindings, KeywordCase, Projects, SavedConsole, Secret, SecretStore, Settings,
 };
 
 #[test]
@@ -153,6 +153,7 @@ fn saves_console_files_in_order_and_reloads_them_after_a_restart() {
     restarted.expect(Event::Started);
     restarted.expect_keymap(Ok(KeymapBindings::new()));
     restarted.expect_settings(Ok(Settings::default()));
+    restarted.expect_no_custom_files();
     restarted.expect(Event::ProjectsLoaded(Projects::default()));
     restarted.expect(Event::DataSourcesLoaded(vec![]));
     restarted.expect(Event::ConsolesLoaded(vec![SavedConsole {
@@ -324,6 +325,30 @@ fn creates_and_reloads_the_keymap_but_never_overwrites_it() {
 }
 
 #[test]
+fn reloads_the_customisation_files_with_their_problems() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    engine.expect_started(vec![]);
+    std::fs::write(
+        dir.path().join("snippets.toml"),
+        "[[snippet]]\ntrigger = \"sel\"\nbody = \"SELECT $1\"\n\n[[snippet]]\nbody = \"x\"\n",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("theme.toml"), "not toml").unwrap();
+
+    engine.send(Command::ReloadCustomFiles);
+
+    let [actions, snippets, theme] = engine.expect_custom_files().try_into().unwrap();
+    assert!(actions.problems().is_empty());
+    let CustomFile::Snippets(snippets) = snippets else {
+        panic!("{snippets:?}");
+    };
+    assert_eq!(snippets.value.len(), 1);
+    assert_eq!(snippets.problems, ["snippet 2: missing field `trigger`"]);
+    assert_eq!(theme.problems().len(), 1, "{:?}", theme.problems());
+}
+
+#[test]
 fn saves_and_reloads_the_settings_and_reports_a_broken_file() {
     let dir = tempfile::tempdir().unwrap();
     let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
@@ -473,6 +498,7 @@ fn never_overwrites_an_unreadable_data_sources_file() {
     engine.expect(Event::Started);
     engine.expect_keymap(Ok(KeymapBindings::new()));
     engine.expect_settings(Ok(Settings::default()));
+    engine.expect_no_custom_files();
     engine.expect(Event::ProjectsLoaded(Projects::default()));
     assert!(matches!(
         engine.next_event(),

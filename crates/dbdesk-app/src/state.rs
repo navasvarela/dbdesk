@@ -161,6 +161,7 @@ impl AppState {
             | Event::McpDefaultsSaveFailed { .. }
             | Event::ConsolesLoaded(_)
             | Event::KeymapLoaded { .. }
+            | Event::CustomFileLoaded { .. }
             | Event::SettingsLoaded { .. }
             | Event::LatestRelease(_)
             | Event::UpdateProgress { .. }

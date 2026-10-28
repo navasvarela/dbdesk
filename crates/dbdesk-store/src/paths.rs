@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use directories::{BaseDirs, ProjectDirs};
 
+use crate::CustomFiles;
+
 /// The application name used for platform directories. Also the eframe app id, so the
 /// window/layout state eframe persists lands in the same folder.
 pub const APP_NAME: &str = "dbdesk";
@@ -56,6 +58,12 @@ impl AppPaths {
     /// Preferences, such as how SQL is formatted. Not guaranteed to exist.
     pub fn settings_file(&self) -> PathBuf {
         self.dirs.config_dir().join("settings.toml")
+    }
+
+    /// `actions.toml`, `snippets.toml` and `theme.toml`, if the user wrote them, beside the
+    /// keymap.
+    pub fn custom_files(&self) -> CustomFiles {
+        CustomFiles::new(self.dirs.config_dir())
     }
 
     /// The query history database. Not guaranteed to exist yet.

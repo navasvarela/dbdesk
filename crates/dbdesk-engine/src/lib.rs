@@ -6,6 +6,7 @@
 //! [`EngineHandle::try_recv`] once per frame. See `docs/adr/0003-ui-engine-message-passing.md`.
 
 mod command_loop;
+mod config_files;
 mod console_files;
 mod environment;
 mod events;

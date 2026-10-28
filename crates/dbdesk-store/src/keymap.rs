@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+use crate::config_text::read_if_exists;
+
 /// Action ids mapped to the shortcuts written for them, as written: `"cmd+enter"`.
 pub type KeymapBindings = BTreeMap<String, Vec<String>>;
 
@@ -77,17 +79,12 @@ impl KeymapFile {
     ///
     /// [`KeymapError::Read`] or [`KeymapError::Parse`] if the file exists but can't be used.
     pub fn load(&self) -> Result<KeymapBindings, KeymapError> {
-        let text = match std::fs::read_to_string(&self.path) {
-            Ok(text) => text,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                return Ok(KeymapBindings::new());
-            }
-            Err(source) => {
-                return Err(KeymapError::Read {
-                    path: self.path.clone(),
-                    source,
-                });
-            }
+        let read = read_if_exists(&self.path).map_err(|source| KeymapError::Read {
+            path: self.path.clone(),
+            source,
+        })?;
+        let Some(text) = read else {
+            return Ok(KeymapBindings::new());
         };
         let contents: FileContents =
             toml::from_str(&text).map_err(|source| KeymapError::Parse {

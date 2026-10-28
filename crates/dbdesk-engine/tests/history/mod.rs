@@ -218,6 +218,7 @@ fn prunes_at_start_up_and_when_the_retention_is_saved() {
     engine.expect(Event::Started);
     engine.expect_keymap(Ok(dbdesk_store::KeymapBindings::new()));
     engine.expect_settings(Ok(settings.clone()));
+    engine.expect_no_custom_files();
     engine.expect(Event::ProjectsLoaded(dbdesk_store::Projects::default()));
     engine.expect(Event::DataSourcesLoaded(vec![]));
     engine.expect(Event::ConsolesLoaded(vec![]));

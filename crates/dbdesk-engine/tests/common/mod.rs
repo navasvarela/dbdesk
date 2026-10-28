@@ -22,8 +22,9 @@ use dbdesk_engine::{
     ReleaseError, ReleaseFeed, Repaint, SessionState, UpdateInstaller,
 };
 use dbdesk_store::{
-    ConsoleFiles, DataSourceFile, HistoryFile, KeymapBindings, KeymapFile, ProjectFile, Projects,
-    Secret, SecretError, SecretStore, Settings, SettingsFile,
+    ConsoleFiles, CustomFile, CustomFileKind, CustomFiles, DataSourceFile, HistoryFile,
+    KeymapBindings, KeymapFile, ProjectFile, Projects, Secret, SecretError, SecretStore, Settings,
+    SettingsFile,
 };
 
 pub const EVENT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -217,6 +218,7 @@ impl TestEngine {
             history: HistoryFile::new(dir.join("history.sqlite")),
             keymap: KeymapFile::new(dir.join("keymap.toml")),
             settings: SettingsFile::new(dir.join("settings.toml")),
+            custom_files: CustomFiles::new(dir),
             releases: Arc::new(releases),
             updater: Arc::new(installer),
             known_hosts: dir.join("known_hosts"),
@@ -262,6 +264,7 @@ impl TestEngine {
         self.expect(Event::Started);
         self.expect_keymap(Ok(KeymapBindings::new()));
         self.expect_settings(Ok(Settings::default()));
+        self.expect_no_custom_files();
         self.expect(Event::ProjectsLoaded(projects));
         self.expect(Event::DataSourcesLoaded(data_sources));
         self.expect(Event::ConsolesLoaded(vec![]));
@@ -286,6 +289,29 @@ impl TestEngine {
                 (other, expected) => panic!("expected settings {expected:?}, got {other:?}"),
             },
             other => panic!("expected the settings, got {other:?}"),
+        }
+    }
+
+    /// Expects `actions.toml`, `snippets.toml` and `theme.toml` to be reported, in that order,
+    /// and returns what each held.
+    pub fn expect_custom_files(&mut self) -> Vec<CustomFile> {
+        CustomFileKind::ALL
+            .into_iter()
+            .map(|kind| match self.next_event() {
+                Event::CustomFileLoaded { path, file } => {
+                    assert_eq!(file.kind(), kind);
+                    assert!(path.ends_with(kind.file_name()), "{}", path.display());
+                    file
+                }
+                other => panic!("expected {}, got {other:?}", kind.file_name()),
+            })
+            .collect()
+    }
+
+    /// Expects the customisation files to be reported as absent: empty, with no problems.
+    pub fn expect_no_custom_files(&mut self) {
+        for file in self.expect_custom_files() {
+            assert_eq!(file, CustomFile::parse(file.kind(), ""));
         }
     }
 

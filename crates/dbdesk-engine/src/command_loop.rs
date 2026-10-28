@@ -5,11 +5,13 @@ use std::time::Duration;
 
 use dbdesk_core::{DataSource, DataSourceId, Password, ProjectId, describe_error};
 use dbdesk_store::{
-    ConsoleFiles, ImportPlan, KeymapFile, Project, Secret, SecretError, SecretStore, SettingsFile,
+    ConsoleFiles, CustomFiles, ImportPlan, KeymapFile, Project, Secret, SecretError, SecretStore,
+    SettingsFile,
 };
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::task::{JoinError, JoinSet};
 
+use crate::config_files;
 use crate::console_files;
 use crate::events::EventSink;
 use crate::export;
@@ -53,6 +55,9 @@ pub(crate) async fn run(
     let settings = settings::load(&config.settings).await;
     let retention = settings::history_retention(&settings);
     events.send(settings);
+    for event in config_files::load_custom(&config.custom_files).await {
+        events.send(event);
+    }
     let projects = ProjectRegistry::load(config.projects).await;
     events.send(projects.loaded_event());
     let registry = Registry::load(config.data_sources).await;
@@ -74,6 +79,7 @@ pub(crate) async fn run(
         console_files: config.consoles,
         keymap_file: config.keymap,
         settings_file: config.settings,
+        custom_files: config.custom_files,
         releases: config.releases,
         updater: config.updater,
         events,
@@ -111,6 +117,7 @@ struct Engine {
     console_files: ConsoleFiles,
     keymap_file: KeymapFile,
     settings_file: SettingsFile,
+    custom_files: CustomFiles,
     releases: Arc<dyn ReleaseFeed>,
     updater: Arc<dyn UpdateInstaller>,
     events: EventSink,
@@ -327,6 +334,11 @@ impl Engine {
             Command::CreateKeymap { text } => {
                 self.events
                     .send(keymap::create(&self.keymap_file, text).await);
+            }
+            Command::ReloadCustomFiles => {
+                for event in config_files::load_custom(&self.custom_files).await {
+                    self.events.send(event);
+                }
             }
             Command::ReloadSettings => {
                 self.events.send(settings::load(&self.settings_file).await);
