@@ -60,7 +60,7 @@ fn field_shortcuts(ui: &mut Ui, console: &mut QueryConsole, keymap: &Keymap, fie
 }
 
 fn find_row(ui: &mut Ui, console: &mut QueryConsole, keymap: &Keymap, find_id: Id) {
-    let palette = Palette::for_visuals(ui.visuals());
+    let palette = &Palette::for_visuals(ui.visuals());
     let bar = console.find_bar_mut();
     let field = ui.add(
         TextEdit::singleline(&mut bar.query)

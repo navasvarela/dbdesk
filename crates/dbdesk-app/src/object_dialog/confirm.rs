@@ -29,7 +29,7 @@ pub(super) struct Confirmation {
 impl Confirmation {
     /// Draws the confirmation. Returns whether Execute may run.
     pub(super) fn show(&mut self, ui: &mut Ui, destruction: &Destruction, target: &Target) -> bool {
-        let palette = Palette::for_visuals(ui.visuals());
+        let palette = &Palette::for_visuals(ui.visuals());
         ui.colored_label(palette.warning, &destruction.summary);
         for consequence in &destruction.consequences {
             ui.label(consequence);

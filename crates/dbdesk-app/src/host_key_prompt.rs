@@ -70,7 +70,7 @@ impl HostKeyPrompt {
 
     fn contents(&mut self, ui: &mut egui::Ui) -> Option<HostKeyAction> {
         ui.set_width(DIALOG_WIDTH);
-        let palette = Palette::for_visuals(ui.visuals());
+        let palette = &Palette::for_visuals(ui.visuals());
         ui.heading(format!("Trust the SSH server {}?", self.key.server()));
         ui.label(RichText::new(&self.name).color(palette.text_weak));
         ui.add_space(ui.spacing().item_spacing.y);

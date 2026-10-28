@@ -9,6 +9,8 @@ use dbdesk_store::{
 };
 use egui::{ScrollArea, Window};
 
+use crate::theme::Palettes;
+
 const WINDOW_SIZE: [f32; 2] = [560.0, 280.0];
 
 #[derive(Debug, Default)]
@@ -16,6 +18,8 @@ pub struct CustomFiles {
     actions: Loaded<Vec<CustomAction>>,
     snippets: Loaded<Vec<Snippet>>,
     theme: Loaded<ThemeOverrides>,
+    /// The palettes `theme.toml` makes.
+    palettes: Palettes,
     /// The file whose problems window is open.
     pub window: Option<CustomFileKind>,
 }
@@ -46,13 +50,22 @@ impl CustomFiles {
         match file {
             CustomFile::Actions(checked) => self.actions.set(path, checked),
             CustomFile::Snippets(checked) => self.snippets.set(path, checked),
-            CustomFile::Theme(checked) => self.theme.set(path, checked),
+            CustomFile::Theme(checked) => {
+                self.theme.set(path, checked);
+                self.palettes = Palettes::with_overrides(&checked.value);
+                let unreadable = self.palettes.contrast_problems();
+                self.theme.checked.problems.extend(unreadable);
+            }
         }
         Some(file.kind())
     }
 
     pub fn actions(&self) -> &[CustomAction] {
         &self.actions.checked.value
+    }
+
+    pub fn palettes(&self) -> Palettes {
+        self.palettes
     }
 
     pub fn snippets(&self) -> &[Snippet] {
@@ -182,7 +195,7 @@ mod tests {
     #[test]
     fn keeps_each_file_as_last_read_and_says_which_changed() {
         let mut files = CustomFiles::default();
-        let theme = parse_theme("[dark]\nprimary = \"#7c5cff\"\n[light]\nprimray = \"#000000\"\n");
+        let theme = parse_theme("[dark]\nprimary = \"#9a8bff\"\n[light]\nprimray = \"#000000\"\n");
         let changed = files.apply(&Event::CustomFileLoaded {
             path: "theme.toml".into(),
             file: CustomFile::Theme(theme),

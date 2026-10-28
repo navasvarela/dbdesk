@@ -88,7 +88,7 @@ pub fn show(ui: &Ui, console: &mut QueryConsole, output: &TextEditOutput) {
                     });
                     return;
                 }
-                let palette = Palette::for_visuals(ui.visuals());
+                let palette = &Palette::for_visuals(ui.visuals());
                 // An area sizes itself from the frame before, so without a minimum the list
                 // would never grow past the height of its first, shorter content.
                 ScrollArea::vertical()

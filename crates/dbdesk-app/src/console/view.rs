@@ -318,7 +318,7 @@ fn action_button(
     let enabled = is_enabled(console, action);
     let response = match toolbar_icon(action) {
         Some((glyph, role)) => IconButton::new(glyph, label)
-            .color(role.color(Palette::for_visuals(ui.visuals())))
+            .color(role.color(&Palette::for_visuals(ui.visuals())))
             .enabled(enabled)
             .tooltip(hint)
             .show(ui),
@@ -366,7 +366,7 @@ fn toolbar(
     keymap: &Keymap,
     actions: &mut Vec<ConsoleAction>,
 ) {
-    let palette = Palette::for_visuals(ui.visuals());
+    let palette = &Palette::for_visuals(ui.visuals());
     widgets::toolbar(ui, |ui| {
         for button in [
             ("Run", Action::RunCurrent),
@@ -402,7 +402,7 @@ fn file_bar(ui: &mut Ui, console: &mut QueryConsole) {
     let Some(disk) = console.disk() else {
         return;
     };
-    let palette = Palette::for_visuals(ui.visuals());
+    let palette = &Palette::for_visuals(ui.visuals());
     let name = console.title().to_owned();
     match disk {
         Disk::Changed(_) => {
@@ -573,7 +573,7 @@ fn mode_label(mode: TransactionMode) -> &'static str {
 }
 
 fn transaction_status(ui: &mut Ui, console: &QueryConsole) {
-    let palette = Palette::for_visuals(ui.visuals());
+    let palette = &Palette::for_visuals(ui.visuals());
     match (console.transaction, &console.transaction_ended) {
         (TransactionStatus::InTransaction, _) => {
             ui.colored_label(palette.warning, "● Transaction open")
@@ -750,7 +750,7 @@ const SQUIGGLE_STEP: f32 = 2.5;
 /// Underlines each problem with a wave, red for errors and amber for warnings, and remembers
 /// where, so hovering can show the message.
 fn squiggles(ui: &Ui, console: &mut QueryConsole, output: &egui::text_edit::TextEditOutput) {
-    let palette = Palette::for_visuals(ui.visuals());
+    let palette = &Palette::for_visuals(ui.visuals());
     let origin = output.galley_pos;
     let mut rects = Vec::new();
     for (index, problem) in console.problems.shown().iter().enumerate() {

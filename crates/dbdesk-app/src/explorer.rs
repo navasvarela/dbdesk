@@ -320,7 +320,7 @@ fn group_header_row(
     count: usize,
     expanded: bool,
 ) -> GroupHeaderResponse {
-    let palette = Palette::for_visuals(ui.visuals());
+    let palette = &Palette::for_visuals(ui.visuals());
     let row = ui.horizontal(|ui| {
         let toggled = expander(ui, expanded, header.label()).clicked();
         let (glyph, color) = match header {
@@ -413,7 +413,7 @@ fn data_sources<'a>(
 }
 
 fn toolbar(ui: &mut Ui, options: &mut ExplorerOptions, actions: &mut Vec<ExplorerAction>) {
-    let palette = Palette::for_visuals(ui.visuals());
+    let palette = &Palette::for_visuals(ui.visuals());
     widgets::toolbar(ui, |ui| {
         let new = ui.menu_button(widgets::glyph(icons::PLUS).size(15.0), |ui| {
             new_data_source_menu(ui, actions);
@@ -450,7 +450,7 @@ fn toolbar(ui: &mut Ui, options: &mut ExplorerOptions, actions: &mut Vec<Explore
 
 /// One entry per driver, each with its icon. Also used by the Welcome tab.
 pub fn new_data_source_menu(ui: &mut Ui, actions: &mut Vec<ExplorerAction>) {
-    let palette = Palette::for_visuals(ui.visuals());
+    let palette = &Palette::for_visuals(ui.visuals());
     let logo_size = ui.text_style_height(&TextStyle::Button);
     for driver in DriverKind::ALL {
         let logo = icons::driver_logo_sized(driver, palette, logo_size);
@@ -477,7 +477,7 @@ fn data_source_tree(
     let id = entry.data_source.id;
     let root = CatalogPath::root();
     let expanded = forced_open || entry.catalog.is_expanded(&root);
-    let palette = Palette::for_visuals(ui.visuals());
+    let palette = &Palette::for_visuals(ui.visuals());
     let row_background = ui.painter().add(Shape::Noop);
     let row = ui.horizontal(|ui| {
         if expander(ui, expanded, &entry.data_source.name).clicked() {
@@ -820,7 +820,7 @@ fn node_row(
             ui.add_space(ui.spacing().icon_width);
         }
         if let Some(kind) = node.kind() {
-            ui.label(icons::node(kind).rich_text(Palette::for_visuals(ui.visuals())));
+            ui.label(icons::node(kind).rich_text(&Palette::for_visuals(ui.visuals())));
         }
         let label = ui.add(
             Label::new(&node.label)

@@ -110,7 +110,7 @@ impl ProjectSettingsDialog {
             warnings(ui, &permissions, members);
         }
         if let Some(error) = &self.error {
-            let palette = Palette::for_visuals(ui.visuals());
+            let palette = &Palette::for_visuals(ui.visuals());
             ui.colored_label(palette.error, format!("Could not save: {error}"));
         }
         ui.separator();
@@ -120,7 +120,7 @@ impl ProjectSettingsDialog {
     fn buttons(&mut self, ui: &mut Ui) -> Option<ProjectSettingsAction> {
         let schemas_valid = self.schemas.scope().is_some();
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let palette = Palette::for_visuals(ui.visuals());
+            let palette = &Palette::for_visuals(ui.visuals());
             let save =
                 Button::new(RichText::new("Save").color(palette.on_primary)).fill(palette.primary);
             let saved = ui
@@ -148,7 +148,7 @@ impl ProjectSettingsDialog {
 /// What the plan asks the settings to say plainly: beyond reading, only a dedicated login's
 /// grants are airtight, and some data sources aren't served at all yet.
 fn warnings(ui: &mut Ui, permissions: &McpPermissions, members: &[&DataSource]) {
-    let palette = Palette::for_visuals(ui.visuals());
+    let palette = &Palette::for_visuals(ui.visuals());
     let changes = permissions.write || permissions.schema || permissions.admin;
     let served =
         |data_source: &&&DataSource| read_only::mode(data_source.config.driver()).is_some();

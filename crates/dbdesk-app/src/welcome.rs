@@ -78,7 +78,7 @@ impl Card {
 }
 
 pub fn show(ui: &mut Ui, data_sources: &DataSources, actions: &mut Vec<ExplorerAction>) {
-    let palette = Palette::for_visuals(ui.visuals());
+    let palette = &Palette::for_visuals(ui.visuals());
     paint_glow(ui, palette);
     egui::ScrollArea::vertical()
         .auto_shrink(false)
@@ -192,7 +192,7 @@ fn card_button(
 fn console_menu(ui: &mut Ui, data_sources: &DataSources, actions: &mut Vec<ExplorerAction>) {
     for entry in data_sources.entries() {
         let data_source = &entry.data_source;
-        let palette = Palette::for_visuals(ui.visuals());
+        let palette = &Palette::for_visuals(ui.visuals());
         let logo = icons::driver_logo_sized(
             data_source.config.driver(),
             palette,

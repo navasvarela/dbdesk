@@ -386,7 +386,7 @@ impl EntryRow<'_> {
 /// A short tag naming where the statement came from, with the details on hover. Statements
 /// from MCP clients stand out, since nobody at the keyboard ran them.
 fn source_badge(ui: &mut Ui, source: &HistorySource) {
-    let palette = Palette::for_visuals(ui.visuals());
+    let palette = &Palette::for_visuals(ui.visuals());
     let (text, color, hover) = match source {
         HistorySource::Console => (
             "Console",
@@ -437,7 +437,7 @@ fn source_badge(ui: &mut Ui, source: &HistorySource) {
 }
 
 fn outcome_label(ui: &mut Ui, entry: &HistoryEntry) {
-    let palette = Palette::for_visuals(ui.visuals());
+    let palette = &Palette::for_visuals(ui.visuals());
     let (text, color) = match entry.outcome {
         HistoryOutcome::Ok => ("ok", palette.success),
         HistoryOutcome::Error => ("error", palette.error),

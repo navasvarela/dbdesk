@@ -113,6 +113,8 @@ pub struct DbDeskApp {
     keymap_window_open: bool,
     custom_files: CustomFiles,
     actions_window_open: bool,
+    /// `theme.toml` was read, and its colours are yet to be installed.
+    theme_changed: bool,
     /// Why the last custom action couldn't run, shown in the status bar until the next one.
     action_problem: Option<String>,
     about_open: bool,
@@ -206,6 +208,7 @@ impl DbDeskApp {
             keymap_window_open: false,
             custom_files: CustomFiles::default(),
             actions_window_open: false,
+            theme_changed: false,
             action_problem: None,
             about_open: false,
             settings: AppSettings::default(),
@@ -365,8 +368,10 @@ impl DbDeskApp {
             let check = self.updates.start(self.settings.settings());
             self.send_if(check);
         }
-        if self.custom_files.apply(event) == Some(CustomFileKind::Actions) {
-            self.rebuild_keymap();
+        match self.custom_files.apply(event) {
+            Some(CustomFileKind::Actions) => self.rebuild_keymap(),
+            Some(CustomFileKind::Theme) => self.theme_changed = true,
+            Some(CustomFileKind::Snippets) | None => {}
         }
         if let Event::KeymapLoaded { path, result } = event {
             self.keymap_file = result.clone();
@@ -1667,7 +1672,7 @@ impl DbDeskApp {
     }
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
-        let palette = Palette::for_visuals(ui.visuals());
+        let palette = &Palette::for_visuals(ui.visuals());
         let dot = match self.state.engine_status {
             EngineStatus::Starting => palette.warning,
             EngineStatus::Running => palette.success,
@@ -1783,6 +1788,9 @@ impl eframe::App for DbDeskApp {
         }
         self.maximize_window_once(ctx);
         self.drain_engine_events();
+        if std::mem::take(&mut self.theme_changed) {
+            theme::install_palettes(ctx, self.custom_files.palettes());
+        }
         self.log_console.drain();
     }
 
@@ -1805,7 +1813,7 @@ impl eframe::App for DbDeskApp {
         let mut explorer_actions = Vec::new();
         let mut console_actions = Vec::new();
         let mut close_requests = Vec::new();
-        let palette = Palette::for_visuals(ui.visuals());
+        let palette = &Palette::for_visuals(ui.visuals());
         let lint = self.settings.lint_options();
         let (open_consoles, saved_consoles, recent_completions) =
             self.consoles.open_and_saved_mut();

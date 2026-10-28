@@ -181,7 +181,7 @@ impl CsvImportDialog {
 
     fn contents(&mut self, ui: &mut Ui) -> Option<CsvImportAction> {
         ui.set_width(DIALOG_WIDTH);
-        let palette = Palette::for_visuals(ui.visuals());
+        let palette = &Palette::for_visuals(ui.visuals());
         ui.heading(format!("Import into {}", self.target.title));
         let action = self.file_row(ui, palette);
         ui.add_space(ui.spacing().item_spacing.y);

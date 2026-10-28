@@ -12,7 +12,7 @@ const LICENSE: &str = env!("CARGO_PKG_LICENSE");
 /// the project lives. Returns `true` once the user closes it.
 pub fn show(ctx: &egui::Context) -> bool {
     let modal = Modal::new(Id::new("about_dbdesk")).show(ctx, |ui| {
-        let palette = Palette::for_visuals(ui.visuals());
+        let palette = &Palette::for_visuals(ui.visuals());
         ui.vertical_centered(|ui| {
             ui.add(brand::logo().max_size(egui::vec2(LOGO_SIZE, LOGO_SIZE)));
             ui.heading("dbdesk");

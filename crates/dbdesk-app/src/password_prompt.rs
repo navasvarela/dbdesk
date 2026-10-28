@@ -99,7 +99,7 @@ impl PasswordPrompt {
     }
 
     fn contents(&mut self, ui: &mut egui::Ui) -> Option<PromptAction> {
-        let palette = Palette::for_visuals(ui.visuals());
+        let palette = &Palette::for_visuals(ui.visuals());
         ui.heading(format!("Connect to {}", self.name));
         ui.label(RichText::new(&self.target).color(palette.text_weak));
         ui.label(format!("Enter {}: {}.", self.wanted, self.reason));

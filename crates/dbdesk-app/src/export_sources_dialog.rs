@@ -92,7 +92,7 @@ impl ExportSourcesDialog {
         data_sources: &[DataSource],
     ) -> Option<ExportAction> {
         ui.set_width(DIALOG_WIDTH);
-        let palette = Palette::for_visuals(ui.visuals());
+        let palette = &Palette::for_visuals(ui.visuals());
         ui.heading("Export data sources");
         ui.label(
             RichText::new(

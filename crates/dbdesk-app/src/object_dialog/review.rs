@@ -106,7 +106,7 @@ impl Review {
         statements: &Result<Vec<String>, DdlError>,
         confirmed: bool,
     ) -> Option<ReviewAction> {
-        let palette = Palette::for_visuals(ui.visuals());
+        let palette = &Palette::for_visuals(ui.visuals());
         ui.strong("SQL");
         let shown = match statements {
             Ok(statements) => {
@@ -278,7 +278,7 @@ fn sql(ui: &mut Ui, target: &Target, text: &str) {
 /// DDL isn't transactional, that a failure part way keeps what ran before it, and how a
 /// password is sent.
 fn notes(ui: &mut Ui, target: &Target, statements: usize, holds_password: bool) {
-    let palette = Palette::for_visuals(ui.visuals());
+    let palette = &Palette::for_visuals(ui.visuals());
     if holds_password {
         ui.horizontal_wrapped(|ui| {
             ui.label(widgets::glyph(icons::LOCK_SIMPLE).color(palette.success));

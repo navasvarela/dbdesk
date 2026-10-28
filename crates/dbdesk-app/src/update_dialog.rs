@@ -17,7 +17,7 @@ pub enum UpdateAction {
 /// installing it when this copy can replace itself, and its release page.
 pub fn show(ctx: &egui::Context, updates: &Updates) -> Option<UpdateAction> {
     let modal = Modal::new(Id::new("check_for_updates")).show(ctx, |ui| {
-        let palette = Palette::for_visuals(ui.visuals());
+        let palette = &Palette::for_visuals(ui.visuals());
         ui.set_min_width(360.0);
         ui.heading("Updates");
         ui.add_space(ui.spacing().item_spacing.y);
