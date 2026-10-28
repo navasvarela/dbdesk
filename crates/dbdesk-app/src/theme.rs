@@ -3,9 +3,14 @@
 //!
 //! Every colour the UI draws comes from a [`Palette`], so a widget asks for a role ("the
 //! success colour", "weak text") and gets the shade that is readable in the current theme.
-//! `tests::text_colours_meet_wcag_aa` holds the palettes to that.
+//! `tests::text_colours_meet_wcag_aa` holds the palettes to that. `theme.toml` can replace
+//! any of them ([`Palettes::with_overrides`]); what it makes unreadable is listed, not refused.
+
+use std::cell::Cell;
+use std::collections::BTreeMap;
 
 use dbdesk_core::{DriverKind, SourceColor};
+use dbdesk_store::{Rgb, ThemeOverrides, ThemeToken};
 use egui::style::{Selection, WidgetVisuals, Widgets};
 use egui::{Color32, CornerRadius, Margin, Shadow, Stroke, Style, Theme, Visuals};
 
@@ -48,6 +53,9 @@ pub struct Palette {
     pub selection: Color32,
     /// Text on a solid primary fill, such as the main button on a screen.
     pub on_primary: Color32,
+    /// Which theme the palette is for, which picks the shades of data source and database
+    /// colours.
+    pub dark: bool,
 }
 
 impl Palette {
@@ -67,6 +75,7 @@ impl Palette {
         text_weak: Color32::from_rgb(0x5C, 0x62, 0x70),
         selection: Color32::from_rgb(0xE0, 0xF4, 0xF0),
         on_primary: Color32::from_rgb(0xFF, 0xFF, 0xFF),
+        dark: false,
     };
 
     pub const DARK: Self = Self {
@@ -85,8 +94,11 @@ impl Palette {
         text_weak: Color32::from_rgb(0x95, 0x9B, 0xA8),
         selection: Color32::from_rgb(0x16, 0x30, 0x2E),
         on_primary: Color32::from_rgb(0x0E, 0x1F, 0x1C),
+        dark: true,
     };
 
+    /// The brand's palette for `theme`, before `theme.toml`.
+    #[cfg(test)]
     pub fn of(theme: Theme) -> &'static Self {
         match theme {
             Theme::Light => &Self::LIGHT,
@@ -94,13 +106,36 @@ impl Palette {
         }
     }
 
-    /// The palette `visuals` were built from.
-    pub fn for_visuals(visuals: &Visuals) -> &'static Self {
-        Self::of(if visuals.dark_mode {
+    /// The palette `visuals` were built from: the one installed last on this thread.
+    pub fn for_visuals(visuals: &Visuals) -> Self {
+        let theme = if visuals.dark_mode {
             Theme::Dark
         } else {
             Theme::Light
-        })
+        };
+        INSTALLED.get().palettes.of(theme).palette
+    }
+
+    fn set(&mut self, token: ThemeToken, rgb: Rgb) {
+        let color = Color32::from_rgb(rgb.r, rgb.g, rgb.b);
+        let slot = match token {
+            ThemeToken::Primary => &mut self.primary,
+            ThemeToken::Secondary => &mut self.secondary,
+            ThemeToken::Success => &mut self.success,
+            ThemeToken::Warning => &mut self.warning,
+            ThemeToken::Error => &mut self.error,
+            ThemeToken::Base => &mut self.base,
+            ThemeToken::Panel => &mut self.panel,
+            ThemeToken::Field => &mut self.field,
+            ThemeToken::Control => &mut self.control,
+            ThemeToken::ControlHover => &mut self.control_hover,
+            ThemeToken::Border => &mut self.border,
+            ThemeToken::Text => &mut self.text,
+            ThemeToken::TextWeak => &mut self.text_weak,
+            ThemeToken::Selection => &mut self.selection,
+            ThemeToken::OnPrimary => &mut self.on_primary,
+        };
+        *slot = color;
     }
 
     /// `color` faded into the panel: a tint for backgrounds that must not compete with text.
@@ -110,7 +145,7 @@ impl Palette {
 
     /// The shade of a data source colour for this theme.
     pub fn source(&self, color: SourceColor) -> Color32 {
-        let dark = *self == Self::DARK;
+        let dark = self.dark;
         let (light, dark_shade) = match color {
             SourceColor::Red => ((0xD9, 0x3B, 0x4A), (0xF0, 0x62, 0x6C)),
             SourceColor::Orange => ((0xE0, 0x6A, 0x1B), (0xFF, 0x96, 0x4F)),
@@ -130,11 +165,7 @@ impl Palette {
     /// The colour of a database's logo in this theme.
     pub fn driver(&self, driver: DriverKind) -> Color32 {
         let brand = database_brand::of(driver);
-        if *self == Self::DARK {
-            brand.dark
-        } else {
-            brand.light
-        }
+        if self.dark { brand.dark } else { brand.light }
     }
 }
 
@@ -177,23 +208,145 @@ fn contrast(a: Color32, b: Color32) -> f64 {
 /// WCAG AA for normal-size text.
 const AA: f64 = 4.5;
 
-/// Installs dbdesk's visuals for both themes. Which one shows follows the OS unless the user
-/// picked one in the View menu; egui remembers that choice between runs.
-pub fn install(ctx: &egui::Context) {
-    install_with_accent(ctx, None);
+/// A theme's palette, and whether `theme.toml` chose its selection or primary colour itself,
+/// which the system's accent colour then leaves alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ThemePalette {
+    pub palette: Palette,
+    own_focus: bool,
 }
 
-/// Installs the visuals with selection and focus in `accent`, the system's accent colour, or
-/// in the brand's primary without one.
+/// The palettes of both themes: the brand's, with what `theme.toml` replaces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Palettes {
+    light: ThemePalette,
+    dark: ThemePalette,
+}
+
+impl Default for Palettes {
+    fn default() -> Self {
+        Self::BRAND
+    }
+}
+
+impl Palettes {
+    pub const BRAND: Self = Self {
+        light: ThemePalette {
+            palette: Palette::LIGHT,
+            own_focus: false,
+        },
+        dark: ThemePalette {
+            palette: Palette::DARK,
+            own_focus: false,
+        },
+    };
+
+    pub fn with_overrides(overrides: &ThemeOverrides) -> Self {
+        let themed = |base: Palette, colours: &BTreeMap<ThemeToken, Rgb>| {
+            let mut palette = base;
+            for (&token, &rgb) in colours {
+                palette.set(token, rgb);
+            }
+            ThemePalette {
+                palette,
+                own_focus: colours.contains_key(&ThemeToken::Primary)
+                    || colours.contains_key(&ThemeToken::Selection),
+            }
+        };
+        Self {
+            light: themed(Palette::LIGHT, &overrides.light),
+            dark: themed(Palette::DARK, &overrides.dark),
+        }
+    }
+
+    pub fn of(&self, theme: Theme) -> &ThemePalette {
+        match theme {
+            Theme::Light => &self.light,
+            Theme::Dark => &self.dark,
+        }
+    }
+
+    /// Text that falls below WCAG AA where it is drawn, by the check the brand's palettes are
+    /// held to, as sentences for `theme.toml`'s problems.
+    pub fn contrast_problems(&self) -> Vec<String> {
+        [(Theme::Light, "light"), (Theme::Dark, "dark")]
+            .into_iter()
+            .flat_map(|(theme, name)| {
+                text_pairs(&self.of(theme).palette).into_iter().filter_map(
+                    move |(text_name, text, background_name, background)| {
+                        let ratio = contrast(text, background);
+                        (ratio < AA).then(|| {
+                            format!(
+                                "{name}: {text_name} on {background_name} is {ratio:.2}:1, \
+                                 below the {AA}:1 that WCAG AA asks for"
+                            )
+                        })
+                    },
+                )
+            })
+            .collect()
+    }
+}
+
+/// What the theme was last installed with on this thread.
+#[derive(Debug, Clone, Copy)]
+struct Installed {
+    palettes: Palettes,
+    accent: Option<Color32>,
+}
+
+thread_local! {
+    /// Load-bearing: [`Palette::for_visuals`] reads the palettes from here. egui's `Visuals`
+    /// can't carry a palette, and widgets ask for theirs in dozens of places with only
+    /// `ui.visuals()` at hand. egui runs an app on one thread, and each UI test on its own, so
+    /// what was installed last on this thread is what its context shows.
+    static INSTALLED: Cell<Installed> = const {
+        Cell::new(Installed {
+            palettes: Palettes::BRAND,
+            accent: None,
+        })
+    };
+}
+
+/// Installs dbdesk's visuals for both themes, in the brand's palettes. Which one shows follows
+/// the OS unless the user picked one in the View menu; egui remembers that choice between runs.
+pub fn install(ctx: &egui::Context) {
+    apply(
+        ctx,
+        Installed {
+            palettes: Palettes::BRAND,
+            accent: None,
+        },
+    );
+}
+
+/// Installs the visuals again with selection and focus in `accent`, the system's accent
+/// colour, or in the palette's primary without one. The palettes stay as they were.
+#[cfg_attr(
+    not(target_os = "macos"),
+    allow(dead_code, reason = "only macOS gives dbdesk an accent colour")
+)]
 pub fn install_with_accent(ctx: &egui::Context, accent: Option<Color32>) {
+    let palettes = INSTALLED.get().palettes;
+    apply(ctx, Installed { palettes, accent });
+}
+
+/// Installs the visuals again in `palettes`, from `theme.toml`. The accent colour stays.
+pub fn install_palettes(ctx: &egui::Context, palettes: Palettes) {
+    let accent = INSTALLED.get().accent;
+    apply(ctx, Installed { palettes, accent });
+}
+
+fn apply(ctx: &egui::Context, installed: Installed) {
+    INSTALLED.set(installed);
     for theme in [Theme::Light, Theme::Dark] {
-        let palette = Palette::of(theme);
-        let focus = accent.map_or_else(
-            || Focus::brand(palette),
-            |accent| Focus::accent(palette, theme, accent),
-        );
+        let ThemePalette { palette, own_focus } = *installed.palettes.of(theme);
+        let focus = match installed.accent {
+            Some(accent) if !own_focus => Focus::accent(&palette, theme, accent),
+            _ => Focus::brand(&palette),
+        };
         ctx.style_mut_of(theme, |style| {
-            style.visuals = visuals(palette, theme, focus);
+            style.visuals = visuals(&palette, theme, focus);
             tune_spacing(style);
         });
     }
@@ -336,7 +489,7 @@ fn tune_spacing(style: &mut Style) {
 /// egui_dock's look: each node of the dock is a rounded island on the darker base, and the
 /// active tab is a subtle highlight rather than a frame.
 pub fn dock_style(style: &Style) -> egui_dock::Style {
-    let palette = Palette::for_visuals(&style.visuals);
+    let palette = &Palette::for_visuals(&style.visuals);
     let mut dock = egui_dock::Style::from_egui(style);
     let top = CornerRadius {
         nw: ISLAND_RADIUS,
@@ -423,6 +576,73 @@ pub fn source_tab_style(
     style
 }
 
+/// Every text colour against every background it is drawn on.
+fn text_pairs(palette: &Palette) -> Vec<(&'static str, Color32, &'static str, Color32)> {
+    let syntax = SyntaxColors::of(palette);
+    let mut pairs = Vec::new();
+    let mut on = |backgrounds: &[(&'static str, Color32)], texts: &[(&'static str, Color32)]| {
+        for &(background_name, background) in backgrounds {
+            for &(text_name, text) in texts {
+                pairs.push((text_name, text, background_name, background));
+            }
+        }
+    };
+    on(
+        &[
+            ("panel", palette.panel),
+            ("field", palette.field),
+            ("base", palette.base),
+            ("control", palette.control),
+            ("hovered control", palette.control_hover),
+            ("selection", palette.selection),
+            (
+                "grid header",
+                palette.tint(palette.primary, GRID_HEADER_TINT),
+            ),
+            ("active tab", palette.tint(palette.primary, ACTIVE_TAB_TINT)),
+        ],
+        &[("text", palette.text)],
+    );
+    on(
+        &[
+            ("panel", palette.panel),
+            ("field", palette.field),
+            ("base", palette.base),
+            ("control", palette.control),
+        ],
+        &[("weak text", palette.text_weak)],
+    );
+    on(
+        &[("panel", palette.panel), ("field", palette.field)],
+        &[
+            ("primary", palette.primary),
+            ("secondary", palette.secondary),
+            ("success", palette.success),
+            ("warning", palette.warning),
+            ("error", palette.error),
+        ],
+    );
+    on(
+        &[("primary fill", palette.primary)],
+        &[("text on primary", palette.on_primary)],
+    );
+    on(
+        &[
+            ("editor", palette.field),
+            ("selected text", palette.selection),
+        ],
+        &[
+            ("keyword", syntax.keyword),
+            ("string", syntax.string),
+            ("number", syntax.number),
+            ("comment", syntax.comment),
+            ("identifier", syntax.identifier),
+            ("plain", syntax.plain),
+        ],
+    );
+    pairs
+}
+
 /// Colours for SQL syntax highlighting, from the palette.
 pub struct SyntaxColors {
     pub keyword: Color32,
@@ -435,7 +655,7 @@ pub struct SyntaxColors {
 
 impl SyntaxColors {
     pub fn for_visuals(visuals: &Visuals) -> Self {
-        Self::of(Palette::for_visuals(visuals))
+        Self::of(&Palette::for_visuals(visuals))
     }
 
     fn of(palette: &Palette) -> Self {
@@ -453,74 +673,6 @@ impl SyntaxColors {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Every text colour against every background it is drawn on.
-    fn text_pairs(palette: &Palette) -> Vec<(&'static str, Color32, &'static str, Color32)> {
-        let syntax = SyntaxColors::of(palette);
-        let mut pairs = Vec::new();
-        let mut on = |backgrounds: &[(&'static str, Color32)],
-                      texts: &[(&'static str, Color32)]| {
-            for &(background_name, background) in backgrounds {
-                for &(text_name, text) in texts {
-                    pairs.push((text_name, text, background_name, background));
-                }
-            }
-        };
-        on(
-            &[
-                ("panel", palette.panel),
-                ("field", palette.field),
-                ("base", palette.base),
-                ("control", palette.control),
-                ("hovered control", palette.control_hover),
-                ("selection", palette.selection),
-                (
-                    "grid header",
-                    palette.tint(palette.primary, GRID_HEADER_TINT),
-                ),
-                ("active tab", palette.tint(palette.primary, ACTIVE_TAB_TINT)),
-            ],
-            &[("text", palette.text)],
-        );
-        on(
-            &[
-                ("panel", palette.panel),
-                ("field", palette.field),
-                ("base", palette.base),
-                ("control", palette.control),
-            ],
-            &[("weak text", palette.text_weak)],
-        );
-        on(
-            &[("panel", palette.panel), ("field", palette.field)],
-            &[
-                ("primary", palette.primary),
-                ("secondary", palette.secondary),
-                ("success", palette.success),
-                ("warning", palette.warning),
-                ("error", palette.error),
-            ],
-        );
-        on(
-            &[("primary fill", palette.primary)],
-            &[("text on primary", palette.on_primary)],
-        );
-        on(
-            &[
-                ("editor", palette.field),
-                ("selected text", palette.selection),
-            ],
-            &[
-                ("keyword", syntax.keyword),
-                ("string", syntax.string),
-                ("number", syntax.number),
-                ("comment", syntax.comment),
-                ("identifier", syntax.identifier),
-                ("plain", syntax.plain),
-            ],
-        );
-        pairs
-    }
 
     /// macOS's accent colours in sRGB (Blue, Purple, Pink, Red, Orange, Yellow, Green,
     /// Graphite), as `NSColor.controlAccentColor` reports them in the light appearance, and Blue
@@ -576,18 +728,59 @@ mod tests {
 
     #[test]
     fn text_colours_meet_wcag_aa() {
-        let mut failures = Vec::new();
-        for theme in [Theme::Light, Theme::Dark] {
-            for (text_name, text, background_name, background) in text_pairs(Palette::of(theme)) {
-                let ratio = contrast(text, background);
-                if ratio < AA {
-                    failures.push(format!(
-                        "{theme:?}: {text_name} on {background_name} is {ratio:.2}:1"
-                    ));
-                }
-            }
-        }
+        let failures = Palettes::BRAND.contrast_problems();
         assert!(failures.is_empty(), "{failures:#?}");
+    }
+
+    #[test]
+    fn theme_toml_replaces_colours_and_lists_what_it_makes_unreadable() {
+        let overrides = dbdesk_store::parse_theme(
+            "[dark]\nprimary = \"#9a8bff\"\n[light]\ntext_weak = \"#bbbbbb\"\n",
+        )
+        .value;
+        let palettes = Palettes::with_overrides(&overrides);
+
+        assert_eq!(
+            palettes.of(Theme::Dark).palette.primary,
+            Color32::from_rgb(0x9a, 0x8b, 0xff)
+        );
+        assert_eq!(palettes.of(Theme::Dark).palette.base, Palette::DARK.base);
+        assert!(palettes.of(Theme::Dark).own_focus);
+        assert!(!palettes.of(Theme::Light).own_focus);
+        assert!(palettes.of(Theme::Dark).palette.dark);
+        let problems = palettes.contrast_problems();
+        assert!(
+            problems.contains(
+                &"light: weak text on panel is 1.85:1, below the 4.5:1 that WCAG AA asks for"
+                    .to_owned()
+            ),
+            "{problems:#?}"
+        );
+        assert!(
+            problems
+                .iter()
+                .all(|problem| problem.starts_with("light: ")),
+            "{problems:#?}"
+        );
+    }
+
+    #[test]
+    fn the_accent_tints_focus_unless_the_file_chose_it() {
+        let ctx = egui::Context::default();
+        let accent = Color32::from_rgb(0xF7, 0x4F, 0x9E);
+        let overrides = dbdesk_store::parse_theme("[dark]\nselection = \"#333344\"\n").value;
+        install_palettes(&ctx, Palettes::with_overrides(&overrides));
+        install_with_accent(&ctx, Some(accent));
+
+        let stroke = |theme| ctx.style_of(theme).visuals.selection.stroke.color;
+        assert_eq!(stroke(Theme::Light), accent);
+        assert_eq!(stroke(Theme::Dark), Palette::DARK.primary);
+        assert_eq!(
+            ctx.style_of(Theme::Dark).visuals.selection.bg_fill,
+            Color32::from_rgb(0x33, 0x33, 0x44)
+        );
+        install(&ctx);
+        assert_eq!(stroke(Theme::Light), Palette::LIGHT.primary);
     }
 
     /// WCAG 2.1's minimum for graphics that identify something (success criterion 1.4.11).

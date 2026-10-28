@@ -104,7 +104,7 @@ impl ProjectNameDialog {
             ui.weak("New projects are hidden from MCP clients until you allow them.");
         }
         if let Some(error) = &self.error {
-            let palette = Palette::for_visuals(ui.visuals());
+            let palette = &Palette::for_visuals(ui.visuals());
             ui.colored_label(palette.error, format!("Could not save: {error}"));
         }
         ui.separator();

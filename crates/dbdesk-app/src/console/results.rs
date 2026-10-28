@@ -466,7 +466,7 @@ fn grid(
         ..
     } = statement;
     let row_height = ui.spacing().interact_size.y;
-    let palette = Palette::for_visuals(ui.visuals());
+    let palette = &Palette::for_visuals(ui.visuals());
     let header_fill = palette.tint(palette.primary, GRID_HEADER_TINT);
     let mut output = GridOutput::default();
     let mut inputs = Vec::new();

@@ -127,7 +127,7 @@ impl DataSourceDialog {
 
     fn contents(&mut self, ui: &mut Ui) -> Option<DialogAction> {
         ui.set_width(DIALOG_WIDTH);
-        let palette = Palette::for_visuals(ui.visuals());
+        let palette = &Palette::for_visuals(ui.visuals());
         ui.horizontal(|ui| {
             let logo_size = ui.text_style_height(&egui::TextStyle::Heading);
             ui.add(icons::driver_logo_sized(
@@ -198,7 +198,7 @@ impl DataSourceDialog {
     }
 
     fn status_line(&self, ui: &mut Ui) {
-        let palette = Palette::for_visuals(ui.visuals());
+        let palette = &Palette::for_visuals(ui.visuals());
         let error_color = palette.error;
         match &self.status {
             Status::Editing => {}
@@ -260,7 +260,7 @@ impl DataSourceDialog {
                     .add_enabled(!testing && !saving, Button::new("Test connection"))
                     .clicked();
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let palette = Palette::for_visuals(ui.visuals());
+                    let palette = &Palette::for_visuals(ui.visuals());
                     let save_button = Button::new(RichText::new("Save").color(palette.on_primary))
                         .fill(palette.primary);
                     let save = ui.add_enabled(!saving, save_button).clicked();
@@ -390,7 +390,7 @@ fn ssh_rows(ui: &mut Ui, fields: &mut SshFields, secret_hint: &str) {
             Resolve::Path,
         );
         ui.label("");
-        let palette = Palette::for_visuals(ui.visuals());
+        let palette = &Palette::for_visuals(ui.visuals());
         if file_button(ui, icons::FOLDER_OPEN, palette.warning, "Browse…")
             .on_hover_text("Choose a private key in OpenSSH's format")
             .clicked()
@@ -477,7 +477,7 @@ fn tls_rows(ui: &mut Ui, fields: &mut ServerFields) {
         Resolve::Path,
     );
     ui.label("");
-    let palette = Palette::for_visuals(ui.visuals());
+    let palette = &Palette::for_visuals(ui.visuals());
     if file_button(ui, icons::FOLDER_OPEN, palette.warning, "Browse…")
         .on_hover_text("Choose a PEM file of authorities to trust")
         .clicked()
@@ -504,7 +504,7 @@ fn file_rows(
     ui.label("");
     let new_database = ui
         .horizontal(|ui| {
-            let palette = Palette::for_visuals(ui.visuals());
+            let palette = &Palette::for_visuals(ui.visuals());
             if file_button(ui, icons::FOLDER_OPEN, palette.warning, "Browse…")
                 .on_hover_text("Open an existing database file")
                 .clicked()
@@ -585,7 +585,7 @@ fn safety_rows(ui: &mut Ui, form: &mut DataSourceForm) {
     .response
     .labelled_by(label.id);
     ui.end_row();
-    let palette = Palette::for_visuals(ui.visuals());
+    let palette = &Palette::for_visuals(ui.visuals());
     if let Some(suggested) = SafetyLevel::suggested_by(form.color)
         .filter(|suggested| form.safety == SafetyLevel::Normal && *suggested != form.safety)
     {
@@ -625,7 +625,7 @@ fn safety_rows(ui: &mut Ui, form: &mut DataSourceForm) {
 
 /// "None" and one swatch per [`SourceColor`], like radio buttons.
 fn color_picker(ui: &mut Ui, selected: &mut Option<SourceColor>) {
-    let palette = Palette::for_visuals(ui.visuals());
+    let palette = &Palette::for_visuals(ui.visuals());
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         let choices = std::iter::once(None).chain(SourceColor::ALL.map(Some));
@@ -701,7 +701,7 @@ fn setting_row(ui: &mut Ui, label: &str, value: &mut String, hint: &str, resolve
             expand_path(Path::new(text), &ProcessEnvironment).map(|path| path.display().to_string())
         }
     };
-    let palette = Palette::for_visuals(ui.visuals());
+    let palette = &Palette::for_visuals(ui.visuals());
     ui.label("");
     match resolved {
         Ok(resolved) => ui.label(

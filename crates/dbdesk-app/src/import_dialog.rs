@@ -89,7 +89,7 @@ impl ImportDialog {
 
     fn contents(&mut self, ui: &mut Ui) -> Option<ImportAction> {
         ui.set_width(DIALOG_WIDTH);
-        let palette = Palette::for_visuals(ui.visuals());
+        let palette = &Palette::for_visuals(ui.visuals());
         ui.heading("Import data sources");
         ui.label(RichText::new(self.path.display().to_string()).color(palette.text_weak));
         ui.add_space(ui.spacing().item_spacing.y);

@@ -120,7 +120,7 @@ pub fn default_layout() -> DockState<Tab> {
 
 /// Draws the content of each tab.
 pub struct Panels<'a> {
-    pub palette: &'static Palette,
+    pub palette: &'a Palette,
     pub log_console: &'a mut LogConsole,
     pub data_sources: &'a DataSources,
     pub projects: &'a [Project],
