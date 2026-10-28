@@ -1,6 +1,6 @@
 # Install and first launch
 
-Download DbRover from [dbdesk.org](https://dbdesk.org/#download), or from the
+Download DbRover from [dbrover.org](https://dbrover.org/#download), or from the
 [releases page](https://github.com/navasvarela/dbrover/releases): pick the file for your system
 from the latest release's **Assets**.
 
@@ -49,7 +49,7 @@ already run. On a bare window manager without one, see [Troubleshooting](trouble
    "Windows protected your PC" and offers only **Don't run**. This is expected. The installer
    isn't signed yet, and SmartScreen holds back programs it hasn't seen downloaded often. To
    go on, click **More info**. The window then shows the file's name and "Unknown publisher".
-   Check that the name is the file you downloaded from dbdesk.org or the releases page, then
+   Check that the name is the file you downloaded from dbrover.org or the releases page, then
    click **Run anyway**.
 3. Follow the installer. It installs DbRover for your user alone, in
    `%LOCALAPPDATA%\DbRover`, without asking for administrator rights, and adds DbRover to the

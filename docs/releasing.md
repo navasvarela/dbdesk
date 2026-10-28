@@ -641,6 +641,12 @@ Fragments (`#…`) aren't sent to the server, and browsers keep them across a re
 Set up the new domain before any layer links to it, so its DNS check and GitHub's
 certificate are done by the time the site moves.
 
+**Done on 2026-10-28,** ahead of the merge order below: dbrover.org's DNS, the Pages custom
+domain with HTTPS enforced, and the dbdesk.org redirect. Checked that day:
+`https://dbdesk.org/manual/install.html` and `http://www.dbdesk.org/manual/` answer `301` to
+the same path on `https://dbrover.org`, a query string is kept, and
+`https://dbrover.org/manual/` answers `200`. The steps stay here as a record.
+
 **dbrover.org** (the maintainer has it):
 1. In dbrover.org's DNS (on Cloudflare, beside dbdesk.org), **DNS only** (grey cloud), so GitHub
    can issue the certificate: `A` records for `@` to `185.199.108.153`, `185.199.109.153`,
@@ -709,9 +715,9 @@ In merge and release order. None of these is done by the sessions building the r
 
 | When | Step |
 | --- | --- |
-| Now, before anything links to it | dbrover.org's DNS records and its GitHub domain verification (steps 1–2 above). |
-| After the plan merges, before the rename layer merges | **Rename the repository**: **Settings › General › Repository name** `dbrover`. Open pull requests, issues, releases, secrets, variables and the Pages setting move with it. Then point every checkout and worktree at the new address: `git remote set-url origin https://github.com/navasvarela/dbrover.git`. Never create a new repository named `dbdesk`. |
-| When the site layer merges | The Pages custom domain (step 3 above), then the dbdesk.org redirect on Cloudflare straight after. |
+| Before anything links to it | **Done 2026-10-28:** dbrover.org's DNS records (step 1 above). Its GitHub domain verification (step 2) is still worth doing, if it isn't done yet. |
+| Just before the rename layer merges | **Rename the repository**: **Settings › General › Repository name** `dbrover`. Open pull requests, issues, releases, secrets, variables and the Pages setting move with it. Then point every checkout and worktree at the new address: `git remote set-url origin https://github.com/navasvarela/dbrover.git`. Never create a new repository named `dbdesk`. |
+| When the site layer merges | **Done 2026-10-28:** the Pages custom domain (step 3 above) with HTTPS enforced, and the dbdesk.org redirect on Cloudflare. |
 | After the rename layer merges | Upload the new `assets/brand/social-preview.png` (**Settings › General › Social preview**), and update the repository's description and website field. |
 | Release | Cut 0.13.0 as usual and check the exit below with it. |
 | For two years at least | Renew dbdesk.org. |
