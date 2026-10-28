@@ -1,6 +1,6 @@
 # Hackability
 
-Status: **H1 in progress** (planned 2026-10-28, in layers H1a–H1f in the
+Status: **H1 built** (2026-10-28, in layers H1a–H1f in the
 [roadmap](roadmap.md#hackability-track)); H2 and H3 planned. Proposed on 2026-10-24. The
 decision behind it is [ADR 0005](adr/0005-customisation-files-commands-then-wasm.md).
 

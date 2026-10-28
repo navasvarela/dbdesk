@@ -14,6 +14,7 @@
 - [Working with table data](table-data.md)
 - [The query history](history.md)
 - [Keyboard shortcuts](shortcuts.md)
+- [Actions, snippets and themes](customising.md)
 - [Connecting an AI assistant](mcp.md)
 - [Where dbdesk keeps its files](files.md)
 - [Troubleshooting](troubleshooting.md)

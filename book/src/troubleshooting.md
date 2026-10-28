@@ -102,6 +102,13 @@ Some lines of `keymap.toml` couldn't be used: an unknown action, a shortcut that
 or a shortcut two actions share. Click the message to open **View → Keymap…**, which lists each
 problem; fix the file and click **Reload**. Everything else in the file still applies.
 
+## "actions.toml: N problems" in the status bar
+
+The same for `actions.toml`, `snippets.toml` or `theme.toml`: an entry that couldn't be used was
+skipped, and the rest of the file applies. Click the message to see each problem, fix the file
+and click **Reload**. For `theme.toml` it can also be a colour that leaves some text too faint to
+read; that colour still applies. See [Actions, snippets and themes](customising.md).
+
 ## The panels are in a mess
 
 **View → Reset layout** puts every panel back where it started. If you closed the Welcome tab,
