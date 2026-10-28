@@ -337,6 +337,10 @@ impl Engine {
                 self.events
                     .send(keymap::create(&self.keymap_file, text).await);
             }
+            Command::CreateCustomFile { kind, text } => {
+                self.events
+                    .send(config_files::create_custom(&self.custom_files, kind, text).await);
+            }
             Command::ReloadCustomFiles => {
                 for event in config_files::load_custom(&self.custom_files).await {
                     self.events.send(event);

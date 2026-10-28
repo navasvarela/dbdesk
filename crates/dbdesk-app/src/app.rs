@@ -14,6 +14,7 @@ use egui::{Frame, Margin, RichText};
 use egui_dock::{DockArea, DockState};
 
 use crate::about_dialog;
+use crate::actions_window::{self, ActionsWindowAction};
 use crate::commands::{self, AppCommand, CommandState};
 use crate::console::{ConsoleAction, ExportedRows, FormatScope, RowsToOpen};
 use crate::consoles::Consoles;
@@ -111,6 +112,7 @@ pub struct DbDeskApp {
     keymap_path: Option<PathBuf>,
     keymap_window_open: bool,
     custom_files: CustomFiles,
+    actions_window_open: bool,
     /// Why the last custom action couldn't run, shown in the status bar until the next one.
     action_problem: Option<String>,
     about_open: bool,
@@ -203,6 +205,7 @@ impl DbDeskApp {
             keymap_path: None,
             keymap_window_open: false,
             custom_files: CustomFiles::default(),
+            actions_window_open: false,
             action_problem: None,
             about_open: false,
             settings: AppSettings::default(),
@@ -1507,6 +1510,7 @@ impl DbDeskApp {
             AppCommand::ImportDataSources => self.import_data_sources(),
             AppCommand::Theme(preference) => ctx.set_theme(preference),
             AppCommand::ShowKeymap => self.keymap_window_open = true,
+            AppCommand::ShowActions => self.actions_window_open = true,
             AppCommand::ShowSettings => self.settings.window_open = true,
             AppCommand::ResetLayout => {
                 self.dock = workspace::default_layout();
@@ -1708,8 +1712,28 @@ impl DbDeskApp {
         for kind in CustomFileKind::ALL {
             let count = self.custom_files.problems(kind).len();
             if count > 0 && widgets::problems_link(ui, kind.file_name(), count, color).clicked() {
-                self.custom_files.window = Some(kind);
+                match kind {
+                    CustomFileKind::Actions => self.actions_window_open = true,
+                    CustomFileKind::Snippets | CustomFileKind::Theme => {
+                        self.custom_files.window = Some(kind);
+                    }
+                }
             }
+        }
+    }
+
+    fn show_actions_window(&mut self, ctx: &egui::Context) {
+        if !self.actions_window_open {
+            return;
+        }
+        match actions_window::show(ctx, &self.custom_files, &self.keymap) {
+            Some(ActionsWindowAction::Reload) => self.send(Command::ReloadCustomFiles),
+            Some(ActionsWindowAction::Create) => self.send(Command::CreateCustomFile {
+                kind: CustomFileKind::Actions,
+                text: actions_window::TEMPLATE.to_owned(),
+            }),
+            Some(ActionsWindowAction::Close) => self.actions_window_open = false,
+            None => {}
         }
     }
 
@@ -1870,6 +1894,7 @@ impl eframe::App for DbDeskApp {
         self.show_history_window(&ctx);
         self.show_keymap_window(&ctx);
         self.show_custom_file_window(&ctx);
+        self.show_actions_window(&ctx);
         self.show_about(&ctx);
         self.show_update_dialog(&ctx);
         self.show_settings_window(&ctx);

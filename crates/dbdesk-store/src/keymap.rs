@@ -2,13 +2,12 @@
 //! the actions and how to parse key names.
 
 use std::collections::BTreeMap;
-use std::fs::OpenOptions;
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::config_text::read_if_exists;
+use crate::config_text::{create_new, read_if_exists};
 
 /// Action ids mapped to the shortcuts written for them, as written: `"cmd+enter"`.
 pub type KeymapBindings = BTreeMap<String, Vec<String>>;
@@ -105,19 +104,10 @@ impl KeymapFile {
     ///
     /// [`KeymapError::Create`] if the file exists or can't be written.
     pub fn create(&self, text: &str) -> Result<(), KeymapError> {
-        let create_error = |source| KeymapError::Create {
+        create_new(&self.path, text).map_err(|source| KeymapError::Create {
             path: self.path.clone(),
             source,
-        };
-        if let Some(dir) = self.path.parent() {
-            std::fs::create_dir_all(dir).map_err(create_error)?;
-        }
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&self.path)
-            .map_err(create_error)?;
-        file.write_all(text.as_bytes()).map_err(create_error)
+        })
     }
 }
 

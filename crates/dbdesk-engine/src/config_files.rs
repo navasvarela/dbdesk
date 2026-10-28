@@ -4,7 +4,7 @@
 use std::error::Error;
 
 use dbdesk_core::describe_error;
-use dbdesk_store::{CustomFileKind, CustomFiles};
+use dbdesk_store::{CustomFile, CustomFileKind, CustomFiles};
 
 use crate::Event;
 
@@ -20,6 +20,37 @@ where
         Ok(Ok(value)) => Ok(value),
         Ok(Err(error)) => Err(describe_error(&error)),
         Err(error) => Err(describe_error(&error)),
+    }
+}
+
+/// Writes a new customisation file, then reads it back. A file that couldn't be written,
+/// because one exists, is reported as it is, with why.
+pub(crate) async fn create_custom(
+    files: &CustomFiles,
+    kind: CustomFileKind,
+    text: String,
+) -> Event {
+    let task_files = files.clone();
+    let created = blocking(move || task_files.create(kind, &text)).await;
+    let task_files = files.clone();
+    let read = tokio::task::spawn_blocking(move || task_files.read(kind)).await;
+    let file = match read {
+        Ok(file) => file,
+        Err(error) => CustomFile::parse(kind, "").with_problem(describe_error(&error)),
+    };
+    let file = match created {
+        Ok(()) => {
+            tracing::info!("created {}", files.path(kind).display());
+            file
+        }
+        Err(error) => {
+            tracing::error!("could not create {}: {error}", kind.file_name());
+            file.with_problem(format!("could not create {}: {error}", kind.file_name()))
+        }
+    };
+    Event::CustomFileLoaded {
+        path: files.path(kind),
+        file,
     }
 }
 

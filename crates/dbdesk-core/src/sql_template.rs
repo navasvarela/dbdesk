@@ -12,6 +12,8 @@ use crate::{Cell, Quoting, Row};
 /// the file rather than when the action runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SqlTemplate {
+    /// As written, for showing the action to the user.
+    source: String,
     parts: Vec<Part>,
 }
 
@@ -175,7 +177,15 @@ impl SqlTemplate {
         if !literal.is_empty() {
             parts.push(Part::Text(literal));
         }
-        Ok(Self { parts })
+        Ok(Self {
+            source: text.to_owned(),
+            parts,
+        })
+    }
+
+    /// The template as written.
+    pub fn source(&self) -> &str {
+        &self.source
     }
 
     pub fn placeholders(&self) -> impl Iterator<Item = &Placeholder> {
