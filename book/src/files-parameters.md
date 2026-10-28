@@ -1,7 +1,7 @@
 # Files, parameters and find
 
-A console doesn't have to live in dbdesk's own folder: it can show a `.sql` file from a project,
-which you save when you choose. Statements can take `:name` parameters, which dbdesk asks for
+A console doesn't have to live in DbRover's own folder: it can show a `.sql` file from a project,
+which you save when you choose. Statements can take `:name` parameters, which DbRover asks for
 before they run. And the editor finds and replaces text.
 
 ## Opening a `.sql` file
@@ -9,7 +9,7 @@ before they run. And the editor finds and replaces text.
 - **File › Open…** (⌘O) asks for a file and opens it in a new console.
 - **File › Open recent** lists the last ten files; **Clear recent files** empties the list.
 - **Drop a file** on the window to open it.
-- **From a terminal**, `dbdesk report.sql` starts dbdesk with the file open. Several files can
+- **From a terminal**, `dbrover report.sql` starts DbRover with the file open. Several files can
   be named.
 
 A console runs on a data source, so the file opens on the one it was opened on last time. The
@@ -18,7 +18,7 @@ data source of the console you were in. A file that is already open isn't opened
 tab comes to the front.
 
 The console's tab is titled with the file's name, and hovering over the tab shows its path. The
-file must be UTF-8 text; dbdesk refuses a file in another encoding rather than garbling it, and
+file must be UTF-8 text; DbRover refuses a file in another encoding rather than garbling it, and
 says why.
 
 ## Saving
@@ -34,16 +34,16 @@ Closing the tab of a file with unsaved changes asks **Save the changes to report
 unsaved changes. If a save fails, the tab stays open, and its toolbar says **Not saved**, with
 the reason on hover.
 
-**Save** or **Save as…** on a console from dbdesk's own folder (see
+**Save** or **Save as…** on a console from DbRover's own folder (see
 [Consoles are saved](consoles.md#consoles-are-saved)) asks where to save it, and the console
-moves there: it stops saving itself in dbdesk's folder, and its copy there is removed once the
+moves there: it stops saving itself in DbRover's folder, and its copy there is removed once the
 file is written.
 
-Tabs showing files reopen the next time you start dbdesk, with the file as it is then.
+Tabs showing files reopen the next time you start DbRover, with the file as it is then.
 
 ## When the file changes elsewhere
 
-dbdesk looks at open files every two seconds, and as soon as its window comes back to the front,
+DbRover looks at open files every two seconds, and as soon as its window comes back to the front,
 so an edit made in another editor, or by `git checkout`, shows up:
 
 - **No unsaved changes in the console:** it shows the file's new text. One undo goes back.
@@ -92,7 +92,7 @@ compares with a number column, `:since` with `2026-01-01` with a date.
   table it creates, or a `USE` or `SET` it runs, ends with it.
 - **PostgreSQL and ClickHouse:** each value is written into the statement as a quoted string,
   `'2026-01-01'`, which the database reads from its context just as it would a bound parameter.
-  (dbdesk's PostgreSQL consoles use the protocol that shows every value as `psql` does, and
+  (DbRover's PostgreSQL consoles use the protocol that shows every value as `psql` does, and
   that protocol has no parameters.)
 - **Explain** always writes the values into the statement.
 

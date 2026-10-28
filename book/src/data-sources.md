@@ -1,7 +1,7 @@
 # Data sources
 
-A *data source* is a saved connection: which database to connect to and how. dbdesk keeps the
-list in a file (see [Where dbdesk keeps its files](files.md)) and passwords in your system's
+A *data source* is a saved connection: which database to connect to and how. DbRover keeps the
+list in a file (see [Where DbRover keeps its files](files.md)) and passwords in your system's
 keychain, never in that file.
 
 ## Adding one
@@ -13,12 +13,12 @@ Click **+** at the top of the explorer (or **New data source** on the Welcome ta
 
 Every kind has:
 
-- **Name** — how it appears in the explorer. Leave it empty and dbdesk names it for you:
+- **Name** — how it appears in the explorer. Leave it empty and DbRover names it for you:
   `database@host` for a server, the file name for SQLite.
 - **Colour** — optional. The colour tints the data source's row in the explorer, the tabs of its
   consoles and a band along the top of each console. Giving production a red and your local copy
   nothing makes it hard to run something in the wrong place.
-- **Safety** — how careful dbdesk is with the data. See [Safety levels](#safety-levels).
+- **Safety** — how careful DbRover is with the data. See [Safety levels](#safety-levels).
 
 **PostgreSQL** adds:
 
@@ -55,7 +55,7 @@ certificate, give the authority's certificate as a PEM file, typed or picked wit
 for example the bundle your cloud provider publishes for its managed databases. The **Host**
 must be a name (or IP address) the certificate lists.
 
-dbdesk encrypts with [rustls](https://github.com/rustls/rustls), so there is no OpenSSL to
+DbRover encrypts with [rustls](https://github.com/rustls/rustls), so there is no OpenSSL to
 install. Client certificates aren't supported yet.
 
 **MySQL / MariaDB** has the same fields as PostgreSQL, with these defaults:
@@ -73,7 +73,7 @@ install. Client certificates aren't supported yet.
 | MCP login | none | Another user, only for AI assistants; see [The MCP login](mcp.md#the-mcp-login). |
 | MCP password | none | Shown once there is an MCP login. Stored in the keychain apart from the password. |
 
-One data source type serves both: dbdesk tells MySQL and MariaDB apart once it connects, and
+One data source type serves both: DbRover tells MySQL and MariaDB apart once it connects, and
 **Test connection** says which it found ("Connected to MariaDB 11.4.4").
 
 **SQL Server** has the same fields too, for SQL Server and Azure SQL, with these defaults. It has
@@ -100,7 +100,7 @@ SQL Server 2022).
 | Field | Default | Notes |
 | --- | --- | --- |
 | Host | `localhost` | Name or IP address of the server. For ClickHouse Cloud, the service's host name. |
-| Port | `8123` | ClickHouse's HTTP port: dbdesk speaks HTTP to ClickHouse, not its native protocol on 9000. |
+| Port | `8123` | ClickHouse's HTTP port: DbRover speaks HTTP to ClickHouse, not its native protocol on 9000. |
 | Database | `default` | The database unqualified names refer to, as `USE` would set. The explorer lists every database you may see. |
 | User | `default` | |
 | TLS | `disable` | `disable`, `require` or `verify-full`; see below. |
@@ -123,12 +123,12 @@ HTTPS, with a publicly signed certificate, so `verify-full` with no CA file work
     file, because SQLite databases end in `.db`, `.sqlite`, `.sqlite3` or nothing at all.
   - **New…** opens your system's Save dialog and creates an empty database file where you
     choose, then fills in the path and clears **Read-only**. The message under the form says
-    whether it worked; click **Save** to keep the data source. dbdesk never overwrites an
+    whether it worked; click **Save** to keep the data source. DbRover never overwrites an
     existing file, even if the Save dialog asked whether to replace it and you said yes: pick
     another name instead.
 
   Connecting never creates a file, so a typo in the path is an error rather than a new, empty
-  database. **New…** is the only way dbdesk creates one.
+  database. **New…** is the only way DbRover creates one.
 - **Read-only** — opens the file read-only. Statements that would change it fail with SQLite's
   error.
 
@@ -143,13 +143,13 @@ HTTPS, with a publicly signed certificate, so `verify-full` with no CA file work
   rather than storing data: DuckDB reads CSV, Parquet and JSON files directly. Each console has
   its own, and everything created in it is gone when it disconnects.
 
-DuckDB is part of dbdesk, so there is nothing to install. **Test connection** says which
+DuckDB is part of DbRover, so there is nothing to install. **Test connection** says which
 version it is ("Connected to DuckDB 1.5.6").
 
 ### SSH tunnels
 
 Many databases only accept connections from inside their own network, through a *jump host*
-(or *bastion*) you reach with SSH. Tick **Connect through an SSH server** and dbdesk opens an
+(or *bastion*) you reach with SSH. Tick **Connect through an SSH server** and DbRover opens an
 SSH tunnel for you before connecting: no `ssh -L` to run first, and nothing to install. Every
 server engine has it: PostgreSQL, MySQL and MariaDB, SQL Server and ClickHouse.
 
@@ -183,7 +183,7 @@ The SSH settings take [placeholders](#placeholders-variable) like the server's, 
 in an [export](sharing.md); the passphrase and password stay in each machine's keychain.
 
 **The SSH server's host key** is checked against `~/.ssh/known_hosts`, the file `ssh` itself
-keeps, so a server you already reach with `ssh` is trusted by dbdesk too. The first time dbdesk
+keeps, so a server you already reach with `ssh` is trusted by DbRover too. The first time DbRover
 meets one it doesn't know, it shows the key's SHA-256 fingerprint and asks. Compare it with the
 fingerprint the server's administrator gives you (`ssh-keygen -lf` on the server's host key):
 **Trust and connect** adds it to `known_hosts` and connects. A server whose key has changed
@@ -216,7 +216,7 @@ A colour only marks a data source. Its **safety level** decides what its console
 | --- | --- |
 | **Normal** | Changes run when asked. Only an `UPDATE` or `DELETE` without `WHERE` asks first (see [Query consoles](consoles.md#statements-that-change-every-row)). |
 | **Careful** | Every change asks first, naming the data source: statements that change data or the schema, and edits in the grid. New consoles start in **Manual commit** mode. |
-| **Read-only** | Changes are refused. dbdesk reads each statement before sending it and refuses anything but reading, then runs it in the database's own read-only mode, which also stops a write hidden in a function. The grid can't be edited. |
+| **Read-only** | Changes are refused. DbRover reads each statement before sending it and refuses anything but reading, then runs it in the database's own read-only mode, which also stops a write hidden in a function. The grid can't be edited. |
 
 ![Red suggests Careful in the data source dialog](images/safety-level.png)
 
@@ -230,16 +230,16 @@ Read-only uses the same checks as an AI assistant's read-only projects (see
 - **PostgreSQL** runs each statement in `BEGIN READ ONLY`, **MySQL and MariaDB** in
   `START TRANSACTION READ ONLY`, rolled back once its rows are read. **SQLite** opens the file
   read-only.
-- **SQL Server**, **DuckDB** and **ClickHouse** have no read-only mode dbdesk uses yet:
+- **SQL Server**, **DuckDB** and **ClickHouse** have no read-only mode DbRover uses yet:
   statements are still checked, but a write inside a procedure or function isn't stopped. The
   dialog says so. (A DuckDB file can also be opened with its own **Read-only** box ticked.)
-- Anything that isn't a plain read is refused, including `SET`, `BEGIN` and statements dbdesk
+- Anything that isn't a plain read is refused, including `SET`, `BEGIN` and statements DbRover
   can't parse, since what they do can't be told.
 
 ## Placeholders: `${VARIABLE}`
 
 Host, port, database, user, a SQLite or DuckDB file and a CA file may hold `${NAME}`
-placeholders, which dbdesk replaces with the environment variable `NAME` each time it connects.
+placeholders, which DbRover replaces with the environment variable `NAME` each time it connects.
 One shared list of data sources then works on machines whose settings differ: each machine sets
 `PGHOST`, say, and the data source's host is `${PGHOST}`. A placeholder can be part of a value
 (`db-${ENV}.internal`), and a path starting with `~` is in your home folder.
@@ -250,38 +250,38 @@ Under each field with a placeholder, the dialog shows what it resolves to now, o
 isn't set. Connecting with an unset variable stops with an error that names the setting:
 *could not resolve the host: ${PGHOST} is not set*.
 
-Variables come from the environment dbdesk was started in. On macOS, an app opened from the
+Variables come from the environment DbRover was started in. On macOS, an app opened from the
 Finder or the Dock doesn't see what your shell profile sets; start it from a terminal
-(`open -a dbdesk`, after exporting the variables), or set them with `launchctl setenv`.
+(`open -a dbrover`, after exporting the variables), or set them with `launchctl setenv`.
 
 ## Passwords and the keychain
 
 PostgreSQL, MySQL and SQL Server passwords are stored in your operating system's credential
 store: the Keychain on
 macOS, Credential Manager on Windows, the Secret Service (GNOME Keyring, KWallet) on Linux.
-Each entry has the service name `dbdesk` and, as its account, the data source's ID, a long
+Each entry has the service name `dbrover` and, as its account, the data source's ID, a long
 string that never changes even if you rename the data source.
 
 - **When you save**, a typed password is written to the keychain. When you edit a data source
   the password field is empty and says *unchanged*: leave it empty to keep the saved password,
   or type a new one to replace it.
-- **When dbdesk connects** — the explorer, each console, and Test connection with an empty
+- **When DbRover connects** — the explorer, each console, and Test connection with an empty
   password field — it reads the password from the keychain. On macOS the system may ask whether
-  to let dbdesk use it; see [Troubleshooting](troubleshooting.md#the-keychain-keeps-asking).
+  to let DbRover use it; see [Troubleshooting](troubleshooting.md#the-keychain-keeps-asking).
 - **When there is none**, or the keychain can't be read (locked, declined, or missing on this
   system), connecting asks for the password. **Save to keychain** is ticked, so you are asked
-  once. Whatever you type is also kept in memory until dbdesk quits, so the data source still
+  once. Whatever you type is also kept in memory until DbRover quits, so the data source still
   connects if the keychain refuses it or you untick the box. A server that needs no password
   (local *trust* login, say) works with the field left empty.
 - **When you delete** a data source, its keychain entry is removed too.
 - **An MCP login's password** has an entry of its own, with the data source's ID followed by
-  `/mcp` as its account. Only `dbdesk mcp` reads it.
+  `/mcp` as its account. Only `dbrover mcp` reads it.
 - **An SSH password or key passphrase** has one too, with `/ssh` after the ID. It is asked for,
   and saved, the same way as the database password.
 
 ![Connecting asks for the password a data source has none saved for](images/password-prompt.png)
 
-SQLite data sources have no password, so dbdesk never asks the keychain for them.
+SQLite data sources have no password, so DbRover never asks the keychain for them.
 
 ## Editing, connecting and deleting
 

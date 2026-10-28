@@ -17,10 +17,10 @@ on:
     paths:
       - .github/workflows/release.yml
       - packaging/**
-      - crates/dbdesk-app/Cargo.toml
-      - crates/dbdesk-app/build.rs
-      - crates/dbdesk-driver-duckdb/Cargo.toml
-      - crates/dbdesk-driver-duckdb/build.rs
+      - crates/dbrover-app/Cargo.toml
+      - crates/dbrover-app/build.rs
+      - crates/dbrover-driver-duckdb/Cargo.toml
+      - crates/dbrover-driver-duckdb/build.rs
 
 permissions:
   contents: read
@@ -31,7 +31,7 @@ concurrency:
   group: release-${{ github.event_name == 'pull_request' && github.head_ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# cargo-packager, given `-p dbdesk-app`, resolves relative paths from the crate's folder and
+# cargo-packager, given `-p dbrover-app`, resolves relative paths from the crate's folder and
 # always packages `target/release/<binary>` under `--release` (`--binaries-dir` is ignored when
 # its config comes from Cargo.toml). Hence the absolute `--out-dir`, and the macOS job copying
 # its universal binary into target/release before packaging.
@@ -39,12 +39,12 @@ env:
   CARGO_TERM_COLOR: always
   # cargo-packager reads this to skip GUI steps meant for interactive machines.
   CI: "true"
-  # Recorded by crates/dbdesk-app/build.rs and shown by `dbdesk --version`.
-  DBDESK_COMMIT: ${{ github.sha }}
+  # Recorded by crates/dbrover-app/build.rs and shown by `dbrover --version`.
+  DBROVER_COMMIT: ${{ github.sha }}
   CARGO_PACKAGER_VERSION: 0.11.8
   # Link DuckDB's prebuilt library rather than compile it; each job runs packaging/duckdb/fetch.sh
   # for its targets first. See docs/duckdb-prebuilt.md.
-  RUSTFLAGS: --cfg dbdesk_prebuilt_duckdb
+  RUSTFLAGS: --cfg dbrover_prebuilt_duckdb
 
 jobs:
   version:
@@ -56,7 +56,7 @@ jobs:
       - id: version
         run: |
           version=$(cargo metadata --format-version 1 --no-deps \
-            | jq -r '.packages[] | select(.name == "dbdesk-app") | .version')
+            | jq -r '.packages[] | select(.name == "dbrover-app") | .version')
           echo "version=$version" >> "$GITHUB_OUTPUT"
           if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "v$version" ]]; then
             echo "::error::Tag $GITHUB_REF_NAME does not match the workspace version $version"
@@ -105,16 +105,16 @@ jobs:
               set -a
               eval "$(packaging/duckdb/fetch.sh "$target" "$RUNNER_TEMP/duckdb")"
               set +a
-              cargo build --release --locked -p dbdesk-app --target "$target"
+              cargo build --release --locked -p dbrover-app --target "$target"
             )
           done
           mkdir -p target/universal/release
-          lipo -create -output target/universal/release/dbdesk \
-            target/aarch64-apple-darwin/release/dbdesk \
-            target/x86_64-apple-darwin/release/dbdesk
-          lipo -archs target/universal/release/dbdesk
+          lipo -create -output target/universal/release/dbrover \
+            target/aarch64-apple-darwin/release/dbrover \
+            target/x86_64-apple-darwin/release/dbrover
+          lipo -archs target/universal/release/dbrover
       # With the signing key set, cargo-packager also writes the update package the app
-      # installs (dbdesk.app.tar.gz) and its signature. Pull requests from forks get no
+      # installs (DbRover.app.tar.gz) and its signature. Pull requests from forks get no
       # secrets and skip both; the release job refuses a release without them.
       - name: Package
         env:
@@ -122,24 +122,36 @@ jobs:
           CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
         run: |
           mkdir -p target/release
-          cp target/universal/release/dbdesk target/release/dbdesk
-          cargo packager -p dbdesk-app --release --formats app --out-dir "$GITHUB_WORKSPACE/dist"
-          packaging/macos-dmg.sh dist/dbdesk.app "dist/dbdesk-$VERSION-macos-universal.dmg"
-          if [[ -f dist/dbdesk.app.tar.gz ]]; then
-            mv dist/dbdesk.app.tar.gz "dist/dbdesk-$VERSION-macos-universal.app.tar.gz"
-            mv dist/dbdesk.app.tar.gz.sig "dist/dbdesk-$VERSION-macos-universal.app.tar.gz.sig"
-            # The updater unpacks the archive's top folder as the new dbdesk.app.
-            tar -tzf "dist/dbdesk-$VERSION-macos-universal.app.tar.gz" | head -1 | grep -qx 'dbdesk.app/'
+          cp target/universal/release/dbrover target/release/dbrover
+          cargo packager -p dbrover-app --release --formats app --out-dir "$GITHUB_WORKSPACE/dist"
+          # Through 0.15, the bundle also answers to the name it had before: MCP clients set up
+          # then start Contents/MacOS/dbdesk, which an update would otherwise remove (see "Names"
+          # in docs/releasing.md). cargo-packager can only copy the binary, so the link is added
+          # here and the update package made again with it. The bundle isn't code-signed yet;
+          # when it is, the link must be added before the signature.
+          ln -s dbrover dist/DbRover.app/Contents/MacOS/dbdesk
+          packaging/macos-dmg.sh dist/DbRover.app "dist/dbrover-$VERSION-macos-universal.dmg"
+          if [[ -f dist/DbRover.app.tar.gz ]]; then
+            rm dist/DbRover.app.tar.gz dist/DbRover.app.tar.gz.sig
+            COPYFILE_DISABLE=1 tar --no-mac-metadata -czf dist/DbRover.app.tar.gz -C dist DbRover.app
+            cargo packager signer sign dist/DbRover.app.tar.gz
+            mv dist/DbRover.app.tar.gz "dist/dbrover-$VERSION-macos-universal.app.tar.gz"
+            mv dist/DbRover.app.tar.gz.sig "dist/dbrover-$VERSION-macos-universal.app.tar.gz.sig"
+            # The updater unpacks the archive's top folder as the new DbRover.app.
+            tar -tzf "dist/dbrover-$VERSION-macos-universal.app.tar.gz" | head -1 | grep -qx 'DbRover.app/'
           fi
       - name: Smoke test the disk image
         run: |
-          mount=$(hdiutil attach -nobrowse -readonly "dist/dbdesk-$VERSION-macos-universal.dmg" \
+          mount=$(hdiutil attach -nobrowse -readonly "dist/dbrover-$VERSION-macos-universal.dmg" \
             | awk -F'\t' '/\/Volumes\// {print $NF}')
-          binary="$mount/dbdesk.app/Contents/MacOS/dbdesk"
+          binary="$mount/DbRover.app/Contents/MacOS/dbrover"
           archs=$(lipo -archs "$binary")
           [[ "$archs" == *arm64* && "$archs" == *x86_64* ]] || { echo "::error::archs: $archs"; exit 1; }
           "$binary" --version | tee version.txt
-          grep -q "dbdesk $VERSION" version.txt
+          grep -q "dbrover $VERSION" version.txt
+          previous_name="$mount/DbRover.app/Contents/MacOS/dbdesk"
+          [[ -L "$previous_name" ]] || { echo "::error::no dbdesk link in the bundle"; exit 1; }
+          "$previous_name" --version | grep -q "dbrover $VERSION"
           hdiutil detach -quiet "$mount"
       - uses: actions/upload-artifact@v7
         with:
@@ -171,7 +183,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev file
       - run: packaging/duckdb/fetch.sh x86_64-unknown-linux-gnu "$RUNNER_TEMP/duckdb" | tee -a "$GITHUB_ENV"
-      - run: cargo build --release --locked -p dbdesk-app
+      - run: cargo build --release --locked -p dbrover-app
       # With the signing key set, cargo-packager signs the AppImage, which the app installs as
       # its update as is. The .deb's signature is dropped: the package manager updates it.
       - name: Package
@@ -179,25 +191,25 @@ jobs:
           CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
           CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
         run: |
-          cargo packager -p dbdesk-app --release --formats appimage,deb \
+          cargo packager -p dbrover-app --release --formats appimage,deb \
             --out-dir "$GITHUB_WORKSPACE/dist"
           # Rename to the names the release notes and manual use. cargo-packager's .deb name
           # already matches, and `mv` refuses to move a file onto itself.
           rename() { [[ "$1" == "$2" ]] || mv "$1" "$2"; }
-          rename dist/*.AppImage "dist/dbdesk-$VERSION-x86_64.AppImage"
-          rename dist/*.deb "dist/dbdesk_${VERSION}_amd64.deb"
+          rename dist/*.AppImage "dist/dbrover-$VERSION-x86_64.AppImage"
+          rename dist/*.deb "dist/dbrover_${VERSION}_amd64.deb"
           if compgen -G "dist/*.AppImage.sig" > /dev/null; then
-            rename dist/*.AppImage.sig "dist/dbdesk-$VERSION-x86_64.AppImage.sig"
+            rename dist/*.AppImage.sig "dist/dbrover-$VERSION-x86_64.AppImage.sig"
           fi
           rm -f dist/*.deb.sig
       - name: Smoke test the AppImage and the .deb
         run: |
-          "dist/dbdesk-$VERSION-x86_64.AppImage" --appimage-extract-and-run --version | tee appimage.txt
-          grep -q "dbdesk $VERSION" appimage.txt
-          dpkg-deb --info "dist/dbdesk_${VERSION}_amd64.deb"
-          dpkg-deb -x "dist/dbdesk_${VERSION}_amd64.deb" deb-root
-          deb-root/usr/bin/dbdesk --version | tee deb.txt
-          grep -q "dbdesk $VERSION" deb.txt
+          "dist/dbrover-$VERSION-x86_64.AppImage" --appimage-extract-and-run --version | tee appimage.txt
+          grep -q "dbrover $VERSION" appimage.txt
+          dpkg-deb --info "dist/dbrover_${VERSION}_amd64.deb"
+          dpkg-deb -x "dist/dbrover_${VERSION}_amd64.deb" deb-root
+          deb-root/usr/bin/dbrover --version | tee deb.txt
+          grep -q "dbrover $VERSION" deb.txt
       - uses: actions/upload-artifact@v7
         with:
           name: linux
@@ -224,8 +236,8 @@ jobs:
         with:
           tool: cargo-packager@${{ env.CARGO_PACKAGER_VERSION }}
       - run: packaging/duckdb/fetch.sh x86_64-pc-windows-msvc "$RUNNER_TEMP/duckdb" | tee -a "$GITHUB_ENV"
-      - run: cargo build --release --locked -p dbdesk-app
-      # dbdesk.exe loads duckdb.dll from its own folder. cargo-packager's resources apply to
+      - run: cargo build --release --locked -p dbrover-app
+      # dbrover.exe loads duckdb.dll from its own folder. cargo-packager's resources apply to
       # every platform, so the Windows package gets a configuration of its own: the one in
       # Cargo.toml plus the DLL, written beside Cargo.toml so its relative paths still resolve.
       - name: Package
@@ -234,15 +246,15 @@ jobs:
           cp "$dll" target/release/
           cargo metadata --format-version 1 --no-deps | jq \
             --arg dll "$dll" --arg version "$VERSION" --arg bin "$(cygpath -m "$PWD/target/release")" \
-            '.packages[] | select(.name == "dbdesk-app") | .metadata.packager
-              + {name: "dbdesk-app", version: $version, binariesDir: $bin}
+            '.packages[] | select(.name == "dbrover-app") | .metadata.packager
+              + {name: "dbrover-app", version: $version, binariesDir: $bin}
               | .resources += [{src: $dll, target: "duckdb.dll"}]' \
-            > crates/dbdesk-app/packager-windows.json
-          cargo packager --config crates/dbdesk-app/packager-windows.json --release --formats nsis \
+            > crates/dbrover-app/packager-windows.json
+          cargo packager --config crates/dbrover-app/packager-windows.json --release --formats nsis \
             --out-dir "$(cygpath -m "$GITHUB_WORKSPACE/dist")"
-          mv dist/*-setup.exe "dist/dbdesk-$VERSION-windows-x64-setup.exe"
+          mv dist/*-setup.exe "dist/dbrover-$VERSION-windows-x64-setup.exe"
       # The installer is also the Windows update: installed copies download it, check this
-      # signature, and run it once dbdesk has quit. It's signed in a step of its own, after
+      # signature, and run it once DbRover has quit. It's signed in a step of its own, after
       # the rename, so the signature names the file users download and nothing changes the
       # bytes after it. Pull requests from forks get no secrets and skip it; the release job
       # refuses a release without it.
@@ -255,24 +267,24 @@ jobs:
             echo "No update signing key, so the installer isn't signed as an update."
             exit 0
           fi
-          cargo packager signer sign "dist/dbdesk-$VERSION-windows-x64-setup.exe"
-          test -s "dist/dbdesk-$VERSION-windows-x64-setup.exe.sig"
+          cargo packager signer sign "dist/dbrover-$VERSION-windows-x64-setup.exe"
+          test -s "dist/dbrover-$VERSION-windows-x64-setup.exe.sig"
       - name: Smoke test
         run: |
-          target/release/dbdesk.exe --version | tee version.txt
-          grep -q "dbdesk $VERSION" version.txt
+          target/release/dbrover.exe --version | tee version.txt
+          grep -q "dbrover $VERSION" version.txt
       # The installed copy, with no DuckDB on PATH: it must find the DLL beside itself.
       - name: Smoke test the installer
         shell: pwsh
         run: |
           $env:Path = ($env:Path -split ';' | Where-Object { $_ -notlike '*duckdb*' }) -join ';'
-          $installer = Start-Process -Wait -PassThru "dist/dbdesk-$env:VERSION-windows-x64-setup.exe" `
-            -ArgumentList '/S', "/D=$env:RUNNER_TEMP\dbdesk-installed"
+          $installer = Start-Process -Wait -PassThru "dist/dbrover-$env:VERSION-windows-x64-setup.exe" `
+            -ArgumentList '/S', "/D=$env:RUNNER_TEMP\dbrover-installed"
           if ($installer.ExitCode -ne 0) { throw "installer exit code $($installer.ExitCode)" }
-          Get-ChildItem "$env:RUNNER_TEMP\dbdesk-installed"
-          $version = & "$env:RUNNER_TEMP\dbdesk-installed\dbdesk.exe" --version
+          Get-ChildItem "$env:RUNNER_TEMP\dbrover-installed"
+          $version = & "$env:RUNNER_TEMP\dbrover-installed\dbrover.exe" --version
           $version
-          if ("$version" -notlike "dbdesk $env:VERSION*") { throw "unexpected version: $version" }
+          if ("$version" -notlike "dbrover $env:VERSION*") { throw "unexpected version: $version" }
       - uses: actions/upload-artifact@v7
         with:
           name: windows
@@ -302,7 +314,7 @@ jobs:
       # real Windows machine. Anything else leaves the installer, and its latest.json entry, out.
       - if: vars.WINDOWS_RELEASES != 'true'
         run: rm -f dist/*-setup.exe dist/*-setup.exe.sig
-      # The manifest installed copies read to update themselves (crates/dbdesk-app/src/
+      # The manifest installed copies read to update themselves (crates/dbrover-app/src/
       # updates.rs reads it through `releases/latest/download/latest.json`). The universal
       # macOS package serves both Mac architectures, and the Windows installer is listed when
       # it is attached. A missing signature fails the release: a release that can't be
@@ -311,8 +323,8 @@ jobs:
         working-directory: dist
         run: |
           base="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"
-          mac="dbdesk-$VERSION-macos-universal.app.tar.gz"
-          linux="dbdesk-$VERSION-x86_64.AppImage"
+          mac="dbrover-$VERSION-macos-universal.app.tar.gz"
+          linux="dbrover-$VERSION-x86_64.AppImage"
           jq -n \
             --arg version "$VERSION" \
             --arg notes "https://github.com/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME" \
@@ -327,7 +339,7 @@ jobs:
                 "linux-x86_64": {url: $linux_url, signature: ($linux_sig | rtrimstr("\n")), format: "appimage"}
               }
             }' > latest.json
-          windows="dbdesk-$VERSION-windows-x64-setup.exe"
+          windows="dbrover-$VERSION-windows-x64-setup.exe"
           if [[ -f "$windows" ]]; then
             jq --arg url "$base/$windows" --rawfile sig "$windows.sig" \
               '.platforms["windows-x86_64"] =
@@ -346,4 +358,4 @@ jobs:
             -f tag_name="$GITHUB_REF_NAME" --jq .body)
           { cat packaging/release-notes.md; echo; echo "$generated"; } > notes.md
           gh release create "$GITHUB_REF_NAME" dist/* --draft \
-            --title "dbdesk $VERSION" --notes-file notes.md
+            --title "DbRover $VERSION" --notes-file notes.md

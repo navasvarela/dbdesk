@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Rewrites DuckDB-LICENSE and DuckDB-THIRD-PARTY.txt beside this script from DuckDB's
-# repository at a release tag. The packages ship both (crates/dbdesk-app/Cargo.toml's
+# repository at a release tag. The packages ship both (crates/dbrover-app/Cargo.toml's
 # resources). Run it when upgrading DuckDB (see docs/duckdb-prebuilt.md):
 #
 #   packaging/duckdb/update-licenses.sh 1.5.6
 #
 # The notices cover every third-party component in DuckDB's source tree that can end up in its
-# library, whether dbdesk compiles it or links DuckDB's prebuilt one: everything under
+# library, whether DbRover compiles it or links DuckDB's prebuilt one: everything under
 # third_party/, the ICU extension's copy of ICU, and the ALP compression algorithms. Test data,
-# the TPC-H generator, the shell's line editor and the Swift bindings never reach dbdesk.
+# the TPC-H generator, the shell's line editor and the Swift bindings never reach DbRover.
 set -euo pipefail
 
 [[ $# -eq 1 ]] || { echo "usage: $0 <duckdb-version>" >&2; exit 2; }

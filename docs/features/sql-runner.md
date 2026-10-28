@@ -29,7 +29,7 @@ Status: implemented in M3 and M4, except where marked *planned*.
 
 egui's `TextEdit` (monospace, code-editor mode) with a custom layouter:
 
-- Syntax highlighting from `dbdesk-sql`'s lexer, which is the same lexer that splits
+- Syntax highlighting from `dbrover-sql`'s lexer, which is the same lexer that splits
   statements, so what looks like a string is exactly what the splitter treats as one.
   Keywords, strings, numbers, comments and quoted identifiers each get a colour, with
   separate palettes for light and dark themes.
@@ -69,7 +69,7 @@ becomes the bottleneck, the plan is a dedicated editor widget in its own crate.
   left out. `VALUES` lists are `column1`, `column2`, … as both databases name them.
 - **Functions**: the database's own, from the explorer's cached catalog where it has loaded a
   schema's functions (PostgreSQL lists them with their arguments, shown as the detail), then
-  the common built-ins of the dialect (`Dialect::builtin_functions` in `dbdesk-sql`). They
+  the common built-ins of the dialect (`Dialect::builtin_functions` in `dbrover-sql`). They
   are inserted with their parentheses, the cursor between them, and only offered once
   something is typed.
 - **Ranking** (`console/completion/ranking.rs`): candidates starting with the typed prefix,
@@ -114,14 +114,14 @@ has focus.
   `CREATE TABLE`'s columns go one per line and a query after `AS` is laid out as above.
 - **Settings** (View → Settings…, saved in `settings.toml`): keyword case (upper, lower, as
   typed) and indent width (1 to 8 spaces).
-- **What never changes.** The formatter works on `dbdesk-sql`'s tokens and only changes the
+- **What never changes.** The formatter works on `dbrover-sql`'s tokens and only changes the
   whitespace between them and the case of keywords. Strings, dollar-quoted bodies, quoted
   names and comments come out byte for byte; a line comment always ends its line. Whitespace
   is never put between two operator characters (`::`, `->>`, `<=`), between a word and a
   string or quoted name that may be its prefix (`B'1010'`, `x'ff'`, `U&"…"`), or inside a
   parameter (`$1`, `:name`), and only removed before `,`, `;`, `)` and after `(`.
 - **Checked before it is applied.** The output is lexed again and compared with the input
-  (`dbdesk_sql::same_meaning`): same tokens, keywords ignoring case, and the spacing rules
+  (`dbrover_sql::same_meaning`): same tokens, keywords ignoring case, and the spacing rules
   above. If they differ, nothing changes and the toolbar says **Not formatted**. A test runs
   this over a corpus of PostgreSQL and SQLite statements in every setting, and checks that
   formatting twice changes nothing.
@@ -150,7 +150,7 @@ id). The toolbar counts them (**1 error, 2 warnings**); clicking the count, or F
 to the previous one, wrapping around.
 
 **Syntax errors** come from [`sqlparser`](https://crates.io/crates/sqlparser) 0.63 with its
-PostgreSQL or SQLite dialect, one statement at a time (as `dbdesk-sql` splits them), mapped
+PostgreSQL or SQLite dialect, one statement at a time (as `dbrover-sql` splits them), mapped
 from the parser's line and column to the token it points at. A statement that ends early is
 marked at its last token ("expected an expression at the end of the statement").
 
@@ -158,7 +158,7 @@ marked at its last token ("expected an expression at the end of the statement").
   `UPDATE`, `DELETE`, SQLite's `REPLACE`). DDL, `DO` blocks, `COPY`, `PRAGMA` and other
   vendor statements are where the parser falls short of the databases, and **a false error is
   worse than a missed one**, so they get none.
-- **Known gaps.** A corpus of valid statements in `dbdesk-sql`'s tests found the constructs
+- **Known gaps.** A corpus of valid statements in `dbrover-sql`'s tests found the constructs
   `sqlparser` rejects although the database accepts them. A statement using one is not
   checked: PostgreSQL `ROWS FROM (…)`, `FOR NO KEY UPDATE` / `FOR KEY SHARE`,
   `BETWEEN SYMMETRIC`, `JOIN … USING (…) AS alias`, the XML functions (`xmlelement(name …)`),
@@ -230,7 +230,7 @@ Shortcuts work while the console's editor has focus, and are taken before the ed
 them, so ⌘↵ runs instead of inserting a newline. These are the defaults; `keymap.toml` can
 change them (see [Keymap](keymap.md)).
 
-**Statement splitting** lives in `dbdesk-sql` and works on text as typed, without parsing:
+**Statement splitting** lives in `dbrover-sql` and works on text as typed, without parsing:
 - Semicolons inside strings, quoted identifiers, comments and PostgreSQL dollar-quoted bodies
   don't split.
 - Neither do semicolons inside `BEGIN … END` in a `CREATE` statement (SQLite trigger bodies,
@@ -270,7 +270,7 @@ sequenceDiagram
 ```
 
 - **Results are text.** PostgreSQL runs over the simple query protocol, so the server formats
-  every value, including types dbdesk knows nothing about, exactly as `psql` shows it. SQLite
+  every value, including types DbRover knows nothing about, exactly as `psql` shows it. SQLite
   values are formatted the way the `sqlite3` shell does (`100.0`, blobs as `x'…'`, or their
   size past 64 bytes). A cell is `Option<String>`, with `None` for `NULL`. See
   [ADR-0004](../adr/0004-results-as-text.md).
@@ -370,8 +370,8 @@ Each console has a mode, **Auto-commit** (the default) or **Manual commit**:
   each row's position in the result.
 - **Sort and filter in the database** (W5c): **In the database**, beside the filter, off by
   default, hands both to the database. A header click, or Enter in **Filter every row**, runs
-  the shown statement again wrapped by `dbdesk_sql::arrange`: `SELECT * FROM (<statement>) AS
-  dbdesk_rows WHERE <any column contains the text> ORDER BY <position> ASC|DESC`. The filter
+  the shown statement again wrapped by `dbrover_sql::arrange`: `SELECT * FROM (<statement>) AS
+  dbrover_rows WHERE <any column contains the text> ORDER BY <position> ASC|DESC`. The filter
   keeps its meaning, with each dialect's own "contains" (`strpos`, `instr`, `LOCATE`,
   `CHARINDEX`, `positionUTF8` on the lowercased value cast to text), so no character in it is
   a wildcard; the sort is by position, so any column name works. The rows then arrive in that
@@ -386,7 +386,7 @@ Each console has a mode, **Auto-commit** (the default) or **Manual commit**:
   CSV…/JSON…** (W5d) runs the statement again on the console's own connection (so it sees its
   open transaction and temporary tables; unread rows of the last run are discarded first, as
   for any statement), wrapped if the database sorts and filters it, and writes each page of
-  500 rows as it arrives, through `dbdesk_store::ExportWriter`: the rows are never all in
+  500 rows as it arrives, through `dbrover_store::ExportWriter`: the rows are never all in
   memory. The toolbar shows "Exporting… N rows" with **Cancel export**, which stops the
   statement. Both write to `<name>.partial` and rename it when complete, so a failed or
   cancelled export leaves no half file and doesn't replace one. On a read-only data source
@@ -422,7 +422,7 @@ Each console has a mode, **Auto-commit** (the default) or **Manual commit**:
   row, then one `UPDATE … SET … WHERE <key> = <value as loaded>` per changed row, then one
   `INSERT` per added row (with only the columns typed into; `DEFAULT VALUES`, or
   `() VALUES ()` on MySQL, for a row left at its defaults), so a key a deleted row frees can be
-  reused. They are built by `dbdesk_sql::RowSql`. All or none: in a transaction of their own,
+  reused. They are built by `dbrover_sql::RowSql`. All or none: in a transaction of their own,
   or behind a savepoint inside the console's open transaction (so in manual commit mode they
   stay pending with the rest). Each must change exactly one row; otherwise (the row changed or
   went since it was read, or a value doesn't fit the column) everything is rolled back, the

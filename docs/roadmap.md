@@ -14,9 +14,9 @@ sized for evenings-and-weekends pace; the order matters more than the dates.
 
 **Exit:** the app opens, shows three panels, logs "engine started" in the log console.
 
-**Demo note:** done. `cargo run -p dbdesk-app` opens the docked layout, and the status bar shows
+**Demo note:** done. `cargo run -p dbrover-app` opens the docked layout, and the status bar shows
 "Engine running". The log console shows "engine started" with level/search filters, and the
-same entries go to `logs/dbdesk.<date>.log`. The layout survives restarts; **View → Reset layout**
+same entries go to `logs/dbrover.<date>.log`. The layout survives restarts; **View → Reset layout**
 restores the default. An egui_kittest test drives the whole app headlessly.
 
 ## M1 — Data sources and sessions
@@ -78,18 +78,18 @@ Follow-ups left out of M2:
 ## M3 — SQL runner
 
 - Query console tabs with highlighting and statement-under-cursor.
-- Run statement / selection / script, with `dbdesk-sql` splitting.
+- Run statement / selection / script, with `dbrover-sql` splitting.
 - Streaming result grid with paging and `FetchMore`.
 - Cancellation for both drivers.
 - Errors with position underline; Postgres notices in the log console.
 - Safety confirmations for `UPDATE`/`DELETE` without `WHERE`.
 
-**Exit:** I use dbdesk instead of `psql` for a day of ordinary queries.
+**Exit:** I use DbRover instead of `psql` for a day of ordinary queries.
 
 **Demo note:** built; the exit criterion (a day of real use) is still to be tried. Right-click a
 data source → **New query console**, or a table → **Open data**. Each console has its own
 connection:
-- **Editing:** SQL is highlighted by `dbdesk-sql`'s lexer.
+- **Editing:** SQL is highlighted by `dbrover-sql`'s lexer.
 - **Running:** ⌘↵ runs the selection or the statement at the cursor; ⇧⌘↵ runs everything,
   stopping at the first failure. ⌘. cancels on both drivers.
 - **Results:** the grid shows 500 rows; **Load more rows** or scrolling to the bottom loads the
@@ -125,7 +125,7 @@ Follow-ups left out of M3 (most belong to M4 anyway):
 - Copy as TSV, export CSV/JSON.
 - `EXPLAIN` action.
 
-**Exit:** I use dbdesk instead of my usual database tool for a week, and keep a list of what I
+**Exit:** I use DbRover instead of my usual database tool for a week, and keep a list of what I
 missed.
 
 **Demo note:** built; the exit criterion (a week of real use) is still to be tried.
@@ -229,7 +229,7 @@ statements are also prepared (never run) on its own connection: a misspelt colum
 the database's own message. Rules are switched off in View → Settings…. Syntax errors come
 from `sqlparser`, only for data queries and changes, with a list of constructs it wrongly
 rejects found by a corpus of valid statements. Covered by that corpus and lint tests in
-`dbdesk-sql`, a `validate` conformance check on both drivers, engine tests that validation
+`dbrover-sql`, a `validate` conformance check on both drivers, engine tests that validation
 never connects, never disturbs unread rows and skips open PostgreSQL transactions, problem
 and catalog-lint tests, and a UI test that hovers a warning and an error.
 
@@ -264,11 +264,11 @@ plan, including the decisions it needs first, is in [Releasing](releasing.md).
 
 **R4 demo note:** built; the update itself is still to be tried on a Windows machine with the
 next release. On Windows, a copy installed with the installer (one with `uninstall.exe` beside
-`dbdesk.exe`) that is older than the newest release says "dbdesk 0.13.0 is available" in the
-status bar. **Install and restart** shows the download's progress, then "dbdesk 0.13.0 is
+`dbrover.exe`) that is older than the newest release says "DbRover 0.13.0 is available" in the
+status bar. **Install and restart** shows the download's progress, then "DbRover 0.13.0 is
 downloaded" and **Restart now**. With a transaction open in a manual-commit console, **Restart
-now** asks first; once dbdesk has quit, the installer's progress bar appears and the new version
-starts. A portable copy instead says it wasn't installed with dbdesk's installer and offers
+now** asks first; once DbRover has quit, the installer's progress bar appears and the new version
+starts. A portable copy instead says it wasn't installed with DbRover's installer and offers
 **Open release page**. Releases sign the installer with the update key and list it as
 `windows-x86_64` in `latest.json`. Authenticode signing comes after the app's rename; the choice
 of service is an open decision in
@@ -284,7 +284,7 @@ Mac, the workflow's signature, manifest and `cargo-packager-updater`'s check of 
 entry (see [R4's status](releasing.md#r4--windows-parity)).
 
 **Update notice demo note:** built, ahead of R2. Start a build older than the newest release,
-and the status bar says "dbdesk 0.2.0 is available"; click it for the version you have and
+and the status bar says "DbRover 0.2.0 is available"; click it for the version you have and
 **Open release page**. **Help › Check for updates…** asks on demand and says "You're up to
 date" otherwise. The check at start-up can be switched off in **View → Settings…**
 (`[updates] check_on_start` in `settings.toml`); a failed automatic check is only logged. The
@@ -331,7 +331,7 @@ source with **TLS** `disable` and **Test connection** fails with *pg_hba.conf re
 and ⌘. cancel all work over TLS. Old `data_sources.toml` files load with `prefer`, and the TLS
 choice is a `[data_source.tls]` table. Underneath, every per-dialect fact (lexer rules,
 `sqlparser` dialect, known parser gaps, functions, `EXPLAIN` prefix, system names) is a method
-in `dbdesk-sql`'s `dialect` module: non-test matches on `Dialect`, `DriverKind` or
+in `dbrover-sql`'s `dialect` module: non-test matches on `Dialect`, `DriverKind` or
 `ConnectionConfig` went from 31 in 16 files to 19 in 5. Host, port, database, user, password
 and TLS are one `ServerConfig` in core and one `ServerFields` section in the dialog, which a
 new server engine reuses. CI starts every compose service and exports the URLs listed in
@@ -383,7 +383,7 @@ to Azure SQL, for want of an account.
 **DB3 demo note:** built in #49, #52 and #55, as a native stack. **+** → **DuckDB**
 opens a form with **File** (with **Browse…**, **New…** and **Read-only**, as for SQLite) or **In
 memory**; **Test connection** says "Connected to DuckDB 1.5.6", and nothing is installed:
-DuckDB is compiled into dbdesk. In an in-memory data source, `SELECT * FROM
+DuckDB is compiled into DbRover. In an in-memory data source, `SELECT * FROM
 '/path/orders.parquet'` or `read_csv(…)` queries files directly. The explorer lists the database
 (and attached ones), schemas, tables, views, macros and sequences, and **Show definition** gives
 DuckDB's own `CREATE` statement, tables included. A trillion-row cross join stops at ⌘., `EXPLAIN`
@@ -412,7 +412,7 @@ from run to run, `EXPLAIN` shows the plan a step per row, results are read-only 
 `countIf` as typed. The downloads grow by about half a megabyte. Underneath: one HTTP session
 per console, `KILL QUERY … SYNC` by `query_id` for ⌘. and for abandoned results, `EXPLAIN AST`
 then `EXPLAIN PLAN` for the linter, and the rustls configuration shared with PostgreSQL in
-`dbdesk-tls`. Covered by the conformance suite without transactions or table descriptions on
+`dbrover-tls`. Covered by the conformance suite without transactions or table descriptions on
 ClickHouse in CI, driver tests for TLS, value formats, the session, paging and abandoning ten
 million rows, and the catalog with definitions, an engine test of a session across runs,
 lexer, syntax-check and formatter corpora for the dialect, and UI tests of the form's TLS port
@@ -433,7 +433,7 @@ shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.
   - lazy, searchable catalogs for very large ones.
 - **C1 — Managed databases:** RDS, Aurora and Redshift; Cloud SQL; Azure SQL, Azure Database,
   and Synapse's and Fabric's SQL endpoints; and Neon, Supabase and ClickHouse Cloud, through the
-  drivers dbdesk has, with presets in the data source dialog.
+  drivers DbRover has, with presets in the data source dialog.
 - **C2 — Object storage:** Parquet, CSV and JSON in S3, Google Cloud Storage and Azure Blob
   Storage, Iceberg and Delta tables, and MotherDuck, all through DuckDB.
 - **C3 — Athena and Trino**, over AWS's Athena API and then Trino's HTTP protocol.
@@ -448,7 +448,7 @@ and users, from a **New** submenu and object actions in the explorer. The full p
 [Creating and changing database objects](entity-helpers.md).
 
 - **E0 — Groundwork:**
-  - object specs and a DDL builder per dialect in `dbdesk-sql`;
+  - object specs and a DDL builder per dialect in `dbrover-sql`;
   - each dialect's capabilities;
   - a review-and-run panel that shows the SQL before anything runs;
   - `ApplyDdl` in one transaction where the engine allows it;
@@ -460,7 +460,7 @@ and users, from a **New** submenu and object actions in the explorer. The full p
   refusal shows the database's error under the SQL and keeps the dialog open, and success
   reloads the folder. On a data source coloured red, **Execute** waits until the table's name
   is typed; a careful one asks "Run on “shop”?" first; a read-only one greys **Execute** out
-  and says why, leaving the console and **Copy**. Underneath: `dbdesk_sql` describes objects
+  and says why, leaving the console and **Copy**. Underneath: `dbrover_sql` describes objects
   as `TableSpec` and `IndexSpec`, turned into each dialect's DDL by pure functions with golden
   tests, quoting a name only when it has capitals, spaces or a word some dialect reserves; each
   dialect's `Capabilities` (transactional DDL, `CASCADE`, keys, index methods, in-place table
@@ -567,7 +567,7 @@ and users, from a **New** submenu and object actions in the explorer. The full p
 
 ## MCP track
 
-An MCP server, so AI assistants can browse and query dbdesk's data sources, grouped into
+An MCP server, so AI assistants can browse and query DbRover's data sources, grouped into
 projects with permissions per project. The full plan is in [MCP server](mcp-server.md).
 
 - **P0 — Projects:**
@@ -587,21 +587,21 @@ projects with permissions per project. The full plan is in [MCP server](mcp-serv
   restart, a broken `projects.toml` never overwritten), a serde test of a 0.2.0 file, and a
   kittest UI test of the whole flow.
 - **MCP1 — Read-only server:**
-  - `dbdesk mcp --project <slug>` over stdio, with catalog, describe, query and explain tools;
+  - `dbrover mcp --project <slug>` over stdio, with catalog, describe, query and explain tools;
   - read-only transactions, row and time limits, and every call logged and recorded in the
     history.
 
   **MCP1 demo note:** built. In `projects.toml`, set `mcp_enabled = true` on a project, then add
-  `dbdesk mcp --project <slug>` to an MCP client (the manual's "Connecting an AI assistant"
+  `dbrover mcp --project <slug>` to an MCP client (the manual's "Connecting an AI assistant"
   has the JSON). The assistant gets six read-only tools: `list_data_sources`, `list_objects`,
   `describe_table`, `get_definition`, `query` and `explain`. Ask it to describe a table and
   query it: rows come back as text cells, at most 500, with `truncated` when there were more.
-  Ask it to run `WITH gone AS (DELETE FROM t RETURNING *) SELECT * FROM gone` and dbdesk
+  Ask it to run `WITH gone AS (DELETE FROM t RETURNING *) SELECT * FROM gone` and DbRover
   refuses it before sending; `SELECT f()` on a function that inserts is refused by the
   database's read-only transaction (SQLSTATE 25006). Both refusals are in
-  `dbdesk-mcp.YYYY-MM-DD.log`, and every statement sent is in the query history with `source =
+  `dbrover-mcp.YYYY-MM-DD.log`, and every statement sent is in the query history with `source =
   'mcp'`. Covered by the classifier's corpus per dialect, the history's two-process WAL test,
-  `dbdesk-mcp`'s stdio test (a real server process against SQLite, PostgreSQL, MySQL and
+  `dbrover-mcp`'s stdio test (a real server process against SQLite, PostgreSQL, MySQL and
   MariaDB), and tests of the `mcp` subcommand on the real binary.
 
 - **MCP2 — Permissions:**
@@ -612,14 +612,14 @@ projects with permissions per project. The full plan is in [MCP server](mcp-serv
 
   **MCP2 demo note:** built. In `projects.toml`, give a project `[project.mcp] write = true` and
   restart its server. The assistant now also has `execute`, marked destructive. An `INSERT`
-  goes through and is committed. A `CREATE TABLE` is refused, and `dbdesk-mcp.YYYY-MM-DD.log`
+  goes through and is committed. A `CREATE TABLE` is refused, and `dbrover-mcp.YYYY-MM-DD.log`
   says `missing_permission="schema"`. Add `schema = true`, restart, and it goes through. Give
   the data source `mcp_login = { user = "…" }` for a role that may only `SELECT`, with its
   password in the keychain entry `<id>/mcp`. The same `INSERT` is then refused by the database
   (SQLSTATE 42501), though the project allows it. `schemas = ["public"]` hides and refuses
   other schemas. A batch whose second statement fails rolls back the first. Covered by the
   classifier's corpus per dialect (now with `CALL`, `COPY`, grants, settings and session
-  killing), unit tests of the allow-list and of `execute`'s planning, and `dbdesk-mcp`'s
+  killing), unit tests of the allow-list and of `execute`'s planning, and `dbrover-mcp`'s
   `permissions` test: a real server process against SQLite, PostgreSQL, MySQL and MariaDB,
   checking the exit criterion end to end.
 - **MCP3 — In the app:** project settings, Copy MCP configuration, MCP statements marked in the
@@ -631,7 +631,7 @@ projects with permissions per project. The full plan is in [MCP server](mcp-serv
   login on a server data source shows the warning that only a dedicated login's grants are
   airtight. Set the login in the data source's dialog (**MCP login**, **MCP password**).
   **Copy MCP configuration** on the project copies the `mcpServers` entry with this machine's
-  path to dbdesk; paste it into the client, as the manual's "Connecting an AI assistant"
+  path to DbRover; paste it into the client, as the manual's "Connecting an AI assistant"
   chapter shows. **View › Settings… › MCP** edits the defaults every project starts from. The
   assistant's statements appear in the console's **History**, marked **MCP**, and the menu
   beside the search shows only them. Covered by kittest UI tests (project settings with the
@@ -640,7 +640,7 @@ projects with permissions per project. The full plan is in [MCP server](mcp-serv
 
 ## Hackability track
 
-Customisation without rebuilding dbdesk, from files to commands to plugins. The full plan is in
+Customisation without rebuilding DbRover, from files to commands to plugins. The full plan is in
 [Hackability](hackability.md), and the decision in
 [ADR 0005](adr/0005-customisation-files-commands-then-wasm.md).
 
@@ -650,8 +650,8 @@ Customisation without rebuilding dbdesk, from files to commands to plugins. The 
     `keymap.toml` and are read the way it is: at start-up, after `settings.toml`, and again on
     **Reload**, by the engine on its blocking pool. A missing file adds nothing; a file that
     isn't TOML is one problem. Each entry is checked on its own, so a broken one is skipped and
-    listed and the rest still apply. The checks are pure functions in `dbdesk-store` (the
-    formats) and `dbdesk-core` (SQL templates), with a unit test for every problem message.
+    listed and the rest still apply. The checks are pure functions in `dbrover-store` (the
+    formats) and `dbrover-core` (SQL templates), with a unit test for every problem message.
     The status bar counts each file's problems next to `keymap.toml`'s, with the same link,
     and one window per file lists them with **Reload**. The five files share one reader and
     one engine loader, so `keymap.toml` and `settings.toml` lose their copies of it.
@@ -720,7 +720,7 @@ Customisation without rebuilding dbdesk, from files to commands to plugins. The 
     read only with `command`, and `run` only with `sql`. A command can't be on `grid.row`, take
     `{values}`, or read stdin on anything but the grid, and SQL can't take the data source's
     fields: each is a problem with the file, with a unit test for every message. The checks are
-    pure functions in `dbdesk-core` (the template) and `dbdesk-store` (the format and the rows
+    pure functions in `dbrover-core` (the template) and `dbrover-store` (the format and the rows
     a command reads, in each format). **View → Actions…** shows each command in full; until
     H2d they aren't offered in menus.
   - **H2c — Running programs:** a new engine command runs one: it fills the placeholders, with
@@ -743,19 +743,19 @@ Customisation without rebuilding dbdesk, from files to commands to plugins. The 
 
   - **Programs run on tokio's process support, not the blocking pool.** `tokio::process`
     waits on a program without holding a thread, and reads stdout and stderr while it writes
-    stdin, so a program that writes before it has read everything can't deadlock against dbdesk.
+    stdin, so a program that writes before it has read everything can't deadlock against DbRover.
     It needs only tokio's `process` feature, no new crate.
   - **Stopping a program is dropping it.** The engine races each run against its timeout and a
     stop; whichever loses is dropped, and the child is spawned with `kill_on_drop`, so a timeout,
-    **Stop**, ⌘. and quitting dbdesk all kill it the same way. A command can't run past the
+    **Stop**, ⌘. and quitting DbRover all kill it the same way. A command can't run past the
     engine.
   - **Only the program itself is killed.** Killing a whole process tree needs process groups on
     Unix and job objects on Windows, both through `unsafe` calls the workspace forbids. So a
     program that starts children of its own (`sh -c "sleep 100 &"`) may leave them running.
-    dbdesk stops reading the moment its own child is gone, so it never waits on them.
+    DbRover stops reading the moment its own child is gone, so it never waits on them.
   - **Timeout:** 60 seconds unless the action sets `timeout`, written with a unit (`"500ms"`,
     `"30s"`, `"5m"`, `"1h"`). A program that opens a window or a terminal (`open -a Terminal`)
-    returns at once, so the timeout only ever stops programs dbdesk is waiting on.
+    returns at once, so the timeout only ever stops programs DbRover is waiting on.
   - **Output limits:** stdout is kept up to 4 MB, chosen rather than measured: far more than
     anyone reads in a viewer or a console, and little enough to hold in memory. Past it the
     program is stopped and what it wrote so far is shown with a note saying so. stderr is kept up to 64 KB and the rest discarded, since only an error
@@ -768,9 +768,9 @@ Customisation without rebuilding dbdesk, from files to commands to plugins. The 
     - Its arguments, each placeholder filling exactly one, as raw text: no shell and no quoting,
       since none is needed. `{qualified_name}` is the name as the dialect's SQL writes it.
       `{database}` is the node's database, or the one the data source connects to.
-    - dbdesk's own environment, as any program started from it, plus `DBDESK_DATA_SOURCE`,
-      `DBDESK_DRIVER`, `DBDESK_DATABASE`, `DBDESK_SCHEMA`, `DBDESK_TABLE` (each only when there is
-      one) and `DBDESK_FORMAT`.
+    - DbRover's own environment, as any program started from it, plus `DBROVER_DATA_SOURCE`,
+      `DBROVER_DRIVER`, `DBROVER_DATABASE`, `DBROVER_SCHEMA`, `DBROVER_TABLE` (each only when there is
+      one) and `DBROVER_FORMAT`.
     - On stdin, the selected cells: the selected columns of the selected rows, as a JSON array
       of objects (the format of Export), CSV with a header line, or TSV as Copy writes it.
       Otherwise stdin is empty, so a program that reads it ends rather than waits.
@@ -798,7 +798,7 @@ Customisation without rebuilding dbdesk, from files to commands to plugins. The 
     - A Mac app started from the Finder gets a short `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`)
       that lacks Homebrew's folders, so `jq` may not be found though the terminal finds it. A
       program that isn't found says so, names the `PATH` it was looked for in, and suggests its
-      full path. dbdesk doesn't add folders to `PATH` behind the user's back.
+      full path. DbRover doesn't add folders to `PATH` behind the user's back.
   - **Commands don't run on `grid.row`.** A command already gets every selected row on stdin,
     so running it once per row would only start more programs and leave nowhere to put several
     outputs. `{row.<column>}` is the first selected row's value, as in SQL.
@@ -836,7 +836,7 @@ Customisation without rebuilding dbdesk, from files to commands to plugins. The 
   and "1m". **Run** opens **Output of Send rows to jq** with one email a line; the next time it
   runs without asking, and **View → Actions…** says **Trusted: runs without asking**. Change
   `-r` to `-c` and **Reload**: it asks again. Written as plain `jq`, a Mac app opened from the
-  Finder says "jq was not found in dbdesk's PATH (/usr/bin:/bin:/usr/sbin:/sbin)". **Dump to
+  Finder says "jq was not found in DbRover's PATH (/usr/bin:/bin:/usr/sbin:/sbin)". **Dump to
   SQL** (`pg_dump --table={qualified_name} …`, `output = "console"`) on a table opens the dump in
   a new console, unrun. A command on a table called `it's; DROP TABLE orders; --` gets it as one
   argument. A `["sleep", "600"]` action shows **Running Sleep…** with **Stop** in the status bar;
@@ -852,7 +852,7 @@ Customisation without rebuilding dbdesk, from files to commands to plugins. The 
 
 ## Well-rounded track
 
-The gaps that keep dbdesk from being an everyday tool. The full plan is in
+The gaps that keep DbRover from being an everyday tool. The full plan is in
 [A well-rounded app](well-rounded.md).
 
 - **W1 — Portable configuration:**
@@ -889,9 +889,9 @@ The gaps that keep dbdesk from being an everyday tool. The full plan is in
   refused before it is sent (*Refused: this statement changes data, and "production" is
   read-only.*), `SELECT f()` on a PostgreSQL function that inserts fails with the database's
   read-only transaction error, rows still page in 500s, and the grid isn't editable. The
-  statement check and the read-only modes moved from `dbdesk-mcp` to `dbdesk_engine::read_only`,
+  statement check and the read-only modes moved from `dbrover-mcp` to `dbrover_engine::read_only`,
   which the MCP server and consoles now share. SQL Server, DuckDB and ClickHouse have no
-  read-only mode dbdesk uses yet, so only the check applies there, and the dialog says so. Covered by engine tests (SQLite refusals and
+  read-only mode DbRover uses yet, so only the check applies there, and the dialog says so. Covered by engine tests (SQLite refusals and
   edits; PostgreSQL `INSERT`, `CREATE TABLE`, a write inside a function, and paging inside the
   read-only transaction), the read-only module's tests, hazard dialog tests, and kittest tests
   of a careful grid edit, a read-only refusal and red suggesting Careful.
@@ -906,14 +906,14 @@ The gaps that keep dbdesk from being an everyday tool. The full plan is in
   another key on that host's line of `known_hosts` and connecting is refused, naming the line to
   remove. MySQL and MariaDB, SQL Server and ClickHouse connect the same way, and TLS through
   the tunnel still checks the server's own name. A data source's explorer and consoles share
-  one tunnel, closed with the last of them; `dbdesk mcp` uses its own. Then run
+  one tunnel, closed with the last of them; `dbrover mcp` uses its own. Then run
   `SELECT pg_terminate_backend(pid)` on a console's session from elsewhere, and run again in
   that console: the statement fails, the toolbar says **Disconnected: its transaction,
   temporary tables and session settings are gone** with **Reconnect**, and nothing runs until
   you click it. A connection idle for a minute is pinged first, so a lost explorer reconnects
   as you expand the next node. The SSH client is `russh` 0.64 on `ring` (no OpenSSL or
-  aws-lc), in a new `dbdesk-ssh` crate with its own `known_hosts` reader (patterns, hashed
-  names, `@revoked`). Covered by `dbdesk-ssh` tests against an OpenSSH container in
+  aws-lc), in a new `dbrover-ssh` crate with its own `known_hosts` reader (patterns, hashed
+  names, `@revoked`). Covered by `dbrover-ssh` tests against an OpenSSH container in
   `docker-compose.yml` (key, encrypted key, password, unknown, changed and revoked host keys, a
   refused forward), engine tests through it (sharing, the prompts, the host-key trust), driver
   tests of each engine through a forwarded port and of a session the server ended, engine
@@ -940,7 +940,7 @@ The gaps that keep dbdesk from being an everyday tool. The full plan is in
   "id" = '3'`, which **Insert into console** puts in the console to review and run. Each entry
   is tagged **Console**, **Grid**, **Object** (the explorer's helpers), **Import** (one entry
   per CSV file, with the file on hover), **Export** or **MCP** (the client's name, from its
-  `initialize`, on hover); rows from before W4 read as **dbdesk**. Pick **Every data source**
+  `initialize`, on hover); rows from before W4 read as **DbRover**. Pick **Every data source**
   and **MCP clients**: an assistant's statements on any data source show, each named, a removed
   data source as *Removed data source*; **Last hour** narrows them. `CREATE ROLE app PASSWORD
   's3cret'` (or `IDENTIFIED BY`, `CREATE SECRET`, `password=` in a connection string) is stored
@@ -949,7 +949,7 @@ The gaps that keep dbdesk from being an everyday tool. The full plan is in
   `[history] max_age_days = 365` and deletes older statements at once, in 2,000-row
   transactions, and again at every start. The file is migrated to schema version 2 (`origin`,
   `detail`, `changes` and two indexes; old rows untouched, `source` still `app`/`mcp` for an
-  older dbdesk sharing the file). Full-text search was measured and left out: on a million
+  older DbRover sharing the file). Full-text search was measured and left out: on a million
   statements FTS5 doubled the file and took 10 s to build under the write lock. Covered by store
   tests (migrations from 0.2.0 and pre-W4 files, two processes writing and migrating, pruning
   while another process writes, every search filter and its query plan, the secrets guard
@@ -976,17 +976,17 @@ The gaps that keep dbdesk from being an everyday tool. The full plan is in
   history. In `orders`, `customer_id` values are underlined: ⌘-click one, or **Open customers
   row**, and a new console selects that customer; there, **Referencing rows ›
   orders.customer_id** opens their orders. Tick **In the database** and click a header: the
-  query runs again as `SELECT * FROM (…) AS dbdesk_rows ORDER BY 2 DESC`, covering rows that
+  query runs again as `SELECT * FROM (…) AS dbrover_rows ORDER BY 2 DESC`, covering rows that
   weren't loaded, and Enter in **Filter every row** adds a `WHERE` with the same meaning as the
   grid's filter; the rows stay editable. **Export › All rows as CSV…** on a 100,000-row result
   writes every row a page at a time (*Exporting… 52000 rows*, **Cancel export** leaves no
   file). **Import CSV…** on a table maps a file's columns by header name, previews 20 rows,
   warns *Line 4, id: “A-11” isn't a whole number*, and imports in 500-row `INSERT`s in one
   transaction; a duplicate key on line 703 rolls it all back and says so. The statements are
-  built by `dbdesk_sql` (`RowSql`, `arrange`), table descriptions carry foreign keys both ways
+  built by `dbrover_sql` (`RowSql`, `arrange`), table descriptions carry foreign keys both ways
   on every driver (none on ClickHouse), the store has a streaming `ExportWriter` and an RFC 4180
   `CsvReader`, and the DuckDB driver now shares one database per file between connections, so
-  the explorer's changes show in open consoles. Covered by `dbdesk_sql` golden tests per
+  the explorer's changes show in open consoles. Covered by `dbrover_sql` golden tests per
   dialect, store tests of the writer and reader, engine tests on SQLite, DuckDB, PostgreSQL,
   MySQL, MariaDB and SQL Server (ClickHouse too for the wrapper and the export) in
   `tests/grid`, a DuckDB driver test of two connections to one file, and kittest tests of each
@@ -1010,13 +1010,13 @@ The gaps that keep dbdesk from being an everyday tool. The full plan is in
       again.
     - Open file tabs are restored at the next launch: the dock layout already keeps the tab,
       and the app's saved state (`app.ron`) keeps which file it shows and the recent files.
-    - `dbdesk report.sql` opens the file; the app ignores other arguments as it does now.
+    - `dbrover report.sql` opens the file; the app ignores other arguments as it does now.
       Finder's **Open With** needs a document type in the macOS bundle and Apple Events, and
       is left as a follow-up.
     - Reading and writing go through the engine (`Command::OpenSqlFile`, `SaveSqlFile`,
       `CheckSqlFiles`), as every other file does, so the UI never waits on the disk. Files are
       UTF-8; another encoding is refused with a message rather than mangled. Saves are atomic.
-  - **W6b — Finding `:name` parameters:** `dbdesk_sql::parameters` finds `:name` (a letter
+  - **W6b — Finding `:name` parameters:** `dbrover_sql::parameters` finds `:name` (a letter
     or `_`, then letters, digits and `_`) outside strings, comments and quoted identifiers,
     with the lexer that highlights. It skips PostgreSQL and DuckDB casts (`::int`), `:=`
     assignments, array slices (`a[1:n]`), DuckDB's and ClickHouse's `{…}` (struct and map
@@ -1058,7 +1058,7 @@ The gaps that keep dbdesk from being an everyday tool. The full plan is in
   - **W6f — Manual:** a chapter on files, parameters and find and replace, and this demo
     note.
 
-  Tested with `dbdesk_sql` golden tests per dialect, store and engine tests of the files
+  Tested with `dbrover_sql` golden tests per dialect, store and engine tests of the files
   (temporary folders), engine tests binding parameters on every engine with a test server,
   unit tests of the find logic, and kittest tests of each feature on SQLite with temporary
   files. New engine tests reuse W5's `test_sources`, so they add a few seconds per server.
@@ -1068,9 +1068,9 @@ The gaps that keep dbdesk from being an everyday tool. The full plan is in
   and the tab reads `report.sql •`; ⌘S writes it and the dot goes. Edit the file in another
   editor and the console follows it within two seconds; edit both and the console says *changed
   on disk* with **Reload** and **Keep mine**. Close the tab, or quit, with unsaved changes and
-  dbdesk asks **Save**, **Don't save** or **Cancel**; a failed save keeps the tab. **Save as…**
+  DbRover asks **Save**, **Don't save** or **Cancel**; a failed save keeps the tab. **Save as…**
   on an ordinary console moves it to a file and removes its copy in `consoles/`. Restart, and
-  the file's tab is back; `dbdesk other.sql` opens another. Run `SELECT * FROM orders WHERE
+  the file's tab is back; `dbrover other.sql` opens another. Run `SELECT * FROM orders WHERE
   placed_at >= :since AND status = :status`: **Parameter values** asks for both, with **NULL**
   switches, and next time starts from what you typed. SQLite, DuckDB, MySQL, MariaDB and SQL
   Server bind the values (`Connection::execute_bound`); PostgreSQL and ClickHouse get quoted
@@ -1106,7 +1106,7 @@ flowchart LR
   the window icon (eframe's `ViewportBuilder::with_icon`) and the macOS `.icns`.
 - Process: three or four concepts side by side, pick one, refine it.
 
-**Exit:** the dbdesk window, the README and the repository's social preview show the logo.
+**Exit:** the DbRover window, the README and the repository's social preview show the logo.
 
 **Demo note:** built in #7. The mark is "Strata", a database cylinder cut into a lid and two
 slabs, picked from four concepts; [brand.md](brand.md) has its construction, the files and the
@@ -1117,7 +1117,7 @@ repository setting rather than a file: `assets/brand/social-preview.png` is uplo
 
 ### D2 — A more colourful, vibrant UI
 
-egui's default look is deliberately neutral grey. This replaces it with a theme of dbdesk's own:
+egui's default look is deliberately neutral grey. This replaces it with a theme of DbRover's own:
 
 - **Theme module.** `Visuals` built from the D1 palette for light and dark mode: accent-tinted
   selection, hover and active states, panel and tab-bar colours, and an `egui_dock` style to
@@ -1145,13 +1145,13 @@ Decisions, including why icons have a font family of their own, are in
 
 ### D3 — User manual
 
-- **mdBook** in `book/`, written for someone who has never seen dbdesk. Chapters:
+- **mdBook** in `book/`, written for someone who has never seen DbRover. Chapters:
   1. Install and first launch
   2. Data sources: adding, testing, passwords and the keychain
   3. Explorer: browsing, filtering, definitions
   4. Query consoles: running, results, cancelling, errors
   5. Keyboard shortcuts
-  6. Where dbdesk keeps its files
+  6. Where DbRover keeps its files
   7. Troubleshooting (TLS, keychain prompts, logs)
 - **Screenshots generated, not hand-taken.** egui_kittest's snapshot feature renders the
   app headlessly (wgpu), against a fixture database. Running one test regenerates every image,
@@ -1181,7 +1181,7 @@ by one ignored test (`screenshots::regenerate_screenshots`), and CI builds the b
 
 **Exit:** the site is live, linked from the README, and redeploys on every merge to `main`.
 
-**Demo note:** built. <https://dbdesk.org> (first published at `navasvarela.github.io/dbdesk`) is
+**Demo note:** built. <https://dbdesk.org> (first published at `navasvarela.github.io/dbrover`) is
 one hand-written page in `site/` (HTML and CSS, the app's palette and bundled fonts, dark first
 with a light theme), with the manual under `/manual/`. `site/build.sh` assembles both, copying the logo, fonts and database
 logos from `assets/` rather than keeping second copies. `.github/workflows/pages.yml` builds it
@@ -1192,7 +1192,7 @@ page, which is empty until the first release is published.
 
 ### D5 — A native look on macOS
 
-dbdesk keeps egui for everything inside the window, but on macOS its chrome becomes the
+DbRover keeps egui for everything inside the window, but on macOS its chrome becomes the
 system's. The design, decisions and risks are in [A native look on macOS](macos-look.md). In
 layers, one PR each:
 
@@ -1210,21 +1210,21 @@ layers, one PR each:
   colour for selection and focus, following changes.
 - **D5e — The manual:** the menu bar and the macOS look in the book.
 
-**Exit:** on a Mac, dbdesk's menus are in the menu bar, ⌘, opens Settings, ⌘Q still asks before
+**Exit:** on a Mac, DbRover's menus are in the menu bar, ⌘, opens Settings, ⌘Q still asks before
 rolling back an open transaction, the window has no separate title bar, and text is in the
 system font with the user's accent colour; Windows and Linux look and behave as before.
 
 **Demo note:** built; the native parts are still to be tried by eye on a Mac (see
-[As built](macos-look.md#as-built)). What to try: on a Mac, the menu bar at the top of the screen has **dbdesk** (About,
+[As built](macos-look.md#as-built)). What to try: on a Mac, the menu bar at the top of the screen has **DbRover** (About,
 Check for updates…, Settings… ⌘,, Services, Hide, Quit ⌘Q), File, Edit, View, Code, Window and
-Help (**dbdesk manual**); there is no egui menu in the window. Open a console, type, and
+Help (**DbRover manual**); there is no egui menu in the window. Open a console, type, and
 **Edit → Undo** should undo in the editor; select cells and **Edit → Copy** copies them as TSV. In
-manual commit mode, run an `INSERT` and press ⌘Q: dbdesk should ask before rolling back. **File → Save**
+manual commit mode, run an `INSERT` and press ⌘Q: DbRover should ask before rolling back. **File → Save**
 is greyed out until a console's tab is selected, and rebinding `file.save` in `keymap.toml`
 changes the menu's key after **Reload**. The window has no title bar of its own: the traffic
-lights sit on dbdesk's top strip, which moves the window when dragged and zooms it when
+lights sit on DbRover's top strip, which moves the window when dragged and zooms it when
 double-clicked. Text is SF Pro and SF Mono, and selections are tinted with the system accent
-colour; switch the accent in System Settings and dbdesk follows when you return. On Linux and
+colour; switch the accent in System Settings and DbRover follows when you return. On Linux and
 Windows nothing changes but **Settings…** showing its new key, Ctrl+Comma. Covered by tests of the command list
 and both menu layouts, kittest tests of the egui menu (every item, shortcut, enabled state and
 tooltip, and that items run their commands) and of the title strip (title, room for the window
@@ -1232,7 +1232,7 @@ buttons, none in full screen), tests of Edit commands' input events and of short
 equivalent conversion, font loading and its fallback, and accent selections against WCAG AA for
 each of macOS's accents.
 
-### D6 — A front page that shows what dbdesk does
+### D6 — A front page that shows what DbRover does
 
 D4's page was written before the first release and last changed with ClickHouse (#61). It tells
 visitors to build from source although releases are out and update themselves, misses most of
@@ -1303,7 +1303,7 @@ Risks:
 major feature with a picture or clip in both themes, and reads well on a phone.
 
 **Demo note:** built. <https://dbdesk.org> opens on "Seven databases, one native app" and a
-13-second clip of dbdesk opening a SQLite data source, completing `SELECT * FROM orders`,
+13-second clip of DbRover opening a SQLite data source, completing `SELECT * FROM orders`,
 running it and having the database filter and sort the rows, in the visitor's theme. The
 download button names the platform and version (**Download for macOS · v0.11.0**), with the
 AppImage and `.deb` beside it; three differentiators follow, then seven rows: writing SQL, the

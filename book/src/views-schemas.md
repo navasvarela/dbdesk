@@ -21,7 +21,7 @@ kept in the query history.
 - **SQLite** has no schema helpers: its schemas are database files attached to the connection,
   not something `CREATE SCHEMA` makes. Its views can't be renamed either: SQLite has no way to.
 - **ClickHouse**'s materialized views are a different thing (they copy each insert into a
-  table), so dbdesk doesn't create, edit or drop them; **Copy DDL** copies theirs.
+  table), so DbRover doesn't create, edit or drop them; **Copy DDL** copies theirs.
 - As with tables, on PostgreSQL, SQL Server and DuckDB the helpers appear only inside the
   database the data source connects to.
 
@@ -56,10 +56,10 @@ editor. Change it, and the SQL shows how the database will save it:
   again, in one transaction, and their indexes go with them. The dialog says so before you run
   it, and a view that other views read can't be dropped this way.
 
-What dbdesk takes out of the definition is the query alone: options written before `AS`, such
+What DbRover takes out of the definition is the query alone: options written before `AS`, such
 as SQL Server's `WITH SCHEMABINDING`, SQLite's column list, or MySQL's `DEFINER` and `SQL
 SECURITY`, aren't kept. MySQL shows a view's query as it stored it, with every name qualified
-and quoted. If dbdesk can't find the query, the whole definition is in the editor, for you to
+and quoted. If DbRover can't find the query, the whole definition is in the editor, for you to
 cut down.
 
 ## Refresh a materialized view

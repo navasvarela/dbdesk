@@ -1,14 +1,14 @@
 # Look and feel
 
-dbdesk's interface takes its layout and density from current desktop database tools
+DbRover's interface takes its layout and density from current desktop database tools
 (TablePlus, Beekeeper Studio, DataGrip's new UI), and its colours from the brand palette
-([brand.md](../brand.md)): a calm base, a few accents used sparingly. The code is in `crates/dbdesk-app/src/theme.rs`, `fonts.rs`, `icons.rs`, `widgets.rs` and `welcome.rs`.
+([brand.md](../brand.md)): a calm base, a few accents used sparingly. The code is in `crates/dbrover-app/src/theme.rs`, `fonts.rs`, `icons.rs`, `widgets.rs` and `welcome.rs`.
 
 ## Themes
 
-There is a light and a dark theme. dbdesk follows the OS setting until the user picks one in
+There is a light and a dark theme. DbRover follows the OS setting until the user picks one in
 **View → Theme** (Match system, Light, Dark). egui stores that choice with the rest of its
-state in `app.ron`, so there is no setting of dbdesk's own to keep in sync.
+state in `app.ron`, so there is no setting of DbRover's own to keep in sync.
 
 Both themes are built by one function from a `Palette`, a struct of colours by role:
 
@@ -107,7 +107,7 @@ holds them to WCAG's 3:1 for graphics. Console tabs keep the SQL-file icon in th
 colour, because egui_dock's tab titles are text and can't hold an image.
 
 We chose SVG files over an icon font (a Nerd Font, say): Simple Icons covers the databases
-dbdesk plans to support (MySQL, MariaDB, ClickHouse, DuckDB) under one licence, while Nerd
+DbRover plans to support (MySQL, MariaDB, ClickHouse, DuckDB) under one licence, while Nerd
 Fonts mix icon sets under several licences, cover databases unevenly, and would mean embedding
 a large font for a handful of glyphs. Oracle is the exception: it had its logo removed from
 Simple Icons, so an Oracle driver will need another source.
@@ -127,7 +127,7 @@ the data source's explorer row, its console tabs (fill and outline) and a thin b
 top of each of its consoles, so a console on production is hard to mistake for one on a local
 copy.
 
-It is a fixed set of names (`dbdesk_core::SourceColor`) rather than free RGB: each name has a
+It is a fixed set of names (`dbrover_core::SourceColor`) rather than free RGB: each name has a
 light-theme and a dark-theme shade (`Palette::source`), so a colour picked in one theme still
 works in the other. The field is optional and serde-defaulted, so files written before it
 existed still load, and it is only written when set.
@@ -153,5 +153,5 @@ comments weak and italic.
 Pictures of the UI, including every image in the user manual (`book/`), are rendered, not
 taken by hand: `screenshots::regenerate_screenshots` (ignored by default) drives the app
 headlessly with egui_kittest's wgpu renderer against a SQLite fixture, and a PostgreSQL data
-source when `DBDESK_TEST_POSTGRES_URL` is set. See
+source when `DBROVER_TEST_POSTGRES_URL` is set. See
 [testing.md](../testing.md#screenshots).

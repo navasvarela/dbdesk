@@ -3,8 +3,8 @@
 # mode it had in the checkout.
 FROM alpine:3.22
 RUN apk add --no-cache openssh-server \
-    && adduser -D dbdesk \
-    && echo 'dbdesk:dbdesk' | chpasswd
+    && adduser -D dbrover \
+    && echo 'dbrover:dbrover' | chpasswd
 COPY sshd_config /etc/ssh/sshd_config
 COPY ssh_host_ed25519_key ssh_host_ed25519_key.pub /etc/ssh/
 COPY authorized_keys /etc/ssh/authorized_keys

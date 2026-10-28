@@ -1,10 +1,10 @@
 # Persistence
 
 All state lives in the platform config directory from the `directories` crate
-(`~/Library/Application Support/dbdesk` on macOS).
+(`~/Library/Application Support/dbrover` on macOS).
 
 ```
-dbdesk/
+dbrover/
 ├── data_sources.toml     # data source configs, no secrets
 ├── settings.toml         # app settings: SQL formatting (more later: page size, fonts)
 ├── keymap.toml           # M5, key bindings (see features/keymap.md)
@@ -16,12 +16,12 @@ dbdesk/
 │   └── <data-source-id>/<console-name>.sql
 ├── history.sqlite        # M4, query history
 ├── trusted_commands.toml # H2, command actions trusted to run (data folder, see below)
-└── logs/dbdesk.<date>.log # daily rolling file log, last 7 kept
+└── logs/dbrover.<date>.log # daily rolling file log, last 7 kept
 ```
 
 `logs/` and `trusted_commands.toml` are in the data directory: the same folder as the rest on
-macOS, `~/.local/share/dbdesk` on Linux (the config is in `~/.config/dbdesk`), and
-`%APPDATA%\dbdesk\data` on Windows (the config is in `%APPDATA%\dbdesk\config`).
+macOS, `~/.local/share/dbrover` on Linux (the config is in `~/.config/dbrover`), and
+`%APPDATA%\dbrover\data` on Windows (the config is in `%APPDATA%\dbrover\config`).
 `trusted_commands.toml` lists each command action the user chose **Run** for, by its id,
 command as written and stdin, written atomically by the engine. It is kept apart from
 `actions.toml` so a config folder copied from elsewhere brings its actions but no trust: each
@@ -43,8 +43,8 @@ command asks before its first run on every machine. A file that can't be read tr
 - `host`, `port`, `database`, `user`, `path` and `ca_file` may hold `${NAME}` placeholders,
   resolved when connecting; a port with one is written as a string (W1).
 - `project` and `mcp_login` are optional too. `mcp_login = { user = "…" }` is the database user
-  `dbdesk mcp` signs in as instead of the data source's own (see [MCP server](mcp-server.md)).
-- Comments and unknown fields are **not** preserved when dbdesk rewrites the file (it is written
+  `dbrover mcp` signs in as instead of the data source's own (see [MCP server](mcp-server.md)).
+- Comments and unknown fields are **not** preserved when DbRover rewrites the file (it is written
   with `serde` + `toml`), and the file header says so. Switching to `toml_edit` to edit the
   document in place is a follow-up if hand-editing becomes common.
 
@@ -76,7 +76,7 @@ read_only = true
 
 - **File › Export data sources…** writes `[[data_source]]` tables in `data_sources.toml`'s
   format, plus `format_version = 1` and `[[project]]` tables (id, name, slug, `mcp_enabled`,
-  MCP overrides). Built by `dbdesk_store::write_export` from types that list every field an
+  MCP overrides). Built by `dbrover_store::write_export` from types that list every field an
   export may carry; a field added to `DataSource` or `Project` fails to compile there until
   someone decides whether it travels. Never a password, token or command.
 - Paths beside the exported file are written relative to it, paths under the home folder as
@@ -87,13 +87,13 @@ read_only = true
 
 ## Secrets
 
-- Passwords go to the OS keychain via `keyring`: service `dbdesk`, account `<data-source-id>`.
+- Passwords go to the OS keychain via `keyring`: service `dbrover`, account `<data-source-id>`.
   The engine only reads the keychain for drivers that use passwords (not SQLite), so opening a
   SQLite file never triggers a keychain prompt.
 - Behind the `SecretStore` trait, so tests use an in-memory store. A real-keychain round trip is
-  an opt-in test: `cargo test -p dbdesk-store -- --ignored`.
+  an opt-in test: `cargo test -p dbrover-store -- --ignored`.
 - A data source's MCP login has an entry of its own, account `<data-source-id>/mcp`, which only
-  `dbdesk mcp` reads.
+  `dbrover mcp` reads.
 - A data source's SSH login has an entry of its own too, account `<data-source-id>/ssh`: the SSH
   password, or an encrypted key's passphrase. A key file's entry is only read once the key turns
   out to be encrypted, so an unencrypted key never triggers a keychain prompt; the agent login
@@ -104,8 +104,8 @@ read_only = true
   logged, since a leftover entry is harmless.
 - A data source that signs in with a password and has none saved (or whose keychain entry
   can't be read: locked, declined, unavailable) asks for it when it connects, with **Save to
-  keychain** ticked. Whatever is typed is also kept in memory until dbdesk quits, so it still
-  connects when saving fails or is unticked. Never written to disk. `dbdesk mcp` can't ask, so
+  keychain** ticked. Whatever is typed is also kept in memory until DbRover quits, so it still
+  connects when saving fails or is unticked. Never written to disk. `dbrover mcp` can't ask, so
   it connects without one. Saving the data source with a new password forgets the remembered
   one.
 - Later: support `~/.pgpass` and `PG*` environment variables for Postgres, which is what other
@@ -115,7 +115,7 @@ read_only = true
 
 - `keymap.toml`, only if the user writes one (or creates it from View → Keymap…, which never
   replaces an existing file). Format and action ids: [Keymap](features/keymap.md).
-- Read by the engine at start-up and on Reload; dbdesk never writes to an existing file.
+- Read by the engine at start-up and on Reload; DbRover never writes to an existing file.
 
 ## Settings
 
@@ -146,10 +146,10 @@ An id in `lint.disabled` that names no rule is listed in the Settings window, an
 ## Query consoles
 
 - One plain `.sql` file per console: `consoles/<data-source-id>/<name>.sql`, readable and
-  editable with any editor (while dbdesk is closed). Names are `console`, `console_2`, …; any
+  editable with any editor (while DbRover is closed). Names are `console`, `console_2`, …; any
   other `.sql` file put in the folder shows up as a saved console
   named after the file.
-- Owned by the engine (`ConsoleFiles` in `dbdesk-store`): read once at start-up, right after the
+- Owned by the engine (`ConsoleFiles` in `dbrover-store`): read once at start-up, right after the
   data sources, and written atomically (temporary file, then rename) on `SaveConsole`. The UI
   sends a save a second after typing stops, and for every unsaved console on quit; the engine
   handles queued commands before it stops, so the last edit is written.
@@ -162,7 +162,7 @@ An id in `lint.disabled` that names no rule is listed in the Settings window, an
 - A console can show a `.sql` file from anywhere instead (**File › Open…**, or **Save as…** on a
   console, whose file in `consoles/` is then removed once the new file is written). Read whole
   as UTF-8 (another encoding is refused, not mangled) and written atomically by the engine
-  (`read_sql_file` and `write_sql_file` in `dbdesk-store`) on `OpenSqlFile` and `SaveSqlFile`,
+  (`read_sql_file` and `write_sql_file` in `dbrover-store`) on `OpenSqlFile` and `SaveSqlFile`,
   only when the user saves.
 - `CheckSqlFiles`, every two seconds and when the window regains focus, compares each open
   file's modification time with the one last read or written, and sends what a changed file
@@ -186,7 +186,7 @@ CREATE TABLE history (
     duration_ms   INTEGER,
     rows          INTEGER,
     outcome       TEXT NOT NULL,      -- ok | error | cancelled
-    source        TEXT NOT NULL DEFAULT 'app',  -- app | mcp, what dbdesk before W4 reads
+    source        TEXT NOT NULL DEFAULT 'app',  -- app | mcp, what dbrover before W4 reads
     origin        TEXT,               -- console | grid | object | import | export | mcp
     detail        TEXT,               -- the MCP client's name, or the imported file
     changes       TEXT                -- a grid edit's row change, JSON
@@ -196,8 +196,8 @@ CREATE INDEX history_by_time   ON history (executed_at DESC);
 CREATE INDEX history_by_origin ON history (coalesce(origin, source), executed_at DESC);
 ```
 
-- A row without `origin` (written before W4, or by an older dbdesk sharing the file) reads as
-  `coalesce(origin, source)`: `app` is "dbdesk, before it recorded where".
+- A row without `origin` (written before W4, or by an older DbRover sharing the file) reads as
+  `coalesce(origin, source)`: `app` is "DbRover, before it recorded where".
 - `executed_at` always has three fraction digits (`2026-10-22T09:15:02.500Z`) so the text sorts
   in time order: with a variable number of digits, `…:02Z` would sort after `…:02.5Z`.
 - One row per statement a console runs, written when it finishes; one per statement the grid,
@@ -219,7 +219,7 @@ CREATE INDEX history_by_origin ON history (coalesce(origin, source), executed_at
   disabled for the session and the History window shows why.
 - Kept as long as `[history]` in `settings.toml` says (`max_age_days`, `max_per_data_source`;
   no limit by default). The app prunes at start-up and when the setting is saved, 2,000 rows
-  per transaction so another process's write never waits long; `dbdesk mcp` doesn't prune.
+  per transaction so another process's write never waits long; `dbrover mcp` doesn't prune.
 
 ## Layout
 

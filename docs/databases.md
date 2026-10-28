@@ -3,7 +3,7 @@
 Status: **DB0 to DB3 built**; DB4 onwards planned. Order agreed on 2026-10-23; ClickHouse added
 after DuckDB the same day.
 
-dbdesk speaks PostgreSQL and SQLite. This plan adds the next engines in order of how many
+DbRover speaks PostgreSQL and SQLite. This plan adds the next engines in order of how many
 people would use them, and starts with the groundwork that makes each one cheaper than the
 last.
 
@@ -33,22 +33,22 @@ The order, with the reason for each place:
    the standard `information_schema`, close to what the PostgreSQL driver already reads.
 2. **SQL Server.** Third or fourth in both measures. Its client is pure Rust, so the downloads
    stay self-contained; its catalog (`sys.*` views) and its SQL dialect are the most different
-   from what dbdesk knows.
+   from what DbRover knows.
 3. **DuckDB.** Small in both rankings but much loved for analytics, and it can query CSV and
    Parquet files directly. It is a file like SQLite, so it fits the file picker; the price is a
-   larger download, because its engine is compiled into dbdesk.
+   larger download, because its engine is compiled into DbRover.
 4. **ClickHouse.** Ahead of DuckDB on DB-Engines, behind it among developers, and the
    column store teams run for analytics on large event and log data. It comes after DuckDB
    because fewer developers use it and, being a server, it is the larger job: a new protocol
    (HTTP), no transactions, and a different idea of updating rows.
-5. **Oracle, later.** First on DB-Engines, but far less used by the developers dbdesk is for,
+5. **Oracle, later.** First on DB-Engines, but far less used by the developers DbRover is for,
    and its Rust client needs Oracle's own client library installed separately, which breaks the
    "download and run" install the [release track](releasing.md) just built. Planned, not
    scheduled.
 
 Left out on purpose:
 
-- **Redis, MongoDB and other non-SQL stores.** Popular, but dbdesk is a SQL console with a grid
+- **Redis, MongoDB and other non-SQL stores.** Popular, but DbRover is a SQL console with a grid
   of results, and their data doesn't fit that shape.
 - **PostgreSQL-compatible databases** (CockroachDB, Neon, Supabase, TimescaleDB, Amazon
   Aurora). They already connect through the PostgreSQL driver. Trying each and fixing what its
@@ -63,24 +63,24 @@ The step-by-step version, for contributors, is [Adding a database](adding-a-data
 From the code as it stands (see [ADR 0002](adr/0002-native-drivers-behind-a-trait.md)), every
 engine is:
 
-- **A driver crate** implementing `Connection` from `dbdesk-core`:
+- **A driver crate** implementing `Connection` from `dbrover-core`:
   - `execute` with a lazily read cursor (paging);
   - `children` and `definition` for the explorer;
   - `describe_table` for grid editing;
   - `validate` for the linter;
   - `transaction_status` for manual commit mode;
   - `cancel_handle` for ⌘.
-- **A `ConnectionConfig` variant** in `dbdesk-core`, with its `DriverKind`, and its form in the
+- **A `ConnectionConfig` variant** in `dbrover-core`, with its `DriverKind`, and its form in the
   data source dialog (`data_source_form/`). Since DB0, a server engine's config holds a shared
   `ServerConfig` and its form a shared `ServerFields` section (host, port, database, user,
   password, TLS), so the engine adds only its own extras.
-- **A SQL dialect** in `dbdesk-sql`. It covers:
+- **A SQL dialect** in `dbrover-sql`. It covers:
   - the lexer's quoting and comment rules, and the statement splitter;
   - the `sqlparser` dialect the linter and completion parse with;
   - the built-in function names for completion;
   - the `EXPLAIN` prefix;
   - the transaction keywords.
-- **The conformance suite** (`dbdesk-core/src/conformance.rs`) passing against a real server in
+- **The conformance suite** (`dbrover-core/src/conformance.rs`) passing against a real server in
   CI.
 - **App touches:**
   - the logo (`assets/icons/databases`) and its theme shades;
@@ -88,7 +88,7 @@ engine is:
   - the website's list of databases.
 
 `Dialect`, `DriverKind` or `ConnectionConfig` is matched in about 30 source files across
-`dbdesk-sql`, `dbdesk-engine`, `dbdesk-store` and `dbdesk-app`, plus their tests. The compiler
+`dbrover-sql`, `dbrover-engine`, `dbrover-store` and `dbrover-app`, plus their tests. The compiler
 finds every one, but each new engine repeats the same small edits in all of them. DB0 gathers
 those facts in one place first.
 
@@ -96,7 +96,7 @@ those facts in one place first.
 
 ### DB0 — Groundwork
 
-Changes that every later engine needs, made once against the two engines dbdesk already has, so
+Changes that every later engine needs, made once against the two engines DbRover already has, so
 each can be tested with no new driver involved:
 
 - **One home for dialect facts.** Each `match dialect` that only looks a fact up (quote
@@ -111,7 +111,7 @@ each can be tested with no new driver involved:
   by every server engine, with each engine adding only its own extras. The PostgreSQL form
   becomes its first user.
 - **Conformance per engine in CI.** `docker-compose.yml` and the CI job grow one service per
-  engine (each test still skips when its `DBDESK_TEST_*_URL` is unset), so adding an engine's
+  engine (each test still skips when its `DBROVER_TEST_*_URL` is unset), so adding an engine's
   container is the only CI change.
 
 **Exit:** the PostgreSQL driver connects to a server that requires TLS, adding a dialect touches
@@ -157,7 +157,7 @@ a row in the grid, and the conformance suite passes on both in CI.
 - **Dialect:**
   - `[bracketed]` identifiers and `N'…'` strings;
   - `GO` as a client-side batch separator, like `DELIMITER` for MySQL;
-  - `TOP` instead of `LIMIT` in what dbdesk itself generates.
+  - `TOP` instead of `LIMIT` in what DbRover itself generates.
 - **Explain:** `SET SHOWPLAN_XML ON` runs in its own batch and returns the plan as XML. The
   cell viewer shows it pretty-printed until a plan view exists.
 - **Validate:** `SET NOEXEC ON` compiles without running. SQL Server only resolves the names
@@ -174,7 +174,7 @@ a row in the grid, and the conformance suite passes on both in CI.
 - **Cancel** is the attention message, sent by the statement's own task, since `tiberius`
   sends one. Its 0.13.0 release stopped reading at the end of the cancelled reply, though, and
   SQL Server 2022 acknowledges in a message of its own, which left the client a reply behind
-  (each later query saw the previous one's result). dbdesk pins `tiberius` to the commit of
+  (each later query saw the previous one's result). DbRover pins `tiberius` to the commit of
   [tiberius-rs/tiberius#460](https://github.com/tiberius-rs/tiberius/pull/460), which fixes
   it, until a release has it. `KILL` was not an option: it ends the whole session, and the
   engine also cancels to discard unread rows.
@@ -183,7 +183,7 @@ a row in the grid, and the conformance suite passes on both in CI.
   tables and columns alike, and sees the session's temporary tables.
 - **Definitions** come from each database's `sys.sql_modules`, which holds what
   `OBJECT_DEFINITION` returns but can be read from another database.
-- **`TOP`**: dbdesk generates no row limit to translate. **Open data** runs `SELECT *` and
+- **`TOP`**: DbRover generates no row limit to translate. **Open data** runs `SELECT *` and
   pages through the result.
 - **TLS:** `tiberius`'s rustls support compiles in aws-lc-rs next to ring, so the network
   drivers install ring as rustls's process-wide provider before connecting.
@@ -193,7 +193,7 @@ a row in the grid, and the conformance suite passes on both in CI.
 ### DB3 — DuckDB
 
 - **Client: the `duckdb` crate**, run on `spawn_blocking` like SQLite. The `bundled` feature
-  compiles DuckDB into dbdesk: no install step for users, but a longer build and a larger
+  compiles DuckDB into DbRover: no install step for users, but a longer build and a larger
   binary. Measure both before committing (see the decisions below).
 - **Data sources:** a `.duckdb` file through the file picker (with **New…**, as for SQLite),
   or an in-memory database for querying CSV, Parquet and JSON files.
@@ -219,7 +219,7 @@ release packages stay within the size budget agreed below.
 - **Prebuilt in CI and releases** (since 2026-10-25). Compiling DuckDB took 10–14 minutes per
   OS on CI's runners, twice per macOS release. CI and the release workflow now link DuckDB's own
   libraries from its GitHub release instead, checksum-pinned: static on macOS and Linux, the
-  DLL beside `dbdesk.exe` on Windows. A plain `cargo build` still compiles it. The downloads
+  DLL beside `dbrover.exe` on Windows. A plain `cargo build` still compiles it. The downloads
   grow by 2–6 MB more, mostly ICU and autocomplete, which DuckDB's libraries carry. See
   [DuckDB's prebuilt libraries](duckdb-prebuilt.md).
 - **Results** are read as DuckDB streams them, in Arrow chunks, and formatted by Arrow, which
@@ -282,7 +282,7 @@ conformance suite (without transactions) passes in CI.
 
 **As built**, where it differs from the plan above or settles what it left open:
 
-- **TLS through `dbdesk-tls`**, not the crate's `rustls-tls-*` features, which trust only the
+- **TLS through `dbrover-tls`**, not the crate's `rustls-tls-*` features, which trust only the
   public authorities and so can't do `verify-full` with a CA file. The rustls configuration the
   PostgreSQL driver built moved into a crate of its own, and the ClickHouse driver hands it to
   `hyper-rustls`. `prefer` is accepted in a saved file and means plain HTTP, as `disable` does.
@@ -316,17 +316,17 @@ conformance suite (without transactions) passes in CI.
   with its own `collect` and results line by line through `AsyncBufRead`, which is sound.
 - **Size:** measured on an Apple-silicon Mac, the stripped release binary went from 68.0 MB to
   69.1 MB, and from 26.1 MB to 26.5 MB with `gzip -9`: the downloads grow by about half a
-  megabyte, the client being little more than hyper, which dbdesk already had.
+  megabyte, the client being little more than hyper, which DbRover already had.
 
 ### DB5 — Oracle (planned, not scheduled)
 
 Waits until after R2 (signed installs).
 
 - **Client:** the `oracle` crate needs Oracle Instant Client on the user's machine. It loads the
-  library at runtime, so dbdesk can still ship without it: an Oracle data source checks for it
-  and explains how to install it. Whether dbdesk may bundle Instant Client depends on Oracle's
+  library at runtime, so DbRover can still ship without it: an Oracle data source checks for it
+  and explains how to install it. Whether DbRover may bundle Instant Client depends on Oracle's
   redistribution terms, to be read then.
-- **Logo:** Oracle asked Simple Icons to remove its logo, so dbdesk uses a neutral database
+- **Logo:** Oracle asked Simple Icons to remove its logo, so DbRover uses a neutral database
   glyph unless Oracle's brand rules allow otherwise.
 - **CI:** the Oracle Database Free container is several gigabytes, so its tests may run
   nightly rather than on every pull request.

@@ -76,7 +76,7 @@ each by running the query again, wrapped in one that sorts and filters it:
 ```sql
 SELECT * FROM (
 SELECT * FROM orders
-) AS dbdesk_rows
+) AS dbrover_rows
 WHERE … any value contains the text …
 ORDER BY 3 DESC
 ```
@@ -120,7 +120,7 @@ Right-click a table in the explorer and choose **Import CSV…**, then pick the 
 1. **The file.** Say whether its **First line is a header** (on by default) and which
    **Separator** it uses: comma, semicolon or tab. **Choose file…** picks another.
 2. **Columns.** Each of the table's columns takes its values from a column of the file, or
-   *(default)* to leave it to the database. dbdesk matches them by name when the file has a
+   *(default)* to leave it to the database. DbRover matches them by name when the file has a
    header (ignoring case), or by position when it doesn't; change any of them in its menu.
 3. **The first rows** of the file show as they would go into the table, with `NULL` for empty
    values and `DEFAULT` for columns left to their default.

@@ -1,0 +1,26 @@
+[package]
+name = "dbrover-driver-postgres"
+description = "PostgreSQL driver for DbRover, built on tokio-postgres."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+dbrover-core.workspace = true
+dbrover-tls.workspace = true
+futures-util.workspace = true
+tokio.workspace = true
+tokio-postgres.workspace = true
+tokio-postgres-rustls.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+dbrover-core = { workspace = true, features = ["conformance"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -1,9 +1,9 @@
 # Connecting an AI assistant
 
-dbdesk can serve a [project](explorer.md#projects)'s databases to an AI assistant or coding
+DbRover can serve a [project](explorer.md#projects)'s databases to an AI assistant or coding
 agent through the [Model Context Protocol](https://modelcontextprotocol.io) (MCP). The
 assistant can then list the project's data sources, browse their tables, describe them and run
-queries, using the data sources, drivers and saved passwords dbdesk already has. Where you allow
+queries, using the data sources, drivers and saved passwords DbRover already has. Where you allow
 it, it can also change data or the schema.
 
 By default an assistant can **only read**. Every read runs in the database's own read-only mode
@@ -33,14 +33,14 @@ Right-click the project's header again and choose **Copy MCP configuration**.
 
 ![A project's menu](images/project-menu.png)
 
-dbdesk copies the entry an MCP client needs, with this machine's path to dbdesk filled in. On
+DbRover copies the entry an MCP client needs, with this machine's path to DbRover filled in. On
 macOS that is the program inside the app bundle, and on Linux it is the AppImage itself:
 
 ```json
 {
   "mcpServers": {
-    "dbdesk-analytics": {
-      "command": "/Applications/dbdesk.app/Contents/MacOS/dbdesk",
+    "dbrover-analytics": {
+      "command": "/Applications/DbRover.app/Contents/MacOS/dbrover",
       "args": ["mcp", "--project", "analytics"]
     }
   }
@@ -51,22 +51,22 @@ macOS that is the program inside the app bundle, and on Linux it is the AppImage
 
 Paste the entry into the client's MCP settings:
 - **Claude Desktop:** Settings › Developer › Edit Config opens `claude_desktop_config.json`.
-  Add the `dbdesk-…` entry inside its `mcpServers`, then restart Claude Desktop.
+  Add the `dbrover-…` entry inside its `mcpServers`, then restart Claude Desktop.
 - **Cursor:** `~/.cursor/mcp.json`, or `.cursor/mcp.json` in a project folder.
 - **Claude Code:** a project's `.mcp.json` takes the same JSON. You can also add the server from
   the command line, with the command and arguments from the copied entry:
 
   ```bash
-  claude mcp add dbdesk-analytics -- /Applications/dbdesk.app/Contents/MacOS/dbdesk mcp --project analytics
+  claude mcp add dbrover-analytics -- /Applications/DbRover.app/Contents/MacOS/dbrover mcp --project analytics
   ```
 
 One entry serves one project. For several projects, add one entry per project.
 
-The client starts dbdesk itself, as `dbdesk mcp --project <slug>`, and talks to it over standard
-input and output. The dbdesk window doesn't need to be open.
+The client starts DbRover itself, as `dbrover mcp --project <slug>`, and talks to it over standard
+input and output. The DbRover window doesn't need to be open.
 
-On macOS, the first time the server reads a saved password, the system asks whether `dbdesk`
-may use it, as it does for the app; choose **Always Allow**. Until dbdesk's builds are signed,
+On macOS, the first time the server reads a saved password, the system asks whether `dbrover`
+may use it, as it does for the app; choose **Always Allow**. Until DbRover's builds are signed,
 it asks again after each update.
 
 ### 4. Try it
@@ -103,7 +103,7 @@ in **View › Settings… › MCP**; they apply to every project that doesn't ov
 | **Read** | Browsing the catalog, `SELECT`, `EXPLAIN`, `SHOW` | on |
 | **Write** | `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `TRUNCATE` | off |
 | **Schema** | `CREATE`, `ALTER`, `DROP`, `COMMENT ON` and other DDL | off |
-| **Admin** | Grants, roles and users, databases, server settings, `COPY` to or from files, killing sessions, procedures (`CALL`), and anything dbdesk can't parse | off |
+| **Admin** | Grants, roles and users, databases, server settings, `COPY` to or from files, killing sessions, procedures (`CALL`), and anything DbRover can't parse | off |
 | **Row limit** | The most rows one call returns; the reply says `"truncated": true` when there were more | 500 |
 | **Statement timeout** | How long one statement may run before it is cancelled | 30 s |
 | **Schemas** | All, or only the schemas listed: the catalog tools show only those, and statements may only name those | all |
@@ -120,36 +120,36 @@ most clients have a button for it, or restart the client.
 
 ### How the permissions are enforced
 
-dbdesk checks each statement in up to three ways:
+DbRover checks each statement in up to three ways:
 
-1. **dbdesk reads the statement first.** It parses it and works out what it does, looking
+1. **DbRover reads the statement first.** It parses it and works out what it does, looking
    inside `WITH` clauses, `SELECT … INTO`, `EXPLAIN ANALYZE` and the rest. It also notices
    well-known functions that end sessions, change settings or read files, such as
    `pg_terminate_backend` and `set_config`. A statement that needs a permission the project
-   lacks is refused before it reaches the database. So is one dbdesk can't parse, unless the
+   lacks is refused before it reaches the database. So is one DbRover can't parse, unless the
    project allows **Admin**, since what it would do is unknown.
 2. **When only reading is allowed, the database refuses writes on its own.** Every read runs
    in a read-only transaction that is then rolled back: `BEGIN READ ONLY` on PostgreSQL,
    `START TRANSACTION READ ONLY` on MySQL and MariaDB. SQLite files are opened read-only. This
-   stops a `SELECT` that calls a function which writes, because dbdesk can't see inside the
+   stops a `SELECT` that calls a function which writes, because DbRover can't see inside the
    function.
 3. **The database's own grants,** through an [MCP login](#the-mcp-login). This is the only
    layer that is airtight beyond reading.
 
-Beyond reading, the first layer is all dbdesk has of its own, and it can be fooled: a function
+Beyond reading, the first layer is all DbRover has of its own, and it can be fooled: a function
 or a procedure can do anything, whatever the statement that calls it looks like. That is why
 Project settings warns when a project allows changes and one of its data sources has no MCP
 login.
 
-SQL Server has no read-only transaction, so dbdesk doesn't serve SQL Server data sources to
+SQL Server has no read-only transaction, so DbRover doesn't serve SQL Server data sources to
 MCP clients yet. The server's log says so when it starts.
 
 ## The MCP login
 
-A data source can have a second login, used only by `dbdesk mcp`. Create a database user with
+A data source can have a second login, used only by `dbrover mcp`. Create a database user with
 exactly the grants an assistant should have, then enter it in the data source's dialog
 (**Edit…**) as **MCP login** and **MCP password**. Every MCP call then signs in as that user,
-and the database enforces its grants, whatever dbdesk's own checks miss.
+and the database enforces its grants, whatever DbRover's own checks miss.
 
 For example, a PostgreSQL role for a project that allows **Write**, with nothing beyond what
 that needs:
@@ -165,14 +165,14 @@ The MCP password is kept in the keychain under its own entry, separate from the 
 password. If it is missing, the server refuses to connect; it never falls back to the data
 source's own login. Clear the **MCP login** field to remove it, together with its password.
 
-SQLite files have no logins, so for them dbdesk's own checks are all there is.
+SQLite files have no logins, so for them DbRover's own checks are all there is.
 
-## What dbdesk records
+## What DbRover records
 
 - **The log.** Every call is a line with the project, data source, tool and the kind of
   statement. Refusals are logged with their reason, and with `missing_permission` when the
-  project lacked one. The server logs to its own daily files, `dbdesk-mcp.YYYY-MM-DD.log`,
-  next to the app's (see [Where dbdesk keeps its files](files.md)). It also logs to standard
+  project lacked one. The server logs to its own daily files, `dbrover-mcp.YYYY-MM-DD.log`,
+  next to the app's (see [Where DbRover keeps its files](files.md)). It also logs to standard
   error, which most clients keep in their own logs.
 - **The query history.** Every statement the server sends to a database is in the data
   source's history, marked **MCP** with the assistant's name, beside your own. The History
@@ -180,7 +180,7 @@ SQLite files have no logins, so for them dbdesk's own checks are all there is.
 
 ## When it doesn't work
 
-The client's log for the server shows what dbdesk said when it stopped:
+The client's log for the server shows what DbRover said when it stopped:
 
 - **"there is no project with the slug …"**: the `--project` doesn't match any project's
   slug. The message lists the slugs there are. Copy the configuration again.

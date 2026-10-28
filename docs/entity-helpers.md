@@ -42,7 +42,7 @@ object. A failure shows the database's error in the dialog, which stays open to 
 
 Everything the helpers have in common, built once.
 
-- **Object specs and a DDL builder in `dbdesk-sql`.** Plain data types describe what the user
+- **Object specs and a DDL builder in `dbrover-sql`.** Plain data types describe what the user
   asked for: `TableSpec` (columns, primary key, unique and foreign keys, checks) and
   `IndexSpec` in E1, `ViewSpec` and `SchemaSpec` in E2, `RoleSpec` in E3. Pure functions turn
   a spec into statements for a dialect, so the builder is tested without a database.
@@ -66,7 +66,7 @@ Everything the helpers have in common, built once.
   - A read-only data source refuses it, and every statement sent is recorded in the history.
   - **Statements holding a password** arrive with E3. W4's redaction keeps them out of the
     history and the log: every statement recorded has its secrets replaced by `'<redacted>'`
-    (`dbdesk_store::redact_secrets`), so `ApplyDdl` needs no flag of its own (see E3).
+    (`dbrover_store::redact_secrets`), so `ApplyDdl` needs no flag of its own (see E3).
 - **Confirmations for destructive actions.** Drop and Truncate name the object and what goes
   with it (`CASCADE` drops dependent views). On a data source coloured red, the user types the
   object's name to confirm. The colour is how the M1 follow-up marks production.
@@ -174,7 +174,7 @@ offers both words, and **New user** starts with LOGIN ticked. pgAdmin likewise u
 - **The password never travels or gets stored in clear.**
   - The dialog hashes it on the client into a SCRAM-SHA-256 verifier, which PostgreSQL stores
     as it is in place of a password (`PASSWORD 'SCRAM-SHA-256$4096:…'`). The hashing function
-    is the one in `postgres-protocol`, which tokio-postgres already depends on, so dbdesk
+    is the one in `postgres-protocol`, which tokio-postgres already depends on, so DbRover
     builds no crate it didn't before.
   - **The review panel shows `PASSWORD '<redacted>'`, not the verifier.** A verifier lets
     whoever holds it guess the password offline, and it teaches nothing to read. Execute sends
@@ -182,11 +182,11 @@ offers both words, and **New user** starts with LOGIN ticked. pgAdmin likewise u
     since the redacted text would set a password nobody knows, and the real one would put the
     verifier on the clipboard.
   - **No `sensitive` flag**: the panel redacts with the function the history uses
-    (`dbdesk_store::redact_secrets`, from W4), which every history write and the DDL log line
+    (`dbrover_store::redact_secrets`, from W4), which every history write and the DDL log line
     already go through, whatever sent the statement. A flag could be forgotten by the next
     caller; the redaction can't. Error messages name statements by position, never by text.
   - Needs PostgreSQL 10 or later, which accepts a verifier whatever `password_encryption`
-    says. dbdesk never falls back to sending the password as typed.
+    says. DbRover never falls back to sending the password as typed.
 - **Edit…**: the same dialog, filled from the role's description (`Connection::describe_role`,
   `Command::DescribeRole`), producing one `ALTER ROLE` for what changed, plus `GRANT`/`REVOKE`
   for changed memberships. The password is left as it is unless a new one is typed, or
@@ -210,7 +210,7 @@ own users when its driver lands:
 
 **Layers**, one stack:
 1. This plan.
-2. `RoleSpec` and the role operations in `dbdesk_sql::ddl`, `ScramVerifier` and
+2. `RoleSpec` and the role operations in `dbrover_sql::ddl`, `ScramVerifier` and
    `Capabilities::users`, with golden tests.
 3. `NodeKind::Role`, `FolderKind::Roles`, `Connection::describe_role` on PostgreSQL and
    `Command::DescribeRole`: round trips on the PostgreSQL test server, including logging in as
@@ -252,7 +252,7 @@ Changing an existing table is the hardest helper, so it comes last.
   - change a column's type, nullability and default;
   - change the primary key; add and drop unique keys, foreign keys and checks;
   - rename the table.
-- **Diffing is pure code in `dbdesk-sql`:** `DdlOperation::AlterTable(TableAlteration)` takes
+- **Diffing is pure code in `dbrover-sql`:** `DdlOperation::AlterTable(TableAlteration)` takes
   the table as loaded (`ExistingTable`), the spec the dialog ends with, and which columns were
   renamed, and writes each dialect's statements, with golden tests per dialect.
   - **A rename is never a drop plus an add.** Each row of the dialog remembers the column it
@@ -368,7 +368,7 @@ Proposed defaults; each is confirmed when its milestone starts.
 | Question | Proposed | Consequence |
 | --- | --- | --- |
 | Run straight away, or always review first | **Always review first**, with Execute in the review panel. | One extra click per change; nothing runs unseen. |
-| Where the DDL builder lives | **`dbdesk-sql`**, beside the dialects. | Pure and testable without a database or the UI. |
+| Where the DDL builder lives | **`dbrover-sql`**, beside the dialects. | Pure and testable without a database or the UI. |
 | Users and roles in one dialog | **One dialog**: New user is New role with LOGIN ticked. | Matches PostgreSQL's model, and pgAdmin's single Login/Group Role dialog. |
 | Passwords | **Hashed into a SCRAM verifier on the client**, redacted in the review panel, the history and the log. | Needs PostgreSQL 10 or later, which stores a verifier as it is whatever `password_encryption` says. Nothing older is supported, so the password is never sent as typed. |
 | SQLite table rebuilds | **Last, in E4**, behind round-trip tests. | Until then, Modify table on SQLite offers only what `ALTER TABLE` does in place, and refuses the rest with the reason. |

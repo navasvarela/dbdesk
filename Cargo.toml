@@ -7,23 +7,23 @@ version = "0.12.0"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/navasvarela/dbdesk"
+repository = "https://github.com/navasvarela/dbrover"
 publish = false
 
 [workspace.dependencies]
-dbdesk-core = { path = "crates/dbdesk-core" }
-dbdesk-driver-mysql = { path = "crates/dbdesk-driver-mysql" }
-dbdesk-driver-clickhouse = { path = "crates/dbdesk-driver-clickhouse" }
-dbdesk-driver-duckdb = { path = "crates/dbdesk-driver-duckdb" }
-dbdesk-driver-postgres = { path = "crates/dbdesk-driver-postgres" }
-dbdesk-driver-sqlite = { path = "crates/dbdesk-driver-sqlite" }
-dbdesk-driver-sqlserver = { path = "crates/dbdesk-driver-sqlserver" }
-dbdesk-engine = { path = "crates/dbdesk-engine" }
-dbdesk-mcp = { path = "crates/dbdesk-mcp" }
-dbdesk-sql = { path = "crates/dbdesk-sql" }
-dbdesk-ssh = { path = "crates/dbdesk-ssh" }
-dbdesk-store = { path = "crates/dbdesk-store" }
-dbdesk-tls = { path = "crates/dbdesk-tls" }
+dbrover-core = { path = "crates/dbrover-core" }
+dbrover-driver-mysql = { path = "crates/dbrover-driver-mysql" }
+dbrover-driver-clickhouse = { path = "crates/dbrover-driver-clickhouse" }
+dbrover-driver-duckdb = { path = "crates/dbrover-driver-duckdb" }
+dbrover-driver-postgres = { path = "crates/dbrover-driver-postgres" }
+dbrover-driver-sqlite = { path = "crates/dbrover-driver-sqlite" }
+dbrover-driver-sqlserver = { path = "crates/dbrover-driver-sqlserver" }
+dbrover-engine = { path = "crates/dbrover-engine" }
+dbrover-mcp = { path = "crates/dbrover-mcp" }
+dbrover-sql = { path = "crates/dbrover-sql" }
+dbrover-ssh = { path = "crates/dbrover-ssh" }
+dbrover-store = { path = "crates/dbrover-store" }
+dbrover-tls = { path = "crates/dbrover-tls" }
 
 anyhow = "1.0.104"
 async-trait = "0.1.92"
@@ -31,18 +31,18 @@ async-trait = "0.1.92"
 data-encoding = "2.11.1"
 directories = "6.0.0"
 # ClickHouse's official client, over its HTTP interface. No default features (lz4 compression)
-# and none of its TLS ones: dbdesk hands it a hyper client with dbdesk-tls's rustls
+# and none of its TLS ones: DbRover hands it a hyper client with dbrover-tls's rustls
 # configuration, which also covers `require` and a CA file.
 clickhouse = { version = "0.15.3", default-features = false }
-# DuckDB 1.5.6 with its Parquet and JSON extensions, inside dbdesk so there is nothing to
-# install. dbdesk-driver-duckdb's manifest picks how: compiled from source (`bundled`) by
+# DuckDB 1.5.6 with its Parquet and JSON extensions, inside DbRover so there is nothing to
+# install. dbrover-driver-duckdb's manifest picks how: compiled from source (`bundled`) by
 # default, or linked from DuckDB's own prebuilt library, as CI and releases do
 # (docs/duckdb-prebuilt.md). No default features: they would download a prebuilt libduckdb while
 # building, unchecked. The downloads grow by about 13 MB compiled, 16 MB prebuilt, within the
 # 30 MB budget in docs/databases.md. Pinned with `~`: the next minor version, 1.20000, bundles a
 # development build of DuckDB 2.0.
 duckdb = { version = "~1.10506.1", default-features = false }
-# With default features off, every one dbdesk needs is listed. `links` is what lets
+# With default features off, every one DbRover needs is listed. `links` is what lets
 # `ctx.open_url` and hyperlinks open the browser: without it egui-winit only logs
 # "feature \"links\" not enabled", and the manual, release page and repository links did nothing.
 eframe = { version = "0.36.2", default-features = false, features = [
@@ -81,7 +81,7 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = ["s
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 # HMAC-SHA1, which OpenSSH hashes host names in known_hosts with. The versions russh uses.
-# hmac also checks SCRAM verifiers in dbdesk-sql's tests, with sha2 and base64, at the
+# hmac also checks SCRAM verifiers in dbrover-sql's tests, with sha2 and base64, at the
 # versions postgres-protocol uses.
 hmac = "0.13.0"
 sha1 = "0.11.0"
@@ -92,12 +92,12 @@ keyring = "4.2.0"
 # MySQL and MariaDB. No default features, which compress with the zlib C library:
 # `minimal-rust` compresses in pure Rust, and TLS is rustls with ring. Its rustls connector
 # takes rustls's process-wide provider, so ring must stay the only provider compiled in
-# (dbdesk-driver-mysql's tests check it).
+# (dbrover-driver-mysql's tests check it).
 mysql_async = { version = "0.37.1", default-features = false, features = ["minimal-rust", "rustls-tls", "ring", "tls12"] }
 # Find and replace's regular expressions; already built for mysql_common and arrow.
 regex = "1.13.1"
 rfd = "0.17.2"
-# The official MCP SDK, for `dbdesk mcp`. Only the server side and the stdio transport; the
+# The official MCP SDK, for `dbrover mcp`. Only the server side and the stdio transport; the
 # tests add the client to drive it.
 rmcp = { version = "3.7.0", default-features = false, features = ["macros", "server", "transport-io"] }
 rusqlite = { version = "0.40.2", features = ["bundled", "column_decltype"] }
@@ -129,7 +129,7 @@ thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "sync", "time", "macros"] }
 tokio-postgres = "0.7.18"
 # tokio-postgres's own protocol crate, for hashing role passwords into SCRAM verifiers on the
-# client (dbdesk-sql): the version tokio-postgres pulls in, so nothing new is built.
+# client (dbrover-sql): the version tokio-postgres pulls in, so nothing new is built.
 postgres-protocol = "0.6.12"
 tokio-postgres-rustls = { version = "0.14.0", features = ["ring"] }
 toml = "1.1.8"
@@ -140,7 +140,7 @@ tracing-subscriber = { version = "0.3.23", default-features = false, features = 
 # (OpenSSL on Linux): TLS is rustls instead. Its rustls feature also compiles in aws-lc-rs,
 # through tokio-rustls's default features, which makes rustls unable to pick a process-wide
 # provider on its own; the network drivers install ring as that provider before connecting
-# (see dbdesk-driver-sqlserver's `tls` module). The webpki roots back `verify-full` without a
+# (see dbrover-driver-sqlserver's `tls` module). The webpki roots back `verify-full` without a
 # CA file, as for the other engines.
 tiberius = { version = "0.13.0", default-features = false, features = ["tds80", "rustls", "rustls-webpki-roots"] }
 # Adapts tokio's TCP stream to the futures I/O traits tiberius takes.

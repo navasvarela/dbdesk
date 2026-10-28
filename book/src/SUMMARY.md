@@ -16,5 +16,5 @@
 - [Keyboard shortcuts](shortcuts.md)
 - [Actions, snippets and themes](customising.md)
 - [Connecting an AI assistant](mcp.md)
-- [Where dbdesk keeps its files](files.md)
+- [Where DbRover keeps its files](files.md)
 - [Troubleshooting](troubleshooting.md)

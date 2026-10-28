@@ -15,9 +15,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # dbdesk_prebuilt_duckdb links DuckDB's prebuilt library, fetched below, rather than compiling
+  # dbrover_prebuilt_duckdb links DuckDB's prebuilt library, fetched below, rather than compiling
   # it; see docs/duckdb-prebuilt.md.
-  RUSTFLAGS: -D warnings --cfg dbdesk_prebuilt_duckdb
+  RUSTFLAGS: -D warnings --cfg dbrover_prebuilt_duckdb
 
 permissions:
   contents: read

@@ -48,7 +48,7 @@ The SQL changes as you fill in the dialog. While something is missing (a table n
 the columns of a key) the dialog says what instead of showing SQL, and **Execute** waits.
 
 Names are quoted only when they need to be: when they have capitals, spaces or other characters
-a bare name can't have, or are a word any of the databases dbdesk supports reserves, such as
+a bare name can't have, or are a word any of the databases DbRover supports reserves, such as
 `order` or `user`. `customer_id` stays `customer_id`; `Order Items` becomes `"Order Items"`
 (`` `Order Items` `` on MySQL and ClickHouse, `[Order Items]` on SQL Server).
 
@@ -128,7 +128,7 @@ below shows the statements that turn the table into what the dialog now says.
 
 ![Modify table, with a column renamed and one added](images/modify-table.png)
 
-- **Rename a column** by typing its new name. dbdesk remembers which row each column came
+- **Rename a column** by typing its new name. DbRover remembers which row each column came
   from, so this is always a rename that keeps the column's values, never a drop and an add.
   Keys that list the column follow its new name.
 - **Drop a column** with the ✕ at the end of its row, and **add one** with **Add column**.
@@ -164,7 +164,7 @@ of showing SQL, and **Execute** waits; the rest of the change can still go to a 
 ### SQLite's table rebuild
 
 SQLite's `ALTER TABLE` does little in place, so for anything else (a new type, a column made
-`NOT NULL`, a new key or check) dbdesk rebuilds the table the way SQLite's documentation
+`NOT NULL`, a new key or check) DbRover rebuilds the table the way SQLite's documentation
 describes, in one transaction, and says so before **Execute**:
 
 1. It creates the new table as `new_orders`, copies every row into it, drops the old table and
@@ -175,11 +175,11 @@ describes, in one transaction, and says so before **Execute**:
    refuses to drop a column one of them still uses.
 
 Foreign keys are switched off while it runs, so dropping the old table can't delete rows that
-point at it (`ON DELETE CASCADE`). If your connection had them on, dbdesk checks them before
+point at it (`ON DELETE CASCADE`). If your connection had them on, DbRover checks them before
 committing: a change that would leave a row pointing at nothing is undone, and the dialog
 names the table.
 
-A rebuild writes the table from what dbdesk reads of it, so a table with something it can't
+A rebuild writes the table from what DbRover reads of it, so a table with something it can't
 read back is refused, with the reason: a column with its own `COLLATE`, a generated column, a
 `WITHOUT ROWID` or a `STRICT` table. Make those changes in a console.
 
@@ -213,8 +213,8 @@ says so.
 **Copy DDL** on a table copies its `CREATE TABLE` statement.
 
 - **SQLite**, **MySQL**, **MariaDB**, **DuckDB** and **ClickHouse** keep the statement, so
-  dbdesk copies theirs, the same one **Show definition** shows.
-- **PostgreSQL** and **SQL Server** keep no such statement, so dbdesk writes one from the
+  DbRover copies theirs, the same one **Show definition** shows.
+- **PostgreSQL** and **SQL Server** keep no such statement, so DbRover writes one from the
   table's columns (their types, defaults and `NOT NULL`) and primary key, the same way New
   table does, followed by an `ALTER TABLE … ADD CONSTRAINT …` for each of its unique keys,
   foreign keys, checks and (on PostgreSQL) exclusion constraints, as the database defines

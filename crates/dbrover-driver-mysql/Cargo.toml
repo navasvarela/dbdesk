@@ -1,0 +1,25 @@
+[package]
+name = "dbrover-driver-mysql"
+description = "MySQL and MariaDB driver for DbRover, built on mysql_async."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+dbrover-core.workspace = true
+mysql_async.workspace = true
+rustls.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+dbrover-core = { workspace = true, features = ["conformance"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

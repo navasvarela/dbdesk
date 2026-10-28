@@ -1,25 +1,25 @@
 # Install and first launch
 
-Download dbdesk from [dbdesk.org](https://dbdesk.org/#download), or from the
-[releases page](https://github.com/navasvarela/dbdesk/releases): pick the file for your system
+Download DbRover from [dbdesk.org](https://dbdesk.org/#download), or from the
+[releases page](https://github.com/navasvarela/dbrover/releases): pick the file for your system
 from the latest release's **Assets**.
 
 | System | File |
 | --- | --- |
-| macOS 11 or later, Apple silicon or Intel | `dbdesk-<version>-macos-universal.dmg` |
-| Linux x86_64, most distributions | `dbdesk-<version>-x86_64.AppImage` |
-| Debian, Ubuntu and derivatives | `dbdesk_<version>_amd64.deb` |
-| Windows 10 or 11, 64-bit Intel or AMD | `dbdesk-<version>-windows-x64-setup.exe` |
+| macOS 11 or later, Apple silicon or Intel | `dbrover-<version>-macos-universal.dmg` |
+| Linux x86_64, most distributions | `dbrover-<version>-x86_64.AppImage` |
+| Debian, Ubuntu and derivatives | `dbrover_<version>_amd64.deb` |
+| Windows 10 or 11, 64-bit Intel or AMD | `dbrover-<version>-windows-x64-setup.exe` |
 
 ## macOS
 
-1. Open the `.dmg` and drag **dbdesk** onto **Applications**.
-2. Open dbdesk from Applications. These builds aren't signed by Apple yet, so the first launch
-   is blocked with "Apple could not verify dbdesk".
-3. Open **System Settings › Privacy & Security**, scroll down to the message about dbdesk, and
+1. Open the `.dmg` and drag **DbRover** onto **Applications**.
+2. Open DbRover from Applications. These builds aren't signed by Apple yet, so the first launch
+   is blocked with "Apple could not verify DbRover".
+3. Open **System Settings › Privacy & Security**, scroll down to the message about DbRover, and
    click **Open Anyway**. macOS asks once more; confirm, and it opens normally from then on.
 
-After each update, macOS asks again for access to each password dbdesk saved in the Keychain.
+After each update, macOS asks again for access to each password DbRover saved in the Keychain.
 Choose **Always Allow**. This happens because the app's signature changes with every unsigned
 build; signed builds, planned for a later release, will remove both steps.
 
@@ -28,14 +28,14 @@ build; signed builds, planned for a later release, will remove both steps.
 **AppImage**, on any distribution:
 
 ```bash
-chmod +x dbdesk-*-x86_64.AppImage
-./dbdesk-*-x86_64.AppImage
+chmod +x dbrover-*-x86_64.AppImage
+./dbrover-*-x86_64.AppImage
 ```
 
-**.deb**, on Debian, Ubuntu and derivatives. This also adds dbdesk to the application menu:
+**.deb**, on Debian, Ubuntu and derivatives. This also adds DbRover to the application menu:
 
 ```bash
-sudo apt install ./dbdesk_*_amd64.deb
+sudo apt install ./dbrover_*_amd64.deb
 ```
 
 Saved passwords go to the Secret Service (GNOME Keyring, KWallet), which desktop environments
@@ -43,7 +43,7 @@ already run. On a bare window manager without one, see [Troubleshooting](trouble
 
 ## Windows
 
-1. Run `dbdesk-<version>-windows-x64-setup.exe`. Your browser may first say the file isn't
+1. Run `dbrover-<version>-windows-x64-setup.exe`. Your browser may first say the file isn't
    commonly downloaded; choose to keep it.
 2. The first time you run it, Microsoft Defender SmartScreen blocks it: a blue window says
    "Windows protected your PC" and offers only **Don't run**. This is expected. The installer
@@ -51,15 +51,15 @@ already run. On a bare window manager without one, see [Troubleshooting](trouble
    go on, click **More info**. The window then shows the file's name and "Unknown publisher".
    Check that the name is the file you downloaded from dbdesk.org or the releases page, then
    click **Run anyway**.
-3. Follow the installer. It installs dbdesk for your user alone, in
-   `%LOCALAPPDATA%\dbdesk`, without asking for administrator rights, and adds dbdesk to the
+3. Follow the installer. It installs DbRover for your user alone, in
+   `%LOCALAPPDATA%\DbRover`, without asking for administrator rights, and adds DbRover to the
    Start menu.
 
-SmartScreen asks again for each new installer you download yourself, until dbdesk's
-installers are signed and known to it. Updates that dbdesk installs (below) run without the
+SmartScreen asks again for each new installer you download yourself, until DbRover's
+installers are signed and known to it. Updates that DbRover installs (below) run without the
 warning. On Windows 11 with Smart App Control switched on (in **Windows Security › App & browser
-control**), Windows may block the unsigned installer with no **Run anyway** at all, and dbdesk
-can't get round that until it is signed. To remove dbdesk, use **Settings › Apps › Installed apps**.
+control**), Windows may block the unsigned installer with no **Run anyway** at all, and DbRover
+can't get round that until it is signed. To remove DbRover, use **Settings › Apps › Installed apps**.
 Saved passwords go to the Windows Credential Manager.
 
 ## Check the download and the version
@@ -74,41 +74,41 @@ On Windows, in PowerShell, print the installer's checksum and compare it with it
 `SHA256SUMS`:
 
 ```powershell
-Get-FileHash dbdesk-*-windows-x64-setup.exe -Algorithm SHA256
+Get-FileHash dbrover-*-windows-x64-setup.exe -Algorithm SHA256
 ```
 
-**Help › About dbdesk** shows the version and the commit it was built from, and **Copy
-version** copies them for a bug report. From a terminal, `dbdesk --version` prints the same.
+**Help › About DbRover** shows the version and the commit it was built from, and **Copy
+version** copies them for a bug report. From a terminal, `dbrover --version` prints the same.
 
 ## Updates
 
-When dbdesk starts, it asks GitHub whether a newer release is out. If one is, the status bar
-says so, for example **dbdesk 0.5.0 is available**. Click it to open **Updates**; **Help ›
+When DbRover starts, it asks GitHub whether a newer release is out. If one is, the status bar
+says so, for example **DbRover 0.5.0 is available**. Click it to open **Updates**; **Help ›
 Check for updates…** asks at any time.
 
-- **macOS, and the Linux AppImage:** click **Install and restart**. dbdesk downloads the new
-  version, checks that it was signed by the dbdesk release process, and puts it in place of the
+- **macOS, and the Linux AppImage:** click **Install and restart**. DbRover downloads the new
+  version, checks that it was signed by the DbRover release process, and puts it in place of the
   one you are running. Click **Restart now** to start it, or carry on and it starts next time.
   If a console has a transaction open, quitting asks first, as it always does.
-- **Windows, installed with the installer:** click **Install and restart**. dbdesk downloads
+- **Windows, installed with the installer:** click **Install and restart**. DbRover downloads
   the new version's installer and checks its signature in the same way; the dialog then says
-  the update is downloaded. Click **Restart now**: dbdesk quits (asking first about open
-  transactions), the installer shows a progress bar while it replaces dbdesk, and the new
+  the update is downloaded. Click **Restart now**: DbRover quits (asking first about open
+  transactions), the installer shows a progress bar while it replaces DbRover, and the new
   version starts. Windows can't replace a program that is running, so if you carry on instead,
   the update waits until you choose **Restart now**, or is downloaded again next time. The
-  installer closes any other dbdesk window that is still open.
+  installer closes any other DbRover window that is still open.
 - **The `.deb`, a Windows copy that wasn't installed with the installer, and builds from
   source:** these can't replace themselves, and the dialog says why. **Open release page**
   leads to the download; install it as above. Copies installed on Windows from version 0.12.0
   or earlier are in this group too: install the next version from the release page once, and
   it updates itself from then on.
 
-An update that isn't signed with dbdesk's key is refused before anything is replaced. On macOS,
-until dbdesk's builds are signed by Apple, the first launch after an update asks again for
+An update that isn't signed with DbRover's key is refused before anything is replaced. On macOS,
+until DbRover's builds are signed by Apple, the first launch after an update asks again for
 access to each saved password; choose **Always Allow**.
 
 The check sends nothing about you or your data: it reads the public list of releases. To stop
-the check at start-up, untick **Check for a new release when dbdesk starts** in **View →
+the check at start-up, untick **Check for a new release when DbRover starts** in **View →
 Settings…**.
 
 ## Build from source
@@ -127,20 +127,20 @@ For contributors, or to run the latest unreleased code. You need:
 Then:
 
 ```bash
-git clone https://github.com/navasvarela/dbdesk.git
-cd dbdesk
-cargo run --release -p dbdesk-app
+git clone https://github.com/navasvarela/dbrover.git
+cd dbrover
+cargo run --release -p dbrover-app
 ```
 
-To install the `dbdesk` command so you can start it from anywhere:
+To install the `dbrover` command so you can start it from anywhere:
 
 ```bash
-cargo install --path crates/dbdesk-app
+cargo install --path crates/dbrover-app
 ```
 
 ## First launch
 
-![dbdesk on first launch](images/first-launch.png)
+![DbRover on first launch](images/first-launch.png)
 
 On first launch the explorer is empty ("No data sources yet") and the Welcome tab offers three
 things to do:
@@ -156,42 +156,42 @@ The log console under the Welcome tab shows `engine started`, and the status bar
 
 ## Light and dark
 
-dbdesk follows your system's light or dark setting. To choose one yourself, open
+DbRover follows your system's light or dark setting. To choose one yourself, open
 **View → Theme** and pick **Match system**, **Light** or **Dark**. The choice is remembered.
 
 ## The layout
 
-dbdesk opens maximized the first time; after that it remembers the window's size and position.
+DbRover opens maximized the first time; after that it remembers the window's size and position.
 
 Every panel is a tab you can drag: onto another panel's tab bar to join it, or onto the edge of
-a panel to split it. Drag the gaps between panels to resize them. dbdesk remembers the layout
+a panel to split it. Drag the gaps between panels to resize them. DbRover remembers the layout
 and the window size when you quit. **View → Reset layout** puts everything back where it
 started.
 
 ## On a Mac
 
-On macOS dbdesk's menus are in the menu bar at the top of the screen, like any Mac app's, and
+On macOS DbRover's menus are in the menu bar at the top of the screen, like any Mac app's, and
 the window has no separate title bar. On Linux and Windows the menus are in the window, under
 its title bar, and this manual names them that way (**View → Settings…**). On a Mac a few of
 them live where Mac apps keep them:
 
 | In the window (Linux, Windows) | On a Mac |
 | --- | --- |
-| **Help → About dbdesk** | **dbdesk → About dbdesk** |
-| **Help → Check for updates…** | **dbdesk → Check for updates…** |
-| **View → Settings…** | **dbdesk → Settings…** (⌘,) |
+| **Help → About DbRover** | **DbRover → About DbRover** |
+| **Help → Check for updates…** | **DbRover → Check for updates…** |
+| **View → Settings…** | **DbRover → Settings…** (⌘,) |
 
 The rest of the Mac's menu bar:
 
-- **dbdesk → Quit dbdesk** (⌘Q) quits the way closing the window does: if a console has an open
-  transaction or unsaved changes, dbdesk asks first. **Hide**, **Hide Others**, **Show All**
+- **DbRover → Quit DbRover** (⌘Q) quits the way closing the window does: if a console has an open
+  transaction or unsaved changes, DbRover asks first. **Hide**, **Hide Others**, **Show All**
   and **Services** are the usual ones.
 - **Edit** has **Undo**, **Redo**, **Cut**, **Copy**, **Paste** and **Select All** for whatever
   has focus: the SQL editor, a text field, or the results grid (**Copy** copies the selected
   cells).
 - **View → Enter Full Screen** (⌃⌘F), and **Window** with **Minimize** (⌘M), **Zoom** and
   **Bring All to Front**.
-- **Help → dbdesk manual** opens this manual, and the Help menu's search finds any menu item.
+- **Help → DbRover manual** opens this manual, and the Help menu's search finds any menu item.
 
 Items that need a console, such as **File → Save** or **Code → Format**, are greyed out until a
 console's tab is selected, and every item shows its shortcut, including ones you changed in
@@ -200,8 +200,8 @@ console's tab is selected, and every item shows its shortcut, including ones you
 The strip along the top of the window, beside the close, minimize and zoom buttons, works as a
 title bar: drag it to move the window, and double-click it to zoom.
 
-dbdesk also takes the Mac's look: text is in the system font, SF Pro (SF Mono for SQL and
+DbRover also takes the Mac's look: text is in the system font, SF Pro (SF Mono for SQL and
 results), and selected text, cells and rows are tinted with the accent colour chosen in
-**System Settings → Appearance**. Change the accent colour and dbdesk follows it when you come
-back to its window. The pictures in this manual were taken with dbdesk's own fonts and colours,
+**System Settings → Appearance**. Change the accent colour and DbRover follows it when you come
+back to its window. The pictures in this manual were taken with DbRover's own fonts and colours,
 which it uses on Linux and Windows.

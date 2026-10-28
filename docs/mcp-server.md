@@ -5,8 +5,8 @@ Status: **built**: P0 (projects), MCP1 (the read-only server), MCP2 (permissions
 Proposed on 2026-10-24.
 
 The [Model Context Protocol](https://modelcontextprotocol.io) (MCP) lets AI assistants and
-coding agents call tools that an application provides. This plan gives dbdesk an MCP server, so
-an assistant can browse the catalog and query the databases dbdesk already knows. It does so
+coding agents call tools that an application provides. This plan gives DbRover an MCP server, so
+an assistant can browse the catalog and query the databases DbRover already knows. It does so
 through the same saved data sources, drivers and keychain as the app.
 
 Two ideas shape the plan:
@@ -28,15 +28,15 @@ Two ideas shape the plan:
    ```json
    {
      "mcpServers": {
-       "dbdesk-analytics": {
-         "command": "/Applications/dbdesk.app/Contents/MacOS/dbdesk",
+       "dbrover-analytics": {
+         "command": "/Applications/DbRover.app/Contents/MacOS/dbrover",
          "args": ["mcp", "--project", "analytics"]
        }
      }
    }
    ```
 
-4. The client starts `dbdesk mcp --project analytics` as a background process and talks to it
+4. The client starts `dbrover mcp --project analytics` as a background process and talks to it
    over standard input and output. The app doesn't need to be open.
 5. Everything an assistant runs shows up in the query history, marked as coming from MCP, and in
    the log.
@@ -45,7 +45,7 @@ Two ideas shape the plan:
 
 Projects are useful in the app on their own, so they come first and don't depend on MCP.
 
-- **`projects.toml`** next to `data_sources.toml`, owned by `dbdesk-store`:
+- **`projects.toml`** next to `data_sources.toml`, owned by `dbrover-store`:
 
   ```toml
   [mcp_defaults]          # the global defaults
@@ -103,7 +103,7 @@ Checking the text of a statement is not enough on its own. A `SELECT` can call a
 writes. A `WITH` clause can hold a `DELETE`. `SELECT … INTO` creates a table. So each statement
 goes through up to three layers, and the strongest layer the engine offers decides:
 
-1. **The parser.** `dbdesk-sql` parses each statement with the dialect's `sqlparser` dialect.
+1. **The parser.** `dbrover-sql` parses each statement with the dialect's `sqlparser` dialect.
    It classifies the statement as read, write, schema or admin, looking inside CTEs,
    `SELECT INTO`, `COPY`, `CALL` and the rest. A statement that needs a permission the project
    lacks is refused before it reaches the database.
@@ -130,11 +130,11 @@ engine has no such setting). Results are limited to `max_rows`.
 
 ## The MCP server (MCP1 and MCP2)
 
-- **One binary.** `dbdesk mcp --project <slug>` runs the same executable without opening a
+- **One binary.** `dbrover mcp --project <slug>` runs the same executable without opening a
   window, next to the existing `--version`. This means:
   - there is no second download, and the client config points at the installed app;
-  - it reuses `dbdesk-store` (data sources, projects, keychain), `dbdesk-core` and the drivers,
-    `dbdesk-sql` (classification, splitting) and the engine's history log.
+  - it reuses `dbrover-store` (data sources, projects, keychain), `dbrover-core` and the drivers,
+    `dbrover-sql` (classification, splitting) and the engine's history log.
 - **SDK:** [`rmcp`](https://crates.io/crates/rmcp), the official Rust SDK (3.7 when this was
   written). Check its maintenance and its API before starting, as with every new dependency.
 - **Transport:** standard input and output, which every MCP client supports. The client starts
@@ -172,7 +172,7 @@ engine has no such setting). Results are limited to `max_rows`.
 
 ### MCP1 — Read-only server
 
-`dbdesk mcp --project …` with the read tools, read-only transactions, `max_rows`,
+`dbrover mcp --project …` with the read tools, read-only transactions, `max_rows`,
 `statement_timeout` and the audit trail. A project must have `mcp_enabled` switched on, and
 every permission beyond `read` is ignored. This is safe to ship first.
 
@@ -190,9 +190,9 @@ every permission beyond `read` is ignored. This is safe to ship first.
   `ServerInfo` for `ServerConfig`). Only its `server`, `macros` and `transport-io` features are
   used; the tests add `client` and `transport-child-process`. Its `schemars` dependency brings
   `chrono` along. Nothing in it changed the plan; expect to adjust a few names on upgrades.
-- The server is the `dbdesk-mcp` crate; `dbdesk mcp --project <slug>` in the app's binary
+- The server is the `dbrover-mcp` crate; `dbrover mcp --project <slug>` in the app's binary
   parses its arguments strictly and runs it on a tokio runtime, with no window.
-- Statements are classified by `dbdesk_sql::classify`, which walks every nested statement and
+- Statements are classified by `dbrover_sql::classify`, which walks every nested statement and
   query in `sqlparser`'s tree (its `visitor` feature), so a `DELETE` inside a `WITH`, `SELECT …
   INTO` and `FOR UPDATE` are caught. Unknown statement types count as admin, and `EXPLAIN` of a
   write is refused even though it wouldn't run, to keep the rule simple.
@@ -204,8 +204,8 @@ every permission beyond `read` is ignored. This is safe to ship first.
   busy timeout. The migration runs in an immediate transaction, so two processes opening an
   old file at once is safe; a test writes from two processes at the same time.
 - On PostgreSQL the time limit is also set as `SET LOCAL statement_timeout`; on every engine,
-  dbdesk's watchdog cancels through the driver.
-- SQL Server (DB2) landed during MCP1. It has no read-only transaction, so `dbdesk mcp` leaves
+  DbRover's watchdog cancels through the driver.
+- SQL Server (DB2) landed during MCP1. It has no read-only transaction, so `dbrover mcp` leaves
   its data sources out, with a warning in the log, until its equivalent is chosen (a read-only
   login, most likely, with MCP2's separate login).
 
@@ -232,15 +232,15 @@ permissions with their fallback to the defaults. Also the separate MCP login per
   committed. Each statement gets the time limit and returns at most `max_rows` rows.
 - SQLite files are opened read-only only when the project only reads. Otherwise every call sets
   `PRAGMA query_only` for itself: on for reads, off for `execute`.
-- The transactions are the engine's: `dbdesk_engine::read_only`, which the consoles of
+- The transactions are the engine's: `dbrover_engine::read_only`, which the consoles of
   read-only data sources share (W2), gained `ReadOnlyMode::QueryOnly` for that SQLite case,
-  and `dbdesk_engine::read_write` beside it opens, commits and rolls back `execute`'s.
+  and `dbrover_engine::read_write` beside it opens, commits and rolls back `execute`'s.
 - Classification, beyond MCP1's: `CALL` is admin, because a procedure can do anything;
   `LOAD DATA` and extensions are admin; `DROP DATABASE`, roles and users are admin. Built-in
   functions that end sessions, change settings, touch the server's files or reach other servers
   (`pg_terminate_backend`, `set_config`, `pg_read_file`, `lo_export`, `dblink`, SQLite's
   `load_extension`…) make any statement admin, `query`'s included: some of them work inside a
-  read-only transaction. A corpus per dialect (`crates/dbdesk-sql/tests/classify/`) pins all
+  read-only transaction. A corpus per dialect (`crates/dbrover-sql/tests/classify/`) pins all
   this.
 - **`schemas`** is `"all"` or a list, in `[mcp_defaults]` and each project. It hides other
   schemas from `list_objects`, refuses paths, tables and statements that name them, and refuses
@@ -248,7 +248,7 @@ permissions with their fallback to the defaults. Also the separate MCP login per
   PostgreSQL each call sets `search_path` to the list, so unqualified names resolve there;
   elsewhere unqualified names need the connection's default schema in the list.
 - **The MCP login** is `mcp_login = { user = "…" }` on a data source, with its password in the
-  keychain entry `<id>/mcp`. `dbdesk mcp` always signs in with it when it is set, and fails
+  keychain entry `<id>/mcp`. `dbrover mcp` always signs in with it when it is set, and fails
   rather than falling back when its password is missing. When a project allows changes, the
   server warns at start-up for each data source without one.
 - SQL Server stays unserved: a read-only login, now possible, is its likely equivalent, but
@@ -258,7 +258,7 @@ permissions with their fallback to the defaults. Also the separate MCP login per
 
 - The Project settings window with its checkboxes and overrides, and the MCP section of
   View › Settings for the defaults.
-- **Copy MCP configuration**, filled in with this machine's path to the dbdesk executable.
+- **Copy MCP configuration**, filled in with this machine's path to the DbRover executable.
 - The history marks MCP statements and can filter by source.
 - A manual chapter: setting up a client, the permissions, and the separate login.
 

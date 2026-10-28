@@ -5,12 +5,12 @@
 
 ## Context
 
-dbdesk exists partly so its user can make it their own (see [Vision](../vision.md)). Until now
+DbRover exists partly so its user can make it their own (see [Vision](../vision.md)). Until now
 the vision listed "a plugin system loaded at runtime" as a non-goal: extension meant adding
 crates to the workspace and rebuilding. That keeps the code simple, but it means every
 customisation beyond keys and formatting needs a Rust change and a new build.
 
-The question is how far dbdesk should open itself up, and through what:
+The question is how far DbRover should open itself up, and through what:
 - files only;
 - external programs;
 - an embedded scripting language;
@@ -47,7 +47,7 @@ The full plan is in [Hackability](../hackability.md).
 
 - **Most customisation becomes possible without a rebuild,** and stays as plain files the user
   can version and share, which fits the vision's "plain config files".
-- **Command actions make dbdesk as extensible as the user's shell,** in any language, at the
+- **Command actions make DbRover as extensible as the user's shell,** in any language, at the
   cost of a small engine feature, with no plugin interface to keep stable.
 - **The extension points are named now** (actions, viewers, exporters, lint rules, data source
   providers). H1 and H2 use the same names as H3 later would, so plugins slot in without
@@ -55,7 +55,7 @@ The full plan is in [Hackability](../hackability.md).
 - **Plugins never draw their own UI.** They contribute entries to lists the app draws, which
   limits them, but keeps egui's immediate-mode code inside the app and the interface small.
 - **Accepted:** until H3, some extensions (a lint rule, a geometry viewer) still need a change to
-  dbdesk itself.
+  DbRover itself.
 - **Accepted:** command actions run with the user's own rights. That is safe because only the
   user's own file can define them, and it is why shared or imported configuration never carries
   actions.
@@ -65,7 +65,7 @@ The full plan is in [Hackability](../hackability.md).
 - **Keep the non-goal: extension only by adding crates.** Simplest, but every personal tweak
   needs Rust and a rebuild. That defeats the personalisation goal for anything beyond keys.
 - **Native plugins (`dylib`, `abi_stable`).** The fastest at runtime and able to do anything, but
-  Rust has no stable ABI between compiler versions, so plugins break with every dbdesk update
+  Rust has no stable ABI between compiler versions, so plugins break with every DbRover update
   unless a C-shaped interface is maintained. Loading them is `unsafe`, which the workspace
   forbids, and a crashing plugin takes the app down.
 - **An embedded scripting language (Lua through `mlua`, or Rhai).** Quick to embed and good for

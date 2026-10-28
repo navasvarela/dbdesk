@@ -1,34 +1,34 @@
-<img src="assets/brand/logo.svg" alt="The dbdesk logo: a database cylinder in teal and violet" width="96">
+<img src="assets/brand/logo.svg" alt="The DbRover logo: a database cylinder in teal and violet" width="96">
 
-# dbdesk
+# DbRover
 
 **Seven databases, one native app.**
 
-dbdesk is a desktop database tool written in Rust. It connects to PostgreSQL, SQLite, MySQL,
+DbRover is a desktop database tool written in Rust. It connects to PostgreSQL, SQLite, MySQL,
 MariaDB, SQL Server, DuckDB and ClickHouse today, and support for Oracle is planned. It is a
 learning project first and a personal daily driver second: the goal is a tool small enough to
 understand end to end and easy to bend to my own workflow.
 
 <picture>
   <source srcset="site/media/hero-dark-poster.png" media="(prefers-color-scheme: dark)">
-  <img src="site/media/hero-light-poster.png" width="720" alt="dbdesk with a SQLite data source's tables in the explorer, and a console whose open orders were filtered and sorted by the database">
+  <img src="site/media/hero-light-poster.png" width="720" alt="DbRover with a SQLite data source's tables in the explorer, and a console whose open orders were filtered and sorted by the database">
 </picture>
 
 Status: released for macOS, Linux and Windows, with an in-app updater; see
-[Releases](https://github.com/navasvarela/dbdesk/releases). Query consoles have highlighting,
+[Releases](https://github.com/navasvarela/dbrover/releases). Query consoles have highlighting,
 completion from the catalog, formatting and problems marked as you type; they run the
 statement at the cursor or a whole script, explain it, cancel it, and open and save `.sql`
 files with `:name` parameters. The grid edits, adds and deletes rows, follows foreign keys,
 sorts and filters in the database, exports every row and imports CSV. Dialogs create and change
 tables, indexes, views, schemas and PostgreSQL roles, showing their SQL first. Data sources
 connect through SSH and TLS, have a safety level each, and group into projects, which an AI
-assistant can use through dbdesk's MCP server with the permissions you give it. Every
+assistant can use through DbRover's MCP server with the permissions you give it. Every
 statement goes to a searchable history. Shortcuts are in `keymap.toml`, and the interface
 comes in light and dark themes, with the macOS menu bar, font and accent colour on a Mac.
 
 Website: **<https://dbdesk.org>**, with the
 [user manual](https://dbdesk.org/manual/), which explains how to install and
-use dbdesk. Its sources are in `book/`; `mdbook serve book` shows it locally.
+use DbRover. Its sources are in `book/`; `mdbook serve book` shows it locally.
 
 ## Building and running
 
@@ -66,10 +66,10 @@ docker compose up -d --wait
 set -a; . ./test-servers.env; set +a; just test
 ```
 
-Files live in `~/Library/Application Support/dbdesk` on macOS: data sources in
+Files live in `~/Library/Application Support/dbrover` on macOS: data sources in
 `data_sources.toml`, consoles in `consoles/`, the query history in `history.sqlite`, window and
 layout state in `app.ron`, your shortcuts in `keymap.toml`, daily log files in `logs/`.
-Passwords are in the macOS Keychain under the service `dbdesk`.
+Passwords are in the macOS Keychain under the service `dbrover`.
 
 ## Core features (v1)
 
@@ -86,7 +86,7 @@ UI: **egui** (via `eframe`) with **egui_dock** for dockable panels.
 
 | Document | What it covers |
 | --- | --- |
-| [User manual](book/src/SUMMARY.md) | Installing and using dbdesk, for people who have never seen it |
+| [User manual](book/src/SUMMARY.md) | Installing and using DbRover, for people who have never seen it |
 | [Vision](docs/vision.md) | Goals, non-goals, terminology, what "personalised" means |
 | [Architecture](docs/architecture.md) | Crates, threading model, data flow, core types |
 | [Connection explorer](docs/features/connection-explorer.md) | Data sources, catalog tree, introspection |
@@ -110,7 +110,7 @@ UI: **egui** (via `eframe`) with **egui_dock** for dockable panels.
 
 ## Licence
 
-dbdesk is licensed under either of
+DbRover is licensed under either of
 
 - the Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE)), or
 - the MIT licence ([LICENSE-MIT](LICENSE-MIT)),
@@ -123,5 +123,5 @@ The bundled fonts keep their own licences: Inter
 SIL Open Font License 1.1.
 
 Unless you explicitly state otherwise, any contribution you intentionally submit for inclusion
-in dbdesk, as defined in the Apache-2.0 licence, is dual licensed as above, without any
+in DbRover, as defined in the Apache-2.0 licence, is dual licensed as above, without any
 additional terms or conditions.

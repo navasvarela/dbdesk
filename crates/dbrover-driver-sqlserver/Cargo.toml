@@ -1,0 +1,31 @@
+[package]
+name = "dbrover-driver-sqlserver"
+description = "SQL Server and Azure SQL driver for DbRover, built on tiberius."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+dbrover-core.workspace = true
+# Only to find where a syntax error is: the server reports the line and the token, not the
+# column (see `errors`).
+dbrover-sql.workspace = true
+futures-util.workspace = true
+jiff.workspace = true
+rustls.workspace = true
+thiserror.workspace = true
+tiberius.workspace = true
+tokio = { workspace = true, features = ["net"] }
+tokio-util.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+dbrover-core = { workspace = true, features = ["conformance"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

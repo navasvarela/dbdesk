@@ -1,4 +1,4 @@
-# The test SSH server: signs in the `dbdesk` user with a key or its password, and forwards
+# The test SSH server: signs in the `dbrover` user with a key or its password, and forwards
 # only to the compose PostgreSQL service, so a test can also see a forward refused.
 Port 22
 HostKey /etc/ssh/ssh_host_ed25519_key

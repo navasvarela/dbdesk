@@ -1,14 +1,14 @@
 # Adding a database
 
-This guide is for contributors who want dbdesk to speak a new database engine. It walks through
+This guide is for contributors who want DbRover to speak a new database engine. It walks through
 every place an engine touches, in the order that keeps each step reviewable. The pull request
 names in brackets refer to how MySQL and MariaDB support was added, which is the best worked
 example to read next to this guide:
-- [#32](https://github.com/navasvarela/dbdesk/pull/32) made quoting and the default schema
+- [#32](https://github.com/navasvarela/dbrover/pull/32) made quoting and the default schema
   per-dialect facts;
-- [#35](https://github.com/navasvarela/dbdesk/pull/35) added the dialect;
-- [#36](https://github.com/navasvarela/dbdesk/pull/36) added the driver;
-- [#37](https://github.com/navasvarela/dbdesk/pull/37) finished the console and the manual.
+- [#35](https://github.com/navasvarela/dbrover/pull/35) added the dialect;
+- [#36](https://github.com/navasvarela/dbrover/pull/36) added the driver;
+- [#37](https://github.com/navasvarela/dbrover/pull/37) finished the console and the manual.
 
 [More databases](databases.md) says which engines are planned and in what order. Its
 "What a new engine needs" section is the short version of this guide.
@@ -21,7 +21,7 @@ native driver behind one trait.
    [More databases](databases.md). Agree on the client crate and the scope there first: which
    versions, which ways to log in, and what is left out.
 2. **Choose the client crate.** In order of importance, it should:
-   - **ship with dbdesk without anything installed separately.** Pure Rust is best. A bundled C
+   - **ship with DbRover without anything installed separately.** Pure Rust is best. A bundled C
      library is acceptable when it builds with only a C compiler. A library the user must install
      (as Oracle's needs) is a reason to wait.
    - **use rustls for TLS, never OpenSSL.** Prefer the `ring` provider, which the workspace
@@ -43,9 +43,9 @@ Each step is one pull request, in this order. Every step compiles and passes the
 own. The engine lists are closed enums on purpose (ADR 0002), so adding a variant makes the
 compiler point at every place that must handle it. Follow its errors rather than searching.
 
-### 1. The dialect (`dbdesk-sql`) [#35]
+### 1. The dialect (`dbrover-sql`) [#35]
 
-Everything dbdesk knows about an engine's SQL lives in `crates/dbdesk-sql/src/dialect/`. Add a
+Everything DbRover knows about an engine's SQL lives in `crates/dbrover-sql/src/dialect/`. Add a
 variant to `Dialect`, then fill in each fact the compiler asks for:
 
 | Fact | Where | What it decides |
@@ -71,7 +71,7 @@ formats as the engine itself would read it, and its corpus passes.
 
 ### 2. The driver crate [#36]
 
-Create `crates/dbdesk-driver-<engine>/`, using `dbdesk-driver-mysql` as the template:
+Create `crates/dbrover-driver-<engine>/`, using `dbrover-driver-mysql` as the template:
 
 | File | Holds |
 | --- | --- |
@@ -80,14 +80,14 @@ Create `crates/dbdesk-driver-<engine>/`, using `dbdesk-driver-mysql` as the temp
 | `execution.rs` | `execute`, returning a `ResultCursor` that reads rows lazily, plus the cancel handle |
 | `table.rs` | `describe_table`, for editing in the grid |
 | `errors.rs` | Mapping the client's errors to `DriverError`, keeping the code, message and position |
-| `tls.rs` | Turning the shared `TlsMode` into the client's TLS setup. A client that takes a rustls `ClientConfig` gets it from `dbdesk-tls`, as PostgreSQL and ClickHouse do |
+| `tls.rs` | Turning the shared `TlsMode` into the client's TLS setup. A client that takes a rustls `ClientConfig` gets it from `dbrover-tls`, as PostgreSQL and ClickHouse do |
 | `tests.rs` | The conformance suite against a real server |
 
 What each `Connection` method must do is documented on the trait in
-`crates/dbdesk-core/src/connection.rs`:
+`crates/dbrover-core/src/connection.rs`:
 - **The catalog's shape** is up to the engine: databases, schemas, then folders of tables,
   views and so on. Use the existing `NodeKind` and `FolderKind` values where they fit, and add
-  new ones in `dbdesk-core/src/catalog.rs` only for objects the others don't have.
+  new ones in `dbrover-core/src/catalog.rs` only for objects the others don't have.
 - **Values reach the grid as text** (ADR 0004). Map each column type to its text form, and an
   unknown type to the server's own text rather than an error.
 - **`validate`** prepares a statement without running it, and returns `None` when the database
@@ -96,7 +96,7 @@ What each `Connection` method must do is documented on the trait in
   database's own errors behind the syntax check.
 - **Cancel** must stop a statement that is still running and leave the connection usable.
 
-Tests use the conformance suite in `dbdesk-core/src/conformance.rs`:
+Tests use the conformance suite in `dbrover-core/src/conformance.rs`:
 - `check_lifecycle` and `check_connect_failure`;
 - `walk_catalog` and `check_invalid_path`;
 - `check_execution`, `check_transactions`, `check_describe_table`, `check_validate`, and
@@ -105,12 +105,12 @@ Tests use the conformance suite in `dbdesk-core/src/conformance.rs`:
 An engine without transactions, or without a key that tells a table's rows apart, skips
 `check_transactions` or `check_describe_table` and says why in its tests, as ClickHouse does.
 
-Each test reads its server from a `DBDESK_TEST_<ENGINE>_URL` variable and skips when it is
-unset, so `cargo test` works offline (see the top of `dbdesk-driver-mysql/src/tests.rs`).
+Each test reads its server from a `DBROVER_TEST_<ENGINE>_URL` variable and skips when it is
+unset, so `cargo test` works offline (see the top of `dbrover-driver-mysql/src/tests.rs`).
 
 ### 3. Core and engine wiring [#36]
 
-- **`dbdesk-core/src/data_source.rs`:**
+- **`dbrover-core/src/data_source.rs`:**
   - A `ConnectionConfig` variant holding an `<Engine>Config`. A server engine embeds the shared
     `ServerConfig` (host, port, database, user, TLS) and adds a `DEFAULT_PORT`. A file engine
     looks like `SqliteConfig`.
@@ -118,15 +118,15 @@ unset, so `cargo test` works offline (see the top of `dbdesk-driver-mysql/src/te
     `uses_password`, which decides whether the keychain is asked.
   - The `default_name`, `database` and `default_schema` arms.
   - The serde tag (`driver = "<engine>"` in `data_sources.toml`), with a round-trip test.
-- **`dbdesk-engine/src/open.rs`:** one arm in `connect` calling your crate's `connect`. Add the
-  crate to `dbdesk-engine/Cargo.toml` and the workspace dependencies.
-- **`dbdesk-engine/tests/common/mod.rs`:** a helper reading the test server's URL, so engine
+- **`dbrover-engine/src/open.rs`:** one arm in `connect` calling your crate's `connect`. Add the
+  crate to `dbrover-engine/Cargo.toml` and the workspace dependencies.
+- **`dbrover-engine/tests/common/mod.rs`:** a helper reading the test server's URL, so engine
   and console tests can run against it.
-- **`dbdesk-sql`:** the `From<DriverKind> for Dialect` arm.
+- **`dbrover-sql`:** the `From<DriverKind> for Dialect` arm.
 
 ### 4. The app [#36, #37]
 
-- **The data source form** (`dbdesk-app/src/data_source_form/`):
+- **The data source form** (`dbrover-app/src/data_source_form/`):
   - a `DriverFields` variant;
   - a server engine reuses `ServerFields` (`server.rs`) for host, port, database, user,
     password and TLS, and adds only its own extras;
@@ -138,7 +138,7 @@ unset, so `cargo test` works offline (see the top of `dbdesk-driver-mysql/src/te
   - the theme's contrast test checks the two shades.
 - **Whatever else the compiler points at.** For MySQL that included the grid's edit statements
   (`console/edit.rs`) and the hazard warnings for DDL that commits (`hazard_dialog.rs`).
-- **The MCP server's read-only mode** (`dbdesk-mcp/src/read_only.rs`): how the engine refuses
+- **The MCP server's read-only mode** (`dbrover-mcp/src/read_only.rs`): how the engine refuses
   writes on its own, or `None`, which keeps its data sources from being served until it has one
   (see `docs/mcp-server.md`).
 - **A UI test** that adds a data source of the new engine through the dialog. With a test server
@@ -149,7 +149,7 @@ unset, so `cargo test` works offline (see the top of `dbdesk-driver-mysql/src/te
 - **`docker-compose.yml`:** a service on an unused port in the 55xxx range, with a healthcheck
   that only passes once the server accepts real connections. Explain any workaround in a
   comment, as the MySQL service does.
-- **`test-servers.env`:** the line `DBDESK_TEST_<ENGINE>_URL=…`. CI starts every compose service
+- **`test-servers.env`:** the line `DBROVER_TEST_<ENGINE>_URL=…`. CI starts every compose service
   and exports every line of this file on its Linux runner, so nothing else in
   `.github/workflows/ci.yml` changes.
 - **`docs/testing.md`:** the service, its version and its port.
@@ -170,7 +170,7 @@ set -a; . ./test-servers.env; set +a; just test
   anything unusual about logging in), plus anything that behaves differently in `explorer.md`
   and `consoles.md`.
 - **Screenshots** showing the new data source, regenerated with
-  `cargo test -p dbdesk-app regenerate_screenshots -- --ignored` (see `docs/testing.md`).
+  `cargo test -p dbrover-app regenerate_screenshots -- --ignored` (see `docs/testing.md`).
 - **The website:** the engine in `site/index.html`'s list, with its logo class in
   `site/style.css`.
 - **The design docs:**

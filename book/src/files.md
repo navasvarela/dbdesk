@@ -1,37 +1,37 @@
-# Where dbdesk keeps its files
+# Where DbRover keeps its files
 
-dbdesk keeps everything in one folder per platform:
+DbRover keeps everything in one folder per platform:
 
 | Platform | Settings | Window state and logs |
 | --- | --- | --- |
-| macOS | `~/Library/Application Support/dbdesk/` | same folder |
-| Linux | `~/.config/dbdesk/` | `~/.local/share/dbdesk/` |
-| Windows | `%APPDATA%\dbdesk\config\` | `%APPDATA%\dbdesk\data\` |
+| macOS | `~/Library/Application Support/dbrover/` | same folder |
+| Linux | `~/.config/dbrover/` | `~/.local/share/dbrover/` |
+| Windows | `%APPDATA%\dbrover\config\` | `%APPDATA%\dbrover\data\` |
 
 | File | What it holds |
 | --- | --- |
 | `data_sources.toml` (settings folder) | Your data sources. No passwords. |
 | `projects.toml` (settings folder) | Your projects. Which project a data source is in is written in `data_sources.toml`. |
 | `consoles/<data source id>/*.sql` (settings folder) | Your query consoles, one file each. See [Query consoles](consoles.md#consoles-are-saved). |
-| `history.sqlite` (settings folder) | Every statement dbdesk and MCP clients sent, with its time, duration, outcome and where it came from (see [The query history](history.md)). |
+| `history.sqlite` (settings folder) | Every statement DbRover and MCP clients sent, with its time, duration, outcome and where it came from (see [The query history](history.md)). |
 | `keymap.toml` (settings folder) | Your shortcuts, if you changed any. See [Keyboard shortcuts](shortcuts.md#changing-them). |
 | `settings.toml` (settings folder) | Your choices in **View → Settings…**, such as how SQL is formatted and whether to check for updates. |
 | `actions.toml`, `snippets.toml`, `theme.toml` (settings folder) | Your own actions, snippets and colours, if you wrote any. See [Actions, snippets and themes](customising.md). |
 | `trusted_commands.toml` (window state folder) | The command actions you chose **Run** for, each as it was then. See [Commands](customising.md#the-first-run). |
 | `app.ron` (window state folder) | The window's size and position, the panel layout, the theme you picked, the recent `.sql` files and which file each console tab shows. |
-| `logs/dbdesk.YYYY-MM-DD.log` (window state folder) | One log file per day. The last seven are kept. |
-| `logs/dbdesk-mcp.YYYY-MM-DD.log` (window state folder) | The same for `dbdesk mcp`, the server AI assistants use. |
+| `logs/dbrover.YYYY-MM-DD.log` (window state folder) | One log file per day. The last seven are kept. |
+| `logs/dbrover-mcp.YYYY-MM-DD.log` (window state folder) | The same for `dbrover mcp`, the server AI assistants use. |
 
 Passwords are not in any of these files: they are in your system's keychain, under the service
-name `dbdesk`. See [Data sources](data-sources.md#passwords-and-the-keychain).
+name `dbrover`. See [Data sources](data-sources.md#passwords-and-the-keychain).
 
-SSH tunnels share `~/.ssh/known_hosts` with `ssh`: dbdesk reads it to check SSH servers' host
+SSH tunnels share `~/.ssh/known_hosts` with `ssh`: DbRover reads it to check SSH servers' host
 keys, and adds a line when you trust a new one. See
 [SSH tunnels](data-sources.md#ssh-tunnels).
 
 ## data_sources.toml
 
-You can edit this file by hand **while dbdesk is closed**. dbdesk reads it at start-up and
+You can edit this file by hand **while DbRover is closed**. DbRover reads it at start-up and
 rewrites it every time you save or delete a data source, so changes made while it runs are
 overwritten, and comments are not kept.
 
@@ -93,12 +93,12 @@ An export (**File › Export data sources…**) is the same `[[data_source]]` ta
 them. See [Moving data sources to another machine](sharing.md).
 
 If the file can't be read — say, a typo while editing it — the explorer shows the error and
-dbdesk refuses to save or delete anything, so it never overwrites your file with an empty list.
-Fix the file and restart dbdesk.
+DbRover refuses to save or delete anything, so it never overwrites your file with an empty list.
+Fix the file and restart DbRover.
 
 ## projects.toml
 
-Like `data_sources.toml`, edit it only while dbdesk is closed; comments are not kept.
+Like `data_sources.toml`, edit it only while DbRover is closed; comments are not kept.
 
 ```toml
 [mcp_defaults]
@@ -124,7 +124,7 @@ schemas = ["public"]
 - `id` is what data sources point at. Don't change it.
 - `slug` is lower-case letters, digits and single hyphens, and must be unique. It is kept when
   the project is renamed.
-- `mcp_enabled` lets AI assistants use the project's databases through `dbdesk mcp`; see
+- `mcp_enabled` lets AI assistants use the project's databases through `dbrover mcp`; see
   [Connecting an AI assistant](mcp.md). A new project starts with it `false`.
 - `mcp_defaults` sets what MCP clients may do in every project, and a `[project.mcp]` table
   under a project overrides it for that project. `read`, `write`, `schema` and `admin` are the
@@ -133,14 +133,14 @@ schemas = ["public"]
   Project settings and View › Settings › MCP edit all of these.
 
 Unknown keys are refused rather than ignored, so a setting that is misspelt, or one written by a
-newer dbdesk, never goes unnoticed. If the file can't be read, the explorer lists every data
-source ungrouped and dbdesk refuses to change projects until the file is fixed, so it never
+newer DbRover, never goes unnoticed. If the file can't be read, the explorer lists every data
+source ungrouped and DbRover refuses to change projects until the file is fixed, so it never
 overwrites it.
 
 ## Starting over
 
 To reset the layout, use **View → Reset layout**. To go back to the default shortcuts, delete
 `keymap.toml` and click **Reload** in **View → Keymap…**; for the default settings, delete
-`settings.toml` and click **Reload** in **View → Settings…**. To forget everything, quit dbdesk and
-delete its folders; the passwords stay in the keychain until you delete the `dbdesk` entries
+`settings.toml` and click **Reload** in **View → Settings…**. To forget everything, quit DbRover and
+delete its folders; the passwords stay in the keychain until you delete the `dbrover` entries
 there too.

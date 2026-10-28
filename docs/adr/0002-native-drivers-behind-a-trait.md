@@ -12,7 +12,7 @@ through one interface.
 
 ## Decision
 
-Each engine gets its own crate implementing the `Connection` trait from `dbdesk-core`, using
+Each engine gets its own crate implementing the `Connection` trait from `dbrover-core`, using
 the engine's native Rust client:
 
 - Postgres: `tokio-postgres`
@@ -25,7 +25,7 @@ methods, because native `async fn` in traits is not yet dyn-compatible.
 registry, so that adding an engine needed no edits outside its crate. In practice every engine
 needs its own variant in the data source file format and its own form in the UI anyway. So
 connection settings are a closed enum, `ConnectionConfig { Postgres(..), Sqlite(..) }`, in
-`dbdesk-core`. Opening a connection is one `match` over it in the engine (`dbdesk-engine/src/open.rs`).
+`dbrover-core`. Opening a connection is one `match` over it in the engine (`dbrover-engine/src/open.rs`).
 Each driver crate exposes a plain `connect` function that returns its concrete connection type.
 Adding an engine is now a compiler-guided change: a new variant, then every non-exhaustive
 `match` the compiler points at. Once connected, everything still goes through `dyn Connection`.

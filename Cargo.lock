@@ -1582,16 +1582,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 
 [[package]]
-name = "dbdesk-app"
+name = "dbrover-app"
 version = "0.12.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "dbdesk-core",
- "dbdesk-engine",
- "dbdesk-mcp",
- "dbdesk-sql",
- "dbdesk-store",
+ "dbrover-core",
+ "dbrover-engine",
+ "dbrover-mcp",
+ "dbrover-sql",
+ "dbrover-store",
  "eframe",
  "egui",
  "egui-phosphor",
@@ -1620,7 +1620,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "dbdesk-core"
+name = "dbrover-core"
 version = "0.12.0"
 dependencies = [
  "async-trait",
@@ -1632,13 +1632,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "dbdesk-driver-clickhouse"
+name = "dbrover-driver-clickhouse"
 version = "0.12.0"
 dependencies = [
  "async-trait",
  "clickhouse",
- "dbdesk-core",
- "dbdesk-tls",
+ "dbrover-core",
+ "dbrover-tls",
  "hyper-rustls",
  "hyper-util",
  "rustls",
@@ -1650,12 +1650,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "dbdesk-driver-duckdb"
+name = "dbrover-driver-duckdb"
 version = "0.12.0"
 dependencies = [
  "async-trait",
- "dbdesk-core",
- "dbdesk-sql",
+ "dbrover-core",
+ "dbrover-sql",
  "duckdb",
  "tempfile",
  "tokio",
@@ -1663,11 +1663,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "dbdesk-driver-mysql"
+name = "dbrover-driver-mysql"
 version = "0.12.0"
 dependencies = [
  "async-trait",
- "dbdesk-core",
+ "dbrover-core",
  "mysql_async",
  "rustls",
  "tempfile",
@@ -1677,12 +1677,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "dbdesk-driver-postgres"
+name = "dbrover-driver-postgres"
 version = "0.12.0"
 dependencies = [
  "async-trait",
- "dbdesk-core",
- "dbdesk-tls",
+ "dbrover-core",
+ "dbrover-tls",
  "futures-util",
  "tempfile",
  "tokio",
@@ -1692,23 +1692,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "dbdesk-driver-sqlite"
+name = "dbrover-driver-sqlite"
 version = "0.12.0"
 dependencies = [
  "async-trait",
- "dbdesk-core",
+ "dbrover-core",
  "rusqlite",
  "tempfile",
  "tokio",
 ]
 
 [[package]]
-name = "dbdesk-driver-sqlserver"
+name = "dbrover-driver-sqlserver"
 version = "0.12.0"
 dependencies = [
  "async-trait",
- "dbdesk-core",
- "dbdesk-sql",
+ "dbrover-core",
+ "dbrover-sql",
  "futures-util",
  "jiff",
  "rustls",
@@ -1721,21 +1721,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "dbdesk-engine"
+name = "dbrover-engine"
 version = "0.12.0"
 dependencies = [
  "async-trait",
  "cargo-packager-updater",
- "dbdesk-core",
- "dbdesk-driver-clickhouse",
- "dbdesk-driver-duckdb",
- "dbdesk-driver-mysql",
- "dbdesk-driver-postgres",
- "dbdesk-driver-sqlite",
- "dbdesk-driver-sqlserver",
- "dbdesk-sql",
- "dbdesk-ssh",
- "dbdesk-store",
+ "dbrover-core",
+ "dbrover-driver-clickhouse",
+ "dbrover-driver-duckdb",
+ "dbrover-driver-mysql",
+ "dbrover-driver-postgres",
+ "dbrover-driver-sqlite",
+ "dbrover-driver-sqlserver",
+ "dbrover-sql",
+ "dbrover-ssh",
+ "dbrover-store",
  "jiff",
  "rusqlite",
  "serde",
@@ -1748,13 +1748,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "dbdesk-mcp"
+name = "dbrover-mcp"
 version = "0.12.0"
 dependencies = [
- "dbdesk-core",
- "dbdesk-engine",
- "dbdesk-sql",
- "dbdesk-store",
+ "dbrover-core",
+ "dbrover-engine",
+ "dbrover-sql",
+ "dbrover-store",
  "jiff",
  "rmcp",
  "rusqlite",
@@ -1768,11 +1768,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "dbdesk-sql"
+name = "dbrover-sql"
 version = "0.12.0"
 dependencies = [
  "base64 0.22.1",
- "dbdesk-core",
+ "dbrover-core",
  "hmac",
  "postgres-protocol",
  "sha2 0.11.1",
@@ -1781,11 +1781,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "dbdesk-ssh"
+name = "dbrover-ssh"
 version = "0.12.0"
 dependencies = [
  "data-encoding",
- "dbdesk-core",
+ "dbrover-core",
  "hmac",
  "russh",
  "sha1 0.11.0",
@@ -1797,10 +1797,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "dbdesk-store"
+name = "dbrover-store"
 version = "0.12.0"
 dependencies = [
- "dbdesk-core",
+ "dbrover-core",
  "directories",
  "jiff",
  "keyring",
@@ -1813,10 +1813,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "dbdesk-tls"
+name = "dbrover-tls"
 version = "0.12.0"
 dependencies = [
- "dbdesk-core",
+ "dbrover-core",
  "rustls",
  "tempfile",
  "thiserror 2.0.21",

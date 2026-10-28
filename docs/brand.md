@@ -1,6 +1,6 @@
 # Brand
 
-<img src="../assets/brand/logo.svg" alt="The dbdesk mark" width="96">
+<img src="../assets/brand/logo.svg" alt="The DbRover mark" width="96">
 
 ## The mark
 
@@ -28,7 +28,7 @@ gaps, so it works as a single-ink stamp.
 | `assets/brand/icon.svg` | The app icon: the mark in its dark-theme colours on a rounded tile with macOS margins. |
 | `assets/brand/icon-*.png` | The app icon at 16–1024 px. The window icon is `icon-256.png`. |
 | `assets/brand/logo-*.png` | The bare mark at 16–512 px. |
-| `assets/brand/dbdesk.icns` | The macOS icon set, for an app bundle. |
+| `assets/brand/dbrover.icns` | The macOS icon set, for an app bundle. |
 | `assets/brand/social-preview.png` | 1280×640 card for the repository's social preview (GitHub → Settings → General → Social preview). Its text is set in the bundled Inter. |
 
 The PNGs and the `.icns` are generated: edit the SVGs, then run `assets/brand/export.sh`. It
