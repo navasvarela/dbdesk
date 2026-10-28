@@ -1,6 +1,7 @@
 # Creating and changing database objects
 
-Status: **E0, E1 and E2 built** (2026-10-26), **E3 built** (2026-10-27); E4 planned. Proposed
+Status: **E0, E1 and E2 built** (2026-10-26), **E3 built** (2026-10-27); E4 planned in
+detail (2026-10-28). Proposed
 on 2026-10-23; on 2026-10-26 indexes moved from Later into E1 and schemas into E2.
 
 Today the explorer only reads: it browses the catalog, opens a table's data and shows
@@ -243,25 +244,93 @@ own users when its driver lands:
 
 Changing an existing table is the hardest helper, so it comes last.
 
-- **Modify table…** opens the New table dialog on the existing table. The dialog compares what
-  the user changed with what `describe_table` reported, and builds the operations from that:
+- **Modify table…** on a table opens the New table dialog filled from the live table: its
+  columns, primary key, unique keys, foreign keys and checks. The dialog compares what the
+  user changed with what it loaded, and the review panel shows the `ALTER TABLE` statements
+  that turn one into the other:
   - add, drop and rename columns;
   - change a column's type, nullability and default;
-  - add and drop keys and checks.
-- **PostgreSQL** supports all of it with `ALTER TABLE`. A type change that needs a conversion
-  gets a `USING` expression field.
-- **SQLite** only renames and adds or drops simple columns in place. Anything else needs
-  SQLite's documented twelve-step rebuild:
-  1. Create the new table.
-  2. Copy the rows into it.
-  3. Drop the old table.
-  4. Rename the new one.
-  5. Recreate the indexes, triggers and views.
+  - change the primary key; add and drop unique keys, foreign keys and checks;
+  - rename the table.
+- **Diffing is pure code in `dbdesk-sql`:** `DdlOperation::AlterTable(TableAlteration)` takes
+  the table as loaded (`ExistingTable`), the spec the dialog ends with, and which columns were
+  renamed, and writes each dialect's statements, with golden tests per dialect.
+  - **A rename is never a drop plus an add.** Each row of the dialog remembers the column it
+    was loaded from, so the alteration names its renames (old name → new name); a column
+    whose row was removed is dropped, a row with no origin is added.
+  - A constraint the user left alone is kept, even when one of its columns was renamed (the
+    comparison follows the renames). A changed constraint is dropped and added again, since
+    a constraint holds no data.
+  - Statements come in an order that works on every engine: drop the constraints that go,
+    rename columns, drop columns, add columns, change columns, add the new primary key,
+    unique keys, checks and foreign keys, and rename the table last.
+- **Per dialect**, from `Capabilities::table_changes`, which gains `ChangePrimaryKey` and
+  splits constraints by kind:
+  - **PostgreSQL** does all of it with `ALTER TABLE`; a type change can say how to convert
+    the values (`USING`), in a field the dialog shows for each retyped column. DuckDB takes
+    `USING` too.
+  - **MySQL and MariaDB** change a column's type or nullability with `MODIFY COLUMN` and its
+    full definition, and only its default with `ALTER COLUMN … SET DEFAULT`; they drop a
+    primary key with `DROP PRIMARY KEY`, a unique key with `DROP INDEX`, a foreign key with
+    `DROP FOREIGN KEY` and a check with `DROP CONSTRAINT`.
+  - **SQL Server** renames columns with `sp_rename`, and keeps each default as a named
+    constraint, which the loaded table names: changing a default, or the type of a column
+    that has one, drops that constraint and adds it again.
+  - **DuckDB** changes columns in place but can't add or drop constraints, nor change the
+    primary key.
+  - **ClickHouse** changes columns with `MODIFY COLUMN` (nullability is part of the type,
+    `Nullable(…)`), adds and drops checks, and can't change its key, which is the table's
+    sort order.
+  - What a dialect can't do is refused in the dialog with the reason ("DuckDB can't add or
+    drop constraints on an existing table."), not attempted: the review panel shows it
+    instead of SQL, and **Execute** stays off. **Open in console** is still there for the
+    rest.
+  - The statements run in one transaction where DDL is transactional (PostgreSQL, SQLite,
+    SQL Server, DuckDB); MySQL and ClickHouse commit each as it runs, as for every helper.
+- **Reading the live table:** `Command::LoadTable` answers `Event::TableLoaded` with the
+  `ExistingTable`, built from `describe_table` and a new `Connection::describe_constraints`,
+  which each driver answers from its catalog: constraint names, unique keys, foreign keys with
+  their `ON DELETE`/`ON UPDATE` actions, checks, the primary key's name and SQL Server's
+  named defaults. MySQL's `describe_table` now reports a default as an SQL expression
+  (MySQL prints a literal default unquoted), so writing it back means the same.
+- **Identity and auto-increment columns** (E2's leftover): `ColumnDescription` and
+  `ColumnSpec` gain the column's identity, so Copy DDL on PostgreSQL and SQL Server writes
+  `GENERATED … AS IDENTITY` and `IDENTITY(seed, increment)`, and Modify table keeps them
+  (MySQL's `MODIFY COLUMN` would otherwise drop `AUTO_INCREMENT`). The dialog shows a
+  column's identity but doesn't change it; changing it is refused.
+- **SQLite** only renames tables and columns, adds simple columns and drops columns in place.
+  Anything else rebuilds the table, as SQLite's documentation describes, in one transaction:
+  1. create the new table under a temporary name, with the columns it keeps under their old
+     names and the columns being dropped still in it;
+  2. copy the rows into it;
+  3. drop the old table and give the new one its name;
+  4. create the old table's indexes and triggers again, from their saved definitions;
+  5. rename and drop columns in place, so SQLite itself rewrites the indexes, triggers,
+     views and other tables' foreign keys that name a renamed column, and refuses to drop a
+     column one of them still uses;
+  6. where foreign keys were on, `PRAGMA foreign_key_check` before committing.
 
-  This all runs in one transaction with foreign keys switched off. It is risky, so it ships
-  last and only once the tests below pass.
-- **Tests:** a round trip per operation (build, apply, `describe_table`, compare), on both
-  engines. SQLite rebuilds also check that rows, indexes and triggers survive.
+  `PRAGMA foreign_keys` can't change inside a transaction, so the engine switches foreign
+  keys off before `BEGIN` and back on after, for every helper's DDL on SQLite: with them on,
+  dropping the old table would run its `ON DELETE` actions on other tables' rows. A table
+  the rebuild can't write back as it is (generated columns, `COLLATE`, `WITHOUT ROWID`,
+  `STRICT`) is refused with the reason. It ships last, in its own layer, once its tests
+  show rows, indexes, triggers and views survive.
+- **Tests:** golden tests per dialect for every kind of change and every refusal; engine
+  round trips on every test server that load a table, alter it through the builder, and
+  compare `describe_table` and the loaded constraints with the new spec; SQLite rebuilds
+  checked for rows, indexes, triggers, views and other tables' foreign keys; kittest tests of
+  the dialog on SQLite.
+
+**Layers**, one stack:
+1. This plan.
+2. Identity columns: `ColumnDescription::identity` in every driver, `ColumnSpec::identity`
+   written by `CREATE TABLE`, and Copy DDL keeping them.
+3. `TableAlteration` and each dialect's `ALTER TABLE`, with golden tests.
+4. `Connection::describe_constraints`, `Command::LoadTable` and engine round trips.
+5. Modify table in the dialog.
+6. SQLite's rebuild.
+7. The manual's chapter and the demo note.
 
 **Exit:** I change a column's type and add a foreign key on a table with rows, on both engines,
 and nothing is lost.
@@ -283,7 +352,9 @@ Proposed defaults; each is confirmed when its milestone starts.
 | Where the DDL builder lives | **`dbdesk-sql`**, beside the dialects. | Pure and testable without a database or the UI. |
 | Users and roles in one dialog | **One dialog**: New user is New role with LOGIN ticked. | Matches PostgreSQL's model, and pgAdmin's single Login/Group Role dialog. |
 | Passwords | **Hashed into a SCRAM verifier on the client**, redacted in the review panel, the history and the log. | Needs PostgreSQL 10 or later, which stores a verifier as it is whatever `password_encryption` says. Nothing older is supported, so the password is never sent as typed. |
-| SQLite table rebuilds | **Last, in E4**, behind round-trip tests. | Until then, Modify table on SQLite offers only what `ALTER TABLE` does in place. Other options are disabled, with a tooltip saying why. |
+| SQLite table rebuilds | **Last, in E4**, behind round-trip tests. | Until then, Modify table on SQLite offers only what `ALTER TABLE` does in place, and refuses the rest with the reason. |
+| What Modify table can't do on a dialect | **Refused in the dialog with the reason**, never attempted. | The user takes the SQL to a console for anything else. |
+| Renamed columns | **Tracked by the dialog's rows**, never guessed from names. | A rename keeps the column's data; it is never written as a drop and an add. |
 
 ## Risks
 
