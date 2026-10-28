@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Assembles the website into one folder: the landing page from site/, the brand assets, fonts
-# and database logos it uses (copied, so assets/ stays their only home), and the user manual
-# built by mdBook under manual/. The Pages workflow publishes what this produces.
+# Assembles the website into one folder: the landing page from site/ with its pictures and
+# clips (site/media, made by site/clips.sh), the brand assets, fonts and database logos it uses
+# (copied, so assets/ stays their only home), and the user manual built by mdBook under
+# manual/. The Pages workflow publishes what this produces.
 #
 #   site/build.sh [OUTPUT_DIR]     # default: target/site
 #
@@ -15,7 +16,16 @@ out="${1:-${root}/target/site}"
 rm -rf "${out}"
 mkdir -p "${out}/assets/brand" "${out}/assets/fonts" "${out}/assets/databases"
 
-cp "${root}/site/index.html" "${root}/site/style.css" "${out}/"
+# The page names the version and links to its files, written in from the workspace's version
+# rather than asked of GitHub when the page loads.
+version="$(sed -n 's/^version = "\(.*\)"$/\1/p' "${root}/Cargo.toml" | head -n 1)"
+if [ -z "${version}" ]; then
+    echo "no workspace version in Cargo.toml" >&2
+    exit 1
+fi
+sed "s/{{version}}/${version}/g" "${root}/site/index.html" > "${out}/index.html"
+cp "${root}/site/style.css" "${out}/"
+cp -R "${root}/site/media" "${out}/media"
 cp "${root}/assets/brand/logo.svg" "${root}/assets/brand/social-preview.png" \
     "${out}/assets/brand/"
 cp "${root}/assets/fonts/inter/Inter-Regular.ttf" "${root}/assets/fonts/inter/Inter-SemiBold.ttf" \
