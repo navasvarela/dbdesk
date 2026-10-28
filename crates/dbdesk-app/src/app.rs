@@ -42,6 +42,7 @@ use crate::settings::AppSettings;
 use crate::settings_window::{self, SettingsWindowAction};
 use crate::sql_files::{self, Destination, OpenFileAction, OpenFileDialog, SqlFiles};
 use crate::state::{AppState, EngineStatus};
+use crate::system_look::SystemLook;
 use crate::theme::{self, Palette};
 use crate::title_bar;
 use crate::unsaved_dialog::{UnsavedChoice, UnsavedConfirmation};
@@ -129,6 +130,8 @@ pub struct DbDeskApp {
     native_menu: Option<NativeMenu>,
     /// The window's content runs under its title bar, so the app draws the top strip itself.
     integrated_title_bar: bool,
+    /// The system's faces and accent colour, when `main` took them.
+    system_look: Option<SystemLook>,
 }
 
 impl DbDeskApp {
@@ -201,6 +204,7 @@ impl DbDeskApp {
             maximize_window,
             native_menu: None,
             integrated_title_bar: false,
+            system_look: None,
         })
     }
 
@@ -228,6 +232,16 @@ impl DbDeskApp {
     )]
     pub fn with_integrated_title_bar(mut self) -> Self {
         self.integrated_title_bar = true;
+        self
+    }
+
+    /// Draws with the system's faces and accent colour, following changes to the accent.
+    #[cfg_attr(
+        not(target_os = "macos"),
+        expect(dead_code, reason = "only macOS has a system look dbdesk takes")
+    )]
+    pub fn with_system_look(mut self, look: SystemLook) -> Self {
+        self.system_look = Some(look);
         self
     }
 
@@ -1566,6 +1580,9 @@ impl eframe::App for DbDeskApp {
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.sync_native_menu(ctx);
+        if let Some(look) = &mut self.system_look {
+            look.follow(ctx);
+        }
         self.maximize_window_once(ctx);
         self.drain_engine_events();
         self.log_console.drain();

@@ -152,18 +152,111 @@ fn mix(from: Color32, to: Color32, amount: f32) -> Color32 {
     )
 }
 
+/// WCAG 2.x relative luminance.
+fn luminance(color: Color32) -> f64 {
+    let linear = |channel: u8| {
+        let c = f64::from(channel) / 255.0;
+        if c <= 0.039_28 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * linear(color.r()) + 0.7152 * linear(color.g()) + 0.0722 * linear(color.b())
+}
+
+/// WCAG 2.x contrast ratio, from 1 to 21.
+fn contrast(a: Color32, b: Color32) -> f64 {
+    let (light, dark) = {
+        let (la, lb) = (luminance(a), luminance(b));
+        if la > lb { (la, lb) } else { (lb, la) }
+    };
+    (light + 0.05) / (dark + 0.05)
+}
+
+/// WCAG AA for normal-size text.
+const AA: f64 = 4.5;
+
 /// Installs dbdesk's visuals for both themes. Which one shows follows the OS unless the user
 /// picked one in the View menu; egui remembers that choice between runs.
 pub fn install(ctx: &egui::Context) {
+    install_with_accent(ctx, None);
+}
+
+/// Installs the visuals with selection and focus in `accent`, the system's accent colour, or
+/// in the brand's primary without one.
+pub fn install_with_accent(ctx: &egui::Context, accent: Option<Color32>) {
     for theme in [Theme::Light, Theme::Dark] {
+        let palette = Palette::of(theme);
+        let focus = accent.map_or_else(
+            || Focus::brand(palette),
+            |accent| Focus::accent(palette, theme, accent),
+        );
         ctx.style_mut_of(theme, |style| {
-            style.visuals = visuals(Palette::of(theme), theme);
+            style.visuals = visuals(palette, theme, focus);
             tune_spacing(style);
         });
     }
 }
 
-fn visuals(palette: &Palette, theme: Theme) -> Visuals {
+/// What selection and focus are drawn in. The brand colours stay for icons, tabs and buttons;
+/// selection and focus are what macOS tints with the user's accent colour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Focus {
+    /// Focus rings, the text cursor, and the outline of what is selected.
+    pub accent: Color32,
+    /// Behind selected text, cells and rows.
+    pub selection: Color32,
+}
+
+/// The most of the accent colour a selection fill takes over the field it is drawn on, in
+/// hundredths: about as strong as macOS's own selected-text colour. Less is used where text on
+/// it would fall below WCAG AA.
+const MAX_ACCENT_SELECTION_TINT_LIGHT: u8 = 20;
+const MAX_ACCENT_SELECTION_TINT_DARK: u8 = 30;
+
+impl Focus {
+    fn brand(palette: &Palette) -> Self {
+        Self {
+            accent: palette.primary,
+            selection: palette.selection,
+        }
+    }
+
+    pub fn accent(palette: &Palette, theme: Theme, accent: Color32) -> Self {
+        Self {
+            accent,
+            selection: accent_selection(palette, theme, accent),
+        }
+    }
+}
+
+/// The accent faded into the field as far as needed for every text colour drawn on a
+/// selection, plain and SQL's, to keep WCAG AA. With no tint the fill is the field itself, where
+/// `tests::text_colours_meet_wcag_aa` holds them to it, so a fill is always found.
+fn accent_selection(palette: &Palette, theme: Theme, accent: Color32) -> Color32 {
+    let syntax = SyntaxColors::of(palette);
+    let texts = [
+        palette.text,
+        syntax.keyword,
+        syntax.string,
+        syntax.number,
+        syntax.comment,
+        syntax.identifier,
+        syntax.plain,
+    ];
+    let max_tint = match theme {
+        Theme::Light => MAX_ACCENT_SELECTION_TINT_LIGHT,
+        Theme::Dark => MAX_ACCENT_SELECTION_TINT_DARK,
+    };
+    (0..=max_tint)
+        .rev()
+        .map(|hundredths| mix(palette.field, accent, f32::from(hundredths) / 100.0))
+        .find(|fill| texts.iter().all(|&text| contrast(text, *fill) >= AA))
+        .unwrap_or(palette.field)
+}
+
+fn visuals(palette: &Palette, theme: Theme, focus: Focus) -> Visuals {
     let mut visuals = theme.default_visuals();
     visuals.override_text_color = None;
     visuals.weak_text_color = Some(palette.text_weak);
@@ -182,16 +275,16 @@ fn visuals(palette: &Palette, theme: Theme) -> Visuals {
     visuals.window_shadow = soft_shadow(theme, 24);
     visuals.popup_shadow = soft_shadow(theme, 12);
     visuals.selection = Selection {
-        bg_fill: palette.selection,
-        stroke: Stroke::new(1.0, palette.primary),
+        bg_fill: focus.selection,
+        stroke: Stroke::new(1.0, focus.accent),
     };
-    visuals.text_cursor.stroke = Stroke::new(2.0, palette.primary);
+    visuals.text_cursor.stroke = Stroke::new(2.0, focus.accent);
     visuals.striped = true;
-    visuals.widgets = widgets(palette);
+    visuals.widgets = widgets(palette, focus);
     visuals
 }
 
-fn widgets(palette: &Palette) -> Widgets {
+fn widgets(palette: &Palette, focus: Focus) -> Widgets {
     let radius = CornerRadius::same(WIDGET_RADIUS);
     let state = |fill: Color32, outline: Stroke| WidgetVisuals {
         bg_fill: fill,
@@ -209,9 +302,9 @@ fn widgets(palette: &Palette) -> Widgets {
         inactive: state(palette.control, Stroke::NONE),
         hovered: state(
             palette.control_hover,
-            Stroke::new(1.0, mix(palette.border, palette.primary, 0.5)),
+            Stroke::new(1.0, mix(palette.border, focus.accent, 0.5)),
         ),
-        active: state(palette.selection, Stroke::new(1.0, palette.primary)),
+        active: state(focus.selection, Stroke::new(1.0, focus.accent)),
         open: state(palette.control_hover, Stroke::new(1.0, palette.border)),
     }
 }
@@ -361,30 +454,6 @@ impl SyntaxColors {
 mod tests {
     use super::*;
 
-    /// WCAG 2.x relative luminance.
-    fn luminance(color: Color32) -> f64 {
-        let linear = |channel: u8| {
-            let c = f64::from(channel) / 255.0;
-            if c <= 0.039_28 {
-                c / 12.92
-            } else {
-                ((c + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        0.2126 * linear(color.r()) + 0.7152 * linear(color.g()) + 0.0722 * linear(color.b())
-    }
-
-    fn contrast(a: Color32, b: Color32) -> f64 {
-        let (light, dark) = {
-            let (la, lb) = (luminance(a), luminance(b));
-            if la > lb { (la, lb) } else { (lb, la) }
-        };
-        (light + 0.05) / (dark + 0.05)
-    }
-
-    /// WCAG AA for normal-size text.
-    const AA: f64 = 4.5;
-
     /// Every text colour against every background it is drawn on.
     fn text_pairs(palette: &Palette) -> Vec<(&'static str, Color32, &'static str, Color32)> {
         let syntax = SyntaxColors::of(palette);
@@ -451,6 +520,58 @@ mod tests {
             ],
         );
         pairs
+    }
+
+    /// macOS's accent colours in sRGB (Blue, Purple, Pink, Red, Orange, Yellow, Green,
+    /// Graphite), as `NSColor.controlAccentColor` reports them in the light appearance, and Blue
+    /// as the dark appearance lightens it.
+    const MACOS_ACCENTS: [(u8, u8, u8); 9] = [
+        (0x00, 0x7A, 0xFF),
+        (0x95, 0x3D, 0x96),
+        (0xF7, 0x4F, 0x9E),
+        (0xE0, 0x38, 0x3E),
+        (0xF7, 0x82, 0x1B),
+        (0xFF, 0xC6, 0x00),
+        (0x62, 0xBA, 0x46),
+        (0x8C, 0x8C, 0x8C),
+        (0x0A, 0x84, 0xFF),
+    ];
+
+    /// Enough for a selected row to stand out from the rest of the grid.
+    const MIN_SELECTION_CONTRAST: f64 = 1.1;
+
+    #[test]
+    fn accent_selection_meets_wcag_aa() {
+        let mut failures = Vec::new();
+        for theme in [Theme::Light, Theme::Dark] {
+            let palette = Palette::of(theme);
+            let syntax = SyntaxColors::of(palette);
+            for (r, g, b) in MACOS_ACCENTS {
+                let selection = Focus::accent(palette, theme, Color32::from_rgb(r, g, b)).selection;
+                // Faded only so far that a selection still shows.
+                if contrast(selection, palette.field) < MIN_SELECTION_CONTRAST {
+                    failures.push(format!(
+                        "{theme:?}: #{r:02X}{g:02X}{b:02X}'s selection barely shows"
+                    ));
+                }
+                for (name, text) in [
+                    ("text", palette.text),
+                    ("keyword", syntax.keyword),
+                    ("string", syntax.string),
+                    ("number", syntax.number),
+                    ("comment", syntax.comment),
+                    ("identifier", syntax.identifier),
+                ] {
+                    let ratio = contrast(text, selection);
+                    if ratio < AA {
+                        failures.push(format!(
+                            "{theme:?}: {name} on #{r:02X}{g:02X}{b:02X}'s selection is {ratio:.2}:1"
+                        ));
+                    }
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
     }
 
     #[test]
