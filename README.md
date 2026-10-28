@@ -14,7 +14,7 @@ understand end to end and easy to bend to my own workflow.
   <img src="site/media/hero-light-poster.png" width="720" alt="dbdesk with a SQLite data source's tables in the explorer, and a console whose open orders were filtered and sorted by the database">
 </picture>
 
-Status: released for macOS and Linux, with an in-app updater; see
+Status: released for macOS, Linux and Windows, with an in-app updater; see
 [Releases](https://github.com/navasvarela/dbdesk/releases). Query consoles have highlighting,
 completion from the catalog, formatting and problems marked as you type; they run the
 statement at the cursor or a whole script, explain it, cancel it, and open and save `.sql`

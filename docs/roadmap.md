@@ -262,6 +262,27 @@ plan, including the decisions it needs first, is in [Releasing](releasing.md).
   installer. Authenticode signing follows the app's rename. Layers, decisions,
   risks and exit: [R4](releasing.md#r4--windows-parity).
 
+**R4 demo note:** built; the update itself is still to be tried on a Windows machine with the
+next release. On Windows, a copy installed with the installer (one with `uninstall.exe` beside
+`dbdesk.exe`) that is older than the newest release says "dbdesk 0.13.0 is available" in the
+status bar. **Install and restart** shows the download's progress, then "dbdesk 0.13.0 is
+downloaded" and **Restart now**. With a transaction open in a manual-commit console, **Restart
+now** asks first; once dbdesk has quit, the installer's progress bar appears and the new version
+starts. A portable copy instead says it wasn't installed with dbdesk's installer and offers
+**Open release page**. Releases sign the installer with the update key and list it as
+`windows-x86_64` in `latest.json`. Authenticode signing comes after the app's rename; the choice
+of service is an open decision in
+[Signing the Windows installer](releasing.md#signing-the-windows-installer). dbdesk.org's
+download button says **Download for Windows** to Windows visitors and links the installer, the
+download section has an **Installer** button, and the manual's Install chapter walks through
+the first-run SmartScreen block (**More info › Run anyway**), as seen when v0.12.0's installer
+was tried on a real Windows machine, and the Windows update. Covered by unit tests of
+keeping the installer (one file, replaced by the next), of its passive `/P /R` command line, and
+of telling an installed copy from a portable one; the update state and dialog tests with a kept
+installer; the engine and UI tests of the install flow with a fake installer; and, by hand on a
+Mac, the workflow's signature, manifest and `cargo-packager-updater`'s check of a Windows
+entry (see [R4's status](releasing.md#r4--windows-parity)).
+
 **Update notice demo note:** built, ahead of R2. Start a build older than the newest release,
 and the status bar says "dbdesk 0.2.0 is available"; click it for the version you have and
 **Open release page**. **Help › Check for updates…** asks on demand and says "You're up to
