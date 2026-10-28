@@ -60,6 +60,7 @@ fn provenance(source: &HistorySource) -> String {
         HistorySource::Mcp { client: None } => {
             "Run by an MCP client, through dbdesk mcp.".to_owned()
         }
+        HistorySource::Action { id } => format!("Run by the action {id} from actions.toml."),
         HistorySource::Dbdesk => {
             "Run by a dbdesk from before the history recorded where.".to_owned()
         }

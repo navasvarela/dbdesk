@@ -28,8 +28,9 @@ use dbdesk_core::{
     TransactionStatus,
 };
 use dbdesk_engine::{
-    Command, ConsoleId, EditFailure, Event, Export, ExportAll, RunId, RunOutcome, RunPurpose,
-    SessionState, StatementFailure, StatementSummary, TransactionEnd, TransactionMode, WatchedFile,
+    Command, ConsoleId, EditFailure, Event, Export, ExportAll, RunId, RunOrigin, RunOutcome,
+    RunPurpose, SessionState, StatementFailure, StatementSummary, TransactionEnd, TransactionMode,
+    WatchedFile,
 };
 use dbdesk_sql::{
     Dialect, FormatOptions, ParameterValues, format_ranges, split_statements, statement_at,
@@ -38,6 +39,8 @@ use dbdesk_sql::{
 use dbdesk_store::{ConsoleKey, ExportFormat, SqlFileContents};
 
 use edit::Editability;
+
+use crate::custom_actions::{GridCells, GridTable};
 use file::{ConfigFile, Reload, SqlFile, Storage};
 
 pub use edit::ChangeCount;
@@ -81,6 +84,8 @@ pub struct SubmittedRun {
     /// None yet for a run typed in the editor, which is asked for them; the values the
     /// statement last ran with for one that runs a shown statement again.
     pub parameters: ParameterValues,
+    /// What the history records the statements as coming from.
+    pub origin: RunOrigin,
 }
 
 impl SubmittedRun {
@@ -222,7 +227,38 @@ pub struct StatementView {
     wrapped: bool,
 }
 
+/// The selected cells of loaded rows, for a custom action: added rows have no values yet.
+fn selected_cells(
+    columns: &[ColumnInfo],
+    rows: &[Row],
+    grid: &grid::GridView,
+    edits: &edit::EditSession,
+) -> Option<GridCells> {
+    let selected_columns = grid.selected_columns()?;
+    let selected_rows = grid
+        .selected_rows()?
+        .filter_map(|position| grid.order().get(position))
+        .filter_map(|&index| rows.get(index).cloned())
+        .collect::<Vec<_>>();
+    if selected_rows.is_empty() {
+        return None;
+    }
+    Some(GridCells {
+        columns: columns.iter().map(|column| column.name.clone()).collect(),
+        selected: selected_columns.collect(),
+        rows: selected_rows,
+        table: edits.target().map(|target| GridTable {
+            schema: target.table.schema.clone(),
+            name: target.table.name.clone(),
+        }),
+    })
+}
+
 impl StatementView {
+    fn selected_cells(&self) -> Option<GridCells> {
+        selected_cells(&self.columns, &self.rows, &self.grid, &self.edits)
+    }
+
     /// The statement to run to show this result again, sorted and filtered as the grid now
     /// asks: wrapped if the database is to sort and filter it, as typed otherwise.
     fn resubmission(&self, dialect: Dialect) -> Result<SubmittedStatement, String> {
@@ -559,6 +595,7 @@ impl QueryConsole {
             statements: vec![statement],
             purpose: RunPurpose::Run,
             parameters: self.parameters.clone(),
+            origin: RunOrigin::Console,
         })
     }
 
@@ -575,6 +612,7 @@ impl QueryConsole {
             statements: vec![statement.resubmission(dialect)?],
             purpose: RunPurpose::Run,
             parameters: self.parameters.clone(),
+            origin: RunOrigin::Console,
         })
     }
 
@@ -1097,6 +1135,21 @@ impl QueryConsole {
 
     /// The statement ⌘↵ would run, to shade in the editor: the one at the cursor, unless text
     /// is selected (the selection is what runs then, and is already highlighted).
+    /// Whether the shown result has cells selected, without copying them.
+    pub fn has_selected_cells(&self) -> bool {
+        self.run
+            .as_ref()
+            .and_then(|run| run.statements.get(run.selected))
+            .is_some_and(|statement| statement.grid.selected_rows().is_some())
+    }
+
+    /// The grid's selected cells in the shown result, for the keys and menu that run custom
+    /// actions.
+    pub fn selected_cells(&self) -> Option<GridCells> {
+        let run = self.run.as_ref()?;
+        run.statements.get(run.selected)?.selected_cells()
+    }
+
     pub fn current_statement(&self) -> Option<Range<usize>> {
         let (start, end) = ordered(&self.selection);
         if start != end {

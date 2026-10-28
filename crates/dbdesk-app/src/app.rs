@@ -3,9 +3,13 @@ use std::time::Instant;
 
 use dbdesk_core::{CatalogPath, DataSource, DataSourceId};
 use dbdesk_engine::{
-    Command, EngineConfig, EngineError, EngineHandle, Event, PasswordKept, Repaint,
+    Command, EngineConfig, EngineError, EngineHandle, Event, PasswordKept, Repaint, RunOrigin,
 };
-use dbdesk_store::{ConsoleKey, CustomFileKind, ExportFormat, McpPermissions, SqlFileContents};
+use dbdesk_sql::Dialect;
+use dbdesk_store::{
+    ActionId, ConsoleKey, CustomFileKind, ExportFormat, KeymapBindings, McpPermissions,
+    SqlFileContents,
+};
 use egui::{Frame, Margin, RichText};
 use egui_dock::{DockArea, DockState};
 
@@ -14,6 +18,7 @@ use crate::commands::{self, AppCommand, CommandState};
 use crate::console::{ConsoleAction, ExportedRows, FormatScope, RowsToOpen};
 use crate::consoles::Consoles;
 use crate::csv_import::{CsvImportAction, CsvImportDialog};
+use crate::custom_actions::{self, Subject, SubjectKind, SubjectOn};
 use crate::custom_files::{self, CustomFiles, FileWindowAction};
 use crate::data_source_dialog::{DataSourceDialog, DialogAction};
 use crate::data_source_form::McpPasswordChange;
@@ -100,10 +105,14 @@ pub struct DbDeskApp {
     /// Set once quitting may roll back open transactions, so the close isn't asked again.
     quit_confirmed: bool,
     keymap: Keymap,
+    /// What `keymap.toml` holds, kept to bind custom actions again when `actions.toml` changes.
+    keymap_file: Result<KeymapBindings, String>,
     /// Where `keymap.toml` is, once the engine has reported it.
     keymap_path: Option<PathBuf>,
     keymap_window_open: bool,
     custom_files: CustomFiles,
+    /// Why the last custom action couldn't run, shown in the status bar until the next one.
+    action_problem: Option<String>,
     about_open: bool,
     settings: AppSettings,
     updates: Updates,
@@ -190,9 +199,11 @@ impl DbDeskApp {
             pick_export_path: Box::new(export_dialog::pick_export_path),
             pick_csv_file: Box::new(file_picker::pick_csv_file),
             keymap: Keymap::default(),
+            keymap_file: Ok(KeymapBindings::new()),
             keymap_path: None,
             keymap_window_open: false,
             custom_files: CustomFiles::default(),
+            action_problem: None,
             about_open: false,
             settings: AppSettings::default(),
             updates: Updates::new(install_support),
@@ -351,13 +362,13 @@ impl DbDeskApp {
             let check = self.updates.start(self.settings.settings());
             self.send_if(check);
         }
-        self.custom_files.apply(event);
+        if self.custom_files.apply(event) == Some(CustomFileKind::Actions) {
+            self.rebuild_keymap();
+        }
         if let Event::KeymapLoaded { path, result } = event {
-            self.keymap = match result {
-                Ok(bindings) => Keymap::from_file(bindings),
-                Err(error) => Keymap::unreadable(error.clone()),
-            };
+            self.keymap_file = result.clone();
             self.keymap_path = Some(path.clone());
+            self.rebuild_keymap();
         }
         if matches!(event, Event::ConsolesLoaded(_)) {
             self.restore_console_tabs();
@@ -555,6 +566,103 @@ impl DbDeskApp {
         for command in triggered.into_iter().filter_map(AppCommand::for_action) {
             self.run_command(command, ctx);
         }
+    }
+
+    fn rebuild_keymap(&mut self) {
+        let custom: Vec<&ActionId> = self
+            .custom_files
+            .actions()
+            .iter()
+            .map(|action| &action.id)
+            .collect();
+        self.keymap = match &self.keymap_file {
+            Ok(bindings) => Keymap::from_file(bindings, &custom),
+            Err(error) => Keymap::unreadable(error.clone()),
+        };
+    }
+
+    /// The keys `keymap.toml` gives custom actions, wherever the focus is.
+    fn custom_action_shortcuts(&mut self, ctx: &egui::Context) {
+        let triggered = ctx.input_mut(|input| self.keymap.consume_custom(input));
+        for action in triggered {
+            self.run_action_on_selection(&action);
+        }
+    }
+
+    /// Runs a custom action from a key or the Actions menu, on what is selected: the focused
+    /// console's cells, or else the explorer's node.
+    fn run_action_on_selection(&mut self, id: &ActionId) {
+        let subject = self.action_subject();
+        let Some(action) = self
+            .custom_files
+            .actions()
+            .iter()
+            .find(|action| action.id == *id)
+        else {
+            return;
+        };
+        match subject {
+            Some((data_source, subject, kind)) if kind.offers(action) => {
+                self.run_action(id, data_source, &subject);
+            }
+            _ => {
+                let targets: Vec<&str> = action
+                    .applies_to
+                    .iter()
+                    .map(|target| target.name())
+                    .collect();
+                self.action_problem = Some(format!(
+                    "{}: select something it applies to first ({})",
+                    action.name,
+                    targets.join(", ")
+                ));
+            }
+        }
+    }
+
+    /// What keys and the Actions menu act on: the focused console's selected cells, or else
+    /// the explorer's selected node.
+    fn action_subject(&mut self) -> Option<(DataSourceId, Subject, SubjectKind)> {
+        let kind = self.action_subject_kind()?;
+        let (data_source, subject) = match kind.on {
+            SubjectOn::Cells => {
+                let key = self.focused_console()?;
+                let cells = self.consoles.get_mut(&key)?.selected_cells()?;
+                (key.data_source, Subject::Cells(cells))
+            }
+            SubjectOn::Node(_) => {
+                let (data_source, path) = self.explorer_options.selected.clone()?;
+                (data_source, Subject::Node(path))
+            }
+        };
+        Some((data_source, subject, kind))
+    }
+
+    /// What [`Self::action_subject`] would act on, without copying the cells: the menus ask
+    /// every frame.
+    fn action_subject_kind(&mut self) -> Option<SubjectKind> {
+        let cells = self.focused_console().filter(|key| {
+            self.consoles
+                .get_mut(key)
+                .is_some_and(|console| console.has_selected_cells())
+        });
+        let (data_source, on) = match cells {
+            Some(key) => (key.data_source, SubjectOn::Cells),
+            None => {
+                let (data_source, path) = self.explorer_options.selected.as_ref()?;
+                (
+                    *data_source,
+                    SubjectOn::Node(custom_actions::node_target(path)?),
+                )
+            }
+        };
+        let driver = self
+            .state
+            .data_source(data_source)?
+            .data_source
+            .config
+            .driver();
+        Some(SubjectKind { driver, on })
     }
 
     /// Puts the DDL Copy DDL asked for on the clipboard once it arrives.
@@ -811,6 +919,12 @@ impl DbDeskApp {
                 }
             }
             ExplorerAction::ImportCsv(id, path) => self.open_csv_import(id, &path),
+            ExplorerAction::Select(id, path) => self.explorer_options.selected = Some((id, path)),
+            ExplorerAction::RunAction {
+                data_source,
+                path,
+                action,
+            } => self.run_action(&action, data_source, &Subject::Node(path)),
             ExplorerAction::NewProject { then_move } => {
                 self.project_dialog = Some(ProjectNameDialog::create(then_move));
             }
@@ -1229,6 +1343,37 @@ impl DbDeskApp {
         }
     }
 
+    /// Fills in a custom action's SQL for `subject` and opens it in a new console, running it
+    /// unless the action says to edit it first. What the action can't fill is said in the
+    /// status bar.
+    fn run_action(&mut self, id: &ActionId, data_source: DataSourceId, subject: &Subject) {
+        let Some(action) = self
+            .custom_files
+            .actions()
+            .iter()
+            .find(|action| action.id == *id)
+        else {
+            return;
+        };
+        let Some(entry) = self.state.data_source(data_source) else {
+            return;
+        };
+        let quoting = Dialect::from(entry.data_source.config.driver()).quoting();
+        match custom_actions::fill(action, &entry.data_source, subject, quoting) {
+            Ok(text) => {
+                self.action_problem = None;
+                let run = action.run.then(|| RunOrigin::Action(action.id.clone()));
+                let (key, command) = self.consoles.open_action(&entry.data_source, text, run);
+                workspace::open_console_tab(&mut self.dock, key);
+                self.send_if(command);
+            }
+            Err(problem) => {
+                tracing::warn!("{problem}");
+                self.action_problem = Some(problem);
+            }
+        }
+    }
+
     /// Opens the rows a foreign key leads to from `console`'s grid, in a new console on the
     /// same data source.
     fn open_rows(&mut self, console: &ConsoleKey, rows: &RowsToOpen) {
@@ -1286,7 +1431,7 @@ impl DbDeskApp {
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
         let state = self.command_state(ui.ctx());
         let recent = self.sql_files.recent().iter().map(|file| file.path.clone());
-        let menus = commands::egui_menu_bar(recent);
+        let menus = commands::egui_menu_bar(recent, self.custom_files.actions());
         if let Some(command) = menu_bar::show(ui, &menus, &state, &self.keymap) {
             self.run_command(command, ui.ctx());
         }
@@ -1326,7 +1471,7 @@ impl DbDeskApp {
             .map(|file| file.path.clone())
             .collect();
         if let Some(menu) = &mut self.native_menu {
-            menu.sync(&state, &self.keymap, &recent);
+            menu.sync(&state, &self.keymap, &recent, self.custom_files.actions());
         }
     }
 
@@ -1335,12 +1480,13 @@ impl DbDeskApp {
             console_focused: self.focused_console().is_some(),
             has_data_sources: !self.state.data_sources.entries().is_empty(),
             theme: ctx.options(|options| options.theme_preference),
+            subject: self.action_subject_kind(),
         }
     }
 
     /// Does what a menu item, or its shortcut, asks for.
     fn run_command(&mut self, command: AppCommand, ctx: &egui::Context) {
-        tracing::debug!(command = command.id(), "running a menu command");
+        tracing::debug!(command = %command.id(), "running a menu command");
         match command {
             AppCommand::OpenFile => self.choose_sql_file(),
             AppCommand::OpenRecent(path) => self.open_sql_file(path),
@@ -1375,6 +1521,7 @@ impl DbDeskApp {
             AppCommand::About => self.about_open = true,
             AppCommand::OpenManual => ctx.open_url(egui::OpenUrl::new_tab(welcome::MANUAL_URL)),
             AppCommand::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            AppCommand::RunAction(action) => self.run_action_on_selection(&action.id),
         }
     }
 
@@ -1534,6 +1681,14 @@ impl DbDeskApp {
                 .color(palette.text_weak),
             );
             self.problem_links(ui, palette.warning);
+            if let Some(problem) = &self.action_problem
+                && ui
+                    .link(RichText::new(problem).small().color(palette.error))
+                    .on_hover_text("Dismiss")
+                    .clicked()
+            {
+                self.action_problem = None;
+            }
             if let Some(notice) = self.updates.notice()
                 && ui
                     .link(RichText::new(notice).small().color(palette.primary))
@@ -1570,7 +1725,8 @@ impl DbDeskApp {
         if !self.keymap_window_open {
             return;
         }
-        match keymap_window::show(ctx, &self.keymap, self.keymap_path.as_deref()) {
+        let custom = self.custom_files.actions();
+        match keymap_window::show(ctx, &self.keymap, self.keymap_path.as_deref(), custom) {
             Some(KeymapWindowAction::Reload) => self.send(Command::ReloadKeymap),
             Some(KeymapWindowAction::Create) => self.send(Command::CreateKeymap {
                 text: keymap::template(),
@@ -1609,6 +1765,7 @@ impl eframe::App for DbDeskApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.file_shortcuts(&ctx);
+        self.custom_action_shortcuts(&ctx);
         self.open_dropped_files(&ctx);
         // The base colour shows in the gaps between the dock's islands.
         ui.painter()
@@ -1642,6 +1799,7 @@ impl eframe::App for DbDeskApp {
                     projects: self.state.projects.projects(),
                     saved_consoles,
                     explorer_options: &mut self.explorer_options,
+                    custom_actions: self.custom_files.actions(),
                     explorer_actions: &mut explorer_actions,
                     consoles: open_consoles,
                     keymap: &self.keymap,
@@ -1662,6 +1820,9 @@ impl eframe::App for DbDeskApp {
                 ConsoleAction::ShowHistory => self.open_history(console),
                 ConsoleAction::Export(rows, format) => self.export(&console, rows, format),
                 ConsoleAction::OpenRows(rows) => self.open_rows(&console, &rows),
+                ConsoleAction::RunAction(action, cells) => {
+                    self.run_action(&action, console.data_source, &Subject::Cells(cells));
+                }
                 ConsoleAction::LoadCatalog(paths) => self.load_catalog(console.data_source, paths),
                 ConsoleAction::Format(scope) => {
                     self.consoles
@@ -1751,6 +1912,7 @@ impl Repaint for EguiRepaint {
 
 #[cfg(test)]
 mod tests {
+    mod actions;
     mod customisation;
     mod files;
     mod find;

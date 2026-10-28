@@ -17,7 +17,8 @@ use super::guard::{self, ReadOnly};
 use super::parameters::Sendable;
 use super::{Disconnected, Script, SessionContext, Worker, cancel_running_statement, transaction};
 use crate::{
-    Event, RunId, RunOutcome, RunPurpose, StatementFailure, StatementSummary, TransactionMode,
+    Event, RunId, RunOrigin, RunOutcome, RunPurpose, StatementFailure, StatementSummary,
+    TransactionMode,
 };
 
 /// Rows per page. Plenty to look at, few enough to arrive at once; other database tools
@@ -34,6 +35,7 @@ struct StatementRef {
     /// The statement as sent, and as the history records it.
     sent: Sendable,
     started_at: Timestamp,
+    origin: RunOrigin,
 }
 
 /// A statement with rows still unread, holding its connection until finished.
@@ -52,7 +54,8 @@ impl Parked {
 
 enum StatementEnd {
     Completed,
-    Parked(Parked),
+    /// Boxed: a parked statement is far bigger than the other ends.
+    Parked(Box<Parked>),
     Failed,
 }
 
@@ -84,6 +87,7 @@ async fn explain_with_setting(
         index: 0,
         sent: Sendable::plain(setting.on),
         started_at: Timestamp::now(),
+        origin: script.origin.clone(),
     };
     if let Err(error) = transaction::run_counting(worker, setting.on, None).await? {
         report_failure(worker, &switched_on, Duration::ZERO, &error);
@@ -137,6 +141,7 @@ async fn run_statements(
                     index,
                     sent: Sendable::plain(sql),
                     started_at: Timestamp::now(),
+                    origin: script.origin.clone(),
                 };
                 report_refusal(worker.context, &statement, missing.to_string());
                 outcome = RunOutcome::Failed;
@@ -149,6 +154,7 @@ async fn run_statements(
             index,
             sent: sendable,
             started_at: Timestamp::now(),
+            origin: script.origin.clone(),
         };
         if let Some(read_only) = worker.context.read_only {
             if let Err(refusal) = ReadOnly::check(&checked, dialect, worker.context.name()) {
@@ -184,7 +190,7 @@ async fn run_statements(
         }
         match end {
             StatementEnd::Completed => {}
-            StatementEnd::Parked(statement) => parked = Some(statement),
+            StatementEnd::Parked(statement) => parked = Some(*statement),
             StatementEnd::Failed if worker.signals.is_cancelled(run) => {
                 outcome = RunOutcome::Cancelled;
                 break;
@@ -254,11 +260,11 @@ async fn run_statement(
         more: more && is_last,
     });
     if more && is_last {
-        return Ok(StatementEnd::Parked(Parked {
+        return Ok(StatementEnd::Parked(Box::new(Parked {
             statement,
             cursor,
             elapsed,
-        }));
+        })));
     }
     finish(worker, statement, cursor, started, Some(elapsed)).await
 }
@@ -461,7 +467,12 @@ fn history_entry(
         duration: Some(elapsed),
         rows,
         outcome,
-        source: HistorySource::Console,
+        source: match &statement.origin {
+            RunOrigin::Console => HistorySource::Console,
+            RunOrigin::Action(id) => HistorySource::Action {
+                id: id.as_str().to_owned(),
+            },
+        },
     }
 }
 

@@ -3,7 +3,8 @@
 
 use std::path::Path;
 
-use egui::{Grid, RichText, ScrollArea, Window};
+use dbdesk_store::CustomAction;
+use egui::{Grid, KeyboardShortcut, RichText, ScrollArea, Window};
 
 use crate::keymap::{Action, Keymap};
 
@@ -16,18 +17,20 @@ pub enum KeymapWindowAction {
     Close,
 }
 
-/// Draws the window. `path` is where the keymap lives, once the engine has said.
+/// Draws the window. `path` is where the keymap lives, once the engine has said; `custom` are
+/// `actions.toml`'s actions, listed after dbdesk's own.
 pub fn show(
     ctx: &egui::Context,
     keymap: &Keymap,
     path: Option<&Path>,
+    custom: &[CustomAction],
 ) -> Option<KeymapWindowAction> {
     let mut open = true;
     let action = Window::new("Keymap")
         .id(egui::Id::new("keymap_window"))
         .open(&mut open)
         .default_size(DEFAULT_SIZE)
-        .show(ctx, |ui| contents(ui, keymap, path))
+        .show(ctx, |ui| contents(ui, keymap, path, custom))
         .and_then(|response| response.inner.flatten());
     if open {
         action
@@ -36,7 +39,12 @@ pub fn show(
     }
 }
 
-fn contents(ui: &mut egui::Ui, keymap: &Keymap, path: Option<&Path>) -> Option<KeymapWindowAction> {
+fn contents(
+    ui: &mut egui::Ui,
+    keymap: &Keymap,
+    path: Option<&Path>,
+    custom: &[CustomAction],
+) -> Option<KeymapWindowAction> {
     let mut action = None;
     ui.horizontal(|ui| {
         if let Some(path) = path {
@@ -60,21 +68,33 @@ fn contents(ui: &mut egui::Ui, keymap: &Keymap, path: Option<&Path>) -> Option<K
     ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
         Grid::new("keymap_bindings").striped(true).show(ui, |ui| {
             for action in Action::ALL {
-                ui.label(RichText::new(action.id()).monospace());
-                let shortcuts: Vec<String> = keymap
-                    .bindings(action)
-                    .iter()
-                    .map(|shortcut| ui.ctx().format_shortcut(shortcut))
-                    .collect();
-                if shortcuts.is_empty() {
-                    ui.weak("unbound");
-                } else {
-                    ui.label(shortcuts.join(", "));
-                }
-                ui.weak(action.description());
-                ui.end_row();
+                row(
+                    ui,
+                    action.id(),
+                    keymap.bindings(action),
+                    action.description(),
+                );
+            }
+            for action in custom {
+                let id = action.id.keymap_id();
+                row(ui, &id, keymap.custom_bindings(&action.id), &action.name);
             }
         });
     });
     action
+}
+
+fn row(ui: &mut egui::Ui, id: &str, bindings: &[KeyboardShortcut], description: &str) {
+    ui.label(RichText::new(id).monospace());
+    let shortcuts: Vec<String> = bindings
+        .iter()
+        .map(|shortcut| ui.ctx().format_shortcut(shortcut))
+        .collect();
+    if shortcuts.is_empty() {
+        ui.weak("unbound");
+    } else {
+        ui.label(shortcuts.join(", "));
+    }
+    ui.weak(description);
+    ui.end_row();
 }

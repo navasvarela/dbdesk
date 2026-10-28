@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-use dbdesk_store::KeymapBindings;
+use dbdesk_store::{ActionId, KeymapBindings};
 use egui::{InputState, Key, KeyboardShortcut, Modifiers};
 
 /// Something a key can do. The ids are what `keymap.toml` names, so they never change once
@@ -170,6 +170,9 @@ impl Action {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Keymap {
     bindings: BTreeMap<Action, Vec<KeyboardShortcut>>,
+    /// Custom actions from `actions.toml`, which have no keys until `keymap.toml` gives them
+    /// some as `custom.<id>`.
+    custom: BTreeMap<ActionId, Vec<KeyboardShortcut>>,
     /// What in the file couldn't be used, for the keymap window. Each was skipped.
     problems: Vec<String>,
 }
@@ -181,36 +184,49 @@ impl Default for Keymap {
                 .into_iter()
                 .map(|action| (action, action.default_bindings()))
                 .collect(),
+            custom: BTreeMap::new(),
             problems: Vec::new(),
         }
     }
 }
 
 impl Keymap {
-    /// The defaults overridden by `file`. Unknown actions and unreadable shortcuts are
-    /// skipped and listed as problems, so one typo doesn't cost every other binding.
-    pub fn from_file(file: &KeymapBindings) -> Self {
+    /// The defaults overridden by `file`, with keys for the custom actions `custom` names.
+    /// Unknown actions and unreadable shortcuts are skipped and listed as problems, so one typo
+    /// doesn't cost every other binding.
+    pub fn from_file(file: &KeymapBindings, custom: &[&ActionId]) -> Self {
         let mut keymap = Self::default();
         for (id, shortcuts) in file {
-            let Some(action) = Action::from_id(id) else {
+            let parsed = keymap.parse_shortcuts(id, shortcuts);
+            if let Some(action) = Action::from_id(id) {
+                keymap.bindings.insert(action, parsed);
+            } else if let Some(action) = custom_action(id, custom) {
+                keymap.custom.insert(action.clone(), parsed);
+            } else if id.starts_with(ActionId::KEYMAP_PREFIX) {
+                keymap
+                    .problems
+                    .push(format!("{id:?} is not an action in actions.toml"));
+            } else {
                 keymap.problems.push(format!(
                     "{id:?} is not an action; see View → Keymap for the ids"
                 ));
-                continue;
-            };
-            let mut parsed = Vec::new();
-            for text in shortcuts {
-                match parse_shortcut(text) {
-                    Some(shortcut) => parsed.push(shortcut),
-                    None => keymap
-                        .problems
-                        .push(format!("{id}: {text:?} is not a shortcut")),
-                }
             }
-            keymap.bindings.insert(action, parsed);
         }
         keymap.report_conflicts();
         keymap
+    }
+
+    fn parse_shortcuts(&mut self, id: &str, shortcuts: &[String]) -> Vec<KeyboardShortcut> {
+        let mut parsed = Vec::new();
+        for text in shortcuts {
+            match parse_shortcut(text) {
+                Some(shortcut) => parsed.push(shortcut),
+                None => self
+                    .problems
+                    .push(format!("{id}: {text:?} is not a shortcut")),
+            }
+        }
+        parsed
     }
 
     /// A keymap whose file couldn't be read: the defaults, and why.
@@ -227,6 +243,31 @@ impl Keymap {
 
     pub fn bindings(&self, action: Action) -> &[KeyboardShortcut] {
         self.bindings.get(&action).map_or(&[], Vec::as_slice)
+    }
+
+    /// The keys `keymap.toml` gives a custom action, minus any a built-in action has.
+    pub fn custom_bindings(&self, action: &ActionId) -> &[KeyboardShortcut] {
+        self.custom.get(action).map_or(&[], Vec::as_slice)
+    }
+
+    /// Consumes this frame's key presses bound to custom actions, and returns the actions.
+    pub fn consume_custom(&self, input: &mut InputState) -> Vec<ActionId> {
+        let mut candidates: Vec<(&ActionId, KeyboardShortcut)> = self
+            .custom
+            .iter()
+            .flat_map(|(action, shortcuts)| {
+                shortcuts.iter().map(move |&shortcut| (action, shortcut))
+            })
+            .collect();
+        candidates
+            .sort_by_key(|(_, shortcut)| std::cmp::Reverse(modifier_count(shortcut.modifiers)));
+        let mut triggered = Vec::new();
+        for (action, shortcut) in candidates {
+            if input.consume_shortcut(&shortcut) && !triggered.contains(action) {
+                triggered.push(action.clone());
+            }
+        }
+        triggered
     }
 
     /// The action's first shortcut, as the platform writes it (`⌘↵`), for tooltips.
@@ -259,22 +300,46 @@ impl Keymap {
         triggered
     }
 
+    /// Reports shortcuts given twice. Between built-in actions the first in `Action`'s order
+    /// keeps it; a custom action loses one a built-in action has, or another custom action has
+    /// first, since the console and the app consume their keys before custom actions'.
     fn report_conflicts(&mut self) {
-        let mut seen: Vec<(KeyboardShortcut, Action)> = Vec::new();
+        let mut seen: Vec<(KeyboardShortcut, String)> = Vec::new();
         for (&action, shortcuts) in &self.bindings {
             for shortcut in shortcuts {
                 match seen.iter().find(|(taken, _)| taken == shortcut) {
                     Some((_, first)) => self.problems.push(format!(
-                        "{} and {} share a shortcut; {} gets it",
-                        first.id(),
-                        action.id(),
-                        first.id()
+                        "{first} and {} share a shortcut; {first} gets it",
+                        action.id()
                     )),
-                    None => seen.push((*shortcut, action)),
+                    None => seen.push((*shortcut, action.id().to_owned())),
                 }
             }
         }
+        for (action, shortcuts) in &mut self.custom {
+            let id = action.keymap_id();
+            shortcuts.retain(
+                |shortcut| match seen.iter().find(|(taken, _)| taken == shortcut) {
+                    Some((_, first)) => {
+                        self.problems.push(format!(
+                            "{first} and {id} share a shortcut; {first} gets it"
+                        ));
+                        false
+                    }
+                    None => {
+                        seen.push((*shortcut, id.clone()));
+                        true
+                    }
+                },
+            );
+        }
     }
+}
+
+/// The custom action a `custom.<id>` binding names, if `actions.toml` has it.
+fn custom_action<'a>(id: &str, custom: &[&'a ActionId]) -> Option<&'a ActionId> {
+    let id = id.strip_prefix(ActionId::KEYMAP_PREFIX)?;
+    custom.iter().copied().find(|action| action.as_str() == id)
 }
 
 fn modifier_count(modifiers: Modifiers) -> usize {
@@ -423,7 +488,7 @@ mod tests {
 
     #[test]
     fn the_file_overrides_defaults_and_reports_what_it_skipped() {
-        let keymap = Keymap::from_file(&bindings(&[
+        let keymap = Keymap::from_file_for_tests(&bindings(&[
             ("console.run", &["cmd+r", "nonsense+key"]),
             ("console.cancel", &[]),
             ("console.runn", &["f5"]),
@@ -441,9 +506,49 @@ mod tests {
         assert_eq!(keymap.problems().len(), 2, "{:?}", keymap.problems());
     }
 
+    impl Keymap {
+        fn from_file_for_tests(file: &KeymapBindings) -> Self {
+            Self::from_file(file, &[])
+        }
+    }
+
+    #[test]
+    fn binds_custom_actions_actions_toml_has_and_reports_the_rest() {
+        let row_count = ActionId::new("row-count").unwrap();
+        let latest = ActionId::new("latest").unwrap();
+        let keymap = Keymap::from_file(
+            &bindings(&[
+                ("custom.row-count", &["cmd+shift+c"]),
+                ("custom.latest", &["cmd+enter", "f6"]),
+                ("custom.gone", &["f7"]),
+            ]),
+            &[&row_count, &latest],
+        );
+
+        assert_eq!(
+            keymap.custom_bindings(&row_count),
+            [KeyboardShortcut::new(
+                Modifiers::COMMAND | Modifiers::SHIFT,
+                Key::C
+            )]
+        );
+        assert_eq!(
+            keymap.custom_bindings(&latest),
+            [KeyboardShortcut::new(Modifiers::NONE, Key::F6)],
+            "console.run keeps ⌘↵"
+        );
+        assert_eq!(
+            keymap.problems(),
+            [
+                "\"custom.gone\" is not an action in actions.toml",
+                "console.run and custom.latest share a shortcut; console.run gets it",
+            ]
+        );
+    }
+
     #[test]
     fn reports_two_actions_on_one_shortcut() {
-        let keymap = Keymap::from_file(&bindings(&[("console.history", &["cmd+enter"])]));
+        let keymap = Keymap::from_file_for_tests(&bindings(&[("console.history", &["cmd+enter"])]));
 
         assert_eq!(
             keymap.problems(),
@@ -482,7 +587,7 @@ mod tests {
                 (id.clone(), shortcuts)
             })
             .collect();
-        let keymap = Keymap::from_file(&file);
+        let keymap = Keymap::from_file(&file, &[]);
         assert!(keymap.problems().is_empty(), "{:?}", keymap.problems());
         for action in Action::ALL {
             assert_eq!(

@@ -22,8 +22,8 @@ use dbdesk_core::{
     PostgresConfig, RelationName, RoleAttribute, RoleDescription, SafetyLevel, TableDescription,
 };
 use dbdesk_engine::{
-    Command, ConsoleId, DatabaseFile, DdlFailure, Event, PasswordUpdate, RunId, RunPurpose,
-    SessionState, TransactionMode,
+    Command, ConsoleId, DatabaseFile, DdlFailure, Event, PasswordUpdate, RunId, RunOrigin,
+    RunPurpose, SessionState, TransactionMode,
 };
 use dbdesk_sql::{
     Check, ColumnSpec, DdlOperation, Dialect, ExistingTable, ForeignKey, ObjectName, OwnedObjects,
@@ -1184,6 +1184,7 @@ fn query(
         parameters: ParameterValues::default(),
         transactions: TransactionMode::Auto,
         purpose: RunPurpose::Run,
+        origin: RunOrigin::Console,
     });
     let mut rows = Vec::new();
     loop {

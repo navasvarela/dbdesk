@@ -231,6 +231,7 @@ impl Engine {
                 parameters,
                 transactions,
                 purpose,
+                origin,
             } => self.execute(
                 console,
                 data_source,
@@ -240,6 +241,7 @@ impl Engine {
                     parameters,
                     transactions,
                     purpose,
+                    origin,
                 },
             ),
             Command::EndTransaction { console, end } => {

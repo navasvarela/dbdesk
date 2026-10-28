@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use dbdesk_core::SourceColor;
-use dbdesk_store::{ConsoleKey, Project};
+use dbdesk_store::{ConsoleKey, CustomAction, Project};
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Color32, FontId, Id, Ui, WidgetText};
 use egui_dock::tab_viewer::OnCloseResponse;
@@ -14,6 +14,7 @@ use crate::console::{
     self, ConsoleAction, ConsoleContext, LintOptions, QueryConsole, RecentCompletions, TreeCatalog,
 };
 use crate::consoles::SavedConsoles;
+use crate::custom_actions::{SubjectKind, SubjectOn};
 use crate::explorer::{self, ExplorerAction, ExplorerOptions};
 use crate::fonts;
 use crate::icons::{self, Icon, Role};
@@ -125,6 +126,8 @@ pub struct Panels<'a> {
     pub projects: &'a [Project],
     pub saved_consoles: &'a SavedConsoles,
     pub explorer_options: &'a mut ExplorerOptions,
+    /// From `actions.toml`, for the explorer's and the grid's menus.
+    pub custom_actions: &'a [CustomAction],
     /// What the user asked for in the explorer this frame, for the app to act on.
     pub explorer_actions: &'a mut Vec<ExplorerAction>,
     pub consoles: &'a mut BTreeMap<ConsoleKey, QueryConsole>,
@@ -208,6 +211,7 @@ impl TabViewer for Panels<'_> {
                     data_sources: self.data_sources,
                     projects: self.projects,
                     saved_consoles: self.saved_consoles,
+                    actions: self.custom_actions,
                 },
                 self.explorer_options,
                 self.explorer_actions,
@@ -220,18 +224,32 @@ impl TabViewer for Panels<'_> {
                     if let Some(color) = self.data_sources.color_of(data_source) {
                         source_band(ui, self.palette.source(color));
                     }
+                    let entry = self
+                        .data_sources
+                        .entries()
+                        .iter()
+                        .find(|entry| entry.data_source.id == data_source);
+                    let cell_actions: Vec<&CustomAction> = entry
+                        .map(|entry| entry.data_source.config.driver())
+                        .map(|driver| {
+                            let on_cells = SubjectKind {
+                                driver,
+                                on: SubjectOn::Cells,
+                            };
+                            self.custom_actions
+                                .iter()
+                                .filter(|action| on_cells.offers(action))
+                                .collect()
+                        })
+                        .unwrap_or_default();
                     let context = ConsoleContext {
                         keymap: self.keymap,
                         lint: self.lint,
                         recent: self.recent_completions,
-                        catalog: self
-                            .data_sources
-                            .entries()
-                            .iter()
-                            .find(|entry| entry.data_source.id == data_source)
-                            .map(|entry| {
-                                TreeCatalog::new(&entry.catalog, &entry.data_source.config)
-                            }),
+                        catalog: entry.map(|entry| {
+                            TreeCatalog::new(&entry.catalog, &entry.data_source.config)
+                        }),
+                        cell_actions: &cell_actions,
                     };
                     let mut actions = Vec::new();
                     console::show(ui, query_console, &context, &mut actions);

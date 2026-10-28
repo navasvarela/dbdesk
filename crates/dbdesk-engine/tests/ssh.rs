@@ -10,8 +10,8 @@ use std::sync::Arc;
 use common::{MemorySecrets, SshTestServer, TestEngine, ssh_test_server};
 use dbdesk_core::{CatalogPath, DataSource, DataSourceId, SshLogin};
 use dbdesk_engine::{
-    Command, ConsoleId, Event, PasswordKept, PasswordNeeded, PasswordUpdate, RunId, RunOutcome,
-    RunPurpose, SessionState, TransactionMode,
+    Command, ConsoleId, Event, PasswordKept, PasswordNeeded, PasswordUpdate, RunId, RunOrigin,
+    RunOutcome, RunPurpose, SessionState, TransactionMode,
 };
 use dbdesk_store::Secret;
 
@@ -67,6 +67,7 @@ impl Machine {
             parameters: dbdesk_sql::ParameterValues::default(),
             transactions: TransactionMode::Auto,
             purpose: RunPurpose::Run,
+            origin: RunOrigin::Console,
         });
         loop {
             if let Event::RunFinished {

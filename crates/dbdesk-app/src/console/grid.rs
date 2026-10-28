@@ -221,6 +221,11 @@ impl GridView {
             .collect()
     }
 
+    /// The selected columns, left to right.
+    pub fn selected_columns(&self) -> Option<RangeInclusive<usize>> {
+        self.selection.map(|selection| selection.columns())
+    }
+
     /// The display positions of the selected rows, top to bottom.
     pub fn selected_rows(&self) -> Option<RangeInclusive<usize>> {
         self.selection.map(|selection| selection.rows())

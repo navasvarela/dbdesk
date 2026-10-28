@@ -36,7 +36,7 @@ use crate::passwords::{Prompting, SessionPasswords};
 use crate::read_only;
 use crate::tunnels::Tunnels;
 use crate::{
-    ConsoleId, Event, ExportAll, RowEdit, RowsImport, RunId, RunPurpose, SessionState,
+    ConsoleId, Event, ExportAll, RowEdit, RowsImport, RunId, RunOrigin, RunPurpose, SessionState,
     TransactionEnd, TransactionMode,
 };
 use guard::ReadOnly;
@@ -71,6 +71,7 @@ pub(crate) struct Script {
     pub(crate) parameters: ParameterValues,
     pub(crate) transactions: TransactionMode,
     pub(crate) purpose: RunPurpose,
+    pub(crate) origin: RunOrigin,
 }
 
 /// Who a session works for, which decides how its state changes are reported.

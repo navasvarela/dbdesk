@@ -10,8 +10,8 @@ use std::sync::Arc;
 use common::{TestEngine, postgres_test_server, sqlite_data_source, sqlite_database};
 use dbdesk_core::{ConnectionConfig, DataSource, DataSourceId, SafetyLevel};
 use dbdesk_engine::{
-    Command, ConsoleId, EditFailure, Event, PasswordUpdate, RunId, RunOutcome, RunPurpose,
-    TransactionMode,
+    Command, ConsoleId, EditFailure, Event, PasswordUpdate, RunId, RunOrigin, RunOutcome,
+    RunPurpose, TransactionMode,
 };
 
 const SETUP_CONSOLE: ConsoleId = ConsoleId(1);
@@ -65,6 +65,7 @@ fn run(
         parameters: dbdesk_sql::ParameterValues::default(),
         transactions: TransactionMode::Auto,
         purpose: RunPurpose::Run,
+        origin: RunOrigin::Console,
     });
     let mut failure = None;
     loop {
@@ -260,6 +261,7 @@ fn page_through(engine: &mut TestEngine, data_source: DataSourceId, run: u64) ->
         parameters: dbdesk_sql::ParameterValues::default(),
         transactions: TransactionMode::Auto,
         purpose: RunPurpose::Run,
+        origin: RunOrigin::Console,
     });
     let mut pages = Vec::new();
     loop {

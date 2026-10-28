@@ -8,7 +8,7 @@ use dbdesk_core::{
 };
 use dbdesk_engine::SessionState;
 use dbdesk_sql::{Capabilities, Dialect, SchemaCreation, TableChange, UserModel};
-use dbdesk_store::{ConsoleKey, Project};
+use dbdesk_store::{ActionId, ActionTarget, ConsoleKey, CustomAction, Project};
 use egui::{
     Color32, CornerRadius, Id, Label, Rect, Response, RichText, ScrollArea, Sense, Shape, TextEdit,
     TextStyle, Ui, WidgetInfo, WidgetType, vec2,
@@ -16,6 +16,7 @@ use egui::{
 
 use crate::catalog_tree::{CatalogTree, Children};
 use crate::consoles::SavedConsoles;
+use crate::custom_actions;
 use crate::icons;
 use crate::mcp_client_config;
 use crate::state::{DataSourceEntry, DataSources};
@@ -63,6 +64,15 @@ pub enum ExplorerAction {
     CopyDdl(DataSourceId, CatalogPath),
     /// Asks for a CSV file, then opens the dialog that imports it into the table at the path.
     ImportCsv(DataSourceId, CatalogPath),
+    /// Makes the node at the path, or the data source for the root, the one that keys and the
+    /// Actions menu act on.
+    Select(DataSourceId, CatalogPath),
+    /// Runs a custom action from `actions.toml` on the node at the path.
+    RunAction {
+        data_source: DataSourceId,
+        path: CatalogPath,
+        action: ActionId,
+    },
 }
 
 /// An object helper, with the catalog node it was opened on.
@@ -112,6 +122,8 @@ pub struct ExplorerOptions {
     /// Project groups the user folded. Groups start open, so a new project's data sources
     /// are in sight.
     pub collapsed_groups: BTreeSet<Group>,
+    /// The node last clicked: the root path for a data source's own row.
+    pub selected: Option<(DataSourceId, CatalogPath)>,
 }
 
 /// A group of data sources in the explorer.
@@ -129,6 +141,8 @@ pub struct ExplorerView<'a> {
     pub projects: &'a [Project],
     /// Offered for reopening in each data source's menu.
     pub saved_consoles: &'a SavedConsoles,
+    /// Offered in the menus of the nodes they apply to.
+    pub actions: &'a [CustomAction],
 }
 
 pub fn show(
@@ -161,6 +175,8 @@ pub fn show(
             let tree = SourcesView {
                 projects: view.projects,
                 saved_consoles: view.saved_consoles,
+                actions: view.actions,
+                selected: options.selected.as_ref(),
             };
             let collapsed = &mut options.collapsed_groups;
             ScrollArea::both().auto_shrink(false).show(ui, |ui| {
@@ -180,6 +196,8 @@ pub fn show(
 struct SourcesView<'a> {
     projects: &'a [Project],
     saved_consoles: &'a SavedConsoles,
+    actions: &'a [CustomAction],
+    selected: Option<&'a (DataSourceId, CatalogPath)>,
 }
 
 /// Each project with its data sources, in the projects' order, then No project. Entries keep
@@ -479,19 +497,23 @@ fn data_source_tree(
         status_dot(ui, &entry.session, palette);
         name
     });
-    if let Some(color) = entry.data_source.color {
-        let rect = Rect::from_x_y_ranges(ui.max_rect().x_range(), row.response.rect.y_range());
-        ui.painter().set(
-            row_background,
-            Shape::rect_filled(
-                rect.expand2(vec2(0.0, 1.0)),
-                CornerRadius::same(4),
-                palette.tint(palette.source(color), SOURCE_ROW_TINT),
-            ),
-        );
+    let selected = tree.selected == Some(&(id, root.clone()));
+    let fill = if selected {
+        Some(ui.visuals().selection.bg_fill)
+    } else {
+        entry
+            .data_source
+            .color
+            .map(|color| palette.tint(palette.source(color), SOURCE_ROW_TINT))
+    };
+    if let Some(fill) = fill {
+        paint_row(ui, row_background, row.response.rect, fill);
     }
     let response = row.inner.on_hover_text(tooltip(entry));
 
+    if response.clicked() {
+        actions.push(ExplorerAction::Select(id, root.clone()));
+    }
     if response.double_clicked() {
         actions.push(toggle_expansion(id, &root, expanded));
     }
@@ -504,6 +526,12 @@ fn data_source_tree(
             quoting: dialect.quoting(),
             capabilities: dialect.capabilities(),
             own_database: entry.data_source.config.database(),
+            driver: entry.data_source.config.driver(),
+            actions: tree.actions,
+            selected: tree
+                .selected
+                .filter(|(selected, _)| *selected == id)
+                .map(|(_, path)| path),
         };
         ui.indent(Id::new(id), |ui| {
             children(ui, &tree, &root, filter, actions)
@@ -561,6 +589,48 @@ fn data_source_menu(
     if widgets::menu_item(ui, icons::TRASH, "Delete…").clicked() {
         actions.push(ExplorerAction::Delete(id));
     }
+    let driver = entry.data_source.config.driver();
+    custom_action_items(
+        ui,
+        tree.actions,
+        ActionTarget::DataSource,
+        driver,
+        |action| {
+            actions.push(ExplorerAction::RunAction {
+                data_source: id,
+                path: CatalogPath::root(),
+                action,
+            });
+        },
+    );
+}
+
+/// The custom actions for what was right-clicked, after a separator, if there are any.
+fn custom_action_items(
+    ui: &mut Ui,
+    all: &[CustomAction],
+    target: ActionTarget,
+    driver: DriverKind,
+    mut chosen: impl FnMut(ActionId),
+) {
+    let mut offered = custom_actions::offered(all, target, driver).peekable();
+    if offered.peek().is_some() {
+        ui.separator();
+    }
+    for action in offered {
+        if widgets::menu_item(ui, icons::MAGIC_WAND, &action.name).clicked() {
+            chosen(action.id.clone());
+        }
+    }
+}
+
+/// Fills a row's background, behind what was drawn in it.
+fn paint_row(ui: &Ui, background: egui::layers::ShapeIdx, row: Rect, fill: Color32) {
+    let rect = Rect::from_x_y_ranges(ui.max_rect().x_range(), row.y_range());
+    ui.painter().set(
+        background,
+        Shape::rect_filled(rect.expand2(vec2(0.0, 1.0)), CornerRadius::same(4), fill),
+    );
 }
 
 /// Every project to move the data source to, then No project, then a new one. Its current
@@ -609,6 +679,10 @@ struct TreeView<'a> {
     /// The database the data source connects to, where its tree lists several. The helpers'
     /// statements run on that connection, so they are offered only inside it.
     own_database: Option<&'a str>,
+    driver: DriverKind,
+    actions: &'a [CustomAction],
+    /// The selected node, if it is in this data source.
+    selected: Option<&'a CatalogPath>,
 }
 
 impl TreeView<'_> {
@@ -736,33 +810,40 @@ fn node_row(
     actions: &mut Vec<ExplorerAction>,
 ) {
     let expanded = forced_open || tree.catalog.is_expanded(&node.path);
-    let response = ui
-        .horizontal(|ui| {
-            if node.has_children {
-                if expander(ui, expanded, &node.label).clicked() {
-                    actions.push(toggle_expansion(tree.id, &node.path, expanded));
-                }
-            } else {
-                ui.add_space(ui.spacing().icon_width);
+    let row_background = ui.painter().add(Shape::Noop);
+    let row = ui.horizontal(|ui| {
+        if node.has_children {
+            if expander(ui, expanded, &node.label).clicked() {
+                actions.push(toggle_expansion(tree.id, &node.path, expanded));
             }
-            if let Some(kind) = node.kind() {
-                ui.label(icons::node(kind).rich_text(Palette::for_visuals(ui.visuals())));
-            }
-            let label = ui.add(
-                Label::new(&node.label)
-                    .selectable(false)
-                    .sense(Sense::click()),
-            );
-            if let Some(detail) = &node.detail {
-                ui.weak(detail);
-            }
-            if let Some(count) = folder_count(tree.catalog, node, filter.show_system) {
-                widgets::count_badge(ui, count);
-            }
-            label
-        })
-        .inner;
+        } else {
+            ui.add_space(ui.spacing().icon_width);
+        }
+        if let Some(kind) = node.kind() {
+            ui.label(icons::node(kind).rich_text(Palette::for_visuals(ui.visuals())));
+        }
+        let label = ui.add(
+            Label::new(&node.label)
+                .selectable(false)
+                .sense(Sense::click()),
+        );
+        if let Some(detail) = &node.detail {
+            ui.weak(detail);
+        }
+        if let Some(count) = folder_count(tree.catalog, node, filter.show_system) {
+            widgets::count_badge(ui, count);
+        }
+        label
+    });
+    if tree.selected == Some(&node.path) {
+        let fill = ui.visuals().selection.bg_fill;
+        paint_row(ui, row_background, row.response.rect, fill);
+    }
+    let response = row.inner;
 
+    if response.clicked() {
+        actions.push(ExplorerAction::Select(tree.id, node.path.clone()));
+    }
     if node.has_children && response.double_clicked() {
         actions.push(toggle_expansion(tree.id, &node.path, expanded));
     }
@@ -811,6 +892,15 @@ fn node_menu(
     }
     if tree.can_change(&node.path) {
         helpers_menu(ui, tree, node, actions);
+    }
+    if let Some(target) = custom_actions::node_target(&node.path) {
+        custom_action_items(ui, tree.actions, target, tree.driver, |action| {
+            actions.push(ExplorerAction::RunAction {
+                data_source: id,
+                path: node.path.clone(),
+                action,
+            });
+        });
     }
 }
 

@@ -131,7 +131,7 @@ impl ParametersDialog {
 #[cfg(test)]
 mod tests {
     use dbdesk_core::DataSourceId;
-    use dbdesk_engine::RunPurpose;
+    use dbdesk_engine::{RunOrigin, RunPurpose};
     use dbdesk_store::ConsoleName;
 
     use super::*;
@@ -153,6 +153,7 @@ mod tests {
             statements: Vec::new(),
             purpose: RunPurpose::Run,
             parameters: ParameterValues::default(),
+            origin: RunOrigin::Console,
         };
         let names = ["since", "note", "new"].map(str::to_owned).to_vec();
 

@@ -109,6 +109,7 @@ fn kind_label(kind: HistorySourceKind) -> &'static str {
         HistorySourceKind::Import => "Imports",
         HistorySourceKind::Export => "Exports",
         HistorySourceKind::Mcp => "MCP clients",
+        HistorySourceKind::Action => "Actions",
         HistorySourceKind::Dbdesk => "Earlier dbdesk",
     }
 }

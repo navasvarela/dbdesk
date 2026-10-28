@@ -51,6 +51,10 @@ impl CustomFiles {
         Some(file.kind())
     }
 
+    pub fn actions(&self) -> &[CustomAction] {
+        &self.actions.checked.value
+    }
+
     pub fn problems(&self, kind: CustomFileKind) -> &[String] {
         match kind {
             CustomFileKind::Actions => &self.actions.checked.problems,
