@@ -24,9 +24,10 @@ permissions:
 
 jobs:
   # Whether the pull request touches anything but documentation. A docs-only pull request (only
-  # docs/, book/, site/, Markdown or licence files) skips the Rust steps of `fmt` and `check`. The
-  # jobs still run and report success, because branch protection requires them, but they finish in
-  # seconds. `book` still builds the manual. Pushes to main always run everything.
+  # docs/, book/, site/, Markdown or licence files) skips the Rust steps of `fmt` and `check`, and
+  # runs all three `check` jobs on Linux. The jobs still run and report success, because branch
+  # protection requires them, but they finish in seconds. `book` still builds the manual. Pushes
+  # to main always run everything.
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -36,13 +37,18 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+      # Compared with the pull request's own head, not HEAD: HEAD is GitHub's test merge, and for
+      # a stacked pull request whose base was just rebased GitHub built it on an older merge, so
+      # the lower layers' code showed up as this layer's (#206 ran every build that way).
       - id: diff
+        env:
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           if [[ "$GITHUB_EVENT_NAME" != pull_request ]]; then
             echo "code=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          code=$(git diff --name-only "origin/$GITHUB_BASE_REF...HEAD" \
+          code=$(git diff --name-only "origin/$GITHUB_BASE_REF...$PR_HEAD" \
             | grep -vE '^(docs|book|site)/|\.md$|^LICENSE' || true)
           if [[ -n "$code" ]]; then
             echo "code=true" >> "$GITHUB_OUTPUT"
@@ -92,17 +98,19 @@ jobs:
       # itself "cancelled", which hid which test failed and let a stack look green (#90).
       fail-fast: true
       matrix:
-        # Windows builds and runs the tests, but dbdesk hasn't been tried on a real Windows
-        # machine yet; see docs/releasing.md.
         os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    # A docs-only pull request skips every step, so it needs no macOS or Windows runner: those
+    # queue for minutes (#206's macOS job waited 15) just to report success. The job keeps its
+    # `check (macos-latest)` name, which branch protection requires, whatever it runs on. An empty
+    # CODE (a broken `changes`) still gets the real runner.
+    runs-on: ${{ needs.changes.outputs.code == 'false' && 'ubuntu-latest' || matrix.os }}
     # The 30 most recent green runs took at most 6 minutes on Linux, 5 on macOS and 11 on Windows.
     # 30 minutes leaves room for a cold Rust cache and still fails a hung runner fast: a Linux job
     # once sat in `apt-get update` for 80 minutes, and without a limit GitHub waits 6 hours.
     timeout-minutes: 30
     env:
       CODE: ${{ needs.changes.outputs.code }}
-    # Every step but the last runs unless `changes` said documentation only.
+    # Every step runs unless `changes` said documentation only.
     steps:
       - if: env.CODE != 'false'
         uses: actions/checkout@v5
