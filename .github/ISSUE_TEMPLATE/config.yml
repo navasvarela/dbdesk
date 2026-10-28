@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Ask a question
+    url: https://github.com/navasvarela/dbrover/discussions/new?category=q-a
+    about: How do I…? Is this expected? Ask in Discussions; issues are for bugs and requests.
+  - name: Read the manual
+    url: https://dbrover.org/manual/
+    about: Installing, connecting, the troubleshooting chapter, and where the logs are.

@@ -1,0 +1,38 @@
+name: Feature request
+description: Something DbRover could do, or do better.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you are trying to do
+      description: The task, and what gets in the way today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would help
+      description: How you picture DbRover doing it. Another tool that does it well is a good reference.
+    validations:
+      required: true
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Database engine
+      description: The databases it is about, if any.
+      multiple: true
+      options:
+        - Not about a database
+        - PostgreSQL
+        - MySQL
+        - MariaDB
+        - SQLite
+        - SQL Server
+        - DuckDB
+        - ClickHouse
+        - Another one (say which above)
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do instead today
