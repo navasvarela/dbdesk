@@ -1,5 +1,7 @@
 //! Golden tests: what each dialect's DDL looks like, written out in full.
 
+use std::collections::BTreeMap;
+
 use dbdesk_core::RoleAttribute;
 
 use super::*;
@@ -1201,4 +1203,469 @@ fn refuses_identity_columns_where_the_dialect_has_none() {
         DdlOperation::CreateTable(keyless).statements(Dialect::Sqlite),
         Err(DdlError::Unsupported { .. })
     ));
+}
+
+/// `shop.orders` as a database describes it: a named key, a default, and a column that goes.
+fn existing_orders(dialect: Dialect) -> ExistingTable {
+    let (integer, text) = match dialect {
+        Dialect::ClickHouse => ("Int32", "String"),
+        _ => ("integer", "varchar(20)"),
+    };
+    let mut default_names = BTreeMap::new();
+    if dialect == Dialect::SqlServer {
+        default_names.insert("status".to_owned(), "DF_orders_status".to_owned());
+    }
+    ExistingTable {
+        spec: TableSpec {
+            name: ObjectName::new(Some("shop"), "orders"),
+            columns: vec![
+                column("id", integer, false, None),
+                column("status", text, false, Some("'new'")),
+                column("note", text, true, None),
+                column("legacy", integer, true, None),
+            ],
+            primary_key: strings(&["id"]),
+            unique_keys: vec![],
+            foreign_keys: vec![],
+            checks: vec![],
+        },
+        primary_key_name: Some("orders_pkey".to_owned()),
+        default_names,
+    }
+}
+
+/// Renames `status` to `state`, widening it and changing its default; makes `note` required;
+/// drops `legacy` and adds `shipped_on`.
+fn changed_columns(dialect: Dialect) -> TableAlteration {
+    let table = existing_orders(dialect);
+    let mut after = table.spec.clone();
+    let wide = match dialect {
+        Dialect::ClickHouse => "LowCardinality(String)",
+        _ => "varchar(40)",
+    };
+    after.columns = vec![
+        after.columns[0].clone(),
+        column("state", wide, false, Some("'open'")),
+        column("note", &after.columns[2].data_type, false, None),
+        column("shipped_on", "date", true, None),
+    ];
+    TableAlteration {
+        table,
+        after,
+        renamed: BTreeMap::from([("state".to_owned(), "status".to_owned())]),
+        conversions: BTreeMap::new(),
+    }
+}
+
+#[test]
+fn alters_columns_in_each_dialect() {
+    let cases = [
+        (
+            Dialect::Postgres,
+            vec![
+                "ALTER TABLE shop.orders DROP COLUMN legacy",
+                "ALTER TABLE shop.orders RENAME COLUMN status TO state",
+                "ALTER TABLE shop.orders ADD COLUMN shipped_on date",
+                "ALTER TABLE shop.orders ALTER COLUMN state TYPE varchar(40)",
+                "ALTER TABLE shop.orders ALTER COLUMN state SET DEFAULT 'open'",
+                "ALTER TABLE shop.orders ALTER COLUMN note SET NOT NULL",
+            ],
+        ),
+        (
+            Dialect::Mysql,
+            vec![
+                "ALTER TABLE shop.orders DROP COLUMN legacy",
+                "ALTER TABLE shop.orders RENAME COLUMN status TO state",
+                "ALTER TABLE shop.orders ADD COLUMN shipped_on date",
+                "ALTER TABLE shop.orders MODIFY COLUMN state varchar(40) DEFAULT 'open' NOT NULL",
+                "ALTER TABLE shop.orders MODIFY COLUMN note varchar(20) NOT NULL",
+            ],
+        ),
+        (
+            Dialect::SqlServer,
+            vec![
+                "ALTER TABLE shop.orders DROP COLUMN legacy",
+                "EXEC sp_rename N'shop.orders.status', N'state', 'COLUMN'",
+                "ALTER TABLE shop.orders ADD shipped_on date NULL",
+                "ALTER TABLE shop.orders DROP CONSTRAINT [DF_orders_status]",
+                "ALTER TABLE shop.orders ALTER COLUMN state varchar(40) NOT NULL",
+                "ALTER TABLE shop.orders ADD CONSTRAINT [DF_orders_status] DEFAULT 'open' FOR state",
+                "ALTER TABLE shop.orders ALTER COLUMN note varchar(20) NOT NULL",
+            ],
+        ),
+        (
+            Dialect::DuckDb,
+            vec![
+                "ALTER TABLE shop.orders DROP COLUMN legacy",
+                "ALTER TABLE shop.orders RENAME COLUMN status TO state",
+                "ALTER TABLE shop.orders ADD COLUMN shipped_on date",
+                "ALTER TABLE shop.orders ALTER COLUMN state TYPE varchar(40)",
+                "ALTER TABLE shop.orders ALTER COLUMN state SET DEFAULT 'open'",
+                "ALTER TABLE shop.orders ALTER COLUMN note SET NOT NULL",
+            ],
+        ),
+        (
+            Dialect::ClickHouse,
+            vec![
+                "ALTER TABLE shop.orders DROP COLUMN legacy",
+                "ALTER TABLE shop.orders RENAME COLUMN status TO state",
+                "ALTER TABLE shop.orders ADD COLUMN shipped_on Nullable(date)",
+                "ALTER TABLE shop.orders MODIFY COLUMN state LowCardinality(String) DEFAULT 'open'",
+                "ALTER TABLE shop.orders MODIFY COLUMN note String",
+            ],
+        ),
+    ];
+    for (dialect, expected) in cases {
+        let statements =
+            DdlOperation::AlterTable(Box::new(changed_columns(dialect))).statements(dialect);
+        assert_eq!(statements, Ok(strings(&expected)), "{dialect:?}");
+    }
+}
+
+#[test]
+fn converts_a_retyped_column_with_using_and_drops_a_default_before_retyping() {
+    let mut alteration = changed_columns(Dialect::Postgres);
+    alteration.after.columns[1].default = None;
+    alteration.after.columns[1].data_type = "integer".to_owned();
+    alteration.conversions.insert(
+        "state".to_owned(),
+        "CASE status WHEN 'new' THEN 0 ELSE 1 END".to_owned(),
+    );
+    let statements = DdlOperation::AlterTable(Box::new(alteration))
+        .statements(Dialect::Postgres)
+        .unwrap();
+    assert_eq!(
+        statements[3..5],
+        [
+            "ALTER TABLE shop.orders ALTER COLUMN state DROP DEFAULT",
+            "ALTER TABLE shop.orders ALTER COLUMN state TYPE integer \
+             USING CASE status WHEN 'new' THEN 0 ELSE 1 END",
+        ]
+    );
+}
+
+#[test]
+fn a_renamed_column_is_never_dropped_and_added() {
+    let table = existing_orders(Dialect::Postgres);
+    let mut after = table.spec.clone();
+    after.columns[3].name = "archived".to_owned();
+    let renamed = TableAlteration {
+        table: table.clone(),
+        after: after.clone(),
+        renamed: BTreeMap::from([("archived".to_owned(), "legacy".to_owned())]),
+        conversions: BTreeMap::new(),
+    };
+    assert_eq!(
+        DdlOperation::AlterTable(Box::new(renamed)).statements(Dialect::Postgres),
+        Ok(strings(&[
+            "ALTER TABLE shop.orders RENAME COLUMN legacy TO archived"
+        ]))
+    );
+    // Without the rename, the same names mean a new column and a dropped one.
+    let replaced = TableAlteration {
+        table,
+        after,
+        renamed: BTreeMap::new(),
+        conversions: BTreeMap::new(),
+    };
+    assert_eq!(
+        DdlOperation::AlterTable(Box::new(replaced)).statements(Dialect::Postgres),
+        Ok(strings(&[
+            "ALTER TABLE shop.orders DROP COLUMN legacy",
+            "ALTER TABLE shop.orders ADD COLUMN archived integer",
+        ]))
+    );
+}
+
+#[test]
+fn swapping_two_columns_names_is_two_renames() {
+    let table = existing_orders(Dialect::Mysql);
+    let mut after = table.spec.clone();
+    after.columns.truncate(3);
+    after.columns.push(column("legacy", "integer", true, None));
+    after.columns[2].name = "remark".to_owned();
+    let alteration = TableAlteration {
+        table,
+        after,
+        renamed: BTreeMap::from([("remark".to_owned(), "note".to_owned())]),
+        conversions: BTreeMap::new(),
+    };
+    assert_eq!(
+        DdlOperation::AlterTable(Box::new(alteration)).statements(Dialect::Mysql),
+        Ok(strings(&[
+            "ALTER TABLE shop.orders RENAME COLUMN note TO remark"
+        ]))
+    );
+}
+
+/// `shop.orders` with every kind of constraint, named as PostgreSQL names them.
+fn constrained_orders() -> ExistingTable {
+    let mut table = existing_orders(Dialect::Postgres);
+    table.spec.columns.truncate(2);
+    table.spec.columns.extend([
+        column("code", "varchar(20)", false, None),
+        column("customer", "integer", true, None),
+        column("total", "integer", false, None),
+        column("region", "integer", false, Some("1")),
+    ]);
+    table.spec.unique_keys = vec![UniqueKey {
+        name: Some("orders_code_key".to_owned()),
+        columns: strings(&["code"]),
+    }];
+    table.spec.foreign_keys = vec![ForeignKey {
+        name: Some("orders_customer_fkey".to_owned()),
+        columns: strings(&["customer"]),
+        target: ObjectName::new(Some("shop"), "customers"),
+        target_columns: strings(&["id"]),
+        on_delete: ReferentialAction::NoAction,
+        on_update: ReferentialAction::NoAction,
+    }];
+    table.spec.checks = vec![Check {
+        name: Some("orders_total_check".to_owned()),
+        expression: "total >= 0".to_owned(),
+    }];
+    table
+}
+
+/// Keeps the unique key (its column renamed), makes the foreign key cascade, replaces the
+/// check, adds `region` to the primary key, and renames the table.
+fn changed_constraints() -> TableAlteration {
+    let table = constrained_orders();
+    let mut after = table.spec.clone();
+    after.name.name = "purchases".to_owned();
+    after.columns[2].name = "reference".to_owned();
+    after.unique_keys[0].columns = strings(&["reference"]);
+    after.foreign_keys[0].on_delete = ReferentialAction::Cascade;
+    after.checks = vec![Check {
+        name: None,
+        expression: "total > 0".to_owned(),
+    }];
+    after.primary_key = strings(&["id", "region"]);
+    TableAlteration {
+        table,
+        after,
+        renamed: BTreeMap::from([("reference".to_owned(), "code".to_owned())]),
+        conversions: BTreeMap::new(),
+    }
+}
+
+#[test]
+fn alters_constraints_in_each_dialect() {
+    let cases = [
+        (
+            Dialect::Postgres,
+            vec![
+                "ALTER TABLE shop.orders DROP CONSTRAINT orders_customer_fkey",
+                "ALTER TABLE shop.orders DROP CONSTRAINT orders_total_check",
+                "ALTER TABLE shop.orders DROP CONSTRAINT orders_pkey",
+                "ALTER TABLE shop.orders RENAME COLUMN code TO reference",
+                "ALTER TABLE shop.orders ADD CONSTRAINT orders_pkey PRIMARY KEY (id, region)",
+                "ALTER TABLE shop.orders ADD CHECK (total > 0)",
+                "ALTER TABLE shop.orders ADD CONSTRAINT orders_customer_fkey FOREIGN KEY \
+                 (customer) REFERENCES shop.customers (id) ON DELETE CASCADE",
+                "ALTER TABLE shop.orders RENAME TO purchases",
+            ],
+        ),
+        (
+            Dialect::Mysql,
+            vec![
+                "ALTER TABLE shop.orders DROP FOREIGN KEY orders_customer_fkey",
+                "ALTER TABLE shop.orders DROP CONSTRAINT orders_total_check",
+                "ALTER TABLE shop.orders DROP PRIMARY KEY",
+                "ALTER TABLE shop.orders RENAME COLUMN code TO reference",
+                "ALTER TABLE shop.orders ADD PRIMARY KEY (id, region)",
+                "ALTER TABLE shop.orders ADD CHECK (total > 0)",
+                "ALTER TABLE shop.orders ADD CONSTRAINT orders_customer_fkey FOREIGN KEY \
+                 (customer) REFERENCES shop.customers (id) ON DELETE CASCADE",
+                "RENAME TABLE shop.orders TO shop.purchases",
+            ],
+        ),
+        (
+            Dialect::SqlServer,
+            vec![
+                "ALTER TABLE shop.orders DROP CONSTRAINT orders_customer_fkey",
+                "ALTER TABLE shop.orders DROP CONSTRAINT orders_total_check",
+                "ALTER TABLE shop.orders DROP CONSTRAINT orders_pkey",
+                "EXEC sp_rename N'shop.orders.code', N'reference', 'COLUMN'",
+                "ALTER TABLE shop.orders ADD CONSTRAINT orders_pkey PRIMARY KEY (id, region)",
+                "ALTER TABLE shop.orders ADD CHECK (total > 0)",
+                "ALTER TABLE shop.orders ADD CONSTRAINT orders_customer_fkey FOREIGN KEY \
+                 (customer) REFERENCES shop.customers (id) ON DELETE CASCADE",
+                "EXEC sp_rename N'shop.orders', N'purchases'",
+            ],
+        ),
+    ];
+    for (dialect, expected) in cases {
+        let statements =
+            DdlOperation::AlterTable(Box::new(changed_constraints())).statements(dialect);
+        assert_eq!(statements, Ok(strings(&expected)), "{dialect:?}");
+    }
+}
+
+#[test]
+fn drops_a_unique_key_by_its_index_on_mysql_and_adds_one_everywhere() {
+    let table = constrained_orders();
+    let mut after = table.spec.clone();
+    after.unique_keys = vec![UniqueKey {
+        name: None,
+        columns: strings(&["code", "region"]),
+    }];
+    let alteration = TableAlteration {
+        table,
+        after,
+        renamed: BTreeMap::new(),
+        conversions: BTreeMap::new(),
+    };
+    assert_eq!(
+        DdlOperation::AlterTable(Box::new(alteration.clone())).statements(Dialect::Mysql),
+        Ok(strings(&[
+            "ALTER TABLE shop.orders DROP INDEX orders_code_key",
+            "ALTER TABLE shop.orders ADD UNIQUE (code, region)",
+        ]))
+    );
+    assert_eq!(
+        DdlOperation::AlterTable(Box::new(alteration)).statements(Dialect::Postgres),
+        Ok(strings(&[
+            "ALTER TABLE shop.orders DROP CONSTRAINT orders_code_key",
+            "ALTER TABLE shop.orders ADD UNIQUE (code, region)",
+        ]))
+    );
+}
+
+#[test]
+fn keeps_a_foreign_key_to_the_table_itself_through_a_rename() {
+    let mut table = constrained_orders();
+    table.spec.foreign_keys[0].target = table.spec.name.clone();
+    let mut after = table.spec.clone();
+    after.name.name = "purchases".to_owned();
+    after.foreign_keys[0].target = after.name.clone();
+    let alteration = TableAlteration {
+        table,
+        after,
+        renamed: BTreeMap::new(),
+        conversions: BTreeMap::new(),
+    };
+    assert_eq!(
+        DdlOperation::AlterTable(Box::new(alteration)).statements(Dialect::Postgres),
+        Ok(strings(&["ALTER TABLE shop.orders RENAME TO purchases"]))
+    );
+}
+
+#[test]
+fn says_when_nothing_changed() {
+    let table = constrained_orders();
+    let alteration = TableAlteration {
+        after: table.spec.clone(),
+        table,
+        renamed: BTreeMap::new(),
+        conversions: BTreeMap::new(),
+    };
+    assert_eq!(
+        DdlOperation::AlterTable(Box::new(alteration)).statements(Dialect::Postgres),
+        Err(DdlError::NothingChanged)
+    );
+}
+
+#[test]
+fn refuses_what_a_dialect_cant_change_in_place() {
+    let cant = |what, dialect| Err(DdlError::CantAlter { what, dialect });
+    let new_check = |dialect| {
+        let table = existing_orders(dialect);
+        let mut after = table.spec.clone();
+        after.checks.push(Check {
+            name: None,
+            expression: "id > 0".to_owned(),
+        });
+        TableAlteration {
+            table,
+            after,
+            renamed: BTreeMap::new(),
+            conversions: BTreeMap::new(),
+        }
+    };
+    assert_eq!(
+        DdlOperation::AlterTable(Box::new(new_check(Dialect::DuckDb))).statements(Dialect::DuckDb),
+        cant("add keys or checks to an existing table", Dialect::DuckDb)
+    );
+    assert_eq!(
+        DdlOperation::AlterTable(Box::new(changed_columns(Dialect::Sqlite)))
+            .statements(Dialect::Sqlite),
+        cant("change an existing column's type", Dialect::Sqlite)
+    );
+    let mut new_key = new_check(Dialect::ClickHouse);
+    new_key.after.checks.clear();
+    new_key.after.primary_key = strings(&["id", "status"]);
+    assert_eq!(
+        DdlOperation::AlterTable(Box::new(new_key)).statements(Dialect::ClickHouse),
+        cant(
+            "change an existing table's primary key",
+            Dialect::ClickHouse
+        )
+    );
+    let mut moved = new_check(Dialect::Postgres);
+    moved.after.checks.clear();
+    moved.after.name.schema = Some("archive".to_owned());
+    assert_eq!(
+        DdlOperation::AlterTable(Box::new(moved)).statements(Dialect::Postgres),
+        cant("move a table to another schema", Dialect::Postgres)
+    );
+    let mut renumbered = new_check(Dialect::Postgres);
+    renumbered.after.checks.clear();
+    renumbered.after.columns[0].identity = Some(Identity::counting(
+        dbdesk_core::IdentityGeneration::ByDefault,
+    ));
+    assert!(matches!(
+        DdlOperation::AlterTable(Box::new(renumbered)).statements(Dialect::Postgres),
+        Err(DdlError::CantAlter { .. })
+    ));
+}
+
+#[test]
+fn sqlite_changes_simple_columns_in_place_and_refuses_the_rest() {
+    let table = existing_orders(Dialect::Sqlite);
+    let mut after = table.spec.clone();
+    after.columns[1].name = "state".to_owned();
+    after.columns.remove(3);
+    after.columns.push(column("shipped_on", "text", true, None));
+    let mut alteration = TableAlteration {
+        table,
+        after,
+        renamed: BTreeMap::from([("state".to_owned(), "status".to_owned())]),
+        conversions: BTreeMap::new(),
+    };
+    assert_eq!(
+        DdlOperation::AlterTable(Box::new(alteration.clone())).statements(Dialect::Sqlite),
+        Ok(strings(&[
+            "ALTER TABLE shop.orders DROP COLUMN legacy",
+            "ALTER TABLE shop.orders RENAME COLUMN status TO state",
+            "ALTER TABLE shop.orders ADD COLUMN shipped_on text",
+        ]))
+    );
+    alteration.after.columns[3].nullable = false;
+    assert!(matches!(
+        DdlOperation::AlterTable(Box::new(alteration)).statements(Dialect::Sqlite),
+        Err(DdlError::CantAlter { .. })
+    ));
+}
+
+#[test]
+fn duckdb_adds_a_required_column_then_requires_it() {
+    let table = existing_orders(Dialect::DuckDb);
+    let mut after = table.spec.clone();
+    after
+        .columns
+        .push(column("priority", "integer", false, Some("0")));
+    let alteration = TableAlteration {
+        table,
+        after,
+        renamed: BTreeMap::new(),
+        conversions: BTreeMap::new(),
+    };
+    assert_eq!(
+        DdlOperation::AlterTable(Box::new(alteration)).statements(Dialect::DuckDb),
+        Ok(strings(&[
+            "ALTER TABLE shop.orders ADD COLUMN priority integer DEFAULT 0",
+            "ALTER TABLE shop.orders ALTER COLUMN priority SET NOT NULL",
+        ]))
+    );
 }

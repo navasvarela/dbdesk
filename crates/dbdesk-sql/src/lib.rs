@@ -36,9 +36,10 @@ pub use classify::{
     Analysis, NamePart, NamedSchemas, StatementKind, Unclassified, analyze, classify,
 };
 pub use ddl::{
-    Check, ColumnSpec, DdlError, DdlOperation, ForeignKey, IndexMethod, IndexSpec, ObjectName,
-    OwnedObjects, PasswordChange, ReferentialAction, RoleSpec, SchemaSpec, TableSpec, UniqueKey,
-    ViewKind, ViewSpec, ddl_statements, quote_name, view_query,
+    Check, ColumnSpec, DdlError, DdlOperation, ExistingTable, ForeignKey, IndexMethod, IndexSpec,
+    ObjectName, OwnedObjects, PasswordChange, ReferentialAction, RoleSpec, SchemaSpec,
+    TableAlteration, TableSpec, UniqueKey, ViewKind, ViewSpec, ddl_statements, quote_name,
+    view_query,
 };
 pub use dialect::{
     Capabilities, Dialect, ExplainSetting, Savepoint, SchemaCreation, TableChange, UserModel,
