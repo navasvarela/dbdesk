@@ -4,7 +4,7 @@ Status: **W1 to W3 and W5 built** (see the [roadmap](roadmap.md#well-rounded-tra
 design is in [Power in the grid](grid-power.md)); W4 and W6 planned.
 Proposed on 2026-10-24.
 
-dbdesk browses, queries and edits PostgreSQL, SQLite, MySQL and MariaDB, and ships as a
+DbRover browses, queries and edits PostgreSQL, SQLite, MySQL and MariaDB, and ships as a
 download. This plan gathers the gaps that still keep it from being the database tool someone
 uses every day without missing another one. Many come from follow-ups that earlier milestones
 left open in the [roadmap](roadmap.md).
@@ -204,7 +204,7 @@ Proposed defaults; each is confirmed when its milestone starts.
 | Matching on import | **By id**, then the user decides each entry | Re-importing is safe. A copy is an explicit choice. |
 | Read-only data sources | **The same checks as MCP's read-only projects** | One way to enforce read-only, tested once. |
 | SSH | **`russh`, with host keys checked against `known_hosts`** | Nothing to install. An unknown host asks, and a changed key is refused. |
-| Grid edits in the history | **Store the values they replaced**, and offer the statement to put them back, never undo silently | It explains every change, without dbdesk ever writing anything you didn't review. |
+| Grid edits in the history | **Store the values they replaced**, and offer the statement to put them back, never undo silently | It explains every change, without DbRover ever writing anything you didn't review. |
 | Database-side sort and filter | **Off by default**, a switch per grid | Today's behaviour stays. Re-running a query is a deliberate step. |
 
 ## Risks

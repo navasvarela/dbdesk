@@ -23,9 +23,9 @@ so a long query in one tab never blocks another. It connects the first time you 
 ## Consoles are saved
 
 Every console is a file, `consoles/<data source id>/console.sql` (then `console_2.sql`, and so
-on; see [Where dbdesk keeps its files](files.md)). dbdesk writes your text a second after you
+on; see [Where DbRover keeps its files](files.md)). DbRover writes your text a second after you
 stop typing, and when you quit. Open consoles reopen with their text the next time you start
-dbdesk.
+DbRover.
 
 Closing a console keeps its file if you typed anything in it, and deletes it otherwise (an empty
 console, or one opened by **Open data** and left as it was). Kept consoles are listed under
@@ -62,7 +62,7 @@ letters of its words. Names that start with what you typed come first, and the o
 lately come before the rest.
 
 Names come from what the explorer has loaded for the data source. When a suggestion needs a
-part that isn't loaded yet, dbdesk loads it in the background (the list says "Loading the
+part that isn't loaded yet, DbRover loads it in the background (the list says "Loading the
 catalog…"), which connects the explorer if it wasn't.
 
 **Formatting.** ⌥⌘L (or **Format** in the toolbar, or **Code → Format**) lays out the selected
@@ -86,14 +86,14 @@ aren't queries, such as `CREATE FUNCTION`, keep their line breaks; a `CREATE TAB
 column per line.
 
 Formatting only changes spaces, line breaks and the case of keywords. Strings, comments,
-quoted names and function bodies between `$$` are never touched, and dbdesk checks the result
+quoted names and function bodies between `$$` are never touched, and DbRover checks the result
 before using it: if it would read differently to the database, the text stays as it was and the
 toolbar says **Not formatted**. The cursor stays where it was in the SQL, and ⌘Z undoes the
 whole format at once.
 
 ![An underlined comparison with NULL, and its explanation](images/problems.png)
 
-**Problems while typing.** A moment after you stop typing, dbdesk underlines mistakes: a red
+**Problems while typing.** A moment after you stop typing, DbRover underlines mistakes: a red
 wave for errors (SQL the database can't read), an amber one for warnings (SQL that runs but
 probably doesn't do what you meant). Hover over one to read it. The toolbar counts them; click
 the count, or press F8 (⇧F8 for the previous one), to move the cursor to the next.
@@ -108,7 +108,7 @@ Warnings point out:
   them.
 
 Only queries and data changes (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, `WITH`, `VALUES`) are
-checked for syntax: dbdesk would rather miss an error in a `CREATE FUNCTION` than flag one that
+checked for syntax: DbRover would rather miss an error in a `CREATE FUNCTION` than flag one that
 isn't there. Once a console has run something, its own connection also asks the database
 whether it would accept each statement, without running it, so the database's own messages
 show up too ("The database says: …"). This never happens while results are still loading or a
@@ -118,7 +118,7 @@ transaction is open.
 
 **View → Settings…** chooses how keywords are written (UPPER, lower, or as you typed them) and
 how many spaces each level is indented. They're saved in `settings.toml` (see
-[Where dbdesk keeps its files](files.md)).
+[Where DbRover keeps its files](files.md)).
 
 ## Running SQL
 
@@ -138,7 +138,7 @@ The toolbar's buttons, and their shortcuts while the editor has focus:
 On Linux and Windows, use Ctrl instead of ⌘. Hover over a button to see its current shortcut;
 all of them can be changed (see [Keyboard shortcuts](shortcuts.md)).
 
-**Which statement is "at the cursor"?** dbdesk splits the text into statements at semicolons,
+**Which statement is "at the cursor"?** DbRover splits the text into statements at semicolons,
 the way the database would: semicolons inside strings, quoted names, comments, PostgreSQL's
 dollar-quoted function bodies, and `BEGIN … END` or `CASE … END` blocks don't end a statement.
 The statement at the cursor is the one the cursor is in, or the one just before it, so you can
@@ -156,7 +156,7 @@ END//
 DELIMITER ;
 ```
 
-The `DELIMITER` lines are dbdesk's to read and are never sent. MySQL's own quoting applies too:
+The `DELIMITER` lines are DbRover's to read and are never sent. MySQL's own quoting applies too:
 `"text"` is a string, as it is without `ANSI_QUOTES`, names are quoted with backticks, and a
 backslash inside a string escapes the next character.
 
@@ -177,7 +177,7 @@ Each statement is sent as a batch of its own, so a variable lives only as long a
 that declares it, even when both are selected and run together: `DECLARE @n int = 1; SELECT @n`
 is two batches, and the second doesn't know `@n`. Leave out the semicolon
 (`DECLARE @n int = 1 SELECT @n`), or put the statements inside `BEGIN … END`, to send them as
-one. Names are quoted with brackets (`[order]`), and the values dbdesk writes, such as a
+one. Names are quoted with brackets (`[order]`), and the values DbRover writes, such as a
 grid edit's, are `N'…'` strings so that any character survives. A statement that returns
 several result sets shows the first.
 
@@ -189,7 +189,7 @@ SELECT customer, sum(total) FROM 'orders/*.parquet' GROUP BY ALL;
 SELECT * FROM read_csv('people.csv', header = true) WHERE age > 30;
 ```
 
-A relative path is resolved from the folder dbdesk was started in, which for an app started from
+A relative path is resolved from the folder DbRover was started in, which for an app started from
 the Dock or the Start menu is not your home folder, so give files their full path. Statements
 that only report how they went show no result grid: `CREATE TABLE`, `SET` and `ATTACH` just
 finish, and an `INSERT`, `UPDATE`, `DELETE` or `COPY` says how many rows it wrote.
@@ -209,7 +209,7 @@ Below the toolbar, each console has a transaction mode:
 
 - **Auto-commit** (the default): every statement is committed as soon as it succeeds, unless you
   start a transaction yourself with `BEGIN`.
-- **Manual commit**: dbdesk starts a transaction before your first statement, and changes stay
+- **Manual commit**: DbRover starts a transaction before your first statement, and changes stay
   pending until you click **Commit** or **Rollback**.
 
 ClickHouse consoles have no transaction mode: ClickHouse's transactions are experimental and
@@ -219,7 +219,7 @@ While a transaction is open, the console says **● Transaction open**, in eithe
 can't switch modes. On PostgreSQL, a statement that fails inside a transaction leaves it
 **● Transaction failed**: the database then only accepts a rollback.
 
-Closing a console, disconnecting its data source or quitting dbdesk with a transaction open
+Closing a console, disconnecting its data source or quitting DbRover with a transaction open
 asks whether to roll it back first. Closing the connection is what rolls it back.
 
 ## When the connection is lost
@@ -227,7 +227,7 @@ asks whether to roll it back first. Closing the connection is what rolls it back
 When a console's connection is lost (the server restarted, an administrator ended the session,
 the network or the SSH tunnel dropped), the console says so in its toolbar: **Disconnected: its
 transaction, temporary tables and session settings are gone**, with the reason on hover. The
-statement that found out fails with the server's error. dbdesk also checks a connection that has
+statement that found out fails with the server's error. DbRover also checks a connection that has
 sat unused for a minute before running anything on it, so a statement isn't sent down one that
 is gone.
 
@@ -283,7 +283,7 @@ else in the same console.
 ### Several statements
 
 When a run includes more than one statement, numbered tabs above the summary pick which
-statement's result to show. dbdesk shows the latest one that returned rows, or the one that
+statement's result to show. DbRover shows the latest one that returned rows, or the one that
 failed; failed statements' tabs are red. Hover over a tab to see its statement.
 
 ![A script of three statements](images/multiple-statements.png)
@@ -336,7 +336,7 @@ mode, are committed); the ones after it don't run at all.
 
 ## Statements that change every row
 
-Before running an `UPDATE` or a `DELETE` without a `WHERE`, dbdesk asks first:
+Before running an `UPDATE` or a `DELETE` without a `WHERE`, DbRover asks first:
 
 ![The "Run anyway?" dialog](images/run-anyway.png)
 

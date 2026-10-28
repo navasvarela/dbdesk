@@ -1,0 +1,366 @@
+//! The server section of the data source form: host, port, database, user, password, TLS and
+//! SSH, shared by every network engine. An engine embeds [`ServerFields`] in its own fields and
+//! adds only what is particular to it.
+
+use std::path::PathBuf;
+
+use dbrover_core::{ServerConfig, TlsMode};
+
+use super::{FormError, SshFields, parse_port, required};
+
+/// What a new data source's server section starts with, and the hints its fields show.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ServerDefaults {
+    pub host: &'static str,
+    /// The port of unencrypted connections, and of every connection where TLS is
+    /// [`TlsOffer::Negotiated`].
+    pub port: u16,
+    pub database: &'static str,
+    pub user: &'static str,
+    pub tls: TlsOffer,
+}
+
+/// How a server offers TLS, which decides the modes the form lists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TlsOffer {
+    /// Agreed on the server's one port: every mode, `prefer` first.
+    Negotiated,
+    /// On a port of its own (ClickHouse's HTTPS). No `prefer`, which needs one port that
+    /// may or may not encrypt; `disable` first.
+    OwnPort(u16),
+}
+
+impl TlsOffer {
+    fn choices(self) -> &'static [TlsChoice] {
+        match self {
+            Self::Negotiated => &TlsChoice::ALL,
+            Self::OwnPort(_) => &[
+                TlsChoice::Disable,
+                TlsChoice::Require,
+                TlsChoice::VerifyFull,
+            ],
+        }
+    }
+
+    fn initial_choice(self) -> TlsChoice {
+        match self {
+            Self::Negotiated => TlsChoice::from(&TlsMode::default()),
+            Self::OwnPort(_) => TlsChoice::Disable,
+        }
+    }
+}
+
+/// Text as the user typed it, plus the TLS choice.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerFields {
+    pub host: String,
+    pub port: String,
+    pub database: String,
+    pub user: String,
+    /// Empty means "keep the saved password" (or none, for a new data source).
+    pub password: String,
+    pub tls: TlsChoice,
+    /// Only used by [`TlsChoice::VerifyFull`], but kept while another mode is chosen so
+    /// switching back doesn't lose it. Empty trusts the public web authorities.
+    pub ca_file: String,
+    pub ssh: SshFields,
+    pub defaults: ServerDefaults,
+}
+
+impl ServerFields {
+    pub fn new(defaults: ServerDefaults) -> Self {
+        Self {
+            host: defaults.host.to_owned(),
+            port: defaults.port.to_string(),
+            database: defaults.database.to_owned(),
+            user: defaults.user.to_owned(),
+            password: String::new(),
+            tls: defaults.tls.initial_choice(),
+            ca_file: String::new(),
+            ssh: SshFields::default(),
+            defaults,
+        }
+    }
+
+    /// The TLS modes this server can be connected with.
+    pub fn tls_choices(&self) -> &'static [TlsChoice] {
+        self.defaults.tls.choices()
+    }
+
+    /// The port a connection with the chosen TLS mode goes to unless told otherwise.
+    pub fn default_port(&self) -> u16 {
+        match self.defaults.tls {
+            TlsOffer::OwnPort(tls_port) if self.tls.encrypts() => tls_port,
+            _ => self.defaults.port,
+        }
+    }
+
+    /// Chooses a TLS mode, moving the port along to the new mode's default if it was on the
+    /// old one's, so choosing `require` for ClickHouse goes from 8123 to 8443.
+    pub fn choose_tls(&mut self, choice: TlsChoice) {
+        let on_default_port = self.port.trim() == self.default_port().to_string();
+        self.tls = choice;
+        if on_default_port {
+            self.port = self.default_port().to_string();
+        }
+    }
+
+    pub fn from_config(config: &ServerConfig, defaults: ServerDefaults) -> Self {
+        let ca_file = match &config.tls {
+            TlsMode::VerifyFull {
+                ca_file: Some(path),
+            } => path.display().to_string(),
+            _ => String::new(),
+        };
+        Self {
+            host: config.host.clone(),
+            port: config.port.to_string(),
+            database: config.database.clone(),
+            user: config.user.clone(),
+            password: String::new(),
+            tls: TlsChoice::from(&config.tls),
+            ca_file,
+            ssh: SshFields::from_config(config.ssh.as_ref()),
+            defaults,
+        }
+    }
+
+    pub fn to_config(&self) -> Result<ServerConfig, FormError> {
+        Ok(ServerConfig {
+            host: required(&self.host, FormError::HostMissing)?,
+            port: parse_port(&self.port, FormError::InvalidPort)?,
+            database: required(&self.database, FormError::DatabaseMissing)?,
+            user: required(&self.user, FormError::UserMissing)?,
+            tls: self.tls_mode(),
+            ssh: self.ssh.to_config()?,
+        })
+    }
+
+    fn tls_mode(&self) -> TlsMode {
+        match self.tls {
+            TlsChoice::Disable => TlsMode::Disable,
+            TlsChoice::Prefer => TlsMode::Prefer,
+            TlsChoice::Require => TlsMode::Require,
+            TlsChoice::VerifyFull => TlsMode::VerifyFull {
+                ca_file: Some(self.ca_file.trim())
+                    .filter(|path| !path.is_empty())
+                    .map(PathBuf::from),
+            },
+        }
+    }
+}
+
+/// The TLS modes, as the form lists them: [`TlsMode`] without its CA file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TlsChoice {
+    Disable,
+    Prefer,
+    Require,
+    VerifyFull,
+}
+
+impl TlsChoice {
+    pub const ALL: [Self; 4] = [Self::Disable, Self::Prefer, Self::Require, Self::VerifyFull];
+
+    /// Whether the connection is always encrypted.
+    fn encrypts(self) -> bool {
+        matches!(self, Self::Require | Self::VerifyFull)
+    }
+
+    /// libpq's `sslmode` names, which PostgreSQL users and hosting providers' guides use.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Disable => "disable",
+            Self::Prefer => "prefer",
+            Self::Require => "require",
+            Self::VerifyFull => "verify-full",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Disable => "Never encrypt.",
+            Self::Prefer => "Encrypt if the server offers it, without checking its certificate.",
+            Self::Require => "Always encrypt, without checking the server's certificate.",
+            Self::VerifyFull => {
+                "Always encrypt, and check that the certificate is trusted and names the host."
+            }
+        }
+    }
+}
+
+impl From<&TlsMode> for TlsChoice {
+    fn from(tls: &TlsMode) -> Self {
+        match tls {
+            TlsMode::Disable => Self::Disable,
+            TlsMode::Prefer => Self::Prefer,
+            TlsMode::Require => Self::Require,
+            TlsMode::VerifyFull { .. } => Self::VerifyFull,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use dbrover_core::Port;
+
+    use super::*;
+
+    const DEFAULTS: ServerDefaults = ServerDefaults {
+        host: "localhost",
+        port: 5432,
+        database: "postgres",
+        user: "postgres",
+        tls: TlsOffer::Negotiated,
+    };
+
+    fn fields(edit: impl FnOnce(&mut ServerFields)) -> ServerFields {
+        let mut fields = ServerFields::new(DEFAULTS);
+        edit(&mut fields);
+        fields
+    }
+
+    type FieldEdit = fn(&mut ServerFields);
+
+    #[test]
+    fn rejects_invalid_fields() {
+        let cases: [(FieldEdit, FormError); 6] = [
+            (|f| f.host = "  ".to_owned(), FormError::HostMissing),
+            (|f| f.port = "abc".to_owned(), FormError::InvalidPort),
+            (|f| f.port = "0".to_owned(), FormError::InvalidPort),
+            (|f| f.port = "70000".to_owned(), FormError::InvalidPort),
+            (|f| f.database = String::new(), FormError::DatabaseMissing),
+            (|f| f.user = String::new(), FormError::UserMissing),
+        ];
+
+        for (edit, expected) in cases {
+            assert_eq!(fields(edit).to_config(), Err(expected));
+        }
+    }
+
+    #[test]
+    fn starts_from_the_engine_defaults_and_trims_what_is_typed() {
+        let config = fields(|f| {
+            f.host = " db.internal ".to_owned();
+            f.port = " 6432 ".to_owned();
+        })
+        .to_config()
+        .unwrap();
+
+        assert_eq!(
+            config,
+            ServerConfig {
+                host: "db.internal".to_owned(),
+                port: 6432.into(),
+                database: "postgres".to_owned(),
+                user: "postgres".to_owned(),
+                tls: TlsMode::Prefer,
+                ssh: None,
+            }
+        );
+    }
+
+    #[test]
+    fn keeps_placeholders_as_typed_to_resolve_when_connecting() {
+        let config = fields(|f| {
+            f.host = " ${PGHOST} ".to_owned();
+            f.port = "${PGPORT}".to_owned();
+            f.user = "${USER}".to_owned();
+        })
+        .to_config()
+        .unwrap();
+
+        assert_eq!(config.host, "${PGHOST}");
+        assert_eq!(config.port, Port::Placeholder("${PGPORT}".to_owned()));
+        assert_eq!(config.user, "${USER}");
+        let fields = ServerFields::from_config(&config, DEFAULTS);
+        assert_eq!(fields.port, "${PGPORT}");
+        assert_eq!(fields.to_config(), Ok(config));
+    }
+
+    #[test]
+    fn keeps_the_ca_file_for_verify_full_only() {
+        let cases = [
+            (TlsChoice::Require, " /etc/ca.pem ", TlsMode::Require),
+            (
+                TlsChoice::VerifyFull,
+                " /etc/ca.pem ",
+                TlsMode::VerifyFull {
+                    ca_file: Some("/etc/ca.pem".into()),
+                },
+            ),
+            (
+                TlsChoice::VerifyFull,
+                "  ",
+                TlsMode::VerifyFull { ca_file: None },
+            ),
+        ];
+        for (choice, ca_file, expected) in cases {
+            let config = fields(|f| {
+                f.tls = choice;
+                f.ca_file = ca_file.to_owned();
+            })
+            .to_config()
+            .unwrap();
+
+            assert_eq!(config.tls, expected, "{choice:?} {ca_file:?}");
+        }
+    }
+
+    #[test]
+    fn every_tls_mode_round_trips_through_the_fields() {
+        let modes = [
+            TlsMode::Disable,
+            TlsMode::Prefer,
+            TlsMode::Require,
+            TlsMode::VerifyFull { ca_file: None },
+            TlsMode::VerifyFull {
+                ca_file: Some("/etc/ca.pem".into()),
+            },
+        ];
+        for tls in modes {
+            let config = ServerConfig {
+                host: "db.internal".to_owned(),
+                port: 6432.into(),
+                database: "app".to_owned(),
+                user: "juan".to_owned(),
+                tls,
+                ssh: None,
+            };
+
+            let fields = ServerFields::from_config(&config, DEFAULTS);
+
+            assert_eq!(fields.to_config(), Ok(config));
+        }
+    }
+
+    #[test]
+    fn moves_the_port_with_tls_on_its_own_port() {
+        let defaults = ServerDefaults {
+            port: 8123,
+            tls: TlsOffer::OwnPort(8443),
+            ..DEFAULTS
+        };
+        let mut fields = ServerFields::new(defaults);
+        assert_eq!(
+            (fields.tls, fields.port.as_str()),
+            (TlsChoice::Disable, "8123")
+        );
+        assert!(!fields.tls_choices().contains(&TlsChoice::Prefer));
+
+        fields.choose_tls(TlsChoice::Require);
+        assert_eq!(fields.port, "8443");
+        fields.choose_tls(TlsChoice::VerifyFull);
+        assert_eq!(fields.port, "8443");
+        fields.choose_tls(TlsChoice::Disable);
+        assert_eq!(fields.port, "8123");
+
+        fields.port = "9000".to_owned();
+        fields.choose_tls(TlsChoice::Require);
+        assert_eq!(fields.port, "9000", "a port the user typed stays");
+
+        let mut negotiated = ServerFields::new(DEFAULTS);
+        negotiated.choose_tls(TlsChoice::Require);
+        assert_eq!(negotiated.port, "5432");
+    }
+}

@@ -1,0 +1,103 @@
+[package]
+name = "dbrover-app"
+description = "The DbRover desktop application."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "dbrover"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+dbrover-core.workspace = true
+dbrover-engine.workspace = true
+dbrover-mcp.workspace = true
+dbrover-sql.workspace = true
+dbrover-store.workspace = true
+eframe.workspace = true
+egui.workspace = true
+egui_dock.workspace = true
+egui_extras.workspace = true
+egui-phosphor.workspace = true
+image.workspace = true
+jiff.workspace = true
+regex.workspace = true
+rfd.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-appender.workspace = true
+tracing-subscriber.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+muda.workspace = true
+objc2-app-kit.workspace = true
+objc2-foundation.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+egui_kittest = { workspace = true, features = ["eframe", "snapshot", "wgpu"] }
+rmcp = { workspace = true, features = ["client", "transport-child-process"] }
+rusqlite.workspace = true
+tempfile.workspace = true
+toml.workspace = true
+
+[lints]
+workspace = true
+
+# How cargo-packager turns the release binary into a .app/.dmg, AppImage/.deb and an NSIS
+# installer. The release workflow (.github/workflows/release.yml) builds the binary first and
+# points --binaries-dir at it; see docs/releasing.md.
+[package.metadata.packager]
+productName = "DbRover"
+identifier = "io.github.navasvarela.dbrover"
+description = "Browse and Query databases"
+longDescription = "A desktop database tool for PostgreSQL and SQLite: browse catalogs, run SQL in query consoles, and page through results."
+homepage = "https://dbdesk.org"
+authors = ["Juan Miguel Salamanca Zafra"]
+publisher = "DbRover"
+copyright = "Copyright © 2026 Juan Miguel Salamanca Zafra and the DbRover contributors"
+category = "DeveloperTool"
+icons = [
+    "../../assets/brand/dbrover.icns",
+    "../../assets/brand/icon-32.png",
+    "../../assets/brand/icon-128.png",
+    "../../assets/brand/icon-256.png",
+    "../../assets/brand/icon-512.png",
+]
+binaries = [{ path = "dbrover", main = true }]
+# Licences travel with the app: DbRover's own, the bundled fonts', and DuckDB's with those of the
+# third-party code inside it (packaging/duckdb/update-licenses.sh writes both).
+resources = [
+    { src = "../../LICENSE-MIT", target = "licenses/LICENSE-MIT" },
+    { src = "../../LICENSE-APACHE", target = "licenses/LICENSE-APACHE" },
+    { src = "../../assets/fonts/inter/LICENSE.txt", target = "licenses/fonts/Inter-LICENSE.txt" },
+    { src = "../../assets/fonts/jetbrains-mono/OFL.txt", target = "licenses/fonts/JetBrainsMono-OFL.txt" },
+    { src = "../../packaging/duckdb/DuckDB-LICENSE", target = "licenses/DuckDB-LICENSE" },
+    { src = "../../packaging/duckdb/DuckDB-THIRD-PARTY.txt", target = "licenses/DuckDB-THIRD-PARTY.txt" },
+]
+
+[package.metadata.packager.macos]
+minimumSystemVersion = "11.0"
+
+# cargo-packager's default, written down because updates depend on it: a per-user install in
+# %LOCALAPPDATA%\DbRover needs no administrator rights, so the updater can run the installer
+# without elevation, and the installer finds the previous location in HKCU and installs there.
+[package.metadata.packager.nsis]
+installMode = "currentUser"
+
+[package.metadata.packager.deb]
+# Otherwise cargo-packager makes it the kebab case of `productName`, `db-rover`.
+packageName = "dbrover"
+section = "database"
+# The rest (glibc, Wayland or X11) is on every desktop installation; passwords need a Secret
+# Service (GNOME Keyring, KWallet), which is recommended rather than required.
+depends = ["libxkbcommon0", "libgl1"]

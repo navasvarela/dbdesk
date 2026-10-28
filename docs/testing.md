@@ -2,8 +2,8 @@
 
 ## Driver conformance suite
 
-The driver traits are only honest if every driver passes the same tests. `dbdesk-core` exposes
-them as `dbdesk_core::conformance` behind the `conformance` feature, which driver crates enable
+The driver traits are only honest if every driver passes the same tests. `dbrover-core` exposes
+them as `dbrover_core::conformance` behind the `conformance` feature, which driver crates enable
 in their dev-dependencies.
 
 Implemented:
@@ -43,11 +43,11 @@ Each driver crate runs the suite against its own backend:
 - **Postgres**: the containers from `docker-compose.yml`. `postgres` (port 55432) is a plain
   server; `postgres-tls` (port 55443) refuses unencrypted connections, and its certificate is
   signed by the test authority in `docker/postgres-tls/` (`generate.sh` makes both), which the
-  `verify-full` tests trust. Tests are skipped with a message when `DBDESK_TEST_POSTGRES_URL`
-  or `DBDESK_TEST_POSTGRES_TLS_URL` is unset, so `cargo test` works offline.
+  `verify-full` tests trust. Tests are skipped with a message when `DBROVER_TEST_POSTGRES_URL`
+  or `DBROVER_TEST_POSTGRES_TLS_URL` is unset, so `cargo test` works offline.
 - **MySQL and MariaDB**: the `mysql` (8.4, port 55306) and `mariadb` (11.4, port 55307)
-  containers, both through the same tests, each skipped when its `DBDESK_TEST_MYSQL_URL` or
-  `DBDESK_TEST_MARIADB_URL` is unset. Both make a self-signed certificate on first start, so
+  containers, both through the same tests, each skipped when its `DBROVER_TEST_MYSQL_URL` or
+  `DBROVER_TEST_MARIADB_URL` is unset. Both make a self-signed certificate on first start, so
   the TLS tests need no fixture of their own. `check_describe_table` asks the server's
   `lower_case_table_names` whether unquoted names match ignoring case: on Linux they don't.
 - **DuckDB**: in memory or a temporary file, always runs, like SQLite: DuckDB is inside the
@@ -56,23 +56,23 @@ Each driver crate runs the suite against its own backend:
   with Parquet and JSON. It runs the suite with `Spelling::STANDARD`, and reading a Parquet file from an
   in-memory database is a test of its own.
 - **ClickHouse**: the `clickhouse` container (25.8, HTTP on port 58123 and HTTPS on 58443,
-  with the `postgres-tls` certificate), skipped when `DBDESK_TEST_CLICKHOUSE_URL` or
-  `DBDESK_TEST_CLICKHOUSE_TLS_URL` is unset. It runs `check_execution`, `check_validate` and
+  with the `postgres-tls` certificate), skipped when `DBROVER_TEST_CLICKHOUSE_URL` or
+  `DBROVER_TEST_CLICKHOUSE_TLS_URL` is unset. It runs `check_execution`, `check_validate` and
   `check_cancel` with `Spelling::STANDARD`, but not `check_transactions` (ClickHouse has none
   to speak of) or `check_describe_table` (no key tells a table's rows apart, so results are
   never editable).
 - **SQL Server**: the `sqlserver` container (2022, port 51433), skipped when
-  `DBDESK_TEST_SQLSERVER_URL` is unset. Its image is x86-64 only: native on CI's Linux runner,
+  `DBROVER_TEST_SQLSERVER_URL` is unset. Its image is x86-64 only: native on CI's Linux runner,
   emulated (slowly, and it can crash) by Docker on an Apple-silicon Mac. The image can't
-  create a database on first start, so the compose health check creates `dbdesk`. The suite
+  create a database on first start, so the compose health check creates `dbrover`. The suite
   runs with `Spelling::SQL_SERVER`: temporary tables are `#name`, and a transaction opens with
   `BEGIN TRANSACTION`, since `BEGIN` alone opens a block there. The server makes its own
   certificate, so the TLS tests need no fixture.
 
-The SSH tunnel (`dbdesk-ssh`) is tested against the `ssh` service (port 55222): OpenSSH on
+The SSH tunnel (`dbrover-ssh`) is tested against the `ssh` service (port 55222): OpenSSH on
 Alpine, built from `docker/ssh/` with committed test keys (`generate.sh` makes them), which
-signs in `dbdesk` with a key or its password and forwards only to the `postgres` service. Its
-tests skip when `DBDESK_TEST_SSH_URL` or `DBDESK_TEST_SSH_POSTGRES_URL` is unset. They fail
+signs in `dbrover` with a key or its password and forwards only to the `postgres` service. Its
+tests skip when `DBROVER_TEST_SSH_URL` or `DBROVER_TEST_SSH_POSTGRES_URL` is unset. They fail
 logins and abandon handshakes on purpose, so the server turns off OpenSSH's penalties for an
 address that does that (`PerSourcePenalties`), which would otherwise refuse the next test's
 connection.
@@ -97,19 +97,19 @@ well under the sleep time.
 
 ## Engine
 
-The engine is tested headless (`dbdesk-engine/tests/engine.rs` and `console.rs`, sharing
+The engine is tested headless (`dbrover-engine/tests/engine.rs` and `console.rs`, sharing
 `tests/common`): send `Command`s, collect `Event`s, assert on the sequence. It uses a temp
 directory for `data_sources.toml`, console files, `history.sqlite` and exports, and an
 in-memory `SecretStore`. Tests that need PostgreSQL (a commit of a failed transaction, say)
-skip without `DBDESK_TEST_POSTGRES_URL`, like the driver tests. Planned: a fake driver (in-memory, scripted responses) covers ordering cases that are hard to trigger
+skip without `DBROVER_TEST_POSTGRES_URL`, like the driver tests. Planned: a fake driver (in-memory, scripted responses) covers ordering cases that are hard to trigger
 against a real server, such as a cancel arriving after the last row.
 
 ### Object helpers' DDL
 
-- `dbdesk_sql`'s DDL builder has golden tests per dialect (`ddl/tests.rs`): a table with every
+- `dbrover_sql`'s DDL builder has golden tests per dialect (`ddl/tests.rs`): a table with every
   kind of constraint and names that need quoting, renames, truncates, drops and indexes, written
   out in full for each of the six dialects, and what each dialect refuses.
-- `dbdesk-engine/tests/ddl.rs` applies DDL through the engine: all or none on SQLite, the
+- `dbrover-engine/tests/ddl.rs` applies DDL through the engine: all or none on SQLite, the
   statements before a failure kept (and counted) on MySQL, refused on a read-only data source,
   and recorded in the history. Its round trip builds a parent and a child table from one
   `TableSpec` on every engine with a test server, describes the child, and compares its
@@ -152,9 +152,9 @@ against a real server, such as a cancel arriving after the last row.
 
 ### Power in the grid
 
-- `dbdesk_sql`'s row statements (`dml.rs`) and the database sort and filter (`arrange.rs`) have
+- `dbrover_sql`'s row statements (`dml.rs`) and the database sort and filter (`arrange.rs`) have
   golden tests per dialect.
-- `dbdesk-engine/tests/grid/` is a module of the `console` test binary, not a binary of its own,
+- `dbrover-engine/tests/grid/` is a module of the `console` test binary, not a binary of its own,
   so it adds no link step to CI. Its tests run on every engine with a test server, each in
   tables with the process id in their names so runs sharing the servers don't clash: a submit
   of deletes, updates and inserts built by `RowSql` (and one that fails and changes nothing),
@@ -168,10 +168,10 @@ against a real server, such as a cancel arriving after the last row.
 
 ### Files and parameters
 
-- `dbdesk_sql::parameters` has a corpus per dialect in `dbdesk-sql/tests/parameters/`, read by
+- `dbrover_sql::parameters` has a corpus per dialect in `dbrover-sql/tests/parameters/`, read by
   a unit test (no binary of its own), and golden tests of the placeholders and literals each
   dialect gets.
-- `dbdesk-engine/tests/parameters/` is a module of the `console` test binary, like the grid's.
+- `dbrover-engine/tests/parameters/` is a module of the `console` test binary, like the grid's.
   It binds a number typed as text, a quote, a repeated parameter and `NULL` on every engine with
   a test server, in a table with the process id in its name; ClickHouse gets literals in a
   query of its own. SQLite alone covers the history's comment, a missing value and an export
@@ -184,8 +184,8 @@ against a real server, such as a cancel arriving after the last row.
 
 ## Actions, snippets and themes (H1)
 
-- `dbdesk_core::SqlTemplate` has unit tests of every placeholder and problem, and of hostile
-  names in the three kinds of quoting. `dbdesk-store`'s `custom` module tests each file's format
+- `dbrover_core::SqlTemplate` has unit tests of every placeholder and problem, and of hostile
+  names in the three kinds of quoting. `dbrover-store`'s `custom` module tests each file's format
   and every problem message.
 - The engine test binary's `reloads_the_customisation_files_with_their_problems` reads them from
   a temporary folder; every start-up test now expects their three events after the settings.
@@ -195,13 +195,13 @@ against a real server, such as a cancel arriving after the last row.
 
 ## Command actions (H2)
 
-- `dbdesk_core::CommandTemplate` has unit tests of each command it refuses, the data source's
-  fields, and a hostile table name staying one argument. `dbdesk-store` tests every problem
+- `dbrover_core::CommandTemplate` has unit tests of each command it refuses, the data source's
+  fields, and a hostile table name staying one argument. `dbrover-store` tests every problem
   message of command actions, the selection written as JSON, CSV and TSV, the trusted commands'
   file, and that a data source export holding `[[action]]` tables imports none of them.
-- The engine's `tests/programs.rs` runs real processes: `dbdesk-test-program`, a binary of the
+- The engine's `tests/programs.rs` runs real processes: `dbrover-test-program`, a binary of the
   engine crate (`src/bin/`), which cargo builds for the engine's tests and whose path they get
-  from `CARGO_BIN_EXE_dbdesk-test-program`. It behaves the same on Linux, macOS and Windows, so
+  from `CARGO_BIN_EXE_dbrover-test-program`. It behaves the same on Linux, macOS and Windows, so
   no test depends on `sh` or `cmd`. Its first argument picks what it does: `dump` writes back its
   arguments, environment, folder and stdin as JSON; `fail` exits with status 3; `wait` sleeps
   until killed; `flood` writes until killed. The tests cover the arguments and environment with
@@ -218,20 +218,20 @@ against a real server, such as a cancel arriving after the last row.
 
 ## MCP server
 
-- `dbdesk_sql::classify` has a corpus per dialect: reads, writes hidden in CTEs, `SELECT …
+- `dbrover_sql::classify` has a corpus per dialect: reads, writes hidden in CTEs, `SELECT …
   INTO`, locking reads, DDL, transaction control and administration, and statements the parser
   can't read, which must never come out as reads.
-- `dbdesk-mcp/tests/stdio.rs` starts the server as another process (the test binary again, so
+- `dbrover-mcp/tests/stdio.rs` starts the server as another process (the test binary again, so
   it has no libtest harness: libtest would print onto the protocol's standard output) and
   drives it with rmcp's client over stdin and stdout. It runs against SQLite always, and
-  against PostgreSQL, MySQL and MariaDB when their `DBDESK_TEST_*_URL` is set. Each engine gets
+  against PostgreSQL, MySQL and MariaDB when their `DBROVER_TEST_*_URL` is set. Each engine gets
   a table and a function that writes, both with a random suffix so runs sharing the servers
   don't clash. The MySQL one needs `log_bin_trust_function_creators`, which
   `docker-compose.yml` sets.
-- `dbdesk-app/tests/mcp_subcommand.rs` runs the real `dbdesk mcp` binary with `HOME` pointed at
+- `dbrover-app/tests/mcp_subcommand.rs` runs the real `dbrover mcp` binary with `HOME` pointed at
   a temporary folder: argument errors, nothing on stdout but the protocol, and one query.
   Unix only, since Windows ignores `HOME`.
-- `dbdesk-store`'s history test writes from two processes at once, the second being the test
+- `dbrover-store`'s history test writes from two processes at once, the second being the test
   binary again.
 
 ## UI
@@ -259,18 +259,18 @@ before clicking inside one.
 writes every picture in the user manual, at 2x, into `book/src/images`:
 
 ```bash
-cargo test -p dbdesk-app regenerate_screenshots -- --ignored
+cargo test -p dbrover-app regenerate_screenshots -- --ignored
 ```
 
-`DBDESK_SCREENSHOTS_DIR` writes them somewhere else, and `DBDESK_SCREENSHOTS_THEMES=light,dark`
+`DBROVER_SCREENSHOTS_DIR` writes them somewhere else, and `DBROVER_SCREENSHOTS_THEMES=light,dark`
 renders each scene in both themes (with a `-light` / `-dark` suffix), which is what design
 reviews want. Regenerate the manual's images after a visible UI change, and run it with
-`DBDESK_TEST_POSTGRES_URL` set so the workspace picture includes the PostgreSQL data source.
+`DBROVER_TEST_POSTGRES_URL` set so the workspace picture includes the PostgreSQL data source.
 
 It is ignored by default because it needs a GPU adapter and rewrites files. Each scene starts a
 fresh app against a SQLite fixture (a small shop database built from SQL in the test) and drives
 it the way a user would: expanding nodes, opening a console, typing and running SQL. With
-`DBDESK_TEST_POSTGRES_URL` set, a PostgreSQL data source joins the fixture. Engine logs reach the log
+`DBROVER_TEST_POSTGRES_URL` set, a PostgreSQL data source joins the fixture. Engine logs reach the log
 console through one global `tracing` subscriber whose layer is swapped per scene.
 
 A scene that needs a test server names its variables (`needs`) and is skipped without them,
@@ -289,18 +289,18 @@ step, with a pointer and a ring around each click drawn in. Then `site/clips.sh`
 into `site/media/`, which is committed:
 
 ```bash
-cargo test -p dbdesk-app record_site_media -- --ignored
+cargo test -p dbrover-app record_site_media -- --ignored
 ```
 
 ```bash
 site/clips.sh
 ```
 
-The test writes into `target/site-media` (`DBDESK_SITE_MEDIA_DIR` elsewhere): each still as
+The test writes into `target/site-media` (`DBROVER_SITE_MEDIA_DIR` elsewhere): each still as
 `<scene>-<theme>.png`, and each clip as numbered frames in `<clip>-<theme>/` with a
 `frames.ffconcat` giving each frame's duration. A clip's time is the script's, not the clock's:
 waiting for the engine adds no frames, so a slow machine records the same clip.
-`DBDESK_SITE_MEDIA=hero` (a comma-separated list of clips and scenes) renders only those.
+`DBROVER_SITE_MEDIA=hero` (a comma-separated list of clips and scenes) renders only those.
 
 `site/clips.sh` needs ffmpeg and ffprobe with libvpx-vp9 and libx264, and cwebp (`brew install
 ffmpeg webp`). Each clip becomes a VP9 `.webm`, an H.264 `.mp4` for browsers without VP9, and a
@@ -320,7 +320,7 @@ Install both with `cargo install mdbook --version 0.5.4` and
 ## Website
 
 `site/build.sh` assembles the website (`site/` plus the manual) into `target/site`, writing a
-version into the page's download links: `DBDESK_SITE_VERSION` if set (the Pages workflow sets it
+version into the page's download links: `DBROVER_SITE_VERSION` if set (the Pages workflow sets it
 to the latest published release), otherwise the workspace version from `Cargo.toml`. Preview it
 with
 `python3 -m http.server -d target/site`. The Pages workflow checks the landing page's links

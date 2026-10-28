@@ -3,21 +3,21 @@
 #   docker compose up -d --wait
 #   set -a; . ./test-servers.env; set +a
 #   cargo test --workspace
-# test-servers.env holds each service's DBDESK_TEST_*_URL; a test skips when its variable is
+# test-servers.env holds each service's DBROVER_TEST_*_URL; a test skips when its variable is
 # unset. CI reads the same two files, so a new engine adds its service here and its URL there.
 # The ports avoid clashing with servers already running on their usual ports.
 services:
   postgres:
     image: postgres:17
     environment:
-      POSTGRES_USER: dbdesk
-      POSTGRES_PASSWORD: dbdesk
-      POSTGRES_DB: dbdesk
+      POSTGRES_USER: dbrover
+      POSTGRES_PASSWORD: dbrover
+      POSTGRES_DB: dbrover
     ports:
       - "55432:5432"
     # Lets `docker compose up --wait` return only once the server accepts connections.
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "dbdesk", "-d", "dbdesk"]
+      test: ["CMD", "pg_isready", "-U", "dbrover", "-d", "dbrover"]
       interval: 1s
       timeout: 5s
       retries: 30
@@ -28,9 +28,9 @@ services:
   postgres-tls:
     image: postgres:17
     environment:
-      POSTGRES_USER: dbdesk
-      POSTGRES_PASSWORD: dbdesk
-      POSTGRES_DB: dbdesk
+      POSTGRES_USER: dbrover
+      POSTGRES_PASSWORD: dbrover
+      POSTGRES_DB: dbrover
     ports:
       - "55443:5432"
     volumes:
@@ -48,7 +48,7 @@ services:
         -c ssl_key_file=/var/lib/postgresql/server.key
         -c hba_file=/tls/pg_hba.conf
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "dbdesk", "-d", "dbdesk"]
+      test: ["CMD", "pg_isready", "-U", "dbrover", "-d", "dbrover"]
       interval: 1s
       timeout: 5s
       retries: 30
@@ -60,16 +60,16 @@ services:
     image: mysql:8.4
     command: ["--log-bin-trust-function-creators=1"]
     environment:
-      MYSQL_ROOT_PASSWORD: dbdesk
-      MYSQL_DATABASE: dbdesk
-      MYSQL_USER: dbdesk
-      MYSQL_PASSWORD: dbdesk
+      MYSQL_ROOT_PASSWORD: dbrover
+      MYSQL_DATABASE: dbrover
+      MYSQL_USER: dbrover
+      MYSQL_PASSWORD: dbrover
     ports:
       - "55306:3306"
     # Over TCP, which only the real server listens on: the image's set-up server answers on
     # the socket alone, so a socket ping would pass too early.
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "dbdesk", "-pdbdesk", "--silent"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "dbrover", "-pdbrover", "--silent"]
       interval: 1s
       timeout: 5s
       retries: 60
@@ -78,10 +78,10 @@ services:
   mariadb:
     image: mariadb:11.4
     environment:
-      MARIADB_ROOT_PASSWORD: dbdesk
-      MARIADB_DATABASE: dbdesk
-      MARIADB_USER: dbdesk
-      MARIADB_PASSWORD: dbdesk
+      MARIADB_ROOT_PASSWORD: dbrover
+      MARIADB_DATABASE: dbrover
+      MARIADB_USER: dbrover
+      MARIADB_PASSWORD: dbrover
     ports:
       - "55307:3306"
     healthcheck:
@@ -101,7 +101,7 @@ services:
     environment:
       ACCEPT_EULA: "Y"
       MSSQL_PID: Developer
-      MSSQL_SA_PASSWORD: Dbdesk-Test-2026
+      MSSQL_SA_PASSWORD: DbRover-Test-2026
     ports:
       - "51433:1433"
     healthcheck:
@@ -114,9 +114,9 @@ services:
         - -U
         - sa
         - -P
-        - Dbdesk-Test-2026
+        - DbRover-Test-2026
         - -Q
-        - IF DB_ID('dbdesk') IS NULL CREATE DATABASE dbdesk
+        - IF DB_ID('dbrover') IS NULL CREATE DATABASE dbrover
       interval: 2s
       timeout: 10s
       retries: 60
@@ -128,9 +128,9 @@ services:
   clickhouse:
     image: clickhouse/clickhouse-server:25.8
     environment:
-      CLICKHOUSE_USER: dbdesk
-      CLICKHOUSE_PASSWORD: dbdesk
-      CLICKHOUSE_DB: dbdesk
+      CLICKHOUSE_USER: dbrover
+      CLICKHOUSE_PASSWORD: dbrover
+      CLICKHOUSE_DB: dbrover
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
     ports:
       - "58123:8123"
@@ -143,13 +143,13 @@ services:
       test:
         - CMD-SHELL
         - >-
-          clickhouse-client --user dbdesk --password dbdesk --query 'SELECT 1' &&
+          clickhouse-client --user dbrover --password dbrover --query 'SELECT 1' &&
           wget -qO- --no-check-certificate https://localhost:8443/ping
       interval: 1s
       timeout: 5s
       retries: 60
 
-  # OpenSSH on Alpine (docker/ssh), for the SSH tunnel tests: signs in `dbdesk` with the test
+  # OpenSSH on Alpine (docker/ssh), for the SSH tunnel tests: signs in `dbrover` with the test
   # keys there or its password, and forwards only to the postgres service. Built from a few
   # lines rather than pulled, so it stays a 10 MB image with fixed host and client keys.
   ssh:

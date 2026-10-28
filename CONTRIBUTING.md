@@ -29,7 +29,7 @@ Commits follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/
   | `revert` | Reverting an earlier commit |
 
 - **scope** (optional) names the part of the codebase, so `git log` can be skimmed by area.
-  Use the crate without its `dbdesk-` prefix (`core`, `sql`, `engine`, `store`, `app`,
+  Use the crate without its `dbrover-` prefix (`core`, `sql`, `engine`, `store`, `app`,
   `driver-postgres`, `driver-sqlite`), or a narrower area of the app (`explorer`, `console`,
   `grid`, `theme`, `keymap`), or `book`, `brand`, `roadmap`. Leave it out when a change spans
   several areas.
@@ -138,7 +138,7 @@ after `cargo clean`. CI and releases link DuckDB's own prebuilt library instead 
 
 ```bash
 set -a; eval "$(packaging/duckdb/fetch.sh "$(rustc -vV | sed -n 's/^host: //p')" target/duckdb)"; set +a
-export RUSTFLAGS="--cfg dbdesk_prebuilt_duckdb"
+export RUSTFLAGS="--cfg dbrover_prebuilt_duckdb"
 ```
 
 Changing `RUSTFLAGS` rebuilds every crate once. On Windows, also add `DUCKDB_LIB_DIR` to

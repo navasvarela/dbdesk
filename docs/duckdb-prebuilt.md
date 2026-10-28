@@ -12,17 +12,17 @@ CI's caches enough to fit under GitHub's 10 GB limit, which the compiled build's
 filled on their own. The cost: packages 2 to 6 MB larger (9 to 11%), mostly ICU and
 autocomplete, which DuckDB's libraries carry.
 
-## What dbdesk links
+## What DbRover links
 
 | Platform | DuckDB artefact (v1.5.6 release) | How it links |
 | --- | --- | --- |
-| macOS arm64 | `static-libs-osx-arm64.zip` | static, into `dbdesk` |
-| macOS x86_64 | `static-libs-osx-amd64.zip` | static, into `dbdesk`, then `lipo` as today |
-| Linux x86_64 | `static-libs-linux-amd64.zip` | static, into `dbdesk` |
-| Windows x86_64 | `libduckdb-windows-amd64.zip` | `duckdb.dll`, shipped beside `dbdesk.exe` |
+| macOS arm64 | `static-libs-osx-arm64.zip` | static, into `dbrover` |
+| macOS x86_64 | `static-libs-osx-amd64.zip` | static, into `dbrover`, then `lipo` as today |
+| Linux x86_64 | `static-libs-linux-amd64.zip` | static, into `dbrover` |
+| Windows x86_64 | `libduckdb-windows-amd64.zip` | `duckdb.dll`, shipped beside `dbrover.exe` |
 
 DuckDB publishes no static library built with MSVC (only `static-libs-windows-mingw.zip`), and
-dbdesk builds with MSVC, so Windows links the DLL.
+DbRover builds with MSVC, so Windows links the DLL.
 
 ### How the build switches
 
@@ -35,22 +35,22 @@ feature (see its `build.rs`):
   `rustc-link-search=<dir>` and `rustc-link-lib=dylib=duckdb`, or `static=duckdb_static` when
   `DUCKDB_STATIC` is set. It uses its own pregenerated bindings (no `bindgen`), so the library
   must be the DuckDB release the crate version encodes (1.10506.x is DuckDB 1.5.6).
-  `DUCKDB_DOWNLOAD_LIB` would download the *dynamic* library, unchecked, so dbdesk doesn't
+  `DUCKDB_DOWNLOAD_LIB` would download the *dynamic* library, unchecked, so DbRover doesn't
   use it.
 
 A Cargo feature can only turn `bundled` on, never off, so the switch is a `cfg`:
 
 ```toml
-# crates/dbdesk-driver-duckdb/Cargo.toml
-[target.'cfg(not(dbdesk_prebuilt_duckdb))'.dependencies]
+# crates/dbrover-driver-duckdb/Cargo.toml
+[target.'cfg(not(dbrover_prebuilt_duckdb))'.dependencies]
 duckdb = { workspace = true, features = ["bundled", "parquet", "json"] }
 
-[target.'cfg(dbdesk_prebuilt_duckdb)'.dependencies]
+[target.'cfg(dbrover_prebuilt_duckdb)'.dependencies]
 duckdb.workspace = true
 ```
 
 Cargo evaluates `cfg(...)` in target tables with the flags in `RUSTFLAGS`, so
-`RUSTFLAGS="--cfg dbdesk_prebuilt_duckdb"` drops `bundled` and nothing else changes.
+`RUSTFLAGS="--cfg dbrover_prebuilt_duckdb"` drops `bundled` and nothing else changes.
 `cargo tree -e features -i libduckdb-sys` confirms it: `bundled`, `parquet` and `json` without
 the flag, neither with it. Without the flag (every local build, docs.rs, rust-analyzer),
 DuckDB is compiled as before. `Cargo.lock` doesn't change.
@@ -71,7 +71,7 @@ DuckDB is compiled as before. `Cargo.lock` doesn't change.
 include `pkg-config`. Even with `DUCKDB_LIB_DIR` set, the crate asks pkg-config first, which
 would find a DuckDB installed by Homebrew or a distribution and link that one instead.
 
-`crates/dbdesk-driver-duckdb/build.rs` adds the one link the static path misses: the C++
+`crates/dbrover-driver-duckdb/build.rs` adds the one link the static path misses: the C++
 standard library (`c++` on macOS, `stdc++` on Linux), which `cc` adds in the bundled build.
 
 The pins were checked against the SHA-256 digests GitHub records for each release asset
@@ -90,7 +90,7 @@ libraries (`re2`, `fmt`, `zstd`, `miniz`, `mbedtls`, `yyjson`, `utf8proc`, `pg_q
 references `core_functions`, `parquet`, `json`, `icu` and `autocomplete`, so all five end up in
 the binary. `tpch` and `tpcds` are never referenced, so the linker leaves them out.
 
-The test `links_duckdb_1_5_6_with_parquet_and_json` (in `dbdesk-driver-duckdb`) asserts
+The test `links_duckdb_1_5_6_with_parquet_and_json` (in `dbrover-driver-duckdb`) asserts
 three things on every platform, bundled or prebuilt:
 
 - `pragma_version()` is `v1.5.6`;
@@ -116,12 +116,12 @@ dylibs after all rlibs, so `stdc++` lands after the archive that needs it, even 
 **Universal macOS binary: yes.** Each target is built on its own with its own
 `DUCKDB_LIB_DIR`. The release job sets it per loop iteration, then `lipo` joins the two
 binaries as today. The runner is arm64, so the spike also ran the x86_64 slice under Rosetta:
-`dbdesk --version` worked, and all 13 `dbdesk-driver-duckdb` tests passed against the x86_64
+`dbrover --version` worked, and all 13 `dbrover-driver-duckdb` tests passed against the x86_64
 static library.
 
 ### 2. Windows
 
-`libduckdb-sys` links `duckdb.lib`, the import library from the zip, so `dbdesk.exe` loads
+`libduckdb-sys` links `duckdb.lib`, the import library from the zip, so `dbrover.exe` loads
 `duckdb.dll` when it starts.
 
 **Where it's found.** Windows looks in the executable's own folder first:
@@ -132,23 +132,23 @@ static library.
   per-platform list. So the Windows job writes a config of its own: the
   `[package.metadata.packager]` table from `cargo metadata`, plus
   `{src: duckdb.dll, target: "duckdb.dll"}`. It saves this as
-  `crates/dbdesk-app/packager-windows.json`, beside `Cargo.toml`, so the relative paths in
+  `crates/dbrover-app/packager-windows.json`, beside `Cargo.toml`, so the relative paths in
   `Cargo.toml` still resolve, and passes it with `--config`. The installer puts `duckdb.dll`
-  in `$INSTDIR`, beside `dbdesk.exe`. The uninstaller removes it with the other resources.
+  in `$INSTDIR`, beside `dbrover.exe`. The uninstaller removes it with the other resources.
 
 A smoke test installs silently (`/S /D=…`), removes every DuckDB folder from `PATH`, and runs
-the installed `dbdesk.exe --version`. In the spike, the installer held `dbdesk.exe` (48.3 MB)
+the installed `dbrover.exe --version`. In the spike, the installer held `dbrover.exe` (48.3 MB)
 and `duckdb.dll` (36.7 MB).
 
 **Parquet and JSON: included.** The DLL passes the same version and extension test in CI.
-The DLL is Authenticode-signed by the Stichting DuckDB Foundation, so signing dbdesk's
+The DLL is Authenticode-signed by the Stichting DuckDB Foundation, so signing DbRover's
 installer later won't leave an unsigned binary inside it.
 
 ### 3. Same DuckDB
 
 `fetch.sh` takes the version from `Cargo.lock`. The test asserts `v1.5.6` against the linked
 library, which catches a mismatched pin or a pkg-config surprise. The whole suite passes on
-all three OSes against the prebuilt libraries, including `dbdesk-driver-duckdb`'s conformance
+all three OSes against the prebuilt libraries, including `dbrover-driver-duckdb`'s conformance
 checks (lifecycle, execution, transactions, describe table, catalog). Locally on macOS, the 13
 driver tests pass in release mode against the static library.
 
@@ -162,8 +162,8 @@ so the first run was cold. One run each, so expect a minute or two of noise.
 
 | Run | Baseline (compiled) | Prebuilt |
 | --- | --- | --- |
-| First (cold) | [40199928020](https://github.com/navasvarela/dbdesk/actions/runs/40199928020) | [40200493004](https://github.com/navasvarela/dbdesk/actions/runs/40200493004) |
-| Second | [40208062661](https://github.com/navasvarela/dbdesk/actions/runs/40208062661) | [40204848715](https://github.com/navasvarela/dbdesk/actions/runs/40204848715) |
+| First (cold) | [40199928020](https://github.com/navasvarela/dbrover/actions/runs/40199928020) | [40200493004](https://github.com/navasvarela/dbrover/actions/runs/40200493004) |
+| Second | [40208062661](https://github.com/navasvarela/dbrover/actions/runs/40208062661) | [40204848715](https://github.com/navasvarela/dbrover/actions/runs/40204848715) |
 
 The second runs were meant to be warm, but every one of them logged `No cache found`. The
 first runs had saved their caches, and GitHub had already evicted them. See
@@ -226,11 +226,11 @@ steps don't share its build-script output. A prebuilt run pays for neither.
 All of these are cold builds, and that is what a real release gets. The packaging jobs' cache
 keys (`macos`, `linux`, `windows`) are never saved by `main`, and a tag can only restore caches
 from its own ref or the default branch. The two prebuilt runs differ by a few minutes either
-way: runner noise. What remains in a prebuilt release build is mostly dbdesk's own release
+way: runner noise. What remains in a prebuilt release build is mostly DbRover's own release
 profile (thin LTO, one codegen unit).
 
 Local, for reference (Apple-silicon Mac, 12 cores, under heavy load from other builds, so
-only the ratio means anything): a clean `cargo build --release -p dbdesk-app` took 14m49s
+only the ratio means anything): a clean `cargo build --release -p dbrover-app` took 14m49s
 compiled and 3m41s prebuilt.
 
 **Sizes** (stripped release binaries and the packages users download):
@@ -245,7 +245,7 @@ compiled and 3m41s prebuilt.
 | Linux binary | 91.6 MB | 101.5 MB | +9.9 MB |
 | **AppImage** | **32.9 MB** | **36.6 MB** | **+3.6 MB (+11%)** |
 | **`.deb`** | **35.4 MB** | **39.4 MB** | **+4.0 MB (+11%)** |
-| Windows `dbdesk.exe` | 77.5 MB | 48.3 MB + `duckdb.dll` 36.7 MB | +7.5 MB on disk |
+| Windows `dbrover.exe` | 77.5 MB | 48.3 MB + `duckdb.dll` 36.7 MB | +7.5 MB on disk |
 | **Windows installer** | **20.7 MB** | **22.5 MB** | **+1.8 MB (+8.8%)** |
 
 Locally on macOS the gzipped arm64 binary went from 28.6 to 31.4 MB.
@@ -259,7 +259,7 @@ extensions). ICU is partly a gain. Both builds have `autoinstall_known_extension
 `AT TIME ZONE`, ICU collations) downloads the extension from `extensions.duckdb.org`. The
 prebuilt one has it offline. Other extensions, such as `httpfs`, still autoinstall in both.
 
-Trimming ICU and autocomplete would need a loader of dbdesk's own, compiled with `cc` against
+Trimming ICU and autocomplete would need a loader of DbRover's own, compiled with `cc` against
 DuckDB's internal C++ API (`duckdb::ExtensionHelper::LoadAllExtensions` and friends). That
 would bring a C++ compile back, and a C++ API that can change in any DuckDB release. Not
 recommended for 2 to 6 MB.
@@ -270,7 +270,7 @@ recommended for 2 to 6 MB.
   the same project that publishes the sources `bundled` compiles. Nothing comes from a
   third-party crate or mirror.
 - **Pins:** `packaging/duckdb/SHA256SUMS`, one line per version and archive
-  (`<sha256>  v1.5.6/static-libs-osx-arm64.zip`). The file pins the four archives dbdesk ships
+  (`<sha256>  v1.5.6/static-libs-osx-arm64.zip`). The file pins the four archives DbRover ships
   with, plus `static-libs-linux-arm64.zip` for ARM Linux developers. A mismatch, or a version
   or target with no pin, fails the build before anything is extracted.
 - **Script:** `packaging/duckdb/fetch.sh`, beside the other packaging scripts. It caches by
@@ -296,13 +296,13 @@ The new symbol is `std::condition_variable::wait`, at the version GCC 12 gave it
 lost. The AppImage doesn't bundle libstdc++, in either build.
 
 **macOS minimum version.** The objects in both macOS archives are built with
-`LC_BUILD_VERSION minos 11.0` (SDK 26.5), matching dbdesk's `minimumSystemVersion = "11.0"`.
+`LC_BUILD_VERSION minos 11.0` (SDK 26.5), matching DbRover's `minimumSystemVersion = "11.0"`.
 
 **Licences.** DuckDB is MIT (Copyright Stichting DuckDB Foundation), and its third-party code
 carries its own licences. The packages ship `licenses/DuckDB-LICENSE`, and
 `licenses/DuckDB-THIRD-PARTY.txt` with every licence under `third_party/`, the ICU extension's ICU and
 the ALP algorithms in DuckDB's repository at the release tag.
-`packaging/duckdb/update-licenses.sh <version>` writes both. Before this change dbdesk shipped
+`packaging/duckdb/update-licenses.sh <version>` writes both. Before this change DbRover shipped
 no DuckDB licence at all, compiled or not. The prebuilt libraries add ICU (Unicode License v3)
 and, on Linux, jemalloc (BSD-2-Clause) to what the compiled build contains; the notices cover
 both builds.
@@ -332,7 +332,7 @@ fetch fails loudly rather than mixing versions. Old pins can stay in the file or
 - The bundled path is no longer built in CI. The version test runs in both modes, and
   `bundled` is upstream's default and best-tested path. A weekly scheduled job could build it,
   if that coverage matters.
-- Windows now ships two files. The installer handles that. If dbdesk ever ships a portable
+- Windows now ships two files. The installer handles that. If DbRover ever ships a portable
   `.zip` for Windows, the DLL must go in it too.
 - The fetch downloads 13 to 30 MB per job, which took 2 to 8 seconds in these runs.
   `actions/cache` could keep it, but it isn't worth it.
@@ -372,5 +372,5 @@ fetch fails loudly rather than mixing versions. Old pins can stay in the file or
 - In complexity: a fetch script with its pins, a 16-line build script, the cfg in two Cargo
   manifests, and the Windows packager config and installer smoke test in `release.yml`.
 
-Going back to compiling everywhere means removing `--cfg dbdesk_prebuilt_duckdb` from the two
+Going back to compiling everywhere means removing `--cfg dbrover_prebuilt_duckdb` from the two
 workflows and the fetch steps; nothing else depends on it.

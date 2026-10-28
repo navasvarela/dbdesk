@@ -5,7 +5,7 @@
 
 ## Context
 
-dbdesk needs dockable panels, a tree, a tabbed SQL editor, and a data grid that stays smooth
+DbRover needs dockable panels, a tree, a tabbed SQL editor, and a data grid that stays smooth
 with tens of thousands of rows. The project is also a Rust learning exercise, so most of the code
 should be Rust, and the toolkit should be well documented with many examples.
 

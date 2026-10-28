@@ -17,7 +17,7 @@ user, but not its password (see [Connecting an AI assistant](mcp.md)).
 **Export…** asks where to write the file.
 
 The file is TOML, in the same format as your own `data_sources.toml` (see
-[Where dbdesk keeps its files](files.md)), plus a `format_version` and the projects. It is
+[Where DbRover keeps its files](files.md)), plus a `format_version` and the projects. It is
 readable and diffable, so a team can keep it in a repository.
 
 Paths travel with it: a SQLite or DuckDB file, or a CA file, **next to the exported file** (or

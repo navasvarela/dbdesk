@@ -12,7 +12,7 @@ PostgreSQL's binary protocol by `tokio-postgres`'s `query_raw`.
 
 Decoding binary values needs a Rust type for each PostgreSQL type. Anything without one (ranges,
 `inet`, `interval`, enums, composite types, extension types) would come through as raw bytes,
-and dbdesk would have to reimplement the server's formatting for each to show it.
+and DbRover would have to reimplement the server's formatting for each to show it.
 
 ## Decision
 
@@ -44,7 +44,7 @@ Results are text:
 ## Alternatives considered
 
 - **Typed values via the extended protocol** (the original sketch): more exact sorting and
-  alignment, but every unknown type falls back to bytes, and dbdesk would own a formatter per
+  alignment, but every unknown type falls back to bytes, and DbRover would own a formatter per
   type.
 - **Extended protocol with text result format**: possible with lower-level tokio-postgres APIs,
   but it gives nothing the simple protocol doesn't for a console, and needs more code.

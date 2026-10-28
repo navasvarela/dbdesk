@@ -1,0 +1,37 @@
+[package]
+name = "dbrover-engine"
+description = "Owns all DbRover I/O on a tokio runtime; talks to the UI only through commands and events."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+cargo-packager-updater.workspace = true
+dbrover-core.workspace = true
+dbrover-driver-clickhouse.workspace = true
+dbrover-driver-duckdb.workspace = true
+dbrover-driver-mysql.workspace = true
+dbrover-driver-postgres.workspace = true
+dbrover-driver-sqlite.workspace = true
+dbrover-driver-sqlserver.workspace = true
+dbrover-sql.workspace = true
+dbrover-ssh.workspace = true
+dbrover-store.workspace = true
+jiff.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["process", "io-util"] }
+tracing.workspace = true
+ureq.workspace = true
+
+[dev-dependencies]
+rusqlite.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

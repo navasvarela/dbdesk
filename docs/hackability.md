@@ -5,8 +5,8 @@ Status: **H1 built** (2026-10-28, in layers H1a–H1f in the
 H3 later. Proposed on 2026-10-24. The
 decision behind it is [ADR 0005](adr/0005-customisation-files-commands-then-wasm.md).
 
-Personalisation is one of the two reasons dbdesk exists (see [Vision](vision.md)). Today you can
-rebind keys and change how SQL is formatted. This plan makes dbdesk hackable in three steps,
+Personalisation is one of the two reasons DbRover exists (see [Vision](vision.md)). Today you can
+rebind keys and change how SQL is formatted. This plan makes DbRover hackable in three steps,
 from cheap and safe to powerful:
 
 1. **H1 — Files:** custom actions that run templated SQL, snippets, and themes, all in
@@ -63,7 +63,7 @@ sql = "SELECT * FROM {qualified_name} ORDER BY {column:created_at} DESC LIMIT 10
 
 - **Placeholders:**
   - Names: `{qualified_name}`, `{database}`, `{schema}`, `{table}`, `{column}`.
-  - `{data_source}`: the data source's name in dbdesk, as a string literal, since it names
+  - `{data_source}`: the data source's name in DbRover, as a string literal, since it names
     nothing in the database.
   - Values from the grid: `{value}` (the first selected cell), `{values}` (the selection, as
     a comma-separated list of literals) and `{row.<column>}`.
@@ -165,10 +165,10 @@ output = "none"
 - **Never secrets.** There is no `{password}` placeholder, and no password reaches a command
   through its environment either. A program that needs one gets it from its own configuration,
   or from the keychain itself.
-- **Context in the environment,** on top of dbdesk's own:
-  - `DBDESK_DATA_SOURCE`, `DBDESK_DRIVER`, `DBDESK_DATABASE`, `DBDESK_SCHEMA`, `DBDESK_TABLE`,
+- **Context in the environment,** on top of DbRover's own:
+  - `DBROVER_DATA_SOURCE`, `DBROVER_DRIVER`, `DBROVER_DATABASE`, `DBROVER_SCHEMA`, `DBROVER_TABLE`,
     each only when there is one;
-  - `DBDESK_FORMAT` for what is on stdin.
+  - `DBROVER_FORMAT` for what is on stdin.
 - **stdin** is the selected columns of the selected rows: `json` as Export writes it, `csv` with
   a header line, `tsv` as Copy writes it. Only the grid has a selection, so stdin on any other
   target is a problem with the file, and `none` (the default) leaves stdin empty.
@@ -253,9 +253,9 @@ Recorded in [ADR 0005](adr/0005-customisation-files-commands-then-wasm.md). In s
 - **A command action running something unintended.** There is no shell, each placeholder fills
   exactly one argument, commands come only from the user's own file, and they are shown in full
   and trusted by their exact definition before their first run.
-- **A command outliving dbdesk's interest in it.** Only the program dbdesk started is killed
+- **A command outliving DbRover's interest in it.** Only the program DbRover started is killed
   on timeout or stop; children it starts itself may keep running, since killing a process tree
-  needs `unsafe` system calls. dbdesk never waits on them.
+  needs `unsafe` system calls. DbRover never waits on them.
 - **Placeholders injecting SQL.** Names are quoted as identifiers and values escaped as
   literals, never pasted in as text, and a test runs every placeholder with hostile names.
 - **A plugin interface that is hard to change once people depend on it.** H3 starts with a

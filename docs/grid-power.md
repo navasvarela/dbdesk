@@ -26,7 +26,7 @@ filtering every row in the database, exporting every row, and importing a CSV.
 
 ## The SQL, in one place
 
-The statements W5 writes are built in a new `dbdesk_sql::dml` module, next to the object
+The statements W5 writes are built in a new `dbrover_sql::dml` module, next to the object
 helpers' DDL, so they are tested per dialect without a database and the engine tests run the
 very statements the app sends:
 
@@ -94,8 +94,8 @@ Names are quoted with the dialect's quoting, and values written as its string li
   - clicking a column header, or pressing Enter in the filter, runs the statement again, wrapped:
 
     ```sql
-    SELECT * FROM (<the statement>) AS dbdesk_rows
-    WHERE LOWER(CAST(dbdesk_rows."name" AS text)) LIKE '%ada%' ESCAPE '\' OR …
+    SELECT * FROM (<the statement>) AS dbrover_rows
+    WHERE LOWER(CAST(dbrover_rows."name" AS text)) LIKE '%ada%' ESCAPE '\' OR …
     ORDER BY 2 DESC
     ```
 
@@ -158,7 +158,7 @@ Names are quoted with the dialect's quoting, and values written as its string li
   process opened, so rows imported through the explorer would otherwise not show in an open
   console.
 - **The CSV reader** is RFC 4180 (quoted fields, doubled quotes, line breaks inside quotes, CRLF
-  or LF), the counterpart of the export's writer, in `dbdesk-store`. It counts lines, not
+  or LF), the counterpart of the export's writer, in `dbrover-store`. It counts lines, not
   records, so a reported line is where the record starts in the file. No new dependency.
 
 ## Engine commands
@@ -174,7 +174,7 @@ Following a key and sorting in the database are runs like any other (`Execute`).
 
 ## Testing
 
-- **`dbdesk_sql::dml`** golden tests per dialect: each statement for all six dialects, with
+- **`dbrover_sql::dml`** golden tests per dialect: each statement for all six dialects, with
   names and values that need quoting.
 - **Engine tests on every engine with a test server** (SQLite and DuckDB always; PostgreSQL,
   MySQL, MariaDB and SQL Server from `docker compose`): a submit that deletes, updates and

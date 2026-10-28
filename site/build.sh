@@ -18,11 +18,11 @@ mkdir -p "${out}/assets/brand" "${out}/assets/fonts" "${out}/assets/databases"
 
 # The page names the version and links to its files, written in at build time rather than asked
 # of GitHub when the page loads. The Pages workflow passes the latest published release as
-# DBDESK_SITE_VERSION, because a version bump reaches main about half an hour before its release's
+# DBROVER_SITE_VERSION, because a version bump reaches main about half an hour before its release's
 # files exist. A local build falls back to the workspace's version.
-version="${DBDESK_SITE_VERSION:-$(sed -n 's/^version = "\(.*\)"$/\1/p' "${root}/Cargo.toml" | head -n 1)}"
+version="${DBROVER_SITE_VERSION:-$(sed -n 's/^version = "\(.*\)"$/\1/p' "${root}/Cargo.toml" | head -n 1)}"
 if [ -z "${version}" ]; then
-    echo "no DBDESK_SITE_VERSION and no workspace version in Cargo.toml" >&2
+    echo "no DBROVER_SITE_VERSION and no workspace version in Cargo.toml" >&2
     exit 1
 fi
 sed "s/{{version}}/${version}/g" "${root}/site/index.html" > "${out}/index.html"

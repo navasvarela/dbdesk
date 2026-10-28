@@ -5,8 +5,8 @@
 #
 #   packaging/duckdb/fetch.sh aarch64-apple-darwin target/duckdb >> "$GITHUB_ENV"
 #
-# The build must also pass `--cfg dbdesk_prebuilt_duckdb` in RUSTFLAGS, which drops the
-# `bundled` feature from dbdesk-driver-duckdb's duckdb dependency.
+# The build must also pass `--cfg dbrover_prebuilt_duckdb` in RUSTFLAGS, which drops the
+# `bundled` feature from dbrover-driver-duckdb's duckdb dependency.
 #
 # The DuckDB version is the one libduckdb-sys encodes in Cargo.lock (1.MMmmpp.x is DuckDB
 # MM.mm.pp), so the library always matches the bindings libduckdb-sys ships.
@@ -31,7 +31,7 @@ duckdb_version() {
 }
 
 # Static libraries on Linux and macOS. DuckDB publishes no static library built with MSVC, so
-# Windows links the DLL, which the installer ships beside dbdesk.exe.
+# Windows links the DLL, which the installer ships beside dbrover.exe.
 case "$target" in
     aarch64-apple-darwin) archive=static-libs-osx-arm64.zip kind=static ;;
     x86_64-apple-darwin) archive=static-libs-osx-amd64.zip kind=static ;;

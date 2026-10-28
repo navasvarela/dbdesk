@@ -63,7 +63,7 @@ and the history.
 
 The password never leaves your computer as you typed it.
 
-- **dbdesk hashes it** into a SCRAM-SHA-256 verifier as soon as both fields match, the same way
+- **DbRover hashes it** into a SCRAM-SHA-256 verifier as soon as both fields match, the same way
   `psql`'s `\password` does, and sends the verifier in its place. PostgreSQL stores a verifier
   as it is, and checks the password against it when the user logs in.
 - **The review panel shows `PASSWORD '<redacted>'`**, never the verifier: a verifier is not
@@ -92,7 +92,7 @@ nothing changed, there is nothing to execute.
 ## Rename a role
 
 **Rename…** writes `ALTER ROLE … RENAME TO …`. A password stored as MD5 is cleared, because
-PostgreSQL salts those with the role's name; the SCRAM passwords dbdesk sets are kept.
+PostgreSQL salts those with the role's name; the SCRAM passwords DbRover sets are kept.
 
 ## Drop a role
 

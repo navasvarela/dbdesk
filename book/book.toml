@@ -1,15 +1,15 @@
 [book]
-title = "dbdesk user manual"
+title = "DbRover user manual"
 language = "en"
 src = "src"
 
 [output.html]
 # Where the manual is published (see site/build.sh); mdBook needs it for the 404 page's links.
 # The site is served from the root of https://dbdesk.org, the repository's GitHub Pages
-# custom domain, so the manual is at /manual/ (it was /dbdesk/manual/ under github.io).
+# custom domain, so the manual is at /manual/ (it was /dbrover/manual/ under github.io).
 site-url = "/manual/"
-git-repository-url = "https://github.com/navasvarela/dbdesk"
-edit-url-template = "https://github.com/navasvarela/dbdesk/edit/main/book/{path}"
+git-repository-url = "https://github.com/navasvarela/dbrover"
+edit-url-template = "https://github.com/navasvarela/dbrover/edit/main/book/{path}"
 
 # Fails the build on a link to a page or an image that doesn't exist. Anchors within pages
 # aren't checked. Web links aren't followed: CI would then fail whenever some other site is

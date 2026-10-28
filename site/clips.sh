@@ -2,7 +2,7 @@
 # Encodes the website's clips and pictures into site/media/, from what the ignored test
 # `record_site_media` renders into target/site-media (see docs/testing.md):
 #
-#   cargo test -p dbdesk-app record_site_media -- --ignored
+#   cargo test -p dbrover-app record_site_media -- --ignored
 #   site/clips.sh [SOURCE_DIR]     # default: target/site-media
 #
 # Each clip <name>-<theme>/ becomes <name>-<theme>.webm (VP9), .mp4 (H.264, for browsers

@@ -2,18 +2,18 @@
 
 ## Overview
 
-dbdesk is a Cargo workspace with a thin UI crate on top of an engine that owns all I/O.
+DbRover is a Cargo workspace with a thin UI crate on top of an engine that owns all I/O.
 The UI and the engine talk only through two message types, `Command` (UI → engine) and
 `Event` (engine → UI). Nothing in the UI crate awaits a future or touches a socket.
 
 ```mermaid
 flowchart LR
     subgraph UI thread
-        App[dbdesk-app<br/>egui + egui_dock] -->|Command| CmdTx[(command channel)]
+        App[dbrover-app<br/>egui + egui_dock] -->|Command| CmdTx[(command channel)]
         EvRx[(event channel)] -->|drained every frame| App
     end
     subgraph Engine runtime - tokio
-        CmdTx --> Engine[dbdesk-engine<br/>SessionManager]
+        CmdTx --> Engine[dbrover-engine<br/>SessionManager]
         Engine --> PG[driver-postgres]
         Engine --> SQ[driver-sqlite]
         Engine --> MY[driver-mysql]
@@ -22,7 +22,7 @@ flowchart LR
         Engine --> CH[driver-clickhouse]
         Engine -->|Event + request_repaint| EvRx
     end
-    Engine --> Store[dbdesk-store<br/>config, keychain, history]
+    Engine --> Store[dbrover-store<br/>config, keychain, history]
     Tracing[tracing subscriber] -->|LogEntry| App
 ```
 
@@ -30,21 +30,21 @@ flowchart LR
 
 | Crate | Responsibility | Depends on |
 | --- | --- | --- |
-| `dbdesk-core` | Domain types (`DataSource`, `ConnectionConfig`, `Password`, …) and the `Connection` trait. No I/O. | — |
-| `dbdesk-sql` | A forgiving SQL lexer: statement splitting, statement at the cursor, highlighting tokens, the UPDATE/DELETE-without-WHERE check, the formatter, and the syntax checker (`sqlparser`) and lint rules. What differs between dialects lives in its `dialect` module. | core, sqlparser |
-| `dbdesk-driver-postgres` | `tokio-postgres` implementation of `Connection`. | core, tls |
-| `dbdesk-driver-sqlite` | `rusqlite` implementation, run on `spawn_blocking`. | core |
-| `dbdesk-driver-mysql` | `mysql_async` implementation for MySQL and MariaDB; a statement's task owns the connection while its result is open, and cancel is `KILL QUERY` from a second connection. | core |
-| `dbdesk-driver-sqlserver` | `tiberius` implementation for SQL Server and Azure SQL; statements run as plain batches on a task that owns the connection while its result is open, and cancel is TDS's attention message, sent by that task. Uses `dbdesk-sql` only to place syntax errors, which SQL Server reports by line and token. | core, sql |
-| `dbdesk-driver-duckdb` | `duckdb` implementation, with DuckDB 1.5 inside (compiled, or DuckDB's prebuilt library in CI and releases; see [duckdb-prebuilt.md](duckdb-prebuilt.md)), run on `spawn_blocking` like SQLite; results are read as DuckDB streams them, in Arrow chunks, and formatted by Arrow. Uses `dbdesk-sql` only to tell a change's row count from a result. | core, sql |
-| `dbdesk-driver-clickhouse` | The official `clickhouse` client over HTTP(S); a connection is a server session (`session_id`), so `USE`, `SET` and temporary tables last between statements. Results are read a line at a time in `JSONCompactEachRowWithNamesAndTypes`, values kept as ClickHouse writes them; cancel is `KILL QUERY` by `query_id` from a client outside the session. | core, tls |
-| `dbdesk-tls` | The rustls client configuration for each TLS mode, shared by the PostgreSQL and ClickHouse drivers. | core |
-| `dbdesk-ssh` | SSH tunnels on `russh` (ring, no OpenSSL): signs in with the agent, a key file or a password, checks the host key against `known_hosts`, and forwards a local port to the database server. | core |
-| `dbdesk-engine` | Session lifecycle, command handling, cancellation, transactions, event emission. | core, sql, store, drivers |
-| `dbdesk-store` | Data source file (TOML), secrets (`SecretStore`, OS keychain via `keyring`), console files, query history (`rusqlite`), CSV/JSON export. All blocking; the engine calls it from the blocking pool. | core |
-| `dbdesk-app` | `eframe` binary: panels, widgets, app state, keymap. | core, engine, sql, store |
+| `dbrover-core` | Domain types (`DataSource`, `ConnectionConfig`, `Password`, …) and the `Connection` trait. No I/O. | — |
+| `dbrover-sql` | A forgiving SQL lexer: statement splitting, statement at the cursor, highlighting tokens, the UPDATE/DELETE-without-WHERE check, the formatter, and the syntax checker (`sqlparser`) and lint rules. What differs between dialects lives in its `dialect` module. | core, sqlparser |
+| `dbrover-driver-postgres` | `tokio-postgres` implementation of `Connection`. | core, tls |
+| `dbrover-driver-sqlite` | `rusqlite` implementation, run on `spawn_blocking`. | core |
+| `dbrover-driver-mysql` | `mysql_async` implementation for MySQL and MariaDB; a statement's task owns the connection while its result is open, and cancel is `KILL QUERY` from a second connection. | core |
+| `dbrover-driver-sqlserver` | `tiberius` implementation for SQL Server and Azure SQL; statements run as plain batches on a task that owns the connection while its result is open, and cancel is TDS's attention message, sent by that task. Uses `dbrover-sql` only to place syntax errors, which SQL Server reports by line and token. | core, sql |
+| `dbrover-driver-duckdb` | `duckdb` implementation, with DuckDB 1.5 inside (compiled, or DuckDB's prebuilt library in CI and releases; see [duckdb-prebuilt.md](duckdb-prebuilt.md)), run on `spawn_blocking` like SQLite; results are read as DuckDB streams them, in Arrow chunks, and formatted by Arrow. Uses `dbrover-sql` only to tell a change's row count from a result. | core, sql |
+| `dbrover-driver-clickhouse` | The official `clickhouse` client over HTTP(S); a connection is a server session (`session_id`), so `USE`, `SET` and temporary tables last between statements. Results are read a line at a time in `JSONCompactEachRowWithNamesAndTypes`, values kept as ClickHouse writes them; cancel is `KILL QUERY` by `query_id` from a client outside the session. | core, tls |
+| `dbrover-tls` | The rustls client configuration for each TLS mode, shared by the PostgreSQL and ClickHouse drivers. | core |
+| `dbrover-ssh` | SSH tunnels on `russh` (ring, no OpenSSL): signs in with the agent, a key file or a password, checks the host key against `known_hosts`, and forwards a local port to the database server. | core |
+| `dbrover-engine` | Session lifecycle, command handling, cancellation, transactions, event emission. | core, sql, store, drivers |
+| `dbrover-store` | Data source file (TOML), secrets (`SecretStore`, OS keychain via `keyring`), console files, query history (`rusqlite`), CSV/JSON export. All blocking; the engine calls it from the blocking pool. | core |
+| `dbrover-app` | `eframe` binary: panels, widgets, app state, keymap. | core, engine, sql, store |
 
-`dbdesk-app` depends on the engine only through its public `EngineHandle` (a command sender
+`dbrover-app` depends on the engine only through its public `EngineHandle` (a command sender
 and an event receiver), so the UI can be driven by a fake engine in tests.
 
 ## Threading model
@@ -58,13 +58,13 @@ and an event receiver), so the UI can be driven by a fake engine in tests.
 - **Blocking drivers**: SQLite calls run inside `spawn_blocking` so they never stall the runtime.
 - **Waking the UI**: after sending an `Event`, the engine calls `egui::Context::request_repaint()`
   so the UI redraws even when the user is idle. The engine receives a clone of the context at
-  start-up, wrapped in a small `Repaint` trait so `dbdesk-engine` does not depend on egui.
+  start-up, wrapped in a small `Repaint` trait so `dbrover-engine` does not depend on egui.
 
 Rationale and alternatives: [ADR-0003](adr/0003-ui-engine-message-passing.md).
 
 ## Messages
 
-Implemented so far (M1–M4). See `dbdesk-engine/src/protocol.rs` for the authoritative version:
+Implemented so far (M1–M4). See `dbrover-engine/src/protocol.rs` for the authoritative version:
 
 ```rust
 pub enum Command {

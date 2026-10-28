@@ -1,11 +1,11 @@
 # Actions, snippets and themes
 
-Three files let you add to dbdesk without rebuilding it: `actions.toml` adds your own SQL, or
+Three files let you add to DbRover without rebuilding it: `actions.toml` adds your own SQL, or
 your own programs, to the explorer's and the grid's menus, `snippets.toml` adds snippets to completion, and `theme.toml`
 changes the colours. They sit next to `keymap.toml` (see
-[Where dbdesk keeps its files](files.md)), and none of them exists until you write it.
+[Where DbRover keeps its files](files.md)), and none of them exists until you write it.
 
-They are read when dbdesk starts. After editing one, click **Reload** in **View → Actions…**,
+They are read when DbRover starts. After editing one, click **Reload** in **View → Actions…**,
 or in the window the status bar opens for the file: that reads all three again.
 
 A mistake costs only the entry it is in: an action, snippet or colour that can't be used is
@@ -61,7 +61,7 @@ them. The history marks the statements **Action**, with the action's id.
 | `{database}`, `{schema}`, `{table}` | The database, schema or table the object is in, or is |
 | `{column}` | The column right-clicked, or the first selected column in the grid |
 | `{column:created_at}` | The same, or `created_at` where there is no column |
-| `{data_source}` | The data source's name in dbdesk, as a string: `'shop'` |
+| `{data_source}` | The data source's name in DbRover, as a string: `'shop'` |
 | `{value}` | The first selected cell, as a literal: `'42'`, or `NULL` |
 | `{values}` | Every selected cell, as literals separated by commas, for `IN (…)` |
 | `{row.email}` | The `email` column of the first selected row (of each row, with `grid.row`) |
@@ -88,8 +88,8 @@ Every action is in the **Actions** menu, and can have a shortcut in `keymap.toml
 
 From the menu or a key, an action acts on the focused console's selected cells, or else on the
 explorer's selected node: click a node to select it. The item is greyed out when what is
-selected isn't something the action applies to. A shortcut that one of dbdesk's own actions
-already has stays dbdesk's, and is listed as a problem in **View → Keymap…**, which also lists
+selected isn't something the action applies to. A shortcut that one of DbRover's own actions
+already has stays DbRover's, and is listed as a problem in **View → Keymap…**, which also lists
 your actions' ids.
 
 **View → Actions…** lists every action with its id, what it applies to, its drivers, its keys
@@ -142,7 +142,7 @@ output = "console"
     and run yourself;
   - `log`: the log console, a line an entry, with what it wrote to stderr as warnings;
   - `none`: nowhere, for a program that opens a window of its own.
-- **`timeout`** is how long it may run before dbdesk stops it, as `"500ms"`, `"30s"`, `"5m"` or
+- **`timeout`** is how long it may run before DbRover stops it, as `"500ms"`, `"30s"`, `"5m"` or
   `"1h"`: a minute when left out.
 - `run` is for SQL only, and a command can't apply to `grid.row`: it already gets every
   selected row at once.
@@ -160,7 +160,7 @@ source's own settings:
 | --- | --- |
 | `{qualified_name}` | The name as the database's SQL writes it: `"public"."orders"` |
 | `{database}`, `{schema}`, `{table}`, `{column}` | As for SQL, unquoted. `{database}` is the one connected to where the object has none |
-| `{data_source}` | The data source's name in dbdesk: `shop` |
+| `{data_source}` | The data source's name in DbRover: `shop` |
 | `{value}`, `{row.email}` | The cell's text; nothing for `NULL` |
 | `{host}`, `{port}`, `{user}` | Where a server data source connects, with `${NAME}` variables filled in |
 | `{file}` | A SQLite or DuckDB data source's file |
@@ -169,9 +169,9 @@ source's own settings:
 this time, such as `{host}` on a SQLite data source, opens a window saying so instead of
 running anything.
 
-The program also gets dbdesk's own environment, with `DBDESK_DATA_SOURCE`, `DBDESK_DRIVER`
-(`postgres`, `sqlite`, …), `DBDESK_DATABASE`, `DBDESK_SCHEMA` and `DBDESK_TABLE` where there is
-one, and `DBDESK_FORMAT`, the `stdin` format. It runs in your home folder.
+The program also gets DbRover's own environment, with `DBROVER_DATA_SOURCE`, `DBROVER_DRIVER`
+(`postgres`, `sqlite`, …), `DBROVER_DATABASE`, `DBROVER_SCHEMA` and `DBROVER_TABLE` where there is
+one, and `DBROVER_FORMAT`, the `stdin` format. It runs in your home folder.
 
 **It never gets a password.** There is no placeholder or variable for one, and none of the
 data source's secrets (its password, its SSH password or passphrase) reach a program in any
@@ -180,14 +180,14 @@ way. A program that needs one reads it from its own configuration, as `~/.pgpass
 
 ### The first run
 
-Before a command runs for the first time, dbdesk shows it in full and asks **Run a program?**,
+Before a command runs for the first time, DbRover shows it in full and asks **Run a program?**,
 with what it gets on stdin, where its output goes and its timeout. **Run** runs it, and from
 then on it runs without asking. Change anything in its `command` or `stdin`, even one argument,
 and it asks again. **Cancel**, or Esc, runs nothing.
 
 **View → Actions…** says of each command whether it is trusted or asks before it next runs.
-dbdesk keeps what you trusted in `trusted_commands.toml`, in its window state folder rather
-than beside `actions.toml` (see [Where dbdesk keeps its files](files.md)). So an `actions.toml`
+DbRover keeps what you trusted in `trusted_commands.toml`, in its window state folder rather
+than beside `actions.toml` (see [Where DbRover keeps its files](files.md)). So an `actions.toml`
 you copy from someone, or sync from another machine, still asks before each of its commands
 first runs. Delete an entry, or the file, to be asked again.
 
@@ -216,7 +216,7 @@ Stopping a program stops that program only. One that starts programs of its own,
   instead: `which jq` in a terminal prints it, such as `/opt/homebrew/bin/jq`.
 - **On Windows,** a program is found on `PATH` with or without `.exe`, and runs without a
   console window. A `.bat` or `.cmd` file runs through `cmd.exe`, which reads some characters
-  in its arguments as its own; dbdesk refuses to start it with an argument it can't pass
+  in its arguments as its own; DbRover refuses to start it with an argument it can't pass
   safely, rather than let `cmd.exe` read it.
 
 ## Snippets

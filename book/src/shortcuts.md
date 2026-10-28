@@ -30,19 +30,19 @@ On Linux and Windows, read Ctrl wherever this page says ⌘.
 Console shortcuts are taken before the editor sees them, so ⌘↵ runs a statement instead of
 inserting a new line. **History**, **Commit** and **Rollback** have no shortcut by default.
 
-On a Mac the menu bar adds the keys every Mac app has: ⌘Q quits, ⌘H hides dbdesk, ⌥⌘H hides
+On a Mac the menu bar adds the keys every Mac app has: ⌘Q quits, ⌘H hides DbRover, ⌥⌘H hides
 the other apps, ⌘M minimizes the window and ⌃⌘F enters full screen. They aren't in
 `keymap.toml`.
 
 ## Changing them
 
 Shortcuts live in `keymap.toml`, next to `data_sources.toml` (see
-[Where dbdesk keeps its files](files.md)). **View → Keymap…** lists every action with its id,
+[Where DbRover keeps its files](files.md)). **View → Keymap…** lists every action with its id,
 its shortcuts and what it does, and has two buttons:
 
 - **Create keymap.toml** writes a file listing every action with its default, commented out. It
   never replaces a file that exists.
-- **Reload** applies your edits without restarting dbdesk.
+- **Reload** applies your edits without restarting DbRover.
 
 In the file, list only the actions you want to change:
 

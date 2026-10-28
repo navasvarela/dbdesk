@@ -1,0 +1,23 @@
+[package]
+name = "dbrover-sql"
+description = "SQL text utilities: lexing, statement splitting, formatting and checking."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+dbrover-core.workspace = true
+postgres-protocol.workspace = true
+sqlparser.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+base64.workspace = true
+hmac.workspace = true
+sha2.workspace = true
+
+[lints]
+workspace = true

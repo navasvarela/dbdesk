@@ -49,7 +49,7 @@ jobs:
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
       - run: site/build.sh _site
         env:
-          DBDESK_SITE_VERSION: ${{ steps.release.outputs.version }}
+          DBROVER_SITE_VERSION: ${{ steps.release.outputs.version }}
       # The manual's links are checked by its own build; this checks the landing page's links
       # to its assets and into the manual. Web links aren't followed, as in the manual.
       - uses: lycheeverse/lychee-action@v2

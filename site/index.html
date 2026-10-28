@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>dbdesk — seven databases, one native app</title>
-  <meta name="description" content="dbdesk is a native desktop database tool written in Rust, for PostgreSQL, MySQL, MariaDB, SQLite, SQL Server, DuckDB and ClickHouse: SQL consoles with completion, a grid that edits, sorts and filters in the database, schema helpers, safety levels, and an MCP server for AI assistants.">
+  <title>DbRover — seven databases, one native app</title>
+  <meta name="description" content="DbRover is a native desktop database tool written in Rust, for PostgreSQL, MySQL, MariaDB, SQLite, SQL Server, DuckDB and ClickHouse: SQL consoles with completion, a grid that edits, sorts and filters in the database, schema helpers, safety levels, and an MCP server for AI assistants.">
   <meta name="color-scheme" content="dark light">
-  <meta property="og:title" content="dbdesk">
+  <meta property="og:title" content="DbRover">
   <meta property="og:description" content="A native desktop database tool written in Rust, for PostgreSQL, MySQL, MariaDB, SQLite, SQL Server, DuckDB and ClickHouse.">
   <meta property="og:image" content="https://dbdesk.org/assets/brand/social-preview.png">
   <meta property="og:url" content="https://dbdesk.org/">
@@ -19,13 +19,13 @@
   <header class="topbar">
     <a class="brand" href="./">
       <img src="assets/brand/logo.svg" alt="" width="28" height="28">
-      <span>dbdesk</span>
+      <span>DbRover</span>
     </a>
     <nav aria-label="Site">
       <a href="#tour">Features</a>
       <a href="manual/">Manual</a>
       <a href="#download">Download</a>
-      <a href="https://github.com/navasvarela/dbdesk">GitHub</a>
+      <a href="https://github.com/navasvarela/dbrover">GitHub</a>
     </nav>
   </header>
 
@@ -34,23 +34,23 @@
       <p class="eyebrow">PostgreSQL · MySQL · MariaDB · SQLite · SQL Server · DuckDB · ClickHouse</p>
       <h1 id="hero-title">Seven databases, one native app</h1>
       <p class="lede">
-        dbdesk is a desktop database tool written in Rust. Write SQL with completion from your
+        DbRover is a desktop database tool written in Rust. Write SQL with completion from your
         catalog, edit rows in the grid, change tables without writing the DDL, keep production
         safe, and let an AI assistant in only as far as you allow.
       </p>
       <div class="hero-actions">
         <a class="button primary" id="download-button" href="#download"
-           data-mac="https://github.com/navasvarela/dbdesk/releases/download/v{{version}}/dbdesk-{{version}}-macos-universal.dmg"
-           data-linux="https://github.com/navasvarela/dbdesk/releases/download/v{{version}}/dbdesk-{{version}}-x86_64.AppImage"
-           data-windows="https://github.com/navasvarela/dbdesk/releases/download/v{{version}}/dbdesk-{{version}}-windows-x64-setup.exe">
+           data-mac="https://github.com/navasvarela/dbrover/releases/download/v{{version}}/dbrover-{{version}}-macos-universal.dmg"
+           data-linux="https://github.com/navasvarela/dbrover/releases/download/v{{version}}/dbrover-{{version}}-x86_64.AppImage"
+           data-windows="https://github.com/navasvarela/dbrover/releases/download/v{{version}}/dbrover-{{version}}-windows-x64-setup.exe">
           <span id="download-label">Download</span> <span class="version">v{{version}}</span>
         </a>
         <a class="button" href="manual/">Read the manual</a>
       </div>
       <p class="alternatives">
         Also for Linux:
-        <a href="https://github.com/navasvarela/dbdesk/releases/download/v{{version}}/dbdesk-{{version}}-x86_64.AppImage">AppImage</a> ·
-        <a href="https://github.com/navasvarela/dbdesk/releases/download/v{{version}}/dbdesk_{{version}}_amd64.deb">.deb</a> ·
+        <a href="https://github.com/navasvarela/dbrover/releases/download/v{{version}}/dbrover-{{version}}-x86_64.AppImage">AppImage</a> ·
+        <a href="https://github.com/navasvarela/dbrover/releases/download/v{{version}}/dbrover_{{version}}_amd64.deb">.deb</a> ·
         <a href="#download">every download</a>
       </p>
     </section>
@@ -77,7 +77,7 @@
       </figcaption>
     </figure>
 
-    <section class="strip" aria-label="Why dbdesk">
+    <section class="strip" aria-label="Why DbRover">
       <article>
         <h2>Native</h2>
         <p>Rust and egui, with no browser engine or JVM inside. The Linux AppImage is 39 MB, the
@@ -206,14 +206,14 @@
         <div class="copy">
           <p class="eyebrow">AI assistants through MCP</p>
           <h3>Let an assistant in, as far as you allow</h3>
-          <p>dbdesk includes an MCP server. Allow a project, copy its configuration into Claude
+          <p>DbRover includes an MCP server. Allow a project, copy its configuration into Claude
             Desktop, Claude Code, Cursor or another client, and the assistant can list, describe,
-            explain and query that project's data sources, with the dbdesk window closed.</p>
+            explain and query that project's data sources, with the DbRover window closed.</p>
           <ul>
             <li>Off until you allow a project.</li>
             <li>Read, write, schema and admin permissions per project, a row limit and a
               statement timeout.</li>
-            <li>Checked three times: dbdesk parses each statement, runs reads in a read-only
+            <li>Checked three times: DbRover parses each statement, runs reads in a read-only
               transaction, and the database's own grants apply.</li>
             <li>An optional login of its own, and every statement in the history, marked with the
               assistant's name.</li>
@@ -259,7 +259,7 @@
         <div class="copy">
           <p class="eyebrow">Making it yours</p>
           <h3>Bend it with plain files</h3>
-          <p>dbdesk keeps its settings in files you can read and edit, next to each other.</p>
+          <p>DbRover keeps its settings in files you can read and edit, next to each other.</p>
           <ul>
             <li><code>keymap.toml</code> <a href="manual/shortcuts.html">rebinds the shortcuts</a>.</li>
             <li><code>actions.toml</code> adds your own SQL
@@ -307,12 +307,12 @@
     </section>
 
     <section class="download" id="download" aria-labelledby="download-title">
-      <h2 id="download-title">Download dbdesk <span class="version">v{{version}}</span></h2>
+      <h2 id="download-title">Download DbRover <span class="version">v{{version}}</span></h2>
       <div class="platforms">
         <article id="platform-mac">
           <h3>macOS</h3>
           <p>A universal app for Apple silicon and Intel, macOS 11 or newer.</p>
-          <a class="button primary" href="https://github.com/navasvarela/dbdesk/releases/download/v{{version}}/dbdesk-{{version}}-macos-universal.dmg">.dmg</a>
+          <a class="button primary" href="https://github.com/navasvarela/dbrover/releases/download/v{{version}}/dbrover-{{version}}-macos-universal.dmg">.dmg</a>
           <p class="small">Not signed by Apple yet, so the first launch needs
             <a href="manual/install.html#macos">Open Anyway</a>.</p>
         </article>
@@ -321,16 +321,16 @@
           <p>For 64-bit Intel and AMD: an AppImage for most distributions, or a package for
             Debian and Ubuntu.</p>
           <div class="pair">
-            <a class="button primary" href="https://github.com/navasvarela/dbdesk/releases/download/v{{version}}/dbdesk-{{version}}-x86_64.AppImage">AppImage</a>
-            <a class="button" href="https://github.com/navasvarela/dbdesk/releases/download/v{{version}}/dbdesk_{{version}}_amd64.deb">.deb</a>
+            <a class="button primary" href="https://github.com/navasvarela/dbrover/releases/download/v{{version}}/dbrover-{{version}}-x86_64.AppImage">AppImage</a>
+            <a class="button" href="https://github.com/navasvarela/dbrover/releases/download/v{{version}}/dbrover_{{version}}_amd64.deb">.deb</a>
           </div>
           <p class="small"><a href="manual/install.html#linux">Installing on Linux</a></p>
         </article>
         <article id="platform-windows">
           <h3>Windows</h3>
-          <p>An installer for Windows 10 and 11 on 64-bit Intel and AMD. It installs dbdesk for
+          <p>An installer for Windows 10 and 11 on 64-bit Intel and AMD. It installs DbRover for
             you alone, without administrator rights.</p>
-          <a class="button primary" href="https://github.com/navasvarela/dbdesk/releases/download/v{{version}}/dbdesk-{{version}}-windows-x64-setup.exe">Installer</a>
+          <a class="button primary" href="https://github.com/navasvarela/dbrover/releases/download/v{{version}}/dbrover-{{version}}-windows-x64-setup.exe">Installer</a>
           <p class="small">Not signed yet, so SmartScreen blocks the first run:
             <a href="manual/install.html#windows">More info, then Run anyway</a>.</p>
         </article>
@@ -338,7 +338,7 @@
       <div class="facts">
         <div>
           <h3>It updates itself</h3>
-          <p>dbdesk asks GitHub for a newer release when it starts, or from <strong>Help ›
+          <p>DbRover asks GitHub for a newer release when it starts, or from <strong>Help ›
             Check for updates…</strong>. On macOS and in the AppImage, <strong>Install and
             restart</strong> checks the update's signature and puts it in place, and installed
             Windows copies do the same from the next release; the <code>.deb</code> opens the
@@ -348,21 +348,21 @@
         <div>
           <h3>Check what you downloaded</h3>
           <p>Every release has a
-            <a href="https://github.com/navasvarela/dbdesk/releases/download/v{{version}}/SHA256SUMS"><code>SHA256SUMS</code></a>
+            <a href="https://github.com/navasvarela/dbrover/releases/download/v{{version}}/SHA256SUMS"><code>SHA256SUMS</code></a>
             file. In the folder with your download:</p>
           <pre><code>shasum -a 256 -c SHA256SUMS --ignore-missing</code></pre>
         </div>
       </div>
       <p class="source">Free and open source under MIT or Apache-2.0.
-        <a href="https://github.com/navasvarela/dbdesk">The source</a>,
-        <a href="https://github.com/navasvarela/dbdesk/releases">every release</a> and
-        <a href="https://github.com/navasvarela/dbdesk/tree/main/docs">the design docs</a> are
+        <a href="https://github.com/navasvarela/dbrover">The source</a>,
+        <a href="https://github.com/navasvarela/dbrover/releases">every release</a> and
+        <a href="https://github.com/navasvarela/dbrover/tree/main/docs">the design docs</a> are
         on GitHub.</p>
     </section>
   </main>
 
   <footer>
-    <p>dbdesk is MIT or Apache-2.0 licensed. Inter and JetBrains Mono are under the SIL Open
+    <p>DbRover is MIT or Apache-2.0 licensed. Inter and JetBrains Mono are under the SIL Open
       Font License. Database logos are from <a href="https://simpleicons.org">Simple Icons</a>
       and remain their owners' trademarks.</p>
   </footer>

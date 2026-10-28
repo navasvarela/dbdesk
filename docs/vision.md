@@ -7,7 +7,7 @@
    careful error handling at system boundaries.
 2. **Personalisation.** The established tools (DBeaver, DataGrip, TablePlus, pgAdmin) are
    capable, but heavy, closed, or configurable only within the limits their makers allow.
-   dbdesk should be small, fast to start, and driven by plain config files I can version and
+   DbRover should be small, fast to start, and driven by plain config files I can version and
    tweak.
 
 ## Goals
@@ -36,7 +36,7 @@
 ## Terminology
 
 Database tools often call the SQL editor a "console", which collides with "a console for logs".
-dbdesk uses these terms everywhere (docs, code, UI):
+DbRover uses these terms everywhere (docs, code, UI):
 
 | Term | Meaning |
 | --- | --- |

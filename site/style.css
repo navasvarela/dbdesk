@@ -1,4 +1,4 @@
-/* The dbdesk website. Colours are the app's palette (crates/dbdesk-app/src/theme.rs and
+/* The DbRover website. Colours are the app's palette (crates/dbrover-app/src/theme.rs and
    docs/brand.md), dark first, with the light theme when the visitor's system asks for it. The
    pictures follow the same rule: <picture> and <video> pick their light versions with
    (prefers-color-scheme: light), so a page and its pictures never disagree. */
@@ -185,7 +185,7 @@ h3 { margin: 0 0 8px; font-size: 1.05rem; font-weight: 600; }
 .button.primary:hover { filter: brightness(1.08); }
 .version { font-weight: 400; opacity: 0.85; }
 
-/* The hero: what dbdesk is, the download, and the clip that shows it working. */
+/* The hero: what DbRover is, the download, and the clip that shows it working. */
 .hero {
   text-align: center;
   padding-top: 48px;

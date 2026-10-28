@@ -1,0 +1,1545 @@
+//! Query consoles: a SQL editor bound to a data source, and the results of its latest run.
+//!
+//! This module holds the state and its rules (what to run, how events update a run); `view`
+//! and `results` draw it. See `docs/features/sql-runner.md`.
+
+mod catalog_lint;
+mod catalog_source;
+pub(crate) mod cell_viewer;
+mod completion;
+mod completion_popup;
+mod edit;
+mod file;
+mod find;
+mod find_bar;
+mod grid;
+pub(crate) mod highlight;
+mod keys;
+mod problems;
+mod results;
+mod snippet;
+mod view;
+
+use std::ops::Range;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant, SystemTime};
+
+use dbrover_core::{
+    Cell, ColumnInfo, DataSource, DataSourceId, RelationName, Row, SafetyLevel, TableDescription,
+    TransactionStatus,
+};
+use dbrover_engine::{
+    Command, ConsoleId, EditFailure, Event, Export, ExportAll, RunId, RunOrigin, RunOutcome,
+    RunPurpose, SessionState, StatementFailure, StatementSummary, TransactionEnd, TransactionMode,
+    WatchedFile,
+};
+use dbrover_sql::{
+    Dialect, FormatOptions, ParameterValues, format_ranges, split_statements, statement_at,
+    tokenize,
+};
+use dbrover_store::{ConsoleKey, ExportFormat, Snippet, SnippetBody, SqlFileContents};
+
+use edit::Editability;
+
+use crate::custom_actions::{GridCells, GridTable};
+use file::{ConfigFile, Reload, SqlFile, Storage};
+
+pub use edit::ChangeCount;
+pub use file::Disk;
+pub use find::Found;
+pub use keys::RowsToOpen;
+
+pub use catalog_source::TreeCatalog;
+pub use completion::{Candidate, RecentCompletions};
+pub use problems::LintOptions;
+pub use view::{ConsoleAction, ConsoleContext, show};
+
+/// One statement sent to the engine, and where it came from in the editor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubmittedStatement {
+    pub sql: String,
+    /// Byte range in the console's text, to place error markers.
+    pub range: Range<usize>,
+    /// How many bytes at the start of `sql` aren't in the console's text, such as an
+    /// `EXPLAIN` prefix. Error positions are shifted back by this much.
+    pub prefix_len: usize,
+    /// Set when `sql` wraps the statement to sort and filter its rows in the database.
+    pub in_database: Option<InDatabase>,
+}
+
+/// A statement whose rows the database sorts and filters, by running it wrapped: the
+/// statement as typed, which decides what can be edited, and the sort and filter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InDatabase {
+    pub typed: String,
+    pub sort: Option<grid::SortKey>,
+    pub filter: String,
+}
+
+/// A run as a console asks for it: its statements, what running them is for, and the values
+/// of their `:name` parameters.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubmittedRun {
+    pub statements: Vec<SubmittedStatement>,
+    pub purpose: RunPurpose,
+    /// None yet for a run typed in the editor, which is asked for them; the values the
+    /// statement last ran with for one that runs a shown statement again.
+    pub parameters: ParameterValues,
+    /// What the history records the statements as coming from.
+    pub origin: RunOrigin,
+}
+
+impl SubmittedRun {
+    /// The `:name` parameters of the run's statements, each once, in order.
+    pub fn parameter_names(&self, dialect: Dialect) -> Vec<String> {
+        let mut names: Vec<String> = Vec::new();
+        for statement in &self.statements {
+            for name in dbrover_sql::parameter_names(&statement.sql, dialect) {
+                if !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+        }
+        names
+    }
+}
+
+/// Which rows an export writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportedRows {
+    /// The rows the grid has loaded, as it shows them.
+    Loaded,
+    /// Every row the statement returns, by running it again.
+    All,
+}
+
+/// What a format covers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FormatScope {
+    /// The selection if there is one, otherwise the statement under the cursor.
+    Current,
+    /// Every statement in the console.
+    All,
+}
+
+/// Which statements a run covers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunScope {
+    /// The selection if there is one, otherwise the statement under the cursor.
+    Current,
+    /// Every statement in the console.
+    All,
+    /// The statement under the cursor (or the first one selected), explained rather than run.
+    Explain,
+}
+
+pub struct QueryConsole {
+    /// The engine session's id, new every time the app starts.
+    id: ConsoleId,
+    /// The console's file, which outlives the app.
+    key: ConsoleKey,
+    title: String,
+    dialect: Dialect,
+    text: String,
+    /// The editor's cursor or selection as byte offsets into `text`, in either order.
+    selection: Range<usize>,
+    /// The state of the console's own connection.
+    session: SessionState,
+    transactions: TransactionMode,
+    transaction: TransactionStatus,
+    /// How the last Commit or Rollback went, until the next run.
+    transaction_ended: Option<Result<TransactionEnd, String>>,
+    run: Option<RunView>,
+    /// Where the last failure points in `text`; underlined until the text changes.
+    error_marker: Option<Range<usize>>,
+    /// A byte offset to move the editor's cursor to on the next frame, after the text was
+    /// changed from outside the editor.
+    pending_cursor: Option<usize>,
+    /// A range to select in the editor and scroll to on the next frame, leaving the keyboard
+    /// focus where it is: a match the find bar went to.
+    pending_selection: Option<Range<usize>>,
+    find: find::FindBar,
+    /// The text before it was replaced from outside the editor (formatted, or reloaded from
+    /// its file), for the editor to record as an undo point next to the new text, so one
+    /// undo takes the whole change back.
+    replaced_text: Option<String>,
+    /// Why the last format was refused, until the text changes.
+    format_error: Option<String>,
+    /// Syntax errors and lint warnings, kept up to date while typing.
+    problems: problems::Problems,
+    /// Where each shown problem's squiggle was drawn last frame (with its index), for hovering.
+    problem_rects: Vec<(egui::Rect, usize)>,
+    /// The cell shown in full in the cell viewer window.
+    viewed_cell: Option<ViewedCell>,
+    /// The completion list, while it is open.
+    completion: Option<Completion>,
+    /// The fields of the snippet just inserted, while Tab moves through them.
+    snippet_fields: Option<snippet::SnippetFields>,
+    /// The candidate accepted last, until the app records it as recent.
+    accepted_completion: Option<completion::Candidate>,
+    /// How the last export went: where the rows went, or why they didn't.
+    export_status: Option<Result<String, String>>,
+    /// An export of every row in progress: its run, to cancel it, and how many rows it has
+    /// written.
+    exporting: Option<(RunId, usize)>,
+    storage: Storage,
+    /// The values the console's parameters last ran with, which the parameters dialog starts
+    /// from, and which running a shown statement again reuses.
+    parameters: ParameterValues,
+    /// The data source's name and safety level, kept up to date as it is edited.
+    data_source_name: String,
+    safety: SafetyLevel,
+}
+
+pub struct RunView {
+    id: RunId,
+    statements: Vec<StatementView>,
+    state: RunState,
+    /// The statement whose result is shown.
+    selected: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunState {
+    Running,
+    Finished {
+        outcome: RunOutcome,
+        elapsed: Duration,
+    },
+}
+
+pub struct StatementView {
+    /// As typed, even when the database sorts and filters its rows by running it wrapped.
+    sql: String,
+    range: Range<usize>,
+    prefix_len: usize,
+    columns: Vec<ColumnInfo>,
+    rows: Vec<Row>,
+    /// More rows can be fetched.
+    more: bool,
+    /// A fetch is in flight, so the grid doesn't ask twice.
+    fetching: bool,
+    result: Option<Result<StatementSummary, StatementFailure>>,
+    grid: grid::GridView,
+    edits: edit::EditSession,
+    /// The table the rows come from, while it is being described.
+    describing: Option<RelationName>,
+    /// The table's foreign keys, once described, for following them from the rows.
+    links: keys::KeyLinks,
+    /// The rows came from the statement wrapped to sort and filter them in the database.
+    wrapped: bool,
+}
+
+/// The selected cells of loaded rows, for a custom action: added rows have no values yet.
+fn selected_cells(
+    columns: &[ColumnInfo],
+    rows: &[Row],
+    grid: &grid::GridView,
+    edits: &edit::EditSession,
+) -> Option<GridCells> {
+    let selected_columns = grid.selected_columns()?;
+    let selected_rows = grid
+        .selected_rows()?
+        .filter_map(|position| grid.order().get(position))
+        .filter_map(|&index| rows.get(index).cloned())
+        .collect::<Vec<_>>();
+    if selected_rows.is_empty() {
+        return None;
+    }
+    Some(GridCells {
+        columns: columns.iter().map(|column| column.name.clone()).collect(),
+        selected: selected_columns.collect(),
+        rows: selected_rows,
+        table: edits.target().map(|target| GridTable {
+            schema: target.table.schema.clone(),
+            name: target.table.name.clone(),
+        }),
+    })
+}
+
+impl StatementView {
+    fn selected_cells(&self) -> Option<GridCells> {
+        selected_cells(&self.columns, &self.rows, &self.grid, &self.edits)
+    }
+
+    /// The statement to run to show this result again, sorted and filtered as the grid now
+    /// asks: wrapped if the database is to sort and filter it, as typed otherwise.
+    fn resubmission(&self, dialect: Dialect) -> Result<SubmittedStatement, String> {
+        let as_typed = SubmittedStatement {
+            sql: self.sql.clone(),
+            range: self.range.clone(),
+            prefix_len: self.prefix_len,
+            in_database: None,
+        };
+        if !self.grid.is_in_database() || !self.grid.has_sort_or_filter() {
+            return Ok(as_typed);
+        }
+        let columns: Vec<String> = self
+            .columns
+            .iter()
+            .map(|column| column.name.clone())
+            .collect();
+        let sort = self.grid.sort();
+        let arranged = dbrover_sql::arrange(
+            &self.sql,
+            dialect,
+            &dbrover_sql::Arrangement {
+                columns: &columns,
+                sort: sort.map(|sort| dbrover_sql::SortOrder {
+                    column: sort.column,
+                    descending: sort.descending,
+                }),
+                filter: self.grid.filter(),
+            },
+        )?;
+        Ok(SubmittedStatement {
+            sql: arranged.sql,
+            prefix_len: arranged.prefix_len,
+            in_database: Some(InDatabase {
+                typed: self.sql.clone(),
+                sort,
+                filter: self.grid.filter().to_owned(),
+            }),
+            ..as_typed
+        })
+    }
+
+    /// Whether the database can sort and filter these rows; `Err` says why not.
+    fn can_arrange(&self, dialect: Dialect) -> Result<(), String> {
+        let columns: Vec<String> = self
+            .columns
+            .iter()
+            .map(|column| column.name.clone())
+            .collect();
+        dbrover_sql::can_arrange(&self.sql, dialect, &columns)
+    }
+}
+
+/// The completion list at the cursor.
+struct Completion {
+    /// Opened on request, rather than by typing: stays open with nothing to suggest.
+    explicit: bool,
+    candidates: Vec<completion::Candidate>,
+    /// The typed prefix, which an accepted candidate replaces.
+    replace: Range<usize>,
+    selected: usize,
+    /// Where the list was drawn last frame, so a click on it doesn't count as leaving the
+    /// editor.
+    rect: Option<egui::Rect>,
+    /// Catalog levels it needs are still loading.
+    loading: bool,
+    /// The bodies of the snippets offered, by trigger.
+    snippets: Vec<(String, SnippetBody)>,
+}
+
+/// A copy of one cell, so the viewer stays open while new rows arrive or a new run starts.
+pub struct ViewedCell {
+    column: String,
+    value: Cell,
+}
+
+impl QueryConsole {
+    pub fn new(
+        id: ConsoleId,
+        key: ConsoleKey,
+        title: String,
+        dialect: Dialect,
+        text: String,
+    ) -> Self {
+        Self {
+            id,
+            key,
+            title,
+            dialect,
+            text,
+            selection: 0..0,
+            session: SessionState::Disconnected,
+            transactions: TransactionMode::Auto,
+            transaction: TransactionStatus::Idle,
+            transaction_ended: None,
+            run: None,
+            error_marker: None,
+            pending_cursor: None,
+            pending_selection: None,
+            find: find::FindBar::default(),
+            replaced_text: None,
+            format_error: None,
+            problems: problems::Problems::new(Instant::now()),
+            problem_rects: Vec::new(),
+            viewed_cell: None,
+            completion: None,
+            accepted_completion: None,
+            snippet_fields: None,
+            export_status: None,
+            exporting: None,
+            storage: Storage::Config(ConfigFile::default()),
+            parameters: ParameterValues::default(),
+            data_source_name: String::new(),
+            safety: SafetyLevel::Normal,
+        }
+    }
+
+    /// This console on `data_source`, as careful as its safety level asks: a careful one
+    /// starts in manual commit mode.
+    pub fn on(mut self, data_source: &DataSource) -> Self {
+        self.follow(data_source);
+        if self.safety == SafetyLevel::Careful {
+            self.transactions = TransactionMode::Manual;
+        }
+        self
+    }
+
+    /// Takes the data source's new name and safety level after it was edited. The commit
+    /// mode stays as the user left it.
+    pub fn follow(&mut self, data_source: &DataSource) {
+        data_source.name.clone_into(&mut self.data_source_name);
+        self.safety = data_source.safety;
+    }
+
+    pub fn parameters(&self) -> &ParameterValues {
+        &self.parameters
+    }
+
+    /// Keeps the values a run's parameters were given, over those of the same names.
+    pub fn remember_parameters(&mut self, values: &ParameterValues) {
+        self.parameters.extend(values);
+    }
+
+    pub fn safety(&self) -> SafetyLevel {
+        self.safety
+    }
+
+    pub fn data_source_name(&self) -> &str {
+        &self.data_source_name
+    }
+
+    /// How many rows the shown statement's pending edits add, change and delete.
+    pub fn pending_changes(&self) -> ChangeCount {
+        self.run
+            .as_ref()
+            .and_then(|run| run.statements.get(run.selected))
+            .map_or_else(ChangeCount::default, |statement| {
+                statement.edits.pending.count()
+            })
+    }
+
+    /// A console reopened from its file, which closing it again must keep.
+    pub fn reopened(mut self) -> Self {
+        if let Storage::Config(file) = &mut self.storage {
+            file.keep = true;
+        }
+        self
+    }
+
+    /// This console showing a `.sql` file just read, rather than one in the config folder.
+    pub fn showing(mut self, path: PathBuf, contents: SqlFileContents) -> Self {
+        let file = SqlFile::new(path, contents);
+        self.title = file.file_name();
+        self.storage = Storage::File(file);
+        self
+    }
+
+    pub fn id(&self) -> ConsoleId {
+        self.id
+    }
+
+    pub fn data_source(&self) -> DataSourceId {
+        self.key.data_source
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// Where each problem's squiggle was drawn last frame, for tests to hover over.
+    #[cfg(test)]
+    pub fn squiggle_rects(&self) -> impl Iterator<Item = egui::Rect> + '_ {
+        self.problem_rects.iter().map(|(rect, _)| *rect)
+    }
+
+    /// Decides, for each result that hasn't been looked at, whether it may be editable, and
+    /// returns the tables to describe: those a result's rows come from, which tell whether it
+    /// is editable and which foreign keys can be followed from it. A read-only data source's
+    /// tables are described too, for their keys.
+    pub fn tables_to_describe(&mut self) -> Vec<RelationName> {
+        let dialect = self.dialect;
+        let read_only = (self.safety == SafetyLevel::ReadOnly)
+            .then(|| format!("\u{201c}{}\u{201d} is read-only", self.data_source_name));
+        let Some(run) = self.run.as_mut() else {
+            return Vec::new();
+        };
+        let mut tables = Vec::new();
+        for statement in &mut run.statements {
+            if statement.columns.is_empty() || statement.edits.editability != Editability::Unknown {
+                continue;
+            }
+            if let Some(reason) = dialect.read_only_results() {
+                statement.edits.editability = Editability::ReadOnly(reason.to_owned());
+                continue;
+            }
+            statement.edits.editability = match edit::editable_source(&statement.sql, dialect) {
+                Ok(table) => {
+                    tables.push(table.clone());
+                    statement.describing = Some(table.clone());
+                    match &read_only {
+                        Some(reason) => Editability::ReadOnly(reason.clone()),
+                        None => Editability::Describing(table),
+                    }
+                }
+                Err(reason) => Editability::ReadOnly(read_only.clone().unwrap_or(reason)),
+            };
+        }
+        tables
+    }
+
+    fn table_described(
+        &mut self,
+        table: &RelationName,
+        result: &Result<Option<TableDescription>, String>,
+    ) {
+        let Some(run) = self.run.as_mut() else {
+            return;
+        };
+        for statement in &mut run.statements {
+            if statement.describing.as_ref() != Some(table) {
+                continue;
+            }
+            statement.describing = None;
+            if let Ok(Some(description)) = result {
+                statement.links = keys::KeyLinks::new(description, &statement.columns);
+            }
+            if statement.edits.editability != Editability::Describing(table.clone()) {
+                continue;
+            }
+            statement.edits.editability = match result {
+                Ok(Some(description)) => edit::edit_target(description.clone(), &statement.columns),
+                Ok(None) => Editability::ReadOnly(format!(
+                    "{} isn't a table",
+                    table.to_sql(self.dialect.quoting())
+                )),
+                Err(error) => Editability::ReadOnly(format!("Couldn't look up the table: {error}")),
+            };
+        }
+    }
+
+    /// The statements for the shown statement's pending changes, marking them as submitted.
+    /// `None` if there is nothing to submit.
+    pub fn submit_edits(&mut self) -> Option<Command> {
+        let run = self.run.as_mut()?;
+        let statement = run.statements.get_mut(run.selected)?;
+        let target = statement.edits.target()?;
+        if statement.edits.pending.is_empty() || statement.edits.submitting {
+            return None;
+        }
+        let statements = statement
+            .edits
+            .pending
+            .statements(target, &statement.columns, &statement.rows, self.dialect)
+            .into_iter()
+            .map(|(_, edit)| edit)
+            .collect();
+        statement.edits.submitting = true;
+        statement.edits.error = None;
+        statement.edits.editing = None;
+        Some(Command::ApplyEdits {
+            console: self.id,
+            statements,
+        })
+    }
+
+    fn edits_applied(&mut self, result: &Result<(), EditFailure>) {
+        let dialect = self.dialect;
+        let Some(run) = self.run.as_mut() else {
+            return;
+        };
+        let Some(statement) = run
+            .statements
+            .iter_mut()
+            .find(|statement| statement.edits.submitting)
+        else {
+            return;
+        };
+        let edits = &mut statement.edits;
+        edits.submitting = false;
+        match result {
+            Ok(()) => {
+                edits.reload = edits.pending.new_rows() > 0;
+                edits.pending.apply_to(&mut statement.rows);
+                edits.error = None;
+            }
+            Err(failure) => {
+                // The same statements, in the same order, as were submitted.
+                let row = edits.target().and_then(|target| {
+                    let index = failure.statement?;
+                    let statements = edits.pending.statements(
+                        target,
+                        &statement.columns,
+                        &statement.rows,
+                        dialect,
+                    );
+                    statements.get(index).map(|(row, _)| *row)
+                });
+                edits.error = Some(match row {
+                    Some(row) => format!("{}: {}", row.describe(), failure.message),
+                    None => failure.message.clone(),
+                });
+            }
+        }
+    }
+
+    /// Running the shown statement again, once rows were added to its result, so they show
+    /// with what the database put in the columns left to their defaults.
+    pub fn take_reload(&mut self) -> Option<SubmittedRun> {
+        let run = self.run.as_mut()?;
+        let statement = run
+            .statements
+            .iter_mut()
+            .find(|statement| statement.edits.reload)?;
+        statement.edits.reload = false;
+        let statement = statement.resubmission(self.dialect).ok()?;
+        Some(SubmittedRun {
+            statements: vec![statement],
+            purpose: RunPurpose::Run,
+            parameters: self.parameters.clone(),
+            origin: RunOrigin::Console,
+        })
+    }
+
+    /// Runs the shown statement again so that the database sorts and filters its rows as the
+    /// grid now asks, or, when the grid no longer asks, as typed. `Err` says why it can't be.
+    pub fn rearrange(&mut self) -> Result<SubmittedRun, String> {
+        let dialect = self.dialect;
+        let statement = self
+            .run
+            .as_ref()
+            .and_then(|run| run.statements.get(run.selected))
+            .ok_or_else(|| "There is no result to sort and filter".to_owned())?;
+        Ok(SubmittedRun {
+            statements: vec![statement.resubmission(dialect)?],
+            purpose: RunPurpose::Run,
+            parameters: self.parameters.clone(),
+            origin: RunOrigin::Console,
+        })
+    }
+
+    /// The export of the rows the grid shows for the selected statement, in the order and
+    /// with the filter it shows them. `None` if there are no rows to export.
+    pub fn export(&self, format: ExportFormat, path: PathBuf) -> Option<Command> {
+        let run = self.run.as_ref()?;
+        let statement = run.statements.get(run.selected)?;
+        if statement.columns.is_empty() {
+            return None;
+        }
+        Some(Command::ExportRows {
+            console: self.id,
+            export: Export {
+                path,
+                format,
+                columns: statement
+                    .columns
+                    .iter()
+                    .map(|column| column.name.clone())
+                    .collect(),
+                rows: statement.grid.shown_rows(&statement.rows),
+            },
+        })
+    }
+
+    /// The export of every row of the selected statement: it runs again, as the grid shows it
+    /// (wrapped, if the database sorts and filters it), and the engine writes its rows as they
+    /// come. `None` if the statement returns no rows.
+    pub fn export_all(
+        &mut self,
+        run: RunId,
+        format: ExportFormat,
+        path: PathBuf,
+    ) -> Option<Command> {
+        let shown = self.run.as_ref()?;
+        let statement = shown.statements.get(shown.selected)?;
+        if statement.columns.is_empty() {
+            return None;
+        }
+        let sql = statement.resubmission(self.dialect).ok()?.sql;
+        self.exporting = Some((run, 0));
+        self.export_status = None;
+        Some(Command::ExportAllRows {
+            console: self.id,
+            export: ExportAll {
+                run,
+                sql,
+                parameters: self.parameters.clone(),
+                path,
+                format,
+            },
+        })
+    }
+
+    /// Opens the completion list; it fills on the next [`QueryConsole::refresh_completion`].
+    pub fn open_completion(&mut self, explicit: bool) {
+        match &mut self.completion {
+            Some(open) => open.explicit |= explicit,
+            None => {
+                self.completion = Some(Completion {
+                    explicit,
+                    candidates: Vec::new(),
+                    replace: self.selection.end..self.selection.end,
+                    selected: 0,
+                    rect: None,
+                    loading: false,
+                    snippets: Vec::new(),
+                });
+            }
+        }
+    }
+
+    pub fn close_completion(&mut self) {
+        self.completion = None;
+    }
+
+    /// Recomputes the open completion list for the cursor, closing it where nothing applies
+    /// (a selection, inside a string, or nothing to suggest unless asked). Returns the catalog
+    /// levels that should be loaded to suggest more.
+    pub fn refresh_completion(
+        &mut self,
+        catalog: Option<&TreeCatalog<'_>>,
+        recent: &completion::RecentCompletions,
+        snippets: &[&Snippet],
+    ) -> Vec<dbrover_core::CatalogPath> {
+        let Some(open) = &self.completion else {
+            return Vec::new();
+        };
+        let (start, end) = ordered(&self.selection);
+        let point = (start == end)
+            .then(|| completion::completion_point(&self.text, end, self.dialect))
+            .flatten();
+        let Some(point) = point else {
+            self.completion = None;
+            return Vec::new();
+        };
+        // The statement the prefix belongs to; none past the end of the one before it, where
+        // a new statement is starting.
+        let (statement, statement_start) = self
+            .current_statement()
+            .filter(|range| point.replace.start <= range.end)
+            .and_then(|range| Some((self.text.get(range.clone())?, range.start)))
+            .unwrap_or_default();
+        let references = completion::table_references(statement, self.dialect);
+        let mut candidates = completion::candidates(&completion::CompletionInput {
+            point: &point,
+            statement,
+            prefix_start: point.replace.start.saturating_sub(statement_start),
+            dialect: self.dialect,
+            catalog: match catalog {
+                Some(catalog) => catalog,
+                None => &completion::NoCatalog,
+            },
+            recent,
+        });
+        let snippets = if point.qualifier.is_none() {
+            snippet::offer(&mut candidates, snippets, &point.prefix);
+            snippets
+                .iter()
+                .map(|snippet| (snippet.trigger.clone(), snippet.body.clone()))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let needed = catalog
+            .map(|catalog| catalog.missing(&references))
+            .unwrap_or_default();
+        // While the catalog loads, an empty list may yet fill; it shows "Loading…".
+        if candidates.is_empty() && !open.explicit && !needed.is_pending() {
+            self.completion = None;
+            return Vec::new();
+        }
+        let selected = open.selected.min(candidates.len().saturating_sub(1));
+        let rect = open.rect;
+        let explicit = open.explicit;
+        self.completion = Some(Completion {
+            explicit,
+            candidates,
+            replace: point.replace,
+            selected,
+            rect,
+            loading: needed.is_pending(),
+            snippets,
+        });
+        needed.unrequested
+    }
+
+    /// Moves the highlight in the completion list, wrapping around.
+    pub fn move_completion(&mut self, down: bool) {
+        if let Some(open) = &mut self.completion
+            && !open.candidates.is_empty()
+        {
+            let count = open.candidates.len();
+            open.selected = if down {
+                (open.selected + 1) % count
+            } else {
+                (open.selected + count - 1) % count
+            };
+        }
+    }
+
+    /// Replaces the typed prefix with the highlighted candidate and closes the list.
+    pub fn accept_completion(&mut self, now: Instant) {
+        let Some(open) = self.completion.take() else {
+            return;
+        };
+        let Some(candidate) = open.candidates.get(open.selected) else {
+            return;
+        };
+        if self.text.get(open.replace.clone()).is_none() {
+            return;
+        }
+        self.text
+            .replace_range(open.replace.clone(), &candidate.insert);
+        let cursor = open.replace.start + candidate.insert.len() - candidate.cursor_back;
+        self.selection = cursor..cursor;
+        self.pending_cursor = Some(cursor);
+        self.accepted_completion = Some(candidate.clone());
+        if candidate.kind == completion::CandidateKind::Snippet
+            && let Some((_, body)) = open
+                .snippets
+                .iter()
+                .find(|(trigger, _)| *trigger == candidate.label)
+        {
+            self.start_snippet(body, open.replace.start);
+        }
+        self.edited(now);
+    }
+
+    /// Selects the first field of a snippet just inserted at `at`, or places the cursor where
+    /// it ends if it has none.
+    fn start_snippet(&mut self, body: &SnippetBody, at: usize) {
+        self.snippet_fields = snippet::SnippetFields::start(body, at, self.text.len());
+        let first = match &self.snippet_fields {
+            Some(fields) => fields.current(),
+            None => {
+                let end = snippet::SnippetFields::end_of(body, at);
+                end..end
+            }
+        };
+        self.select(first);
+    }
+
+    /// Selects `range` in the editor, focusing it.
+    fn select(&mut self, range: Range<usize>) {
+        self.selection = range.clone();
+        self.pending_cursor = Some(range.end);
+        self.pending_selection = Some(range);
+    }
+
+    /// Whether Tab moves through a snippet's fields right now: there are fields, and no
+    /// completion list with something to pick, which takes Tab first.
+    pub fn in_snippet(&self) -> bool {
+        let picking = self
+            .completion
+            .as_ref()
+            .is_some_and(|open| !open.candidates.is_empty());
+        self.snippet_fields.is_some() && !picking
+    }
+
+    /// Selects the snippet's next field, or the previous one. Past the last, at the end, the
+    /// fields are done and Tab is the editor's again.
+    pub fn next_snippet_field(&mut self, forward: bool) {
+        let Some(fields) = &mut self.snippet_fields else {
+            return;
+        };
+        let next = fields.advance(forward);
+        if next.is_none() || fields.at_end() {
+            self.snippet_fields = None;
+        }
+        if let Some(range) = next {
+            self.select(range);
+        }
+    }
+
+    pub fn leave_snippet(&mut self) {
+        self.snippet_fields = None;
+    }
+
+    /// Follows what the editor did this frame: typing in the current field moves the fields
+    /// after it; typing or clicking anywhere else leaves the snippet.
+    pub fn follow_snippet(&mut self, changed: bool, clicked: bool) {
+        let Some(fields) = &mut self.snippet_fields else {
+            return;
+        };
+        let still_in = if changed {
+            fields.follow_edit(self.text.len(), self.selection.end)
+        } else {
+            !clicked || fields.holds(&self.selection)
+        };
+        if !still_in {
+            self.snippet_fields = None;
+        }
+    }
+
+    /// The candidate accepted since this was last asked, for the app to remember as recent.
+    pub fn take_accepted_completion(&mut self) -> Option<completion::Candidate> {
+        self.accepted_completion.take()
+    }
+
+    /// Puts `sql` at the cursor, replacing the selection, as a statement on a line of its own,
+    /// and moves the cursor past it.
+    pub fn insert_statement(&mut self, sql: &str, now: Instant) {
+        let (start, end) = ordered(&self.selection);
+        let sql = sql.trim_end();
+        let mut inserted = String::new();
+        if !self.text[..start].is_empty() && !self.text[..start].ends_with('\n') {
+            inserted.push('\n');
+        }
+        inserted.push_str(sql);
+        if !sql.ends_with(';') {
+            inserted.push(';');
+        }
+        inserted.push('\n');
+        self.text.replace_range(start..end, &inserted);
+        let cursor = start + inserted.len();
+        self.selection = cursor..cursor;
+        self.pending_cursor = Some(cursor);
+        self.edited(now);
+    }
+
+    /// Formats what `scope` covers, keeping the cursor on the token it was on. Leaves the
+    /// text alone (and says why) if formatting would change what it does.
+    pub fn format(&mut self, scope: FormatScope, options: &FormatOptions, now: Instant) {
+        let ranges = self.ranges_to_format(scope);
+        let formatted = match format_ranges(&self.text, &ranges, self.dialect, options) {
+            Ok(formatted) => formatted,
+            Err(error) => {
+                self.format_error = Some(error.to_string());
+                return;
+            }
+        };
+        self.format_error = None;
+        if formatted.text() == self.text {
+            return;
+        }
+        let cursor = formatted.map_offset(self.selection.end);
+        self.replaced_text = Some(std::mem::replace(&mut self.text, formatted.into_text()));
+        self.selection = cursor..cursor;
+        self.pending_cursor = Some(cursor);
+        self.edited(now);
+    }
+
+    /// The statements `scope` formats. A selection is narrowed to the tokens wholly inside
+    /// it, and split where statements end, so a selection that starts or ends inside a
+    /// string never formats half of it.
+    fn ranges_to_format(&self, scope: FormatScope) -> Vec<Range<usize>> {
+        let statements = split_statements(&self.text, self.dialect);
+        let (start, end) = ordered(&self.selection);
+        match scope {
+            FormatScope::All => statements,
+            FormatScope::Current if start == end => statement_at(&statements, end)
+                .map(|index| statements[index].clone())
+                .into_iter()
+                .collect(),
+            FormatScope::Current => {
+                let inside: Vec<Range<usize>> = tokenize(&self.text, self.dialect)
+                    .into_iter()
+                    .filter(|token| {
+                        !token.kind.is_trivia()
+                            && token.range.start >= start
+                            && token.range.end <= end
+                    })
+                    .map(|token| token.range)
+                    .collect();
+                let (Some(first), Some(last)) = (inside.first(), inside.last()) else {
+                    return Vec::new();
+                };
+                statements
+                    .into_iter()
+                    .map(|statement| statement.start.max(first.start)..statement.end.min(last.end))
+                    .filter(|range| range.start < range.end)
+                    .collect()
+            }
+        }
+    }
+
+    /// Checks the text for problems if it is due; see [`problems::Problems::check`].
+    pub fn check_problems(
+        &mut self,
+        catalog: Option<&TreeCatalog<'_>>,
+        options: &LintOptions,
+        now: Instant,
+    ) -> problems::CheckOutcome {
+        let can_ask_database = matches!(self.session, SessionState::Connected(_))
+            && self.cancellable_run().is_none()
+            && self.transaction == TransactionStatus::Idle;
+        let input = problems::CheckInput {
+            text: &self.text,
+            dialect: self.dialect,
+            catalog: match catalog {
+                Some(catalog) => catalog,
+                None => &completion::NoCatalog,
+            },
+            options,
+            can_ask_database,
+        };
+        self.problems.check(&input, now)
+    }
+
+    /// Moves the cursor to the next problem after it (or the previous one before it),
+    /// wrapping around.
+    pub fn jump_to_problem(&mut self, forward: bool) {
+        let (start, end) = ordered(&self.selection);
+        let from = if forward { end } else { start };
+        if let Some(problem) = self.problems.next_from(from, forward) {
+            let at = problem.range.start;
+            self.selection = at..at;
+            self.pending_cursor = Some(at);
+        }
+    }
+
+    /// Records that the user changed the text at `now`.
+    pub fn edited(&mut self, now: Instant) {
+        self.error_marker = None;
+        self.format_error = None;
+        self.problems.edited(now);
+        if let Storage::Config(file) = &mut self.storage {
+            file.keep = true;
+            file.unsaved_since.get_or_insert(now);
+        }
+    }
+
+    /// The save to send if the text has been unsaved for at least `delay` (or at all, for a
+    /// zero delay), marking it saved. Otherwise how long until it would be due. A console
+    /// showing a `.sql` file is only saved when asked, by [`QueryConsole::save_file`].
+    pub fn take_save(
+        &mut self,
+        now: Instant,
+        delay: Duration,
+    ) -> Result<Command, Option<Duration>> {
+        let Storage::Config(file) = &mut self.storage else {
+            return Err(None);
+        };
+        let since = file.unsaved_since.ok_or(None)?;
+        let waited = now.saturating_duration_since(since);
+        if waited < delay {
+            return Err(Some(delay - waited));
+        }
+        file.unsaved_since = None;
+        file.save_error = None;
+        Ok(Command::SaveConsole {
+            key: self.key.clone(),
+            text: self.text.clone(),
+        })
+    }
+
+    /// What to do with the console's file in the config folder when the tab closes: write the
+    /// last edits, or remove a file nobody typed anything into. Nothing for a `.sql` file,
+    /// which the user saves or not.
+    pub fn file_on_close(&mut self) -> Option<Command> {
+        let Storage::Config(file) = &self.storage else {
+            return None;
+        };
+        if !file.keep || self.text.trim().is_empty() {
+            return Some(Command::DeleteConsoleFile(self.key.clone()));
+        }
+        self.take_save(Instant::now(), Duration::ZERO).ok()
+    }
+
+    /// Whether the console's file in the config folder is kept once the tab closes, to be
+    /// reopened from the explorer.
+    pub fn keeps_file(&self) -> bool {
+        match &self.storage {
+            Storage::Config(file) => file.keep && !self.text.trim().is_empty(),
+            Storage::File(_) => false,
+        }
+    }
+
+    pub fn save_error(&self) -> Option<&str> {
+        match &self.storage {
+            Storage::Config(file) => file.save_error.as_deref(),
+            Storage::File(file) => file.save_error.as_deref(),
+        }
+    }
+
+    /// The `.sql` file the console shows, if it shows one.
+    pub fn file_path(&self) -> Option<&Path> {
+        match &self.storage {
+            Storage::File(file) => Some(file.path()),
+            Storage::Config(_) => None,
+        }
+    }
+
+    /// Whether the console shows a `.sql` file and has changes not written to it.
+    pub fn has_unsaved_file(&self) -> bool {
+        matches!(&self.storage, Storage::File(file) if file.is_unsaved(&self.text))
+    }
+
+    /// What another program did to the console's `.sql` file, if anything.
+    pub fn disk(&self) -> Option<&Disk> {
+        match &self.storage {
+            Storage::File(file) if file.disk != Disk::Unchanged => Some(&file.disk),
+            _ => None,
+        }
+    }
+
+    /// Writes the text to the console's `.sql` file. `None` if it shows none, and Save as must
+    /// ask where.
+    pub fn save_file(&mut self) -> Option<Command> {
+        let Storage::File(file) = &mut self.storage else {
+            return None;
+        };
+        file.saving(self.text.clone());
+        Some(Command::SaveSqlFile {
+            console: self.key.clone(),
+            path: file.path().to_owned(),
+            text: self.text.clone(),
+        })
+    }
+
+    /// Writes the text to `path`, and shows that file from now on. A console from the config
+    /// folder stops saving itself there; its file is removed once this one is written.
+    pub fn save_file_as(&mut self, path: PathBuf) -> Command {
+        let mut file = match &self.storage {
+            Storage::Config(_) => SqlFile::saved_from_config(path.clone()),
+            Storage::File(_) => SqlFile::new(
+                path.clone(),
+                SqlFileContents {
+                    text: String::new(),
+                    modified: None,
+                },
+            ),
+        };
+        file.saving(self.text.clone());
+        self.title = file.file_name();
+        self.storage = Storage::File(file);
+        Command::SaveSqlFile {
+            console: self.key.clone(),
+            path,
+            text: self.text.clone(),
+        }
+    }
+
+    /// Takes in how a save of the console's `.sql` file went. Returns the removal of its old
+    /// file in the config folder, once there is nothing left there that isn't written.
+    pub fn file_saved(&mut self, result: &Result<Option<SystemTime>, String>) -> Option<Command> {
+        let Storage::File(file) = &mut self.storage else {
+            return None;
+        };
+        file.saved(result)
+            .then(|| Command::DeleteConsoleFile(self.key.clone()))
+    }
+
+    /// Takes in what the console's `.sql` file holds after another program changed it.
+    pub fn file_changed(&mut self, contents: Option<&SqlFileContents>) {
+        let Storage::File(file) = &mut self.storage else {
+            return;
+        };
+        if let Reload::Replaced(text) = file.changed_on_disk(contents, &self.text) {
+            self.replace_text(text);
+        }
+    }
+
+    /// Drops the unsaved changes for what the `.sql` file now holds.
+    pub fn reload_file(&mut self) {
+        if let Storage::File(file) = &mut self.storage
+            && let Some(text) = file.reload()
+        {
+            self.replace_text(text);
+        }
+    }
+
+    /// Keeps the text over what the `.sql` file now holds, until it is saved over it.
+    pub fn keep_mine(&mut self) {
+        if let Storage::File(file) = &mut self.storage {
+            file.keep_mine();
+        }
+    }
+
+    /// The `.sql` file to look at for changes, and when it was last modified.
+    pub fn watched_file(&self) -> Option<WatchedFile> {
+        match &self.storage {
+            Storage::File(file) => Some(file.watched()),
+            Storage::Config(_) => None,
+        }
+    }
+
+    /// Replaces the whole text from outside the editor, as one undo step, keeping the cursor
+    /// where it was if the new text is long enough.
+    fn replace_text(&mut self, text: String) {
+        let (_, end) = ordered(&self.selection);
+        let mut cursor = end.min(text.len());
+        while !text.is_char_boundary(cursor) {
+            cursor -= 1;
+        }
+        self.replaced_text = Some(std::mem::replace(&mut self.text, text));
+        self.selection = cursor..cursor;
+        self.pending_cursor = Some(cursor);
+        self.error_marker = None;
+        self.problems.edited(Instant::now());
+    }
+
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    /// The tab's title: a `.sql` file's name ends with `•` while it has unsaved changes.
+    pub fn tab_title(&self) -> String {
+        if self.has_unsaved_file() {
+            format!("{} \u{2022}", self.title)
+        } else {
+            self.title.clone()
+        }
+    }
+
+    pub fn dialect(&self) -> Dialect {
+        self.dialect
+    }
+
+    pub fn transaction_mode(&self) -> TransactionMode {
+        self.transactions
+    }
+
+    /// Whether the console's connection has uncommitted work that closing it would roll
+    /// back.
+    pub fn has_open_transaction(&self) -> bool {
+        self.transaction != TransactionStatus::Idle
+    }
+
+    pub fn is_running(&self) -> bool {
+        self.run
+            .as_ref()
+            .is_some_and(|run| run.state == RunState::Running)
+    }
+
+    #[cfg(test)]
+    pub fn session(&self) -> &SessionState {
+        &self.session
+    }
+
+    /// Whether the latest run finished without a failure.
+    #[cfg(test)]
+    pub fn last_run_completed(&self) -> bool {
+        self.run.as_ref().is_some_and(|run| {
+            matches!(
+                run.state,
+                RunState::Finished {
+                    outcome: RunOutcome::Completed,
+                    ..
+                }
+            )
+        })
+    }
+
+    /// The statement ⌘↵ would run, to shade in the editor: the one at the cursor, unless text
+    /// is selected (the selection is what runs then, and is already highlighted).
+    /// Whether the shown result has cells selected, without copying them.
+    pub fn has_selected_cells(&self) -> bool {
+        self.run
+            .as_ref()
+            .and_then(|run| run.statements.get(run.selected))
+            .is_some_and(|statement| statement.grid.selected_rows().is_some())
+    }
+
+    /// The grid's selected cells in the shown result, for the keys and menu that run custom
+    /// actions.
+    pub fn selected_cells(&self) -> Option<GridCells> {
+        let run = self.run.as_ref()?;
+        run.statements.get(run.selected)?.selected_cells()
+    }
+
+    pub fn current_statement(&self) -> Option<Range<usize>> {
+        let (start, end) = ordered(&self.selection);
+        if start != end {
+            return None;
+        }
+        let ranges = split_statements(&self.text, self.dialect);
+        statement_at(&ranges, end).map(|index| ranges[index].clone())
+    }
+
+    /// What `scope` would run right now. Empty if there is nothing but whitespace and
+    /// comments.
+    pub fn statements_to_run(&self, scope: RunScope) -> Vec<SubmittedStatement> {
+        let (start, end) = ordered(&self.selection);
+        let submit = |offset: usize, ranges: Vec<Range<usize>>, source: &str| {
+            ranges
+                .into_iter()
+                .map(|range| SubmittedStatement {
+                    sql: source[range.clone()].to_owned(),
+                    range: range.start + offset..range.end + offset,
+                    prefix_len: 0,
+                    in_database: None,
+                })
+                .collect::<Vec<_>>()
+        };
+        match scope {
+            RunScope::Current if start != end => {
+                let selected = &self.text[start..end];
+                submit(start, split_statements(selected, self.dialect), selected)
+            }
+            RunScope::Current => {
+                let ranges = split_statements(&self.text, self.dialect);
+                let current = statement_at(&ranges, end).map(|index| ranges[index].clone());
+                submit(0, current.into_iter().collect(), &self.text)
+            }
+            RunScope::All => submit(0, split_statements(&self.text, self.dialect), &self.text),
+            RunScope::Explain => {
+                let server = match &self.session {
+                    SessionState::Connected(server) => Some(server),
+                    _ => None,
+                };
+                let prefix = self.dialect.explain_prefix(server);
+                self.statements_to_run(RunScope::Current)
+                    .into_iter()
+                    .take(1)
+                    .map(|statement| SubmittedStatement {
+                        sql: format!("{prefix}{}", statement.sql),
+                        prefix_len: prefix.len(),
+                        ..statement
+                    })
+                    .collect()
+            }
+        }
+    }
+
+    pub fn begin_run(&mut self, run: RunId, statements: &[SubmittedStatement]) {
+        self.error_marker = None;
+        self.transaction_ended = None;
+        self.run = Some(RunView {
+            id: run,
+            statements: statements
+                .iter()
+                .map(|statement| {
+                    let (sql, grid) = match &statement.in_database {
+                        Some(arranged) => (
+                            arranged.typed.clone(),
+                            grid::GridView::in_database(arranged.sort, arranged.filter.clone()),
+                        ),
+                        None => (statement.sql.clone(), grid::GridView::default()),
+                    };
+                    StatementView {
+                        sql,
+                        range: statement.range.clone(),
+                        prefix_len: statement.prefix_len,
+                        columns: Vec::new(),
+                        rows: Vec::new(),
+                        more: false,
+                        fetching: false,
+                        result: None,
+                        grid,
+                        edits: edit::EditSession::default(),
+                        describing: None,
+                        links: keys::KeyLinks::default(),
+                        wrapped: statement.in_database.is_some(),
+                    }
+                })
+                .collect(),
+            state: RunState::Running,
+            selected: 0,
+        });
+    }
+
+    /// The run to cancel: one still running, or one whose rows are still open.
+    pub fn cancellable_run(&self) -> Option<RunId> {
+        let run = self.run.as_ref()?;
+        let open_rows = run.statements.iter().any(|statement| statement.more);
+        (run.state == RunState::Running || open_rows).then_some(run.id)
+    }
+
+    /// Marks the next page as requested. `None` if there is nothing more, or a fetch is
+    /// already in flight.
+    pub fn request_more(&mut self) -> Option<RunId> {
+        let run = self.run.as_mut()?;
+        let statement = run
+            .statements
+            .iter_mut()
+            .find(|statement| statement.more && !statement.fetching)?;
+        statement.fetching = true;
+        Some(run.id)
+    }
+
+    pub fn apply(&mut self, event: &Event) {
+        match event {
+            Event::ConsoleSessionChanged { console, state } if *console == self.id => {
+                self.session_changed(state);
+            }
+            Event::TransactionChanged { console, status } if *console == self.id => {
+                self.transaction = *status;
+                // Statements skipped inside the transaction can be asked about now.
+                if *status == TransactionStatus::Idle {
+                    self.problems.forget_database(Instant::now());
+                }
+            }
+            Event::TransactionEnded { console, result } if *console == self.id => {
+                self.transaction_ended = Some(result.clone());
+            }
+            Event::ExportProgress { console, rows } if *console == self.id => {
+                if let Some((_, written)) = &mut self.exporting {
+                    *written = *rows;
+                }
+            }
+            Event::ExportFinished {
+                console,
+                path,
+                result,
+            } if *console == self.id => {
+                self.exporting = None;
+                self.export_status = Some(
+                    result
+                        .as_ref()
+                        .map(|rows| format!("Exported {rows} rows to {}", path.display()))
+                        .map_err(Clone::clone),
+                );
+            }
+            Event::TableDescribed {
+                data_source,
+                table,
+                result,
+            } if *data_source == self.data_source() => self.table_described(table, result),
+            Event::EditsApplied { console, result } if *console == self.id => {
+                self.edits_applied(result);
+            }
+            Event::StatementsValidated { console, results } if *console == self.id => {
+                self.problems.database_answered(results, Instant::now());
+            }
+            // Tables the checks didn't know may have loaded.
+            Event::ChildrenLoaded { id, .. } if *id == self.data_source() => {
+                self.problems.recheck(Instant::now());
+            }
+            Event::ConsoleSaveFailed { key, error } if *key == self.key => {
+                // Shown until the next save is sent; that one writes the whole text again.
+                if let Storage::Config(file) = &mut self.storage {
+                    file.save_error = Some(error.clone());
+                }
+            }
+            Event::StatementStarted {
+                run,
+                statement,
+                columns,
+            } => {
+                if let Some(view) = self.current_run_mut(*run)
+                    && let Some(statement_view) = view.statements.get_mut(*statement)
+                {
+                    statement_view.columns = columns.clone();
+                    view.selected = *statement;
+                }
+            }
+            Event::RowsFetched {
+                run,
+                statement,
+                rows,
+                more,
+            } => {
+                if let Some(view) = self.current_run_mut(*run)
+                    && let Some(statement_view) = view.statements.get_mut(*statement)
+                {
+                    statement_view.rows.extend(rows.iter().cloned());
+                    statement_view.more = *more;
+                    statement_view.fetching = false;
+                }
+            }
+            Event::StatementFinished {
+                run,
+                statement,
+                result,
+            } => self.statement_finished(*run, *statement, result),
+            Event::RunFinished {
+                run,
+                outcome,
+                elapsed,
+            } => {
+                if let Some(view) = self.current_run_mut(*run) {
+                    view.state = RunState::Finished {
+                        outcome: *outcome,
+                        elapsed: *elapsed,
+                    };
+                    // The run may have created or dropped tables, or ended a transaction.
+                    self.problems.forget_database(Instant::now());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The latest run, if it is `run`: events for older runs are stale and ignored.
+    fn current_run_mut(&mut self, run: RunId) -> Option<&mut RunView> {
+        self.run.as_mut().filter(|view| view.id == run)
+    }
+
+    fn statement_finished(
+        &mut self,
+        run: RunId,
+        statement: usize,
+        result: &Result<StatementSummary, StatementFailure>,
+    ) {
+        let Some(view) = self.run.as_mut().filter(|view| view.id == run) else {
+            return;
+        };
+        let Some(statement_view) = view.statements.get_mut(statement) else {
+            return;
+        };
+        statement_view.result = Some(result.clone());
+        statement_view.more = false;
+        statement_view.fetching = false;
+        if let Err(StatementFailure {
+            position: Some(position),
+            ..
+        }) = result
+        {
+            // A position inside an added prefix points at no text; mark the statement's start.
+            // One past the statement, in what a wrapper added after it, marks its end.
+            let offset = (statement_view.range.start
+                + position.saturating_sub(statement_view.prefix_len))
+            .min(statement_view.range.end);
+            self.error_marker = Some(highlight::error_marker(&self.text, self.dialect, offset));
+        }
+        if result.is_err() {
+            view.selected = statement;
+        }
+    }
+
+    /// A connection that fails or closes ends whatever the console was doing with it.
+    fn session_changed(&mut self, state: &SessionState) {
+        self.session = state.clone();
+        if matches!(state, SessionState::Connected(_)) {
+            self.problems.forget_database(Instant::now());
+        }
+        if matches!(
+            state,
+            SessionState::Disconnected | SessionState::Failed(_) | SessionState::Lost(_)
+        ) {
+            // The database rolls back whatever a closed connection left uncommitted.
+            self.transaction = TransactionStatus::Idle;
+        }
+        let failure = match state {
+            SessionState::Failed(error) | SessionState::Lost(error) => error.clone(),
+            SessionState::Disconnected => "the connection closed".to_owned(),
+            SessionState::Connecting | SessionState::Connected(_) => return,
+        };
+        let Some(view) = self.run.as_mut() else {
+            return;
+        };
+        for statement in &mut view.statements {
+            statement.more = false;
+            statement.fetching = false;
+        }
+        if view.state == RunState::Running {
+            if let Some(pending) = view
+                .statements
+                .iter_mut()
+                .find(|statement| statement.result.is_none())
+            {
+                pending.result = Some(Err(StatementFailure {
+                    message: failure,
+                    position: None,
+                }));
+            }
+            view.state = RunState::Finished {
+                outcome: RunOutcome::Failed,
+                elapsed: Duration::ZERO,
+            };
+        }
+    }
+}
+
+/// A selection's ends in text order.
+fn ordered(range: &Range<usize>) -> (usize, usize) {
+    (range.start.min(range.end), range.start.max(range.end))
+}
+
+#[cfg(test)]
+mod tests;

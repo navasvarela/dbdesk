@@ -4,11 +4,11 @@ Status: **planned**, not scheduled. Proposed on 2026-10-27; the order and the de
 confirmed when the track starts. The providers' priority was set on 2026-10-28: AWS, then Google
 Cloud, then Azure.
 
-dbdesk connects to databases you run or reach by host and port. Much of the data people query
+DbRover connects to databases you run or reach by host and port. Much of the data people query
 today lives elsewhere: managed databases signed into with a cloud account instead of a password,
 Parquet and table formats in object storage, and warehouses such as Snowflake and BigQuery that
 answer over HTTPS and bill by the work a query does. This plan brings those in, starting with
-what costs least: the engines dbdesk already speaks, hosted in the cloud.
+what costs least: the engines DbRover already speaks, hosted in the cloud.
 
 ## What changes when the data is in the cloud
 
@@ -17,10 +17,10 @@ What is new is shared by all of them, and is built once:
 
 - **Signing in with a cloud account.** Managed databases accept short-lived tokens from AWS IAM,
   Google Cloud IAM or Microsoft Entra ID instead of a stored password, and warehouses accept
-  only tokens, key pairs or OAuth. dbdesk should reuse the sign-in the user already has, never
+  only tokens, key pairs or OAuth. DbRover should reuse the sign-in the user already has, never
   store a cloud secret itself, and refresh tokens before they expire.
 - **Queries that cost money.** BigQuery bills by bytes scanned, Snowflake and Databricks by
-  warehouse time, Athena by bytes scanned. Things dbdesk does without asking on a local
+  warehouse time, Athena by bytes scanned. Things DbRover does without asking on a local
   database (counting a table's rows, **Open data**, completion's catalog reads, W5's
   **Export every row**) can cost real money there. The user needs to see the cost before
   running, a limit per data source, and defaults that never scan a whole table unasked.
@@ -42,7 +42,7 @@ that belongs to one of them comes before the ones that run on any cloud. Service
 tied to a provider (Neon, Supabase, ClickHouse Cloud, MotherDuck, Snowflake, Databricks) aren't
 ranked by it.
 
-1. **Managed versions of the engines dbdesk already has.** They need no new protocol, only
+1. **Managed versions of the engines DbRover already has.** They need no new protocol, only
    cloud sign-in and fixes for what each catalog does differently. The cheapest step, and it
    reaches the most users.
    - AWS: Amazon RDS and Aurora (PostgreSQL and MySQL), and Amazon Redshift, which speaks
@@ -52,7 +52,7 @@ ranked by it.
      speak SQL Server's protocol: Synapse's dedicated and serverless SQL pools, and Microsoft
      Fabric's warehouse and SQL analytics endpoint.
    - Not tied to a provider: Neon, Supabase and ClickHouse Cloud.
-2. **Object storage through DuckDB.** DuckDB, already compiled into dbdesk, reads Parquet, CSV
+2. **Object storage through DuckDB.** DuckDB, already compiled into DbRover, reads Parquet, CSV
    and JSON from S3, Google Cloud Storage and Azure Blob Storage, in that order, and Iceberg and
    Delta tables, through its own extensions. That is a data lake console with no new driver,
    plus MotherDuck (hosted DuckDB) through the same engine.
@@ -62,7 +62,7 @@ ranked by it.
    dialect.
 4. **BigQuery.** Google's warehouse, with a REST jobs API, GoogleSQL, and a dry run that says
    how many bytes a query will scan before it runs.
-5. **Snowflake.** The most used cloud warehouse among the tools dbdesk is compared with, and
+5. **Snowflake.** The most used cloud warehouse among the tools DbRover is compared with, and
    available on all three clouds. Its SQL API is HTTPS with JSON or Arrow results, which fits the
    ClickHouse driver's shape.
 6. **Databricks SQL.** A SQL warehouse over Unity Catalog's three-level names, through the
@@ -82,7 +82,7 @@ Left out on purpose:
   [More databases](databases.md) leaves out Redis and MongoDB: their data doesn't fit a SQL
   console with a grid of results. DynamoDB's PartiQL could be reconsidered later.
 - **Running or managing cloud resources** (creating instances, scaling warehouses, IAM policy).
-  dbdesk queries data; the cloud consoles and infrastructure-as-code tools manage it.
+  DbRover queries data; the cloud consoles and infrastructure-as-code tools manage it.
 
 ## Milestones
 
@@ -90,7 +90,7 @@ Left out on purpose:
 
 The groundwork every later milestone needs.
 
-- **Credential providers** in a new `dbdesk-cloud` crate, chosen per data source, built in the
+- **Credential providers** in a new `dbrover-cloud` crate, chosen per data source, built in the
   providers' order:
   - AWS: an IAM authentication token for RDS and Aurora (PostgreSQL and MySQL), from the
     user's AWS profile (including SSO);
@@ -170,7 +170,7 @@ Proposed defaults; each is confirmed when its milestone starts.
 | Question | Proposed | Consequence |
 | --- | --- | --- |
 | Which provider first | **AWS, then Google Cloud, then Azure.** Settled on 2026-10-28, not only proposed. | Each milestone builds and tries AWS's services first, and Athena moves ahead of the warehouses that run on any cloud. Azure's services come last in each milestone, but its SQL Server-protocol warehouses (Synapse, Fabric) join C1 instead of waiting for a driver of their own. |
-| How dbdesk gets cloud credentials | **From the provider's own sign-in on the machine first:** AWS profiles and SSO cache, Google Application Default Credentials, Azure CLI's sign-in, read or invoked (`aws`, `gcloud`, `az`) without a shell. A browser OAuth flow later, for warehouses that need it. | Uses the login people already have, and no cloud secret ever lives in dbdesk's files. Users without the CLIs need them installed, or a key file. |
+| How DbRover gets cloud credentials | **From the provider's own sign-in on the machine first:** AWS profiles and SSO cache, Google Application Default Credentials, Azure CLI's sign-in, read or invoked (`aws`, `gcloud`, `az`) without a shell. A browser OAuth flow later, for warehouses that need it. | Uses the login people already have, and no cloud secret ever lives in DbRover's files. Users without the CLIs need them installed, or a key file. |
 | Cloud SDKs | **No full SDKs.** Small HTTP clients on the hyper and rustls stack the ClickHouse driver already uses, plus request signing (AWS SigV4) where needed. | Keeps CI build times and download size close to today's; each new API call is a little more code to write and test. |
 | Warehouse protocols | **Their HTTPS APIs** (Snowflake SQL API, BigQuery REST, Databricks Statement Execution, Trino HTTP), not ODBC or JDBC. | Pure Rust, no drivers to install, works through proxies; some services' fastest result paths (BigQuery's Storage Read API, Arrow Flight) come later if needed. |
 | Testing services with no container | **Recorded HTTP exchanges replayed by a fake server in CI**, plus live tests run by hand (or nightly) with credentials kept in repository secrets. | Every pull request stays fast and needs no cloud account; the live tests catch API drift. |

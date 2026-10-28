@@ -36,11 +36,11 @@ resvg --width 1280 --height 640 --skip-system-fonts \
     social-preview.svg social-preview.png
 
 if ! command -v iconutil >/dev/null; then
-    echo "iconutil not found (it ships with macOS); skipping dbdesk.icns" >&2
+    echo "iconutil not found (it ships with macOS); skipping dbrover.icns" >&2
     exit 0
 fi
 
-iconset="$(mktemp -d)/dbdesk.iconset"
+iconset="$(mktemp -d)/dbrover.iconset"
 mkdir "${iconset}"
 trap 'rm -rf "$(dirname "${iconset}")"' EXIT
 # iconutil expects each point size at 1x and 2x under these exact names.
@@ -48,4 +48,4 @@ for points in 16 32 128 256 512; do
     cp "icon-${points}.png" "${iconset}/icon_${points}x${points}.png"
     cp "icon-$((points * 2)).png" "${iconset}/icon_${points}x${points}@2x.png"
 done
-iconutil --convert icns --output dbdesk.icns "${iconset}"
+iconutil --convert icns --output dbrover.icns "${iconset}"

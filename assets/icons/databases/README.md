@@ -1,6 +1,6 @@
 # Database logos
 
-One logo per database dbdesk has a driver for, shown next to data sources in the explorer, in
+One logo per database DbRover has a driver for, shown next to data sources in the explorer, in
 the New data source menu and in the data source dialog.
 
 | File | Logo | Brand colour |
@@ -8,7 +8,7 @@ the New data source menu and in the data source dialog.
 | `postgresql.svg` | PostgreSQL | `#4169E1` |
 | `sqlite.svg` | SQLite | `#003B57` |
 | `mysql.svg` | MySQL (also shown for MariaDB, which the same driver serves) | `#4479A1` |
-| `sqlserver.svg` | A neutral database glyph for SQL Server, drawn for dbdesk (see below) | `#CC2927` |
+| `sqlserver.svg` | A neutral database glyph for SQL Server, drawn for DbRover (see below) | `#CC2927` |
 | `duckdb.svg` | DuckDB (its yellow is darkened to a gold on the light theme, where it wouldn't show) | `#FFF000` |
 | `clickhouse.svg` | ClickHouse (its yellow is darkened to an amber on the light theme) | `#FFCC01` |
 
@@ -22,15 +22,15 @@ The only change is `fill="#FFFFFF"` on the root `<svg>` element. Simple Icons le
 unset, which renders black, and egui tints an image by multiplying its colours, so a black
 shape would stay black whatever the tint. White takes the tint exactly, which is how each logo
 gets a shade that reads in the light and the dark theme (`Palette::driver` in
-`crates/dbdesk-app/src/theme.rs`).
+`crates/dbrover-app/src/theme.rs`).
 
-The logos themselves remain trademarks of their owners. dbdesk shows them only to identify the
+The logos themselves remain trademarks of their owners. DbRover shows them only to identify the
 database a data source connects to. See each project's policy, e.g.
 [PostgreSQL's](https://www.postgresql.org/about/policies/trademarks/).
 
 `sqlserver.svg` is the exception: Simple Icons no longer carries Microsoft's SQL Server logo
-(its last release with it was 12.4.0), so it is a plain database cylinder drawn for dbdesk,
-under the same licence as dbdesk, in the colour SQL Server's logo uses.
+(its last release with it was 12.4.0), so it is a plain database cylinder drawn for DbRover,
+under the same licence as DbRover, in the colour SQL Server's logo uses.
 
 ## Adding a database
 

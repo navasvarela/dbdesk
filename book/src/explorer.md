@@ -229,7 +229,7 @@ again, fresh, the next time you expand it. **Refresh** does the same for a singl
 connected, which is how you see a table you just created.
 
 A connection can also be **lost**: the server restarted, an administrator ended the session, or
-the network or SSH tunnel dropped. dbdesk notices when a request fails that way, and, before
+the network or SSH tunnel dropped. DbRover notices when a request fails that way, and, before
 using a connection that has sat unused for a minute, by checking that it still answers. The
 data source's dot turns red and its tooltip says *Disconnected* and why. The tree stays as it
 was, and the next thing you expand or refresh connects again by itself.

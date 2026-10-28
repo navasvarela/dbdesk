@@ -34,7 +34,7 @@ Entries logged on the UI thread are collected by a second drain at the end of ea
 requests the repaint itself.
 
 Records from the `log` crate (used by eframe and winit) are bridged into `tracing`. A target
-filter keeps dbdesk's own crates at debug and everything else at warn and above.
+filter keeps DbRover's own crates at debug and everything else at warn and above.
 
 A second layer writes the same events to a rolling file (`tracing-appender`) for debugging
 crashes after the fact.
