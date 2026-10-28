@@ -49,9 +49,6 @@ pub enum SubjectOn {
 
 impl SubjectKind {
     pub fn offers(self, action: &CustomAction) -> bool {
-        if !runs_here(action) {
-            return false;
-        }
         match self.on {
             SubjectOn::Node(target) => action.applies_to(target, self.driver),
             SubjectOn::Cells => grid_target(action).is_some() && action.runs_on(self.driver),
@@ -85,13 +82,7 @@ pub fn offered(
 ) -> impl Iterator<Item = &CustomAction> {
     actions
         .iter()
-        .filter(move |action| runs_here(action) && action.applies_to(target, driver))
-}
-
-/// Only SQL actions run so far: command actions are read, checked and listed in View →
-/// Actions…, but not offered anywhere they could be chosen.
-fn runs_here(action: &CustomAction) -> bool {
-    matches!(action.body, ActionBody::Sql { .. })
+        .filter(move |action| action.applies_to(target, driver))
 }
 
 /// The console text an action fills in on `subject`: one statement, or one per selected row,
@@ -127,6 +118,28 @@ pub fn fill(
         .collect())
 }
 
+/// What fills a command action's placeholders on `subject`. A command never runs per row, so
+/// there is one set, whatever the action applies to.
+pub fn command_values(
+    data_source: &DataSource,
+    subject: &Subject,
+    quoting: Quoting,
+) -> TemplateValues {
+    let base = base_values(data_source);
+    match subject {
+        Subject::Node(path) => node_values(path, base, quoting),
+        Subject::Cells(cells) => cell_values(cells, base, quoting),
+    }
+}
+
+fn base_values(data_source: &DataSource) -> TemplateValues {
+    TemplateValues {
+        database: data_source.config.database().map(str::to_owned),
+        data_source: data_source.name.clone(),
+        ..TemplateValues::default()
+    }
+}
+
 /// What fills the placeholders, per statement.
 fn values(
     action: &CustomAction,
@@ -134,11 +147,7 @@ fn values(
     subject: &Subject,
     quoting: Quoting,
 ) -> Vec<TemplateValues> {
-    let base = TemplateValues {
-        database: data_source.config.database().map(str::to_owned),
-        data_source: data_source.name.clone(),
-        ..TemplateValues::default()
-    };
+    let base = base_values(data_source);
     match subject {
         Subject::Node(path) => vec![node_values(path, base, quoting)],
         Subject::Cells(cells) if grid_target(action) == Some(ActionTarget::GridRow) => cells

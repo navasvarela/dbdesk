@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 
 use dbdesk_core::{DataSourceId, Password};
 use dbdesk_engine::{
-    EngineConfig, InstallError, InstallSupport, InstalledUpdate, ProcessRunner, Release,
-    ReleaseError, ReleaseFeed, Restart, UpdateInstaller,
+    EngineConfig, InstallError, InstallSupport, InstalledUpdate, Invocation, ProgramFailure,
+    ProgramOutput, ProgramRunner, Release, ReleaseError, ReleaseFeed, Restart, UpdateInstaller,
 };
 use dbdesk_store::{
     ConsoleFiles, CustomFiles, DataSourceFile, HistoryFile, KeymapFile, ProjectFile, Secret,
@@ -111,6 +111,39 @@ impl UpdateInstaller for FakeInstaller {
     }
 }
 
+/// Plays the part of command actions' programs, so UI tests start no processes; the engine's
+/// own tests run real ones. The program's name says what it does:
+/// - `echo` writes its stdin back;
+/// - `print` writes its arguments, one a line;
+/// - `fail` exits with status 3, after writing "it went wrong" to stderr;
+/// - `hang` runs until it is stopped.
+pub struct ScriptedPrograms;
+
+#[async_trait::async_trait]
+impl ProgramRunner for ScriptedPrograms {
+    async fn run(&self, invocation: Invocation) -> Result<ProgramOutput, ProgramFailure> {
+        let wrote = |stdout: String| {
+            Ok(ProgramOutput {
+                stdout,
+                ..ProgramOutput::default()
+            })
+        };
+        match invocation.program.as_str() {
+            "echo" => wrote(invocation.stdin),
+            "print" => wrote(invocation.arguments.join("\n")),
+            "fail" => Err(ProgramFailure::Exited {
+                program: invocation.program,
+                status: "exit status: 3".to_owned(),
+                stderr: "it went wrong".to_owned(),
+            }),
+            "hang" => std::future::pending().await,
+            other => Err(ProgramFailure::CouldNotStart(format!(
+                "{other} is not a scripted program"
+            ))),
+        }
+    }
+}
+
 /// Starts the app with its data source file in `dir`.
 pub fn start_app(
     builder: HarnessBuilder<DbDeskApp>,
@@ -128,7 +161,7 @@ pub fn start_app(
         settings: SettingsFile::new(dir.join("settings.toml")),
         custom_files: CustomFiles::new(dir),
         trusted_commands: TrustedCommandsFile::new(dir.join("trusted_commands.toml")),
-        programs: Arc::new(ProcessRunner),
+        programs: Arc::new(ScriptedPrograms),
         releases: Arc::new(FixedReleases::current()),
         updater: Arc::new(FakeInstaller::default()),
         known_hosts: dir.join("known_hosts"),

@@ -3,6 +3,7 @@
 
 use egui::{Grid, RichText, ScrollArea, Window};
 
+use crate::command_runs::{CommandRuns, command_text, timeout_text};
 use crate::custom_files::{self, CustomFiles};
 use crate::keymap::Keymap;
 use dbdesk_store::{ActionBody, CommandAction, CustomAction, CustomFileKind};
@@ -20,13 +21,14 @@ pub fn show(
     ctx: &egui::Context,
     files: &CustomFiles,
     keymap: &Keymap,
+    runs: &CommandRuns,
 ) -> Option<ActionsWindowAction> {
     let mut open = true;
     let action = Window::new("Actions")
         .id(egui::Id::new("actions_window"))
         .open(&mut open)
         .default_size(DEFAULT_SIZE)
-        .show(ctx, |ui| contents(ui, files, keymap))
+        .show(ctx, |ui| contents(ui, files, keymap, runs))
         .and_then(|response| response.inner.flatten());
     if open {
         action
@@ -39,6 +41,7 @@ fn contents(
     ui: &mut egui::Ui,
     files: &CustomFiles,
     keymap: &Keymap,
+    runs: &CommandRuns,
 ) -> Option<ActionsWindowAction> {
     let kind = CustomFileKind::Actions;
     let mut action = custom_files::header(ui, files.path(kind), &files.summary(kind))
@@ -66,14 +69,14 @@ fn contents(
                 }
                 ui.end_row();
                 for custom in files.actions() {
-                    row(ui, custom, keymap);
+                    row(ui, custom, keymap, runs);
                 }
             });
     });
     action
 }
 
-fn row(ui: &mut egui::Ui, action: &CustomAction, keymap: &Keymap) {
+fn row(ui: &mut egui::Ui, action: &CustomAction, keymap: &Keymap, runs: &CommandRuns) {
     ui.label(&action.name);
     ui.label(RichText::new(action.id.keymap_id()).monospace());
     let targets: Vec<&str> = action
@@ -109,15 +112,15 @@ fn row(ui: &mut egui::Ui, action: &CustomAction, keymap: &Keymap) {
             }
         }
         ActionBody::Command(command) => {
-            ui.vertical(|ui| command_cell(ui, command));
+            let trusted = runs.is_trusted(&action.id, command);
+            ui.vertical(|ui| command_cell(ui, command, trusted));
         }
     }
     ui.end_row();
 }
 
-/// The command in full, every argument quoted so where one ends is plain, and what goes in
-/// and out of it.
-fn command_cell(ui: &mut egui::Ui, command: &CommandAction) {
+/// The command in full, what goes in and out of it, and whether it runs without asking.
+fn command_cell(ui: &mut egui::Ui, command: &CommandAction, trusted: bool) {
     ui.label(RichText::new(command_text(command.command.source())).monospace());
     ui.weak(format!(
         "stdin {} · output {} · timeout {}",
@@ -125,20 +128,10 @@ fn command_cell(ui: &mut egui::Ui, command: &CommandAction) {
         command.output.name(),
         timeout_text(command.timeout)
     ));
-}
-
-/// As `actions.toml` writes a list of strings.
-fn command_text(source: &[String]) -> String {
-    let items: Vec<String> = source.iter().map(|item| format!("{item:?}")).collect();
-    format!("[{}]", items.join(", "))
-}
-
-/// As `actions.toml` writes a timeout, "30s" or "1m 30s".
-fn timeout_text(timeout: std::time::Duration) -> String {
-    match jiff::SignedDuration::try_from(timeout) {
-        // `#` selects jiff's friendly format ("30s") over ISO 8601 ("PT30S").
-        Ok(duration) => format!("{duration:#}"),
-        Err(_) => format!("{}s", timeout.as_secs()),
+    if trusted {
+        ui.weak("Trusted: runs without asking");
+    } else {
+        ui.weak("Asks before it next runs");
     }
 }
 
@@ -192,14 +185,6 @@ pub const TEMPLATE: &str = r#"# dbdesk custom actions. Uncomment and change an a
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn writes_commands_and_timeouts_as_actions_toml_does() {
-        let source = ["jq".to_owned(), "-r".to_owned(), ".[] | \"x\"".to_owned()];
-        assert_eq!(command_text(&source), r#"["jq", "-r", ".[] | \"x\""]"#);
-        assert_eq!(timeout_text(std::time::Duration::from_secs(90)), "1m 30s");
-        assert_eq!(timeout_text(std::time::Duration::from_millis(500)), "500ms");
-    }
 
     #[test]
     fn the_template_adds_nothing_until_uncommented_and_then_reads_cleanly() {

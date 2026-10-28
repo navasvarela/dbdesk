@@ -15,6 +15,7 @@ use egui_dock::{DockArea, DockState};
 
 use crate::about_dialog;
 use crate::actions_window::{self, ActionsWindowAction};
+use crate::command_runs::{CommandRuns, Finished};
 use crate::commands::{self, AppCommand, CommandState};
 use crate::console::{ConsoleAction, ExportedRows, FormatScope, RowsToOpen};
 use crate::consoles::Consoles;
@@ -117,6 +118,7 @@ pub struct DbDeskApp {
     theme_changed: bool,
     /// Why the last custom action couldn't run, shown in the status bar until the next one.
     action_problem: Option<String>,
+    command_runs: CommandRuns,
     about_open: bool,
     settings: AppSettings,
     updates: Updates,
@@ -210,6 +212,7 @@ impl DbDeskApp {
             actions_window_open: false,
             theme_changed: false,
             action_problem: None,
+            command_runs: CommandRuns::default(),
             about_open: false,
             settings: AppSettings::default(),
             updates: Updates::new(install_support),
@@ -335,6 +338,9 @@ impl DbDeskApp {
             self.show_change(dialog.data_source(), changed);
         }
         self.apply_to_copied_ddl(event);
+        if let Some(Finished::OpenConsole { data_source, text }) = self.command_runs.apply(event) {
+            self.open_program_output(data_source, text);
+        }
         if let Some(window) = &mut self.definition_window {
             window.apply(event);
         }
@@ -1351,9 +1357,9 @@ impl DbDeskApp {
         }
     }
 
-    /// Fills in a custom action's SQL for `subject` and opens it in a new console, running it
-    /// unless the action says to edit it first. What the action can't fill is said in the
-    /// status bar.
+    /// Runs a custom action on `subject`: a command action's program, or its SQL, filled in
+    /// and opened in a new console, run unless the action says to edit it first. What the
+    /// action can't fill is said in the status bar.
     fn run_action(&mut self, id: &ActionId, data_source: DataSourceId, subject: &Subject) {
         let Some(action) = self
             .custom_files
@@ -1367,6 +1373,15 @@ impl DbDeskApp {
             return;
         };
         let quoting = Dialect::from(entry.data_source.config.driver()).quoting();
+        if let ActionBody::Command(command) = &action.body {
+            self.action_problem = None;
+            let values = custom_actions::command_values(&entry.data_source, subject, quoting);
+            let run = self
+                .command_runs
+                .start(action, command, data_source, values);
+            self.send_if(run);
+            return;
+        }
         match custom_actions::fill(action, &entry.data_source, subject, quoting) {
             Ok(text) => {
                 self.action_problem = None;
@@ -1380,6 +1395,42 @@ impl DbDeskApp {
                 tracing::warn!("{problem}");
                 self.action_problem = Some(problem);
             }
+        }
+    }
+
+    /// Opens what a command action's program wrote, SQL, in a new console on the data source
+    /// it ran on, without running it.
+    fn open_program_output(&mut self, data_source: DataSourceId, text: String) {
+        let Some(entry) = self.state.data_source(data_source) else {
+            return;
+        };
+        let (key, command) = self.consoles.open_action(&entry.data_source, text, None);
+        workspace::open_console_tab(&mut self.dock, key);
+        self.send_if(command);
+    }
+
+    /// ⌘. stops running programs, unless the focused console has a run of its own to stop,
+    /// which the console then handles.
+    fn program_shortcuts(&mut self, ctx: &egui::Context) {
+        if !self.command_runs.is_running() {
+            return;
+        }
+        let console_busy = self.focused_console().is_some_and(|key| {
+            self.consoles
+                .get_mut(&key)
+                .is_some_and(|console| console.cancellable_run().is_some())
+        });
+        if console_busy {
+            return;
+        }
+        let stop = ctx.input_mut(|input| {
+            !self
+                .keymap
+                .consume(input, &[keymap::Action::Cancel])
+                .is_empty()
+        });
+        if stop {
+            self.send_all(self.command_runs.stop_all());
         }
     }
 
@@ -1691,6 +1742,8 @@ impl DbDeskApp {
                 .color(palette.text_weak),
             );
             self.problem_links(ui, palette.warning);
+            let stops = self.command_runs.status(ui, palette);
+            self.send_all(stops);
             if let Some(problem) = &self.action_problem
                 && ui
                     .link(RichText::new(problem).small().color(palette.error))
@@ -1732,7 +1785,7 @@ impl DbDeskApp {
         if !self.actions_window_open {
             return;
         }
-        match actions_window::show(ctx, &self.custom_files, &self.keymap) {
+        match actions_window::show(ctx, &self.custom_files, &self.keymap, &self.command_runs) {
             Some(ActionsWindowAction::Reload) => self.send(Command::ReloadCustomFiles),
             Some(ActionsWindowAction::Create) => self.send(Command::CreateCustomFile {
                 kind: CustomFileKind::Actions,
@@ -1799,6 +1852,7 @@ impl eframe::App for DbDeskApp {
         let ctx = ui.ctx().clone();
         self.file_shortcuts(&ctx);
         self.custom_action_shortcuts(&ctx);
+        self.program_shortcuts(&ctx);
         self.open_dropped_files(&ctx);
         // The base colour shows in the gaps between the dock's islands.
         ui.painter()
@@ -1905,6 +1959,8 @@ impl eframe::App for DbDeskApp {
         self.show_keymap_window(&ctx);
         self.show_custom_file_window(&ctx);
         self.show_actions_window(&ctx);
+        let commands = self.command_runs.show(&ctx);
+        self.send_all(commands);
         self.show_about(&ctx);
         self.show_update_dialog(&ctx);
         self.show_settings_window(&ctx);
@@ -1948,6 +2004,7 @@ impl Repaint for EguiRepaint {
 #[cfg(test)]
 mod tests {
     mod actions;
+    mod commands;
     mod customisation;
     mod files;
     mod find;
@@ -2010,7 +2067,7 @@ mod tests {
             settings: SettingsFile::new(dir.join("settings.toml")),
             custom_files: CustomFiles::new(dir),
             trusted_commands: TrustedCommandsFile::new(dir.join("trusted_commands.toml")),
-            programs: Arc::new(dbdesk_engine::ProcessRunner),
+            programs: Arc::new(crate::test_support::ScriptedPrograms),
             releases: Arc::new(releases),
             updater: Arc::new(crate::test_support::FakeInstaller::default()),
             known_hosts: dir.join("known_hosts"),
