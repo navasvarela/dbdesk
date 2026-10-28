@@ -62,6 +62,17 @@ egui_extras = { version = "0.36.2", features = ["image", "svg"] }
 egui_kittest = "0.36.2"
 # Icon font; 0.14 is the release built against egui 0.36.
 egui-phosphor = "0.14.0"
+# The macOS menu bar (docs/macos-look.md), the menu crate Tauri uses. macOS only, and without
+# default features, which would build GTK on Linux. Its macOS dependencies (objc2, objc2-app-kit,
+# crossbeam-channel, dpi) are winit's and rfd's already; it adds keyboard-types.
+muda = { version = "0.21.2", default-features = false }
+# AppKit, for what eframe doesn't expose on macOS: the pasteboard's text for Edit › Paste. The
+# versions winit, rfd and muda already use; features are listed per use.
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "NSPasteboard",
+] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSString"] }
 # Decodes the PNGs egui_extras loads (the logo on the Welcome tab).
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }

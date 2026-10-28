@@ -19,7 +19,7 @@ use crate::widgets;
 
 /// Where "Open the manual" goes: the user manual on dbdesk's website, published from `book/`
 /// by `.github/workflows/pages.yml`.
-const MANUAL_URL: &str = "https://dbdesk.org/manual/";
+pub const MANUAL_URL: &str = "https://dbdesk.org/manual/";
 
 const LOGO_SIZE: f32 = 64.0;
 const CARD_SIZE: Vec2 = vec2(132.0, 104.0);

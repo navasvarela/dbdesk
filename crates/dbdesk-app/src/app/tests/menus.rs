@@ -54,7 +54,7 @@ fn check_entries(harness: &mut Harness<'_, DbDeskApp>, entries: &[Entry], state:
             Entry::Note(text) => {
                 harness.get_by_label(text);
             }
-            Entry::Separator => {}
+            Entry::Edit(_) | Entry::System(_) | Entry::Separator => {}
         }
     }
 }

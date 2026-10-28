@@ -26,10 +26,13 @@ mod import_dialog;
 mod keymap;
 mod keymap_window;
 mod log_console;
+#[cfg(target_os = "macos")]
+mod macos;
 mod mcp;
 mod mcp_client_config;
 mod mcp_settings;
 mod menu_bar;
+mod native_menu;
 mod object_dialog;
 mod parameters_dialog;
 mod password_prompt;
@@ -132,6 +135,8 @@ fn main() -> anyhow::Result<()> {
         options,
         Box::new(move |cc| {
             let app = DbDeskApp::new(cc, log_feed, engine_config)?.with_files_to_open(files);
+            #[cfg(target_os = "macos")]
+            let app = app.with_native_menu(native_menu::NativeMenu::install(&cc.egui_ctx));
             Ok(Box::new(app))
         }),
     )

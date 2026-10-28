@@ -1159,7 +1159,7 @@ fn project_settings(harness: &mut Harness<'static, DbDeskApp>, fixture: &Fixture
 fn settings_mcp(harness: &mut Harness<'static, DbDeskApp>, _: &Fixture) {
     harness.get_by_label("View").click();
     harness.run_ok();
-    harness.get_by_label("Settings…").click();
+    harness.get_by_label_contains("Settings…").click();
     harness.run_ok();
     harness.get_by_label("Save MCP defaults").scroll_to_me();
     harness.run_ok();

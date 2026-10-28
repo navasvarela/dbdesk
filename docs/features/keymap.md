@@ -43,10 +43,12 @@ rebind it. Status: implemented in M5.
 | `console.previous-problem` | ⇧F8 | Go to the previous syntax error or warning |
 | `grid.view-cell` | Space | Show the selected cell in the cell viewer |
 | `grid.edit-cell` | F2, Enter | Edit the selected cell, if its table can be edited |
+| `app.settings` | ⌘, | Open the settings |
 
 Console actions work while the console's editor has focus, and are taken before the editor
 sees the key. The `grid.*` actions work while no text field has focus. Toolbar buttons show their
-action's current shortcut in their tooltip.
+action's current shortcut in their tooltip, and menu items theirs, in the egui menu bar and in
+macOS's (see [A native look on macOS](../macos-look.md)).
 
 ## Design
 

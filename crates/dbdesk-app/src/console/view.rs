@@ -229,6 +229,7 @@ fn perform(console: &QueryConsole, action: Action, actions: &mut Vec<ConsoleActi
         | Action::NextProblem
         | Action::PreviousProblem
         | Action::OpenFile
+        | Action::Settings
         | Action::Save
         | Action::SaveAs
         | Action::Find
@@ -264,6 +265,7 @@ fn is_enabled(console: &QueryConsole, action: Action) -> bool {
         | Action::NextProblem
         | Action::PreviousProblem
         | Action::OpenFile
+        | Action::Settings
         | Action::Save
         | Action::SaveAs
         | Action::Find
@@ -320,6 +322,7 @@ fn toolbar_icon(action: Action) -> Option<(&'static str, Role)> {
         | Action::EditCell
         | Action::Complete
         | Action::OpenFile
+        | Action::Settings
         | Action::Save
         | Action::SaveAs
         | Action::Find

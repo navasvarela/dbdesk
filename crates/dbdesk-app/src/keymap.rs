@@ -32,10 +32,11 @@ pub enum Action {
     Replace,
     FindNext,
     FindPrevious,
+    Settings,
 }
 
 impl Action {
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 22] = [
         Self::Complete,
         Self::RunCurrent,
         Self::RunAll,
@@ -57,6 +58,7 @@ impl Action {
         Self::Replace,
         Self::FindNext,
         Self::FindPrevious,
+        Self::Settings,
     ];
 
     pub fn id(self) -> &'static str {
@@ -82,6 +84,7 @@ impl Action {
             Self::Replace => "editor.replace",
             Self::FindNext => "editor.find-next",
             Self::FindPrevious => "editor.find-previous",
+            Self::Settings => "app.settings",
         }
     }
 
@@ -108,6 +111,7 @@ impl Action {
             Self::Replace => "Find and replace in the console",
             Self::FindNext => "Go to the next match",
             Self::FindPrevious => "Go to the previous match",
+            Self::Settings => "Open the settings",
         }
     }
 
@@ -155,13 +159,15 @@ impl Action {
                 KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::G),
                 KeyboardShortcut::new(Modifiers::SHIFT, Key::F3),
             ],
+            // The settings key of macOS apps, and of VS Code and JetBrains IDEs elsewhere.
+            Self::Settings => shortcut(Modifiers::COMMAND, Key::Comma),
             Self::ShowHistory | Self::Commit | Self::Rollback => Vec::new(),
         }
     }
 }
 
 /// The bindings in effect: the defaults, with whatever `keymap.toml` changed.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Keymap {
     bindings: BTreeMap<Action, Vec<KeyboardShortcut>>,
     /// What in the file couldn't be used, for the keymap window. Each was skipped.
