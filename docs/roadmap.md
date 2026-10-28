@@ -698,8 +698,125 @@ Customisation without rebuilding dbdesk, from files to commands to plugins. The 
   recolours selection and buttons on **Reload**; `[dark] text_weak = "#444444"` applies and
   lists each text it makes unreadable. Covered by the tests in
   [Testing](testing.md#actions-snippets-and-themes-h1).
-- **H2 — Commands:** actions that run your own programs, with no shell and never a secret,
-  getting the selection on stdin and sending output to the viewer, a console or the log.
+- **H2 — Commands:** an action in `actions.toml` runs a program instead of SQL, with no shell
+  and never a secret, getting the grid's selection on stdin and sending its output to a viewer,
+  a new console, the log or nowhere. In layers, one PR each:
+  - **H2a — Plan:** this section, and the design points it settles in
+    [Hackability](hackability.md#h2--commands).
+  - **H2b — Reading command actions:** an action has either `sql` or `command`, never both.
+    `command` is a list of arguments whose placeholders are checked like `sql`'s, plus the data
+    source's own fields: `{host}`, `{port}`, `{user}` and `{file}`. `stdin` (`json`, `csv`,
+    `tsv`, `none`), `output` (`viewer`, `console`, `log`, `none`) and `timeout` (`"30s"`) are
+    read only with `command`, and `run` only with `sql`. A command can't be on `grid.row`, take
+    `{values}`, or read stdin on anything but the grid, and SQL can't take the data source's
+    fields: each is a problem with the file, with a unit test for every message. The checks are
+    pure functions in `dbdesk-core` (the template) and `dbdesk-store` (the format and the rows
+    a command reads, in each format). **View → Actions…** shows each command in full; until
+    H2d they aren't offered in menus.
+  - **H2c — Running programs:** a new engine command runs one: it fills the placeholders, with
+    the data source's fields resolved as a connection resolves them, writes the selection to
+    stdin, and reports its output in one event. It runs on tokio's process support, with a
+    timeout, a stop, and output capped. Which commands the user has trusted is a new file the
+    engine reads at start-up and adds to, and the engine refuses to run any other. Tested with
+    a small program built from the engine crate itself, on every CI OS.
+  - **H2d — Command actions in the app:** command actions are offered where SQL actions are,
+    in the right-click menus, the Actions menu and the keymap. The first run of each asks
+    first, showing the command in full. While one runs, the status bar says so with **Stop**,
+    and ⌘. stops it. Its output goes where `output` says, and a failure opens a window with
+    the exit code and stderr. **View → Actions…** says which commands are trusted. Tested with
+    kittest UI tests of each output, against a scripted program runner instead of real
+    processes.
+  - **H2e — Manual:** the book's actions chapter, [Testing](testing.md), and the demo note.
+
+  Decisions:
+
+  - **Programs run on tokio's process support, not the blocking pool.** `tokio::process`
+    waits on a program without holding a thread, and reads stdout and stderr while it writes
+    stdin, so a program that writes before it has read everything can't deadlock against dbdesk.
+    It needs only tokio's `process` feature, no new crate.
+  - **Stopping a program is dropping it.** The engine races each run against its timeout and a
+    stop; whichever loses is dropped, and the child is spawned with `kill_on_drop`, so a timeout,
+    **Stop**, ⌘. and quitting dbdesk all kill it the same way. A command can't run past the
+    engine.
+  - **Only the program itself is killed.** Killing a whole process tree needs process groups on
+    Unix and job objects on Windows, both through `unsafe` calls the workspace forbids. So a
+    program that starts children of its own (`sh -c "sleep 100 &"`) may leave them running.
+    dbdesk stops reading the moment its own child is gone, so it never waits on them.
+  - **Timeout:** 60 seconds unless the action sets `timeout`, written with a unit (`"500ms"`,
+    `"30s"`, `"5m"`, `"1h"`). A program that opens a window or a terminal (`open -a Terminal`)
+    returns at once, so the timeout only ever stops programs dbdesk is waiting on.
+  - **Output limits:** stdout is kept up to 4 MB, chosen rather than measured: far more than
+    anyone reads in a viewer or a console, and little enough to hold in memory. Past it the
+    program is stopped and what it wrote so far is shown with a note saying so. stderr is kept up to 64 KB and the rest discarded, since only an error
+    message is wanted from it. Output is read as UTF-8, with invalid bytes replaced.
+  - **A non-zero exit is a failure, whatever `output` says:** stdout is discarded and a window
+    shows the exit code (or, on Unix, the signal) and stderr. A program that can't start, a
+    placeholder nothing fills, a timeout and a stop are failures too, each said in words. With
+    `output = "log"`, stderr goes to the log console on success as well.
+  - **What a command gets:**
+    - Its arguments, each placeholder filling exactly one, as raw text: no shell and no quoting,
+      since none is needed. `{qualified_name}` is the name as the dialect's SQL writes it.
+      `{database}` is the node's database, or the one the data source connects to.
+    - dbdesk's own environment, as any program started from it, plus `DBDESK_DATA_SOURCE`,
+      `DBDESK_DRIVER`, `DBDESK_DATABASE`, `DBDESK_SCHEMA`, `DBDESK_TABLE` (each only when there is
+      one) and `DBDESK_FORMAT`.
+    - On stdin, the selected cells: the selected columns of the selected rows, as a JSON array
+      of objects (the format of Export), CSV with a header line, or TSV as Copy writes it.
+      Otherwise stdin is empty, so a program that reads it ends rather than waits.
+    - It runs in the home folder: a Mac app started from the Finder has `/` as its folder,
+      which no command expects.
+  - **Never a secret.** No placeholder or variable holds a password, a token or an SSH secret.
+    The data source's fields come from its saved settings with `${NAME}` variables resolved,
+    which hold none; the engine's passwords are never consulted to build a command. An engine
+    test runs a program that writes back everything it got, and searches it for a saved
+    password.
+  - **Trust.** The first run of each command shows it in full (the action, every argument as
+    written, what goes on stdin, where output goes) and asks **Run** or **Cancel**. **Run**
+    records the action's id, command and stdin in `trusted_commands.toml`. It lives in the data
+    folder, not the config folder beside `actions.toml`, so a config folder synced from
+    elsewhere or copied from a colleague brings no trust with it. A command whose definition
+    changes, even by one argument, asks again. The engine checks the same list before it runs
+    anything, so a UI bug can't skip the question. Shared and imported configuration (the data
+    source export) carries no actions, and a test proves an export holding some imports none.
+  - **Windows, macOS and Linux:**
+    - Arguments are passed as a list everywhere. On Windows the standard library quotes each one
+      for the program's own parser, and refuses arguments it can't pass safely to a `.bat` or
+      `.cmd` file rather than letting `cmd.exe` read them.
+    - On Windows a program is started without a console window (`CREATE_NO_WINDOW`), so a
+      command doesn't flash one open.
+    - A Mac app started from the Finder gets a short `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`)
+      that lacks Homebrew's folders, so `jq` may not be found though the terminal finds it. A
+      program that isn't found says so, names the `PATH` it was looked for in, and suggests its
+      full path. dbdesk doesn't add folders to `PATH` behind the user's back.
+  - **Commands don't run on `grid.row`.** A command already gets every selected row on stdin,
+    so running it once per row would only start more programs and leave nowhere to put several
+    outputs. `{row.<column>}` is the first selected row's value, as in SQL.
+
+  Changes to [Hackability](hackability.md) made while planning: programs run on tokio's
+  process support rather than the blocking pool; the data source's fields as placeholders
+  (`{host}`, `{port}`, `{user}`, `{file}`); trust is recorded by definition outside the config
+  folder and asked on first run; `grid.row`, `{values}`, and stdin off the grid aren't for
+  commands; the program runs in the home folder.
+
+  Risks:
+
+  - **A command running something unintended.** No shell, one argument per placeholder,
+    commands only from the user's own file, each shown in full and trusted by its exact
+    definition before it first runs, and checked again by the engine.
+  - **A secret reaching a program.** No placeholder or variable holds one, and the engine test
+    searches everything a program gets for a saved password.
+  - **Runaway programs.** Each has a timeout, a stop and capped output; what can't be killed
+    (a program's own children) is never waited on.
+  - **Programs differ by OS.** The tests run a program built from the workspace, the same on
+    all three CI systems, never `sh` or `cmd`; the manual's examples say which OS they are for.
+  - **Slow or flaky tests.** Engine tests use timeouts of a second or less and a program that
+    sleeps until killed, never one that sleeps for a fixed time. UI tests use a scripted runner,
+    so they start no processes at all.
+
+  **Exit:** I send selected rows to `jq` and see the result in the viewer; I open a data source
+  in `pgcli`; a program that writes SQL opens its output in a console; a runaway command is
+  stopped by its timeout and by ⌘.; a table named with a quote, a space and a semicolon reaches
+  the command as one argument; no saved password reaches any command.
 - **H3 — WebAssembly plugins (later):** sandboxed and capability-based, over the same extension
   points, started once at least three real needs outgrow H1 and H2.
 
