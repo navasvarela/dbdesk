@@ -78,9 +78,11 @@ Left out on purpose:
 
 - **Hadoop-era engines** (Hive through Thrift, Impala, Spark Thrift Server). Fewer new users,
   Thrift and SASL protocols, and the same data usually reachable through Trino or Databricks.
-- **NoSQL cloud stores** (DynamoDB, Cosmos DB, Bigtable, Firestore), for the reason
-  [More databases](databases.md) leaves out Redis and MongoDB: their data doesn't fit a SQL
-  console with a grid of results. DynamoDB's PartiQL could be reconsidered later.
+- **NoSQL cloud stores** (DynamoDB, Cosmos DB, Bigtable, Firestore), for now. The
+  [NoSQL track](nosql.md) builds what they need first: query languages beside SQL and
+  document results. DynamoDB is the first to reconsider after it, with its PartiQL and C0's
+  sign-in and cost guards; Cosmos DB's MongoDB API may already connect through that track's
+  MongoDB driver.
 - **Running or managing cloud resources** (creating instances, scaling warehouses, IAM policy).
   DbRover queries data; the cloud consoles and infrastructure-as-code tools manage it.
 

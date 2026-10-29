@@ -20,9 +20,14 @@
   Secrets are the exception and live in the OS keychain.
 - Keep the engine-specific code behind one driver abstraction, so adding an engine is a new
   crate rather than edits scattered across the app.
+- Speak the databases developers use, SQL or not. SQL engines came first; Redis, MongoDB and
+  the other NoSQL stores in [NoSQL databases](nosql.md) were out of scope until 2026-10-29, and
+  now come to the same explorer, console and grid, each in its own query language.
 
 ## Non-goals (for now)
 
+- Replacing each NoSQL vendor's own tool (RedisInsight, MongoDB Compass, Kibana). DbRover
+  browses, queries and edits; monitoring, profiling and cluster administration stay with them.
 - Feature parity with full database IDEs such as DBeaver or DataGrip. In particular:
   refactorings, VCS integration, and a full SQL language server. ER diagrams and schema
   diffing were on this list until 2026-10-29; both are now planned, though not soon (ER1 and
@@ -44,9 +49,9 @@ DbRover uses these terms everywhere (docs, code, UI):
 | --- | --- |
 | **Data source** | A saved connection configuration (host, port, user, driver, options). |
 | **Session** | A live connection to a data source. A data source can have several sessions. |
-| **Query console** | A SQL editor tab bound to one session. |
+| **Query console** | An editor tab bound to one session, in the engine's query language: SQL, Redis commands, MongoDB's shell syntax, and so on. |
 | **Log console** | The panel that shows connection, query and server messages. |
-| **Catalog** | The tree of objects (databases, schemas, tables, …) a data source exposes. |
+| **Catalog** | The tree of objects (databases, schemas, tables, keys, collections, …) a data source exposes. |
 
 ## What "personalised" means concretely
 
