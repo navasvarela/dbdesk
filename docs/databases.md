@@ -46,10 +46,15 @@ The order, with the reason for each place:
    "download and run" install the [release track](releasing.md) just built. Planned, not
    scheduled.
 
+Planned separately:
+
+- **Redis, MongoDB and other non-SQL stores.** Until 2026-10-29 they were left out on purpose,
+  because their data doesn't fit a SQL console with a grid of results. They now have a track of
+  their own, [NoSQL databases](nosql.md), which starts with the groundwork that makes them fit:
+  query languages beside SQL, nested documents in the grid, and safety checks for each language.
+
 Left out on purpose:
 
-- **Redis, MongoDB and other non-SQL stores.** Popular, but DbRover is a SQL console with a grid
-  of results, and their data doesn't fit that shape.
 - **PostgreSQL-compatible databases** (CockroachDB, Neon, Supabase, TimescaleDB, Amazon
   Aurora). They already connect through the PostgreSQL driver. Trying each and fixing what its
   catalog does differently is a small task of its own, best done after DB0 brings TLS, which

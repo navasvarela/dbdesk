@@ -88,7 +88,7 @@ Beekeeper's is Community unless it names a paid tier (Indie, Professional, Busin
 | DuckDB | ✅ built in [R2] | ❔ listed [D4], edition not stated | ✅ [J10] | ✅ [T3] | ⚠️ Indie and up [B1] | ✅ [X4]; MCP needs a separate driver [X5] |
 | ClickHouse | ✅ [R2] | ❔ listed [D4], edition not stated | ✅ [J1] | ✅ [T1] | ⚠️ Professional and up [B1] | ✅ [X4] |
 | Oracle | ❌ planned [R2] | ✅ [D4] | ✅ [J1] | ✅ [T1] | ⚠️ Indie and up [B1] | ✅ [X4] |
-| MongoDB, Redis | ❌ not planned | ⚠️ PRO [D1] | ✅ [J1] | ✅ [T1] | ⚠️ Redis free, MongoDB Professional [B1] | ✅ [X1] |
+| MongoDB, Redis | ❌ planned [R16] | ⚠️ PRO [D1] | ✅ [J1] | ✅ [T1] | ⚠️ Redis free, MongoDB Professional [B1] | ✅ [X1] |
 
 ### Connections
 
@@ -278,6 +278,7 @@ page.
 - R13: [Manual: Moving data sources to another machine](../book/src/sharing.md)
 - R14: [Manual: Actions, snippets and themes](../book/src/customising.md)
 - R15: [ADR 0001: the UI toolkit is egui](adr/0001-ui-toolkit-egui.md)
+- R16: [NoSQL databases (planned)](nosql.md)
 
 **DBeaver**
 

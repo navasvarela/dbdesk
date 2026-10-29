@@ -463,6 +463,32 @@ shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.
 - **C5 — Snowflake**, over its SQL API.
 - **C6 — Databricks SQL**, over the Statement Execution API and Unity Catalog.
 
+## NoSQL track
+
+Redis, MongoDB and the other most used non-SQL stores, in the same explorer, console and grid,
+each in its own query language. Planned on 2026-10-29, not scheduled: building starts after W7,
+which changes the grid and results code first. The full plan, with the order, the groundwork and
+the decisions, is in [NoSQL databases](nosql.md).
+
+- **N0a — Groundwork: languages, safety and the explorer:**
+  - query languages beside SQL, each splitting, highlighting, completing and classifying its
+    own commands;
+  - safety levels, warnings and MCP permissions for every language, with a read-only login as
+    the database's guard where there is no read-only session;
+  - an explorer that pages through large levels, with the filter applied by the server.
+- **N0b — Groundwork: documents:** ADR 0006, documents as Extended JSON text; the grid flattens
+  them into columns, and a tree view shows the whole document, for SQL engines' JSON columns
+  too.
+- **N1 — Redis, Valkey and Dragonfly:** keys by pattern with `SCAN`, grouped by `:`; a viewer
+  per type with TTL; a command console classified by the server's own command flags.
+- **N2 — MongoDB:** databases and collections, `find` and `aggregate` in a subset of the shell's
+  syntax, documents in the grid and tree, edits that keep each value's type.
+- **N3 — Elasticsearch and OpenSearch:** indices and mappings, Dev Tools-style requests, hits as
+  documents, the SQL endpoints as rows.
+- **N4 — Cassandra and ScyllaDB:** CQL as a dialect of `dbrover-sql`, keyspaces and tables,
+  paged rows, collections in the tree.
+- **Later:** DynamoDB in the cloud track after C0, and Neo4j after ER1.
+
 ## Object helpers track
 
 Dialogs that write, show and run the SQL to create and change tables, indexes, views, schemas
