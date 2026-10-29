@@ -1115,7 +1115,7 @@ The gaps that keep DbRover from being an everyday tool. The full plan is in
     header with an autofilter, a new sheet past a million rows.
   - **W7e — Parquet** (built): written by an in-memory DuckDB that spills to disk, each column given the
     narrowest type all its values fit.
-  - **W7f — The export dialog:** loaded or all rows, the format, its options and a preview, the
+  - **W7f — The export dialog** (built): loaded or all rows, the format, its options and a preview, the
     last choices remembered in `app.ron`.
   - **W7g — Copy as:** every text format from the cell menu and the Edit menu, **Copy with
     headers** (⇧⌘C), and **Copy row** quoting as **Copy selection** does.

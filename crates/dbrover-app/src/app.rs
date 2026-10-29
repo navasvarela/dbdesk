@@ -5,7 +5,7 @@ use dbrover_core::{CatalogPath, DataSource, DataSourceId};
 use dbrover_engine::{
     Command, EngineConfig, EngineError, EngineHandle, Event, PasswordKept, Repaint, RunOrigin,
 };
-use dbrover_export::{ExportFormat, ExportSpec};
+use dbrover_export::ExportFormat;
 use dbrover_sql::Dialect;
 use dbrover_store::{
     ActionBody, ActionId, ConsoleKey, CustomFileKind, KeymapBindings, McpPermissions,
@@ -18,7 +18,7 @@ use crate::about_dialog;
 use crate::actions_window::{self, ActionsWindowAction};
 use crate::command_runs::{CommandRuns, Finished};
 use crate::commands::{self, AppCommand, CommandState};
-use crate::console::{ConsoleAction, ExportedRows, FormatScope, RowsToOpen};
+use crate::console::{ConsoleAction, FormatScope, RowsToOpen};
 use crate::consoles::Consoles;
 use crate::csv_import::{CsvImportAction, CsvImportDialog};
 use crate::custom_actions::{self, Subject, SubjectKind, SubjectOn};
@@ -28,7 +28,7 @@ use crate::data_source_form::McpPasswordChange;
 use crate::definition_window::DefinitionWindow;
 use crate::delete_dialog::{DeleteChoice, DeleteConfirmation};
 use crate::explorer::{ExplorerAction, ExplorerOptions};
-use crate::export_dialog;
+use crate::export_dialog::{self, ExportChoices, ExportDialog, ExportDialogAction};
 use crate::export_sources_dialog::{ExportAction, ExportSourcesDialog};
 use crate::file_picker;
 use crate::history_window::{HistoryAction, HistoryWindow};
@@ -100,6 +100,9 @@ pub struct DbRoverApp {
     password_prompt: Option<PasswordPrompt>,
     host_key_prompt: Option<HostKeyPrompt>,
     export_sources_dialog: Option<ExportSourcesDialog>,
+    export_dialog: Option<ExportDialog>,
+    /// The export dialog's format and options, as last used.
+    export_choices: ExportChoices,
     import_dialog: Option<ImportDialog>,
     csv_import: Option<CsvImportDialog>,
     /// Ask where to export data sources to and which file to import. The platform's file
@@ -168,6 +171,10 @@ impl DbRoverApp {
         // window rather than keep the small default size.
         let maximize_window = saved_layout.is_none();
         let dock = saved_layout.unwrap_or_else(workspace::default_layout);
+        let export_choices = cc
+            .storage
+            .and_then(|storage| eframe::get_value(storage, export_dialog::STORAGE_KEY))
+            .unwrap_or_default();
         let remembered_files = cc
             .storage
             .and_then(|storage| eframe::get_value(storage, sql_files::STORAGE_KEY))
@@ -201,6 +208,8 @@ impl DbRoverApp {
             password_prompt: None,
             host_key_prompt: None,
             export_sources_dialog: None,
+            export_dialog: None,
+            export_choices,
             import_dialog: None,
             csv_import: None,
             pick_data_sources_export: Box::new(file_picker::pick_data_sources_export),
@@ -1362,13 +1371,6 @@ impl DbRoverApp {
         }
     }
 
-    fn export(&mut self, console: &ConsoleKey, rows: ExportedRows, spec: ExportSpec) {
-        if let Some(path) = (self.pick_export_path)(spec.format(), "rows") {
-            let command = self.consoles.export(console, rows, spec, path);
-            self.send_if(command);
-        }
-    }
-
     /// Runs a custom action on `subject`: a command action's program, or its SQL, filled in
     /// and opened in a new console, run unless the action says to edit it first. What the
     /// action can't fill is said in the status bar.
@@ -1616,6 +1618,32 @@ impl DbRoverApp {
         if let Some(console) = self.focused_console() {
             self.consoles
                 .format(&console, scope, &self.settings.format_options());
+        }
+    }
+
+    fn open_export_dialog(&mut self, console: ConsoleKey) {
+        if let Some(preview) = self.consoles.export_preview(&console) {
+            self.export_dialog = Some(ExportDialog::new(console, preview, &self.export_choices));
+        }
+    }
+
+    /// The export dialog; once it has a format, asks where to save and starts the export.
+    fn show_export_dialog(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.export_dialog else {
+            return;
+        };
+        match dialog.show(ctx) {
+            Some(ExportDialogAction::Export { rows, spec }) => {
+                self.export_choices = dialog.choices().clone();
+                let console = dialog.console().clone();
+                if let Some(path) = (self.pick_export_path)(spec.format(), "rows") {
+                    self.export_dialog = None;
+                    let command = self.consoles.export(&console, rows, spec, path);
+                    self.send_if(command);
+                }
+            }
+            Some(ExportDialogAction::Close) => self.export_dialog = None,
+            None => {}
         }
     }
 
@@ -1934,7 +1962,7 @@ impl eframe::App for DbRoverApp {
         for (console, action) in console_actions {
             match action {
                 ConsoleAction::ShowHistory => self.open_history(console),
-                ConsoleAction::Export(rows, spec) => self.export(&console, rows, spec),
+                ConsoleAction::OpenExportDialog => self.open_export_dialog(console),
                 ConsoleAction::OpenRows(rows) => self.open_rows(&console, &rows),
                 ConsoleAction::RunAction(action, cells) => {
                     self.run_action(&action, console.data_source, &Subject::Cells(cells));
@@ -1974,6 +2002,7 @@ impl eframe::App for DbRoverApp {
         self.show_password_prompt(&ctx);
         self.show_host_key_prompt(&ctx);
         self.show_export_sources_dialog(&ctx);
+        self.show_export_dialog(&ctx);
         self.show_import_dialog(&ctx);
         self.show_csv_import(&ctx);
         if self
@@ -2008,6 +2037,7 @@ impl eframe::App for DbRoverApp {
             sql_files::STORAGE_KEY,
             &self.sql_files.remembered(self.consoles.files()),
         );
+        eframe::set_value(storage, export_dialog::STORAGE_KEY, &self.export_choices);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
@@ -3729,6 +3759,50 @@ mod tests {
 
     /// Opens the `orders` table of a saved `shop` data source in a console, which runs
     /// `SELECT * FROM main.orders`, and waits for its rows.
+    /// Opens the grid's export dialog, picks `rows` ("Loaded rows" or "All rows") and, when
+    /// given, `format` from the format list, and leaves the dialog open for the options.
+    fn open_export_dialog(harness: &mut Harness<'_, DbRoverApp>, rows: &str, format: Option<&str>) {
+        harness.get_by_label("Export…").click();
+        // The modal sizes itself over its first frames: run until it is still before clicking.
+        harness.run();
+        harness.get_by_label_contains(rows).click();
+        harness.run();
+        if let Some(format) = format {
+            open_format_list(harness);
+            harness.get_by_label(format).click();
+            harness.run();
+        }
+    }
+
+    /// Opens the export dialog's format list: the list showing a format's name.
+    fn open_format_list(harness: &mut Harness<'_, DbRoverApp>) {
+        let names: Vec<&str> = dbrover_export::export_choices(
+            &dbrover_export::RowSource::untabled(dbrover_sql::Dialect::Sqlite),
+        )
+        .iter()
+        .map(|choice| choice.name)
+        .collect();
+        harness
+            .get_by(|node| {
+                node.role() == Role::ComboBox
+                    && node
+                        .value()
+                        .is_some_and(|value| names.contains(&value.as_str()))
+            })
+            .click();
+        harness.run();
+    }
+
+    /// Clicks the export dialog's Export…, the last on screen: the toolbar has one too.
+    fn confirm_export(harness: &mut Harness<'_, DbRoverApp>) {
+        harness
+            .get_all_by_label("Export…")
+            .last()
+            .expect("the dialog's Export…")
+            .click();
+        harness.run();
+    }
+
     fn open_orders(harness: &mut Harness<'_, DbRoverApp>, rows_shown: &str) {
         for expand in ["Expand shop", "Expand main", "Expand tables"] {
             step_until_visible(harness, expand);
@@ -3785,11 +3859,8 @@ mod tests {
         harness.get_by_label("Value of note");
         harness.get_by_value("{\n  \"gift\": true\n}");
 
-        harness.get_by_label("Export").click();
-        harness.run();
-        harness.get_by_label("Loaded rows ⏵").click();
-        harness.run();
-        harness.get_by_label("CSV…").click();
+        open_export_dialog(&mut harness, "Loaded rows", None);
+        confirm_export(&mut harness);
         step_until_visible(&mut harness, "Exported 3 rows");
         assert_eq!(
             std::fs::read_to_string(&export_path).unwrap(),

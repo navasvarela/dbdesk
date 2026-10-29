@@ -90,14 +90,21 @@ disabled; hover over it to see why. It is also disabled while changes are waitin
 submitted, since running the query again would lose them. The database sorts by its own rules,
 which may differ from the grid's: where `NULL`s go, for example.
 
-## Exporting every row
+## Exporting rows
 
-**Export** in the grid's toolbar has two submenus, each listing every format:
+**Export…** in the grid's toolbar opens the export dialog:
 
-- **Loaded rows**: the rows loaded so far, in the order and with the filter the grid shows them.
-- **All rows**: every row the query returns. The query runs again, sorted and filtered if the
-  database is doing that, and its rows are written to the file as they arrive, so even a very
-  large result never has to fit in memory.
+![The export dialog: rows, format, its options and a preview of the file](images/export-dialog.png)
+
+- **Rows**: **Loaded rows**, the rows loaded so far in the order and with the filter the grid
+  shows them, or **All rows**, every row the query returns. For all rows the query runs again,
+  sorted and filtered if the database is doing that, and its rows are written to the file as
+  they arrive, so even a very large result never has to fit in memory.
+- **Format**, and its **Options** (below).
+- **Preview**: the file's first lines, or for Excel and Parquet what each column becomes.
+
+**Export…** then asks where to save the file. The dialog starts from the format and options you
+used last, each format remembering its own.
 
 The formats:
 
@@ -137,10 +144,25 @@ code with a leading zero stays text, and a timestamp with an offset isn't moved 
 gathered in a temporary DuckDB database that spills to disk, so a large export doesn't fill the
 memory, and the file is compressed with zstd.
 
-The SQL formats need to know the table: they are offered for rows the grid can edit (selected
-from one table, with its whole primary key), and greyed out elsewhere, saying why. Their
-statements are in the data source's own SQL, with its quoting; moving rows to a different kind
-of database may need them edited.
+The SQL formats need to know the table. For rows the grid can edit (selected from one table,
+with its whole primary key) it is that table; elsewhere **SQL INSERT** asks for one, and
+**SQL UPDATE** is greyed out, saying why. Their statements are in the data source's own SQL, with
+its quoting; moving rows to a different kind of database may need them edited.
+
+The options:
+
+- **CSV**: the **separator** (comma, semicolon, tab, pipe, or any other character), **quotes**
+  where needed or around every value, the **header**, what `NULL` is written as (an empty field,
+  `NULL`, `\N` or anything else), the **line ending** (CRLF or LF) and a **byte order mark**.
+  **CSV for Excel** is CSV with the byte order mark on; for Excel in a language that separates
+  lists with semicolons, choose it and then the semicolon.
+- **Excel**: the header, keeping it in view, its filter buttons, and the sheet's name.
+- **TSV**, **Markdown** and **HTML**: what `NULL` is written as; TSV's header; HTML as a whole
+  page or the table alone, to paste into an email.
+- **SQL INSERT**: how many rows each statement inserts, from 1 to 1,000. For rows DbRover doesn't
+  know the table of (a join, or a table without a primary key), name the table, and its schema
+  if it isn't the default one.
+- **Parquet**: zstd or Snappy compression.
 
 Values are written as the database printed them, exactly as the grid shows them: dates and
 numbers are never reformatted. To change how they look, format them in the query (`to_char`,

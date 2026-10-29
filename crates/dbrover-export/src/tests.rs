@@ -269,3 +269,40 @@ fn leaves_the_chosen_file_alone_until_finished_and_when_abandoned() {
         "no partial file left"
     );
 }
+
+/// What a dialog remembers reads back as it was, a missing field takes its default, and an
+/// option no format can use is refused.
+#[test]
+fn saves_and_reads_back_every_formats_options() {
+    let mut options = ExportOptions {
+        csv: CsvOptions {
+            separator: FieldSeparator::SEMICOLON,
+            null_text: "\\N".to_owned(),
+            ..CsvOptions::for_excel()
+        },
+        ..ExportOptions::default()
+    };
+    options.xlsx.sheet_name = SheetName::try_from("Orders".to_owned()).unwrap();
+    options.insert.rows_per_statement = RowsPerInsert::clamped(250);
+    options.parquet.compression = ParquetCompression::Snappy;
+    options.html.document = HtmlDocument::Fragment;
+
+    let saved = serde_json::to_string(&options).unwrap();
+    assert_eq!(
+        serde_json::from_str::<ExportOptions>(&saved).unwrap(),
+        options
+    );
+
+    let partial: ExportOptions = serde_json::from_str(r#"{"csv": {"bom": true}}"#).unwrap();
+    assert_eq!(partial.csv, CsvOptions::for_excel());
+    assert_eq!(partial.xlsx, XlsxOptions::default());
+    for refused in [
+        r#"{"csv": {"separator": "\""}}"#,
+        r#"{"xlsx": {"sheet_name": "a/b"}}"#,
+    ] {
+        assert!(
+            serde_json::from_str::<ExportOptions>(refused).is_err(),
+            "{refused}"
+        );
+    }
+}

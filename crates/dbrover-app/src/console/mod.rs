@@ -34,6 +34,8 @@ use dbrover_engine::{
     WatchedFile,
 };
 use dbrover_export::{ExportColumn, ExportSpec, RowSource};
+
+use crate::export_dialog::{ExportPreview, PREVIEW_ROWS};
 use dbrover_sql::{
     Dialect, FormatOptions, ParameterValues, format_ranges, split_statements, statement_at,
     tokenize,
@@ -632,6 +634,27 @@ impl QueryConsole {
             purpose: RunPurpose::Run,
             parameters: self.parameters.clone(),
             origin: RunOrigin::Console,
+        })
+    }
+
+    /// What the export dialog shows of the selected statement's rows. `None` if it returns
+    /// none.
+    pub fn export_preview(&self) -> Option<ExportPreview> {
+        let run = self.run.as_ref()?;
+        let statement = run.statements.get(run.selected)?;
+        if statement.columns.is_empty() {
+            return None;
+        }
+        let shown = statement.grid.shown_rows(&statement.rows);
+        Some(ExportPreview {
+            columns: statement
+                .columns
+                .iter()
+                .map(|column| ExportColumn::new(column, self.dialect))
+                .collect(),
+            loaded: shown.len(),
+            sample: shown.into_iter().take(PREVIEW_ROWS).collect(),
+            source: statement.row_source(self.dialect),
         })
     }
 

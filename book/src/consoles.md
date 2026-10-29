@@ -265,9 +265,9 @@ doesn't, yet).
   work on the rows loaded so far, without asking the database again, and the grid says so.
   Tick **In the database** to sort and filter every row instead; see
   [Sorting and filtering in the database](table-data.md#sorting-and-filtering-in-the-database).
-- **Exporting.** **Export → Loaded rows** saves the rows as shown, sorted and filtered, to a
-  file you pick, as CSV, TSV, Markdown, JSON, JSON Lines or HTML. **Export → All rows** runs the
-  query again and writes every row; see [Exporting every row](table-data.md#exporting-every-row).
+- **Exporting.** **Export…** saves the rows as shown, sorted and filtered, or every row the
+  query returns, as CSV, Excel, TSV, Markdown, SQL, JSON, JSON Lines, Parquet or HTML; see
+  [Exporting rows](table-data.md#exporting-rows).
 
 ### Large results
 

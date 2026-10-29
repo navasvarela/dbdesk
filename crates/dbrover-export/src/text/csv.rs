@@ -4,6 +4,7 @@
 use std::io::{self, Write};
 
 use dbrover_core::Cell;
+use serde::{Deserialize, Serialize};
 
 use super::TextFormat;
 use crate::ExportColumn;
@@ -12,7 +13,8 @@ use crate::ExportColumn;
 /// read it as part of the first column's name, which is why it is off by default.
 const BYTE_ORDER_MARK: &str = "\u{feff}";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct CsvOptions {
     pub separator: FieldSeparator,
     pub quoting: Quoting,
@@ -51,7 +53,8 @@ impl CsvOptions {
 
 /// The character between fields. Any but a quote or a line break, which would make a file
 /// that can't be read back.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "char", into = "char")]
 pub struct FieldSeparator(char);
 
 impl FieldSeparator {
@@ -62,6 +65,12 @@ impl FieldSeparator {
 
     pub fn get(self) -> char {
         self.0
+    }
+}
+
+impl From<FieldSeparator> for char {
+    fn from(separator: FieldSeparator) -> Self {
+        separator.0
     }
 }
 
@@ -81,7 +90,8 @@ impl TryFrom<char> for FieldSeparator {
 pub struct InvalidSeparator(char);
 
 /// Which fields are put in quotes.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Quoting {
     /// Fields holding the separator, a quote or a line break, as RFC 4180 asks.
     #[default]
@@ -90,7 +100,8 @@ pub enum Quoting {
     Always,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum LineEnding {
     /// As RFC 4180 asks, and Windows programs expect.
     #[default]

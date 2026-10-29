@@ -9,9 +9,9 @@ use egui::{Id, Margin, ScrollArea, TextEdit, Ui, vec2};
 
 use super::highlight::Marks;
 use super::{
-    Candidate, Disk, ExportedRows, FormatScope, Found, LintOptions, QueryConsole,
-    RecentCompletions, RowsToOpen, RunScope, RunState, SubmittedRun, TreeCatalog, cell_viewer,
-    completion_popup, find_bar, highlight, results,
+    Candidate, Disk, FormatScope, Found, LintOptions, QueryConsole, RecentCompletions, RowsToOpen,
+    RunScope, RunState, SubmittedRun, TreeCatalog, cell_viewer, completion_popup, find_bar,
+    highlight, results,
 };
 use crate::icons::{self, Role};
 use crate::keymap::{Action, Keymap};
@@ -22,7 +22,6 @@ use dbrover_core::{SafetyLevel, TransactionStatus};
 use dbrover_engine::{
     RunId, RunOrigin, RunOutcome, RunPurpose, SessionState, TransactionEnd, TransactionMode,
 };
-use dbrover_export::ExportSpec;
 use dbrover_sql::{ProblemSource, Severity};
 use dbrover_store::{ActionId, CustomAction, Snippet};
 
@@ -63,7 +62,8 @@ pub enum ConsoleAction {
     Cancel(RunId),
     EndTransaction(TransactionEnd),
     /// Saves the rows the grid has loaded, or every row; the app asks where.
-    Export(ExportedRows, ExportSpec),
+    /// Opens the export dialog for the selected statement's rows.
+    OpenExportDialog,
     /// Opens the data source's query history, to insert a past statement here.
     ShowHistory,
     /// Loads these catalog levels into the explorer's cache, for completion.

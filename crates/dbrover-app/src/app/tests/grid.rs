@@ -206,11 +206,8 @@ fn exports_every_row_not_only_those_loaded() {
     harness.get_by_label("id ▲").click();
     step_until_visible(&mut harness, "customer 600");
 
-    harness.get_by_label("Export").click();
-    harness.run();
-    harness.get_by_label("All rows ⏵").click();
-    harness.run();
-    harness.get_by_label("CSV…").click();
+    open_export_dialog(&mut harness, "All rows", None);
+    confirm_export(&mut harness);
     step_until_visible(&mut harness, "Exported 600 rows");
 
     let text = std::fs::read_to_string(&export_path).unwrap();
@@ -248,57 +245,48 @@ fn exports_the_loaded_rows_in_other_formats() {
 
     let expected = [
         (
-            "CSV for Excel…",
+            "CSV for Excel",
             "\u{feff}id,customer\r\n1,Zoë | Ltd\r\n2,\r\n",
         ),
         (
-            "Markdown…",
+            "Markdown",
             "| id | customer |\n| --- | --- |\n| 1 | Zoë \\| Ltd |\n| 2 | NULL |\n",
         ),
         (
-            "SQL INSERT…",
+            "SQL INSERT",
             "INSERT INTO \"main\".\"orders\" (\"id\", \"customer\") VALUES (1, 'Zoë | Ltd');\n\
              INSERT INTO \"main\".\"orders\" (\"id\", \"customer\") VALUES (2, NULL);\n",
         ),
         (
-            "SQL UPDATE…",
+            "SQL UPDATE",
             "UPDATE \"main\".\"orders\" SET \"customer\" = 'Zoë | Ltd' WHERE \"id\" = '1';\n\
              UPDATE \"main\".\"orders\" SET \"customer\" = NULL WHERE \"id\" = '2';\n",
         ),
     ];
-    for (index, (choice, contents)) in expected.into_iter().enumerate() {
-        harness.get_by_label("Export").click();
-        harness.run();
-        harness.get_by_label("Loaded rows ⏵").click();
-        harness.run();
-        harness.get_by_label(choice).click();
+    for (index, (format, contents)) in expected.into_iter().enumerate() {
+        open_export_dialog(&mut harness, "Loaded rows", Some(format));
+        confirm_export(&mut harness);
         step_until_visible(&mut harness, &format!("orders{index}."));
         let path = picked.lock().unwrap()[index].clone();
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             contents,
-            "{choice}"
+            "{format}"
         );
     }
-    harness.get_by_label("Export").click();
-    harness.run();
-    harness.get_by_label("Loaded rows ⏵").click();
-    harness.run();
-    harness.get_by_label("Excel…").click();
-    step_until_visible(&mut harness, "orders4.xlsx");
-    let workbook = std::fs::read(&picked.lock().unwrap()[4]).unwrap();
-    assert!(workbook.starts_with(b"PK"), "an .xlsx is a zip file");
-    harness.get_by_label("Export").click();
-    harness.run();
-    harness.get_by_label("Loaded rows ⏵").click();
-    harness.run();
-    harness.get_by_label("Parquet…").click();
-    step_until_visible(&mut harness, "orders5.parquet");
-    let parquet = std::fs::read(&picked.lock().unwrap()[5]).unwrap();
-    assert!(
-        parquet.starts_with(b"PAR1"),
-        "a Parquet file starts with its magic number"
-    );
+    for (index, (format, magic)) in [("Excel", &b"PK"[..]), ("Parquet", &b"PAR1"[..])]
+        .into_iter()
+        .enumerate()
+    {
+        open_export_dialog(&mut harness, "Loaded rows", Some(format));
+        confirm_export(&mut harness);
+        step_until_visible(&mut harness, &format!("orders{}.", index + 4));
+        let file = std::fs::read(&picked.lock().unwrap()[index + 4]).unwrap();
+        assert!(
+            file.starts_with(magic),
+            "{format} starts with its magic number"
+        );
+    }
     let extensions: Vec<String> = picked
         .lock()
         .unwrap()
@@ -308,17 +296,20 @@ fn exports_the_loaded_rows_in_other_formats() {
     assert_eq!(extensions, ["csv", "md", "sql", "sql", "xlsx", "parquet"]);
 }
 
-/// The SQL formats need to know the table: for rows from a join they are greyed out.
+/// For rows of no one table, UPDATE is greyed out and INSERT asks for the table's name.
 #[test]
-fn greys_out_the_sql_formats_for_rows_of_no_one_table() {
+fn asks_which_table_to_insert_rows_of_no_one_table_into() {
     let dir = tempfile::tempdir().unwrap();
     save_shop(
         dir.path(),
         "CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT);
          INSERT INTO orders VALUES (1, 'a');",
     );
+    let export_path = dir.path().join("copy.sql");
     let (_layer, feed) = log_console::pipeline();
     let mut harness = start_app(dir.path(), feed);
+    let picked = export_path.clone();
+    harness.state_mut().pick_export_path = Box::new(move |_, _| Some(picked.clone()));
     open_console(&mut harness);
     harness
         .get_by_role(Role::MultilineTextInput)
@@ -327,17 +318,77 @@ fn greys_out_the_sql_formats_for_rows_of_no_one_table() {
     harness.get_by_label("Run").click();
     step_until_visible(&mut harness, "Read-only");
 
-    harness.get_by_label("Export").click();
+    open_export_dialog(&mut harness, "Loaded rows", None);
+    open_format_list(&mut harness);
+    assert!(
+        harness
+            .get_by_label("SQL UPDATE")
+            .accesskit_node()
+            .is_disabled()
+    );
+    harness.get_by_label("SQL INSERT").click();
     harness.run();
-    harness.get_by_label("Loaded rows ⏵").click();
+    harness.get_by_label_contains("Name the table to insert into");
+    let export = harness.get_all_by_label("Export…").last().unwrap();
+    assert!(export.accesskit_node().is_disabled());
+
+    let table = harness.get_by_role_and_label(Role::TextInput, "Table");
+    table.click();
     harness.run();
-    for format in ["SQL INSERT…", "SQL UPDATE…"] {
-        assert!(
-            harness.get_by_label(format).accesskit_node().is_disabled(),
-            "{format}"
-        );
+    harness
+        .get_by_role_and_label(Role::TextInput, "Table")
+        .type_text("archive");
+    harness.run();
+    confirm_export(&mut harness);
+    step_until_visible(&mut harness, "copy.sql");
+    assert_eq!(
+        std::fs::read_to_string(&export_path).unwrap(),
+        "INSERT INTO \"archive\" (\"id\", \"customer\") VALUES (1, 'a');\n"
+    );
+}
+
+/// The dialog starts from the format and options used last, CSV for Excel shown by name.
+#[test]
+fn remembers_the_format_and_options_used_last() {
+    let dir = tempfile::tempdir().unwrap();
+    save_shop(
+        dir.path(),
+        "CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT);
+         INSERT INTO orders VALUES (1, 'a;b');",
+    );
+    let export_path = dir.path().join("orders.csv");
+    let (_layer, feed) = log_console::pipeline();
+    let mut harness = start_app(dir.path(), feed);
+    let picked = export_path.clone();
+    harness.state_mut().pick_export_path = Box::new(move |_, _| Some(picked.clone()));
+    open_orders(&mut harness, "1 row");
+
+    open_export_dialog(&mut harness, "Loaded rows", Some("CSV for Excel"));
+    harness
+        .get_by(|node| node.role() == Role::ComboBox && node.value().as_deref() == Some("Comma"))
+        .click();
+    harness.run();
+    harness.get_by_label("Semicolon").click();
+    harness.run();
+    harness.get_by_label("Header with the column names").click();
+    harness.run();
+    confirm_export(&mut harness);
+    step_until_visible(&mut harness, "Exported 1 rows");
+    assert_eq!(
+        std::fs::read_to_string(&export_path).unwrap(),
+        "\u{feff}1;\"a;b\"\r\n"
+    );
+
+    open_export_dialog(&mut harness, "Loaded rows", None);
+    for shown in ["CSV", "Semicolon"] {
+        harness
+            .get_by(|node| node.role() == Role::ComboBox && node.value().as_deref() == Some(shown));
     }
-    assert!(!harness.get_by_label("CSV…").accesskit_node().is_disabled());
+    assert_eq!(
+        harness.state().export_choices.format,
+        dbrover_export::ExportFormat::Csv
+    );
+    assert!(!harness.state().export_choices.options.csv.header);
 }
 
 /// Saves `shop` with an orders table at `safety`, starts the app, and opens Import CSV… on

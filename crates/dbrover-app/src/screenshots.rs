@@ -449,6 +449,13 @@ const SCENES: &[Scene] = &[
         needs: &[],
     },
     Scene {
+        name: "export-dialog",
+        data_sources: FixtureSources::Shop,
+        play: export_dialog,
+        keeps_pointer: false,
+        needs: &[],
+    },
+    Scene {
         name: "csv-import",
         data_sources: FixtureSources::Shop,
         play: csv_import,
@@ -1467,6 +1474,19 @@ fn follow_key(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
 }
 
 /// Import CSV… on customers: the columns matched by name, the first rows, and a warning.
+fn export_dialog(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
+    open_console(harness, "shop", "SELECT * FROM customers;");
+    run_all(harness, "Add row");
+    harness.get_by_label("Export…").click();
+    harness.run_ok();
+    harness
+        .get_by(|node| node.role() == Role::ComboBox && node.value().as_deref() == Some("CSV"))
+        .click();
+    harness.run_ok();
+    harness.get_by_label("CSV for Excel").click();
+    harness.run_ok();
+}
+
 fn csv_import(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture) {
     let file = fixture.dir.path().join("new-customers.csv");
     std::fs::write(
