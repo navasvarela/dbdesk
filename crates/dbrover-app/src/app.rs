@@ -3793,14 +3793,16 @@ mod tests {
         harness.run();
     }
 
-    /// Clicks the export dialog's Export…, the last on screen: the toolbar has one too.
+    /// Clicks the export dialog's Export…, the last on screen: the toolbar has one too. One
+    /// step, not `run`: an export of every row keeps the app repainting with its progress, more
+    /// frames than `run` allows on a slow machine; callers wait for its outcome.
     fn confirm_export(harness: &mut Harness<'_, DbRoverApp>) {
         harness
             .get_all_by_label("Export…")
             .last()
             .expect("the dialog's Export…")
             .click();
-        harness.run();
+        harness.step();
     }
 
     fn open_orders(harness: &mut Harness<'_, DbRoverApp>, rows_shown: &str) {
