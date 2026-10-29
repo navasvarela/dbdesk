@@ -1145,6 +1145,116 @@ The gaps that keep DbRover from being an everyday tool. The full plan is in
   templates, **W8d** programs, **W8e** manual. Designed in
   [Exports and your own formats](exports.md#w8--your-own-formats).
 
+Also planned, from the gaps in [the comparison](comparison.md#gaps-worth-closing-soon), in
+this order. Not scheduled yet; each is sized there (**S** a pull request or two, **M** a stack of
+three to five, **L** a track of its own).
+
+- **W9 — A password command (S):** a data source can get its password by running a command
+  instead of from the keychain, so short-lived tokens work today: `aws rds
+  generate-db-auth-token`, `gcloud sql generate-login-token`, `az account get-access-token`,
+  `op read`, `vault kv get`.
+  - The data source dialog gets **Password from a command**, with the command and its
+    arguments as a list (no shell), and `{host}`, `{port}`, `{user}` and `{database}` filled in
+    from the data source.
+  - It runs on H2's command machinery: the first run shows the command in full and asks, trust
+    is recorded by its exact definition in `trusted_commands.toml`, it has a timeout and its
+    output is capped. Its standard output, trimmed, is the password; it is never written to
+    disk, the log or the history.
+  - It runs again on every connection, so a token that expires after fifteen minutes is fresh
+    each time; reconnecting (W3) gets a new one.
+  - C0's built-in cloud sign-in stays the long-term answer; this covers the time until then and
+    every secret store DbRover will never know.
+
+  **Exit:** a data source whose password command is `["printf", "dbrover"]` connects to the
+  PostgreSQL test server after one trust prompt and without it the second time; a command that
+  fails shows its exit code and standard error instead of connecting.
+- **W10 — A visual explain plan (M):** the plan of the statement at the cursor as a tree of
+  steps, each with its estimated cost and rows and, after **Explain analyse**, the actual rows
+  and time, the costliest steps highlighted.
+  - PostgreSQL first, from `EXPLAIN (FORMAT JSON)`; then MySQL's `EXPLAIN FORMAT=JSON` and SQL
+    Server's XML showplan. Each format is parsed into one plan type, which the view draws.
+  - **Explain analyse** runs the statement, so on a careful data source it asks first, and on a
+    read-only one it runs inside the read-only transaction.
+  - The text plan stays one click away, and both can be copied.
+
+  **Exit:** on the PostgreSQL test server, ⌥⌘E on a join of `orders` and `customers` shows a
+  tree whose costliest step is highlighted, and **Explain analyse** adds the actual rows.
+- **W11 — Read-only on every engine (S–M):** the read-only level (W2) and the MCP server use
+  each engine's own read-only mode, so the database refuses a write on all seven engines, not only
+  on PostgreSQL, MySQL, MariaDB and SQLite.
+  - ClickHouse: every statement is sent with the `readonly = 1` setting.
+  - DuckDB: the file is opened with `access_mode = 'READ_ONLY'`. DuckDB refuses a second
+    configuration of a file already open in the same process, so a read-only DuckDB session
+    needs its own process or the file not open elsewhere; settle this first.
+  - SQL Server has no read-only transaction. Its data sources are served to MCP clients only
+    through an MCP login, whose grants are what keeps them read-only, and the dialog says so.
+
+  **Exit:** a read-only ClickHouse and a read-only DuckDB data source refuse an `INSERT` hidden
+  in a function the statement check can't see, with the database's own error; an MCP client
+  can query a SQL Server data source that has an MCP login.
+- **W12 — Charts from results (M):** a bar, line or scatter chart of a result's columns, in a
+  tab beside the grid, from the rows already fetched, exported as PNG or SVG like ER1's
+  diagrams.
+
+  **Exit:** a `GROUP BY` result of months and totals charts as bars and lines, and exports as an
+  SVG a browser shows.
+- **W13 — Schema compare (L, later):** two schemas, on one data source or two of the same
+  engine, side by side with what differs (tables, columns, keys, indexes, views), and the script
+  that turns one into the other, opened in a console to read and run by hand. It starts with
+  PostgreSQL and reuses the object helpers' DDL (E-track). It was a non-goal in
+  [Vision](vision.md) until 2026-10-29, and comes after the others here and after ER1.
+
+  **Exit:** comparing two PostgreSQL schemas that differ by a column and an index lists both
+  differences, and running the script on one makes the comparison come back empty.
+
+## Diagrams track
+
+Pictures of a schema. Every other tool in [the comparison](comparison.md) has ER diagrams, and
+they show what a database holds better than any list. Planned, not a top priority: this comes
+after the near-term work above, W9 to W12 included. ER diagrams were a non-goal in
+[Vision](vision.md) until 2026-10-29.
+
+- **ER1 — Read-only ER diagrams (planned, not scheduled):** a diagram of the tables you pick,
+  or of a whole schema, with their columns and the foreign keys between them. It shows the
+  schema and changes nothing in it: editing from the diagram is out of scope.
+  - **Opening one:** right-click a schema → **Diagram…** picks its tables, all of them by
+    default, with **Add the tables these reference** to grow the choice by one step of foreign
+    keys. On a table, **Diagram with related tables** starts from it and the tables its keys
+    join. The explorer selects one node at a time, so choosing tables happens in this dialog,
+    not by multi-selecting in the tree.
+  - **What loads:** each table's description, through the drivers' `describe_table`, which
+    already returns columns, the primary key and foreign keys both ways (W5's
+    `foreign_keys` and `referenced_by`). A command describes a list of tables, a few at a
+    time, on the explorer's connection, so a schema of a hundred tables doesn't open a
+    hundred connections. ClickHouse has no foreign keys, so the menus aren't offered there.
+  - **Layout:** automatic and layered (Sugiyama's method): referenced tables in the first
+    layer, the tables pointing at them in the next, cycles broken at a self-reference or the
+    last key found, and crossings reduced by sweeping the layers in barycentre order. It is a
+    pure function from tables and keys to boxes and lines, tested without a window.
+  - **The view:** a dock tab with egui 0.36's `Scene` for pan and zoom. Tables are boxes with
+    their columns, the primary key and foreign-key columns marked, coloured like the
+    explorer's icons; each key is a line from its columns to the table it references. Drag a
+    table to move it; **Arrange** lays everything out again.
+  - **Saved per project:** the tables in a diagram and where each one sits go in a file in the
+    settings folder, `diagrams/<project>/<name>.toml`, so a diagram reopens as it was left and
+    can be kept in Git with the rest. A table dropped from the database is shown as missing
+    rather than removed from the file.
+  - **Export:** SVG, written from the same boxes and lines, and PNG at 1×, 2× or 3×, drawn from
+    that SVG with `resvg`, which `egui_extras` already brings into the build.
+  - **Manual:** a chapter on diagrams, a demo note here, and a clip for the site.
+
+  Open questions:
+  - Where a data source outside any project keeps its diagrams: under `diagrams/_none/`, or
+    only once it joins a project.
+  - How big a diagram may get before the dialog asks to narrow it; 150 tables is a first
+    guess, to be measured.
+
+  **Exit:** on the PostgreSQL test server, right-click `public` → **Diagram…**, pick `orders`
+  and tick **Add the tables these reference**: `orders`, `customers` and `products` appear,
+  laid out with their keys drawn. Move `products`, quit, start again and reopen the diagram:
+  `products` is where it was left. **Export › SVG…** writes a file a browser shows with the
+  same boxes and lines.
+
 ## Design and documentation track
 
 Runs alongside the feature milestones rather than after them: each item is usable on its own.
