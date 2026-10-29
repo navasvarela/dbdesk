@@ -6,7 +6,7 @@ use std::time::Duration;
 use dbrover_core::{CommandTemplate, Row, SelectedCells};
 use serde::{Deserialize, Serialize};
 
-use crate::export::{RowObject, unique_keys, write_csv_line};
+use dbrover_export::{ExportColumn, ExportFormat, ExportSpec, TsvOptions, render};
 
 /// Long enough for a program that reads a few thousand rows, short enough that one stuck on a
 /// prompt nobody sees doesn't sit there all day.
@@ -50,10 +50,20 @@ impl StdinFormat {
 
     /// The selected columns of the selected rows, in this format. Empty for [`Self::None`].
     pub fn encode(self, cells: &SelectedCells) -> String {
-        let columns: Vec<String> = cells
+        let spec = match self {
+            Self::Json => ExportSpec::Json,
+            Self::Csv => ExportFormat::Csv.default_spec(),
+            // `NULL` as an empty field, as in CSV, rather than as the grid shows it.
+            Self::Tsv => ExportSpec::Tsv(TsvOptions {
+                header: true,
+                null_text: String::new(),
+            }),
+            Self::None => return String::new(),
+        };
+        let columns: Vec<ExportColumn> = cells
             .selected
             .iter()
-            .filter_map(|&index| cells.columns.get(index).cloned())
+            .filter_map(|&index| cells.columns.get(index).map(ExportColumn::text))
             .collect();
         let rows: Vec<Row> = cells
             .rows
@@ -66,12 +76,7 @@ impl StdinFormat {
                     .collect()
             })
             .collect();
-        match self {
-            Self::Json => json(&columns, &rows),
-            Self::Csv => csv(&columns, &rows),
-            Self::Tsv => tsv(&columns, &rows),
-            Self::None => String::new(),
-        }
+        render(&spec, &columns, &rows)
     }
 }
 
@@ -98,54 +103,6 @@ impl CommandOutput {
             Self::Log => "log",
             Self::None => "none",
         }
-    }
-}
-
-fn json(columns: &[String], rows: &[Row]) -> String {
-    let keys = unique_keys(columns);
-    let objects: Vec<RowObject<'_>> = rows
-        .iter()
-        .map(|row| RowObject { keys: &keys, row })
-        .collect();
-    // Serializing strings, nulls and maps of them can't fail.
-    let mut text = serde_json::to_string_pretty(&objects).unwrap_or_default();
-    text.push('\n');
-    text
-}
-
-fn csv(columns: &[String], rows: &[Row]) -> String {
-    let mut out = Vec::new();
-    let header = columns.iter().map(String::as_str);
-    // Writing to a `Vec` can't fail.
-    let _ = write_csv_line(&mut out, header);
-    for row in rows {
-        let _ = write_csv_line(
-            &mut out,
-            row.iter().map(|cell| cell.as_deref().unwrap_or_default()),
-        );
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-fn tsv(columns: &[String], rows: &[Row]) -> String {
-    let line = |fields: Vec<String>| format!("{}\n", fields.join("\t"));
-    let mut text = line(columns.iter().map(|name| tsv_field(Some(name))).collect());
-    for row in rows {
-        text.push_str(&line(
-            row.iter().map(|cell| tsv_field(cell.as_deref())).collect(),
-        ));
-    }
-    text
-}
-
-/// A field with a tab, a line break or a quote is quoted, with quotes doubled, the way
-/// spreadsheets read TSV back. `NULL` is an empty field, as in CSV.
-fn tsv_field(value: Option<&str>) -> String {
-    let value = value.unwrap_or_default();
-    if value.contains(['\t', '\n', '\r', '"']) {
-        format!("\"{}\"", value.replace('"', "\"\""))
-    } else {
-        value.to_owned()
     }
 }
 

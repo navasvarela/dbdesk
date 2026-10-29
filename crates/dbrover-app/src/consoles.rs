@@ -9,8 +9,9 @@ use dbrover_core::{CatalogPath, DataSource, DataSourceId, SafetyLevel};
 use dbrover_engine::{
     Command, ConsoleId, Event, RunId, RunOrigin, RunPurpose, TransactionMode, WatchedFile,
 };
+use dbrover_export::ExportSpec;
 use dbrover_sql::{Dialect, FormatOptions, ParameterValues};
-use dbrover_store::{ConsoleKey, ConsoleName, ExportFormat, SqlFileContents};
+use dbrover_store::{ConsoleKey, ConsoleName, SqlFileContents};
 
 use crate::console::{
     ConsoleAction, ExportedRows, FormatScope, QueryConsole, RecentCompletions, RowsToOpen,
@@ -344,15 +345,15 @@ impl Consoles {
         &mut self,
         key: &ConsoleKey,
         rows: ExportedRows,
-        format: ExportFormat,
+        spec: ExportSpec,
         path: PathBuf,
     ) -> Option<Command> {
         match rows {
-            ExportedRows::Loaded => self.open.get(key)?.export(format, path),
+            ExportedRows::Loaded => self.open.get(key)?.export(spec, path),
             ExportedRows::All => {
                 let console = self.open.get_mut(key)?;
                 self.next_run += 1;
-                console.export_all(RunId(self.next_run), format, path)
+                console.export_all(RunId(self.next_run), spec, path)
             }
         }
     }

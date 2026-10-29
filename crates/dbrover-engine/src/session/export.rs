@@ -4,7 +4,8 @@
 use std::time::Instant;
 
 use dbrover_core::{CancelHandle, DriverError, ResultCursor, Row, describe_error};
-use dbrover_store::{ExportWriter, HistoryEntry, HistoryOutcome, HistorySource};
+use dbrover_export::{ExportColumn, ExportWriter};
+use dbrover_store::{HistoryEntry, HistoryOutcome, HistorySource};
 use jiff::Timestamp;
 
 use super::guard::{self, ReadOnly};
@@ -114,14 +115,15 @@ async fn export_rows(
         Ok(cursor) => cursor,
         Err(error) => return Ok(Err(stopped(worker, export, &error))),
     };
-    let columns: Vec<String> = cursor
+    let dialect = worker.context.dialect();
+    let columns: Vec<ExportColumn> = cursor
         .columns()
         .iter()
-        .map(|column| column.name.clone())
+        .map(|column| ExportColumn::new(column, dialect))
         .collect();
-    let (path, format) = (export.path.clone(), export.format);
+    let (path, spec) = (export.path.clone(), export.spec.clone());
     let created = blocking(move || {
-        ExportWriter::create(&path, format, &columns).map_err(|e| describe_error(&e))
+        ExportWriter::create(&path, &spec, &columns).map_err(|e| describe_error(&e))
     })
     .await;
     let mut writer = match created {

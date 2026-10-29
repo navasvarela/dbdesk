@@ -423,7 +423,7 @@ pub(super) fn export_all(
     engine: &mut TestEngine,
     run: u64,
     sql: &str,
-    target: (&std::path::Path, dbrover_store::ExportFormat),
+    target: (&std::path::Path, dbrover_export::ExportFormat),
 ) -> (Vec<usize>, Result<usize, String>) {
     let (path, format) = target;
     engine.send(Command::ExportAllRows {
@@ -433,7 +433,7 @@ pub(super) fn export_all(
             sql: sql.to_owned(),
             parameters: dbrover_sql::ParameterValues::default(),
             path: path.to_owned(),
-            format,
+            spec: format.default_spec(),
         },
     });
     let mut progress = Vec::new();
@@ -482,7 +482,7 @@ fn exports_every_row_on_every_engine() {
             &mut engine,
             2,
             &sql,
-            (&csv, dbrover_store::ExportFormat::Csv),
+            (&csv, dbrover_export::ExportFormat::Csv),
         );
         assert_eq!(result, Ok(1200), "{}", source.name);
         assert_eq!(progress, [500, 1000, 1200], "{}", source.name);
@@ -501,7 +501,7 @@ fn exports_every_row_on_every_engine() {
             &mut engine,
             3,
             &sql,
-            (&json, dbrover_store::ExportFormat::Json),
+            (&json, dbrover_export::ExportFormat::Json),
         );
         assert_eq!(result, Ok(1200), "{}", source.name);
         let parsed: serde_json::Value =
@@ -531,7 +531,7 @@ fn cancels_fails_and_refuses_exports_without_leaving_a_file() {
                 .to_owned(),
             parameters: dbrover_sql::ParameterValues::default(),
             path: path.clone(),
-            format: dbrover_store::ExportFormat::Csv,
+            spec: dbrover_export::ExportFormat::Csv.default_spec(),
         },
     });
     match next_run_event(&mut engine) {
@@ -556,7 +556,7 @@ fn cancels_fails_and_refuses_exports_without_leaving_a_file() {
         &mut engine,
         3,
         "SELECT * FROM no_such_table",
-        (&path, dbrover_store::ExportFormat::Csv),
+        (&path, dbrover_export::ExportFormat::Csv),
     );
     assert!(failed.unwrap_err().contains("no_such_table"));
     let files: Vec<_> = std::fs::read_dir(dir.path())
@@ -590,7 +590,7 @@ fn cancels_fails_and_refuses_exports_without_leaving_a_file() {
         &mut engine,
         2,
         "DELETE FROM t RETURNING id",
-        (&path, dbrover_store::ExportFormat::Csv),
+        (&path, dbrover_export::ExportFormat::Csv),
     );
     assert!(refused.unwrap_err().contains("read-only"));
     engine.shut_down();

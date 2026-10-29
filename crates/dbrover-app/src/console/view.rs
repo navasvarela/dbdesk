@@ -22,8 +22,9 @@ use dbrover_core::{SafetyLevel, TransactionStatus};
 use dbrover_engine::{
     RunId, RunOrigin, RunOutcome, RunPurpose, SessionState, TransactionEnd, TransactionMode,
 };
+use dbrover_export::ExportSpec;
 use dbrover_sql::{ProblemSource, Severity};
-use dbrover_store::{ActionId, CustomAction, ExportFormat, Snippet};
+use dbrover_store::{ActionId, CustomAction, Snippet};
 
 use crate::custom_actions::GridCells;
 
@@ -62,7 +63,7 @@ pub enum ConsoleAction {
     Cancel(RunId),
     EndTransaction(TransactionEnd),
     /// Saves the rows the grid has loaded, or every row; the app asks where.
-    Export(ExportedRows, ExportFormat),
+    Export(ExportedRows, ExportSpec),
     /// Opens the data source's query history, to insert a past statement here.
     ShowHistory,
     /// Loads these catalog levels into the explorer's cache, for completion.

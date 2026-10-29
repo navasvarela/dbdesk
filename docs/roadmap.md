@@ -1101,10 +1101,10 @@ The gaps that keep DbRover from being an everyday tool. The full plan is in
   (*1 of 2*), with **Aa**, **W** and **.\***; ⌥⌘F adds the replace field, and **Replace all**
   replaces every match in one undo step. Covered by the tests above; the engine tests ran on
   every server of the compose file.
-- **W7 — Exports:** planned (2026-10-29). Rows out in the formats people use, from everywhere
+- **W7 — Exports:** in progress (2026-10-29). Rows out in the formats people use, from everywhere
   rows are, designed in [Exports and your own formats](exports.md). In layers, one PR each:
   - **W7a — Plan:** this entry and the design.
-  - **W7b — Text formats:** a `dbrover-export` crate with one `TextFormat` trait (a header, each
+  - **W7b — Text formats** (built): a `dbrover-export` crate with one `TextFormat` trait (a header, each
     row, a footer, to any writer) for files, the clipboard and MCP alike; CSV with options
     (separator, quoting, header, `NULL` text, line ending, a BOM) and a **CSV for Excel** preset,
     TSV, Markdown, JSON, JSON Lines and HTML; each column's kind from its declared type.

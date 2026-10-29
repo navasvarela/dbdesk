@@ -92,13 +92,28 @@ which may differ from the grid's: where `NULL`s go, for example.
 
 ## Exporting every row
 
-**Export** in the grid's toolbar offers:
+**Export** in the grid's toolbar has two submenus, each listing every format:
 
-- **Loaded rows as CSV…** and **as JSON…**: the rows loaded so far, in the order and with the
-  filter the grid shows them.
-- **All rows as CSV…** and **as JSON…**: every row the query returns. The query runs again,
-  sorted and filtered if the database is doing that, and its rows are written to the file as
-  they arrive, so even a very large result never has to fit in memory.
+- **Loaded rows**: the rows loaded so far, in the order and with the filter the grid shows them.
+- **All rows**: every row the query returns. The query runs again, sorted and filtered if the
+  database is doing that, and its rows are written to the file as they arrive, so even a very
+  large result never has to fit in memory.
+
+The formats:
+
+| Format | What it writes |
+| --- | --- |
+| **CSV** | Comma-separated values as RFC 4180 describes them: a header line, fields quoted only where they need it, `NULL` as an empty field, lines ending in CRLF, UTF-8. |
+| **CSV for Excel** | The same, starting with a byte order mark: without one, Excel reads a UTF-8 file's accents and other non-English letters wrongly. Excel set to a language whose list separator is a semicolon (much of Europe) puts each line in one column; import it with **Data › From Text/CSV** instead. |
+| **TSV** | Tab-separated, as ⌘C copies cells: a header line, `NULL` written out, fields with tabs, line breaks or quotes quoted the way spreadsheets read them. |
+| **Markdown** | A table for a pull request, an issue or a chat: pipes escaped, line breaks as `<br>`, `NULL` written out. |
+| **JSON** | A list of objects, one a row, keyed by column name. Values are text, and `NULL` is `null`. A repeated column name gets `_2`, `_3`. |
+| **JSON Lines** | The same objects, one a line, as data pipelines and `jq -c` read them. |
+| **HTML** | A web page with the rows as a table, every value escaped, that prints with its header on each page. |
+
+Values are written as the database printed them, exactly as the grid shows them: dates and
+numbers are never reformatted. To change how they look, format them in the query (`to_char`,
+`FORMAT`, `strftime`).
 
 While every row is being exported, the toolbar counts them (*Exporting… 125000 rows*), and
 **Cancel export** stops it. A cancelled or failed export leaves no file behind, and never
@@ -108,8 +123,7 @@ replaces a file that was there: the rows go to a file named like the one you cho
 Running the query again needs the console's connection, so a result that was still loading
 more rows stops loading (its summary says `rest discarded`); the rows already in the grid stay.
 The export runs in the console's open transaction, if there is one, and sees its temporary
-tables. CSV files have a header line and leave `NULL` empty; JSON files are a list of objects,
-with values as text.
+tables.
 
 ## Importing a CSV file
 

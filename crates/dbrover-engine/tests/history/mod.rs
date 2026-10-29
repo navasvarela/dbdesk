@@ -3,9 +3,8 @@
 
 use dbrover_core::TableName;
 use dbrover_engine::RowsImport;
-use dbrover_store::{
-    ExportFormat, HistoryEntry, HistorySource, NamedCell, RowChange, RowChangeKind, Separator,
-};
+use dbrover_export::ExportFormat;
+use dbrover_store::{HistoryEntry, HistorySource, NamedCell, RowChange, RowChangeKind, Separator};
 
 use super::*;
 

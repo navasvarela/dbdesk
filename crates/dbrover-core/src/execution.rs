@@ -22,6 +22,32 @@ pub type Cell = Option<String>;
 
 pub type Row = Vec<Cell>;
 
+/// What kind of value a column holds, from its declared type: what an export with types
+/// (`.xlsx`, Parquet, a SQL literal) makes of its text. `dbrover_sql::Dialect::value_kind`
+/// maps each database's type names.
+///
+/// Values stay text either way (ADR 0004); a kind says what the text should parse as, and a
+/// value that doesn't parse is written as text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ValueKind {
+    Integer,
+    /// An exact number with a fractional part: `DECIMAL`, `NUMERIC`, `MONEY`.
+    Decimal,
+    /// A floating-point number: `REAL`, `DOUBLE PRECISION`, `FLOAT`.
+    Float,
+    Boolean,
+    Date,
+    /// A date and time with no time zone.
+    Timestamp,
+    /// A date and time with a time zone or offset, which has no equivalent in a spreadsheet.
+    TimestampWithZone,
+    /// Text, or a type that none of the other kinds describes (JSON, UUID, intervals, arrays).
+    Text,
+    /// The driver reported no type, as PostgreSQL's simple query protocol doesn't: formats
+    /// with types look at each value instead.
+    Undeclared,
+}
+
 /// The rows of one running statement, read a page at a time.
 ///
 /// While a cursor is open its connection is busy: finish the cursor before using the

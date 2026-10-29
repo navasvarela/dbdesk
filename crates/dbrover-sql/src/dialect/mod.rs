@@ -8,6 +8,7 @@
 
 mod capabilities;
 mod functions;
+mod value_kind;
 
 pub use capabilities::{
     Capabilities, ForeignKeySwitch, SchemaCreation, TableChange, UserModel, ViewReplacement,

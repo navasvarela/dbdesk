@@ -1,6 +1,6 @@
 # Exports and your own formats
 
-Status: **planned** (2026-10-29). This is the design of W7 and W8 in
+Status: **in progress** (2026-10-29); W7b is built. This is the design of W7 and W8 in
 [A well-rounded app](well-rounded.md#w7--exports); the [roadmap](roadmap.md#well-rounded-track)
 tracks them.
 
@@ -220,11 +220,13 @@ depends on `dbrover-core` and `dbrover-sql` (for the SQL formats' quoting), and 
   its options), keeps W5d's `.partial` file and rename, and counts rows. Both loaded-rows and
   all-rows exports go through it, as now.
 - **`ExportColumn`** is a column's name, its declared type name, and a `ValueKind` (integer,
-  decimal, float, boolean, date, timestamp, timestamp with time zone, text, other) mapped from
-  that type name per dialect, in `dbrover-core`, with a table-driven test per driver. `.xlsx`,
+  decimal, float, boolean, date, timestamp, timestamp with time zone, text, or undeclared when
+  the driver reports no type). The kind is a `dbrover-core` type; `dbrover_sql::Dialect::value_kind`
+  maps each dialect's type names to it, with a table-driven test per driver, since what differs
+  between dialects lives in `dbrover-sql`'s `dialect` module. `.xlsx`,
   Parquet and `INSERT` use the kind; the text rules for columns without one are pure functions
   with their own tests.
-- **Formats are an enum,** `ExportFormat`, matched exhaustively in one place, `ExportSpec::writer`,
+- **Formats are an enum,** `ExportFormat`, matched exhaustively in one place, `ExportSpec::text_format`,
   which builds the writer for each; everything else (the dialog's option panel, the extension, the
   file dialog's filter, which outputs a format allows) is a method on it, so adding a format is one
   compiler-checked change.
@@ -313,7 +315,7 @@ Each layer is one pull request in a stack, and is useful and tested on its own.
 **W7 — Exports**
 
 - **W7a — Plan:** this document and the roadmap entries.
-- **W7b — Text formats:** the `dbrover-export` crate; `TextFormat`; CSV with its options, TSV,
+- **W7b — Text formats** (built): the `dbrover-export` crate; `TextFormat`; CSV with its options, TSV,
   Markdown, JSON, JSON Lines and HTML; `ExportSpec` and `ExportWriter` moved from the store, which
   uses them for the history; `ValueKind` from declared types. Golden tests: each format's output
   for awkward values (quotes, separators, line breaks, `|`, `<`, `NULL`, empty strings, emoji) and

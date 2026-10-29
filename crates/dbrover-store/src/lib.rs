@@ -9,7 +9,6 @@ mod consoles;
 mod csv;
 mod custom;
 mod data_sources;
-mod export;
 mod history;
 mod keymap;
 mod paths;
@@ -31,7 +30,6 @@ pub use custom::{
     TrustedCommandsFile, driver_id, parse_actions, parse_snippets, parse_theme,
 };
 pub use data_sources::{DataSourceFile, StoreError};
-pub use export::{ExportError, ExportFormat, ExportWriter, export_rows};
 pub use history::{
     History, HistoryEntry, HistoryError, HistoryExportError, HistoryFile, HistoryOutcome,
     HistoryQuery, HistorySource, HistorySourceKind, NamedCell, ReplacedCell, RowChange,

@@ -5,9 +5,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use dbrover_core::{DataSourceId, describe_error};
-use dbrover_store::{
-    ExportFormat, History, HistoryEntry, HistoryFile, HistoryQuery, HistorySettings,
-};
+use dbrover_export::ExportFormat;
+use dbrover_store::{History, HistoryEntry, HistoryFile, HistoryQuery, HistorySettings};
 use jiff::Timestamp;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
