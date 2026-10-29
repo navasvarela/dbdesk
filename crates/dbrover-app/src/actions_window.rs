@@ -158,7 +158,7 @@ pub const TEMPLATE: &str = r#"# DbRover custom actions. Uncomment and change an 
 #   timeout = "30s" stops it after that long (default 60s).
 # DbRover shows each command in full and asks before its first run.
 #
-# Bind an action to a key in keymap.toml as "custom.<id>" = "cmd+shift+c".
+# Bind an action to a key in keymap.toml as "custom.<id>" = "cmd+shift+y".
 
 # [[action]]
 # id = "row-count"

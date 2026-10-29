@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use dbrover_store::CustomAction;
 use egui::{Event, Key, KeyboardShortcut, Modifiers, ThemePreference};
 
+use crate::console::{ClipboardCopy, ClipboardFormat};
 use crate::custom_actions::SubjectKind;
 use crate::keymap::Keymap;
 use crate::{icons, keymap};
@@ -47,6 +48,12 @@ pub enum AppCommand {
     Quit,
     /// A custom action from `actions.toml`, on what is selected.
     RunAction(Box<CustomAction>),
+    /// Copies the focused console's selected cells in a format.
+    #[cfg_attr(
+        not(target_os = "macos"),
+        allow(dead_code, reason = "only the macOS menu bar has an Edit menu")
+    )]
+    Copy(ClipboardCopy),
 }
 
 /// What decides whether a command can run and which item is checked, gathered once a frame.
@@ -66,6 +73,7 @@ impl AppCommand {
     pub fn id(&self) -> Cow<'static, str> {
         let id = match self {
             Self::RunAction(action) => return Cow::Owned(action.id.keymap_id()),
+            Self::Copy(copy) => copy_action(*copy).id(),
             Self::OpenFile => keymap::Action::OpenFile.id(),
             Self::Save => keymap::Action::Save.id(),
             Self::SaveAs => keymap::Action::SaveAs.id(),
@@ -95,6 +103,8 @@ impl AppCommand {
     pub fn label(&self) -> Cow<'_, str> {
         let label = match self {
             Self::RunAction(action) => return Cow::Borrowed(&action.name),
+            Self::Copy(ClipboardCopy::WithHeaders) => "Copy with headers",
+            Self::Copy(ClipboardCopy::As(format)) => format.format().name(),
             Self::OpenRecent(path) => {
                 return path.file_name().map_or_else(
                     || Cow::Owned(path.display().to_string()),
@@ -135,6 +145,7 @@ impl AppCommand {
             Self::Format => Some(keymap::Action::Format),
             Self::FormatAll => Some(keymap::Action::FormatAll),
             Self::ShowSettings => Some(keymap::Action::Settings),
+            Self::Copy(copy) => Some(copy_action(*copy)),
             _ => None,
         }
     }
@@ -213,13 +224,16 @@ impl AppCommand {
                 Some("Select a query console first")
             }
             Self::RunAction(_) => Some("Select something the action applies to first"),
+            Self::Copy(_) => Some("Select cells in a query console's results first"),
             _ => None,
         }
     }
 
     pub fn enabled(&self, state: &CommandState) -> bool {
         match self {
-            Self::Save | Self::SaveAs | Self::Format | Self::FormatAll => state.console_focused,
+            Self::Save | Self::SaveAs | Self::Format | Self::FormatAll | Self::Copy(_) => {
+                state.console_focused
+            }
             Self::ExportDataSources => state.has_data_sources,
             Self::RunAction(action) => state.subject.is_some_and(|subject| subject.offers(action)),
             _ => true,
@@ -339,6 +353,29 @@ pub enum SystemItem {
 )]
 pub const WINDOW_MENU: &str = "Window";
 pub const HELP_MENU: &str = "Help";
+
+/// The keymap action whose keys copy this way.
+fn copy_action(copy: ClipboardCopy) -> keymap::Action {
+    match copy {
+        ClipboardCopy::WithHeaders => keymap::Action::CopyWithHeaders,
+        ClipboardCopy::As(format) => keymap::Action::CopyAs(format),
+    }
+}
+
+/// Edit › Copy as: each format the clipboard takes.
+#[cfg_attr(
+    not(target_os = "macos"),
+    allow(dead_code, reason = "only the macOS menu bar has an Edit menu")
+)]
+fn copy_as() -> Menu {
+    Menu {
+        title: "Copy as",
+        entries: ClipboardFormat::ALL
+            .into_iter()
+            .map(|format| Entry::Command(AppCommand::Copy(ClipboardCopy::As(format))))
+            .collect(),
+    }
+}
 
 /// A menu or submenu: its title and what it lists, top to bottom.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -467,6 +504,8 @@ pub fn macos_menu_bar(
                 Separator,
                 Edit(EditCommand::Cut),
                 Edit(EditCommand::Copy),
+                Command(C::Copy(ClipboardCopy::WithHeaders)),
+                Submenu(copy_as()),
                 Edit(EditCommand::Paste),
                 Edit(EditCommand::SelectAll),
             ],

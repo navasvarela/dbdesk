@@ -24,6 +24,23 @@ pub struct RowSource {
 }
 
 impl RowSource {
+    /// The same rows with only the result's columns at `selected`, in that order: the table's
+    /// columns among them, and its key if they hold all of it.
+    pub fn select_columns(&self, selected: &[usize]) -> Self {
+        let position = |column: &usize| selected.iter().position(|chosen| chosen == column);
+        Self {
+            dialect: self.dialect,
+            table: self.table.as_ref().map(|table| SourceTable {
+                name: table.name.clone(),
+                columns: table.columns.iter().filter_map(position).collect(),
+                key: table
+                    .key
+                    .as_ref()
+                    .and_then(|key| key.iter().map(position).collect()),
+            }),
+        }
+    }
+
     /// Rows DbRover doesn't know the table of.
     pub fn untabled(dialect: Dialect) -> Self {
         Self {

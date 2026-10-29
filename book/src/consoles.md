@@ -256,8 +256,16 @@ doesn't, yet).
 
 - **Selecting and copying.** Click a cell to select it; shift-click or drag to select a block.
   ⌘C (while no text field has focus) copies the selection, tab-separated, ready to paste into a
-  spreadsheet. Right-click a cell for **Copy selection**, **Copy value**, **Copy row** and
-  **View value**.
+  spreadsheet, and ⇧⌘C copies it with the column names as a first line. Right-click a cell for
+  **Copy selection**, **Copy with headers**, **Copy as ›**, **Copy value**, **Copy row** and
+  **View value**. **Copy as ›** copies the selected columns of the selected rows as CSV, TSV,
+  Markdown (for a pull request or a chat), SQL `INSERT` or `UPDATE` statements, JSON, JSON
+  Lines or an HTML table, with the options last chosen in the
+  [export dialog](table-data.md#exporting-rows); HTML is copied as markup, as text. The SQL
+  formats need rows the grid can edit, and `UPDATE` the table's whole key among the selected
+  columns. Each format has a keymap id, `grid.copy-as.csv` and so on, with no key until you give
+  it one. On macOS they are in the Edit menu too. **Copy row** quotes values with tabs or line
+  breaks, as **Copy selection** does, so they paste into the right cells.
 - **Viewing a long value.** Double-click a cell, or select it and press Space, to see the whole
   value in a window. JSON and XML are shown indented; **Copy** copies it as stored.
 - **Sorting and filtering.** Click a column header to sort by it (ascending, descending, off),

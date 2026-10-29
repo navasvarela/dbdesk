@@ -43,6 +43,8 @@ rebind it. Status: implemented in M5.
 | `console.previous-problem` | ⇧F8 | Go to the previous syntax error or warning |
 | `grid.view-cell` | Space | Show the selected cell in the cell viewer |
 | `grid.edit-cell` | F2, Enter | Edit the selected cell, if its table can be edited |
+| `grid.copy-with-headers` | ⇧⌘C | Copy the selected cells with their column names |
+| `grid.copy-as.csv`, `.tsv`, `.markdown`, `.sql-insert`, `.json`, `.jsonl`, `.html`, `.sql-update` | — | Copy the selected cells in that format, as **Copy as ›** does |
 | `app.settings` | ⌘, | Open the settings |
 
 Console actions work while the console's editor has focus, and are taken before the editor

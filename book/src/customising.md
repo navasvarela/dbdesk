@@ -83,7 +83,7 @@ Every action is in the **Actions** menu, and can have a shortcut in `keymap.toml
 
 ```toml
 [bindings]
-"custom.row-count" = "cmd+shift+c"
+"custom.row-count" = "cmd+shift+y"
 ```
 
 From the menu or a key, an action acts on the focused console's selected cells, or else on the
