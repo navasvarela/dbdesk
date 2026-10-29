@@ -1101,6 +1101,49 @@ The gaps that keep DbRover from being an everyday tool. The full plan is in
   (*1 of 2*), with **Aa**, **W** and **.\***; ⌥⌘F adds the replace field, and **Replace all**
   replaces every match in one undo step. Covered by the tests above; the engine tests ran on
   every server of the compose file.
+- **W7 — Exports:** planned (2026-10-29). Rows out in the formats people use, from everywhere
+  rows are, designed in [Exports and your own formats](exports.md). In layers, one PR each:
+  - **W7a — Plan:** this entry and the design.
+  - **W7b — Text formats:** a `dbrover-export` crate with one `TextFormat` trait (a header, each
+    row, a footer, to any writer) for files, the clipboard and MCP alike; CSV with options
+    (separator, quoting, header, `NULL` text, line ending, a BOM) and a **CSV for Excel** preset,
+    TSV, Markdown, JSON, JSON Lines and HTML; each column's kind from its declared type.
+  - **W7c — SQL statements:** `INSERT` (to the result's table or one named, up to 1,000 rows a
+    statement) and `UPDATE` (for rows the grid could edit), built by `RowSql`.
+  - **W7d — Excel:** `.xlsx` with `rust_xlsxwriter` in constant memory, cells typed from declared
+    types or, without one, from the text (leading zeros, long ids and offsets stay text), a frozen
+    header with an autofilter, a new sheet past a million rows.
+  - **W7e — Parquet:** written by an in-memory DuckDB that spills to disk, each column given the
+    narrowest type all its values fit.
+  - **W7f — The export dialog:** loaded or all rows, the format, its options and a preview, the
+    last choices remembered in `app.ron`.
+  - **W7g — Copy as:** every text format from the cell menu and the Edit menu, **Copy with
+    headers** (⇧⌘C), and **Copy row** quoting as **Copy selection** does.
+  - **W7h — The explorer and Run to file:** **Export data…** on tables and views, streamed on the
+    explorer's connection; **Run to file…** (⌥⌘↵) writes a statement's rows without loading the
+    grid.
+  - **W7i — MCP:** the `query` tool's `format` (`json`, `csv`, `markdown`, `jsonl`), as text
+    within the row limit; MCP clients write no files.
+  - **W7j — Manual:** a chapter on exporting and copying, and this demo note.
+
+  Decisions, risks and tests are in [the design](exports.md#decisions). In short: values are
+  never reformatted, only typed where the format has types; the BOM is off for CSV and on in the
+  Excel preset; Parquet comes from DuckDB rather than new crates; rich HTML on the clipboard is
+  left for later.
+
+  **Exit:** a PostgreSQL query's every row opens in Excel with numbers that sum, dates that sort
+  and a zip code's leading zero kept; **CSV for Excel** keeps its accents; a selection pastes into
+  a pull request as Markdown and into a SQLite console as `INSERT`s that run; **Export data…**
+  writes a ten-million-row table to Parquet without DbRover's memory growing; **Run to file…**
+  never loads the grid; an assistant gets rows as CSV over MCP.
+- **W8 — Your own export formats:** planned, after W7. `exports.toml`, beside `actions.toml` and
+  read like it, defines named presets of the built-in formats, templates (a header, a row and a
+  footer in MiniJinja, streamed, with no file access and a fuel limit) and programs that get the
+  rows as JSON Lines on stdin and write the file on stdout, trusted as H2's commands are. They
+  appear in the export dialog and **Copy as ›**. No grouping, totals or charts: those are SQL's
+  job, or a program's. Layers: **W8a** plan, **W8b** reading the file and presets, **W8c**
+  templates, **W8d** programs, **W8e** manual. Designed in
+  [Exports and your own formats](exports.md#w8--your-own-formats).
 
 ## Design and documentation track
 

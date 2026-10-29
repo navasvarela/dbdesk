@@ -1,7 +1,8 @@
 # A well-rounded app
 
-Status: **W1 to W3 and W5 built** (see the [roadmap](roadmap.md#well-rounded-track); W5's
-design is in [Power in the grid](grid-power.md)); W4 and W6 planned.
+Status: **W1 to W6 built** (see the [roadmap](roadmap.md#well-rounded-track); W5's
+design is in [Power in the grid](grid-power.md)); W7 and W8 planned, designed in
+[Exports and your own formats](exports.md).
 Proposed on 2026-10-24.
 
 DbRover browses, queries and edits PostgreSQL, SQLite, MySQL and MariaDB, and ships as a
@@ -9,7 +10,7 @@ download. This plan gathers the gaps that still keep it from being the database 
 uses every day without missing another one. Many come from follow-ups that earlier milestones
 left open in the [roadmap](roadmap.md).
 
-The work is in six milestones, W1 to W6. Each is useful on its own.
+The work is in eight milestones, W1 to W8. Each is useful on its own.
 
 ## Order and why
 
@@ -25,6 +26,10 @@ The work is in six milestones, W1 to W6. Each is useful on its own.
 5. **W5 — Power in the grid.** Inserting and deleting rows, following foreign keys, sorting and
    filtering in the database, CSV import, and exporting every row.
 6. **W6 — Files and parameters.** Opening `.sql` files from disk, and `:name` parameters.
+7. **W7 — Exports.** Added on 2026-10-29, and the next to build: getting rows out in the formats
+   people use, from everywhere rows are. It comes before ER diagrams.
+8. **W8 — Your own export formats.** Formats of the user's own in `exports.toml`, once W7's
+   formats have settled.
 
 Signed installs, which remove macOS's "could not verify" warning and the repeated Keychain
 prompts, are already planned as R2 in [Release binaries](releasing.md).
@@ -193,6 +198,33 @@ The design, layer by layer, is in [Power in the grid](grid-power.md).
 **Exit:**
 - I open a `.sql` file from a project folder, run it against a data source, edit and save it.
 - A statement with `:since` asks for the date and remembers it for next time.
+
+## W7 — Exports
+
+The design, layer by layer, is in [Exports and your own formats](exports.md).
+
+- **Formats:** CSV with options (separator, quoting, header, `NULL` text, line ending, a BOM)
+  and a **CSV for Excel** preset, TSV, Excel `.xlsx` with typed cells, Markdown, SQL `INSERT`
+  and `UPDATE`, JSON, JSON Lines, HTML and Parquet (through DuckDB).
+- **Everywhere rows are:** an export dialog with a preview from the grid, **Copy as ›** a format
+  and **Copy with headers**, **Export data…** on a table in the explorer, **Run to file…** without
+  loading the grid, and a `format` for MCP's `query` tool.
+- **Any size:** every file export streams.
+
+**Exit:**
+- A PostgreSQL query's rows open in Excel as numbers and dates, with a zip code's leading zero
+  kept.
+- A selection pastes into a pull request as a Markdown table.
+- A ten-million-row table exports to Parquet without DbRover's memory growing.
+
+## W8 — Your own export formats
+
+- `exports.toml` beside `actions.toml`: named presets of the built-in formats, templates (a
+  header, a row and a footer, in MiniJinja) and programs that get the rows as JSON Lines on
+  stdin, trusted as H2's commands are.
+- No grouping, totals or charts: those are SQL's job, or a program's.
+
+**Exit:** a preset, a template and a program each appear in the export dialog and **Copy as ›**.
 
 ## Decisions
 

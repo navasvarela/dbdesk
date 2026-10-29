@@ -31,7 +31,7 @@ What can be extended, and which level opens it up:
 | Colours | `theme.toml` | — | — |
 | Key bindings, for every built-in and custom action | `keymap.toml` (exists) | — | — |
 | Cell viewers (JSON exists; geometry, images, …) | — | output to the viewer | ✓ |
-| Export formats | — | command actions | ✓ |
+| Export formats (W8, [Exports](exports.md#w8--your-own-formats)) | presets and templates in `exports.toml` | programs in `exports.toml` | ✓ |
 | Lint rules | — | — | ✓ |
 | Where data sources come from (1Password, Vault, a team file) | — | — | ✓ |
 
