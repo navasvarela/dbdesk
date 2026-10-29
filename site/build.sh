@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Assembles the website into one folder: the landing page from site/ with its pictures and
-# clips (site/media, made by site/clips.sh), the brand assets, fonts and database logos it uses
+# Assembles the website into one folder: the pages from site/ with their pictures and
+# clips (site/media, made by site/clips.sh), the brand assets, fonts and database logos they use
 # (copied, so assets/ stays their only home), and the user manual built by mdBook under
 # manual/. The Pages workflow publishes what this produces.
 #
@@ -31,8 +31,10 @@ case "${version}" in
     0.[0-9].* | 0.1[0-2].*) files=dbdesk ;;
     *) files=dbrover ;;
 esac
-sed -e "s/{{version}}/${version}/g" -e "s/{{files}}/${files}/g" \
-    "${root}/site/index.html" > "${out}/index.html"
+for page in index.html compare.html; do
+    sed -e "s/{{version}}/${version}/g" -e "s/{{files}}/${files}/g" \
+        "${root}/site/${page}" > "${out}/${page}"
+done
 cp "${root}/site/style.css" "${out}/"
 cp -R "${root}/site/media" "${out}/media"
 cp "${root}/assets/brand/logo.svg" "${root}/assets/brand/social-preview.png" \
