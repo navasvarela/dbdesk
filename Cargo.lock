@@ -1756,6 +1756,7 @@ version = "0.13.0"
 dependencies = [
  "dbrover-core",
  "dbrover-sql",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",

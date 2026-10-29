@@ -8,7 +8,7 @@
 //! implicit conversion), which is how text from the grid (ADR-0004) goes back in without
 //! DbRover knowing the types.
 
-use dbrover_core::{Cell, Quoting, TableDescription, TableName};
+use dbrover_core::{Cell, Quoting, TableDescription, TableName, ValueKind};
 
 use crate::Dialect;
 
@@ -42,6 +42,13 @@ impl<'a> From<&'a TableName> for Table<'a> {
 pub struct ColumnValue<'a> {
     pub column: &'a str,
     pub value: &'a Cell,
+}
+
+/// A column of [`RowSql::insert_typed`], and the kind of value it holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TypedColumn<'a> {
+    pub name: &'a str,
+    pub kind: ValueKind,
 }
 
 /// Writes the statements that change one table's rows, in one dialect.
@@ -121,6 +128,34 @@ impl<'a> RowSql<'a> {
         )
     }
 
+    /// One `INSERT` of `rows`, each with a value for every one of `columns`, in order: on one
+    /// line for a single row, else a row a line. A number in a numeric column is written bare,
+    /// which reads better in a file meant to be read; every other value is a string literal.
+    pub fn insert_typed(&self, columns: &[TypedColumn<'_>], rows: &[Vec<Cell>]) -> String {
+        let names: Vec<String> = columns
+            .iter()
+            .map(|column| self.name(column.name))
+            .collect();
+        let values: Vec<String> = rows
+            .iter()
+            .map(|row| {
+                let literals: Vec<String> = row
+                    .iter()
+                    .zip(columns)
+                    .map(|(value, column)| self.typed_literal(value, column.kind))
+                    .collect();
+                format!("({})", literals.join(", "))
+            })
+            .collect();
+        let separator = if values.len() == 1 { " " } else { "\n" };
+        format!(
+            "INSERT INTO {} ({}) VALUES{separator}{}",
+            self.table_name(),
+            names.join(", "),
+            values.join(",\n")
+        )
+    }
+
     /// `DELETE … WHERE <key>`.
     pub fn delete(&self, key: &[ColumnValue<'_>]) -> String {
         format!(
@@ -165,6 +200,17 @@ impl<'a> RowSql<'a> {
         }
     }
 
+    fn typed_literal(&self, value: &Cell, kind: ValueKind) -> String {
+        let numeric = matches!(
+            kind,
+            ValueKind::Integer | ValueKind::Decimal | ValueKind::Float
+        );
+        match value {
+            Some(text) if numeric && is_plain_number(text) => text.clone(),
+            value => self.literal(value),
+        }
+    }
+
     /// Every key column equal to its value; `IS NULL` for a `NULL`, which `=` never matches.
     fn condition(&self, key: &[ColumnValue<'_>]) -> String {
         key.iter()
@@ -175,6 +221,25 @@ impl<'a> RowSql<'a> {
             .collect::<Vec<_>>()
             .join(" AND ")
     }
+}
+
+/// Whether `text` is a number every dialect reads as a numeric literal: digits with an
+/// optional minus sign, fraction and exponent. `NaN`, `Infinity`, `1,5` and `.5` are not.
+fn is_plain_number(text: &str) -> bool {
+    let digits = |part: &str| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit());
+    let unsigned = text.strip_prefix('-').unwrap_or(text);
+    let (mantissa, exponent) = match unsigned.split_once(['e', 'E']) {
+        Some((mantissa, exponent)) => {
+            let exponent = exponent.strip_prefix(['+', '-']).unwrap_or(exponent);
+            (mantissa, Some(exponent))
+        }
+        None => (unsigned, None),
+    };
+    let mantissa_is_number = match mantissa.split_once('.') {
+        Some((whole, fraction)) => digits(whole) && digits(fraction),
+        None => digits(mantissa),
+    };
+    mantissa_is_number && exponent.is_none_or(digits)
 }
 
 #[cfg(test)]
@@ -261,6 +326,53 @@ mod tests {
             RowSql::new(Dialect::Mysql, TABLE).insert_rows(&["id", "note"], &rows),
             "INSERT INTO `shop`.`order \"items\"` (`id`, `note`) VALUES\n('1', NULL),\n('2', 'it''s')"
         );
+    }
+
+    #[test]
+    fn inserts_numbers_bare_in_numeric_columns_only() {
+        let columns = [
+            TypedColumn {
+                name: "id",
+                kind: ValueKind::Integer,
+            },
+            TypedColumn {
+                name: "price",
+                kind: ValueKind::Decimal,
+            },
+            TypedColumn {
+                name: "code",
+                kind: ValueKind::Text,
+            },
+        ];
+        let sql = RowSql::new(Dialect::Postgres, TABLE);
+        let one = vec![vec![text("7"), text("-1.5e3"), text("007")]];
+        assert_eq!(
+            sql.insert_typed(&columns, &one),
+            r#"INSERT INTO "shop"."order ""items""" ("id", "price", "code") VALUES (7, -1.5e3, '007')"#
+        );
+        let two = vec![
+            vec![text("8"), text("NaN"), None],
+            vec![None, text("1,5"), text("x")],
+        ];
+        assert_eq!(
+            sql.insert_typed(&columns, &two),
+            concat!(
+                r#"INSERT INTO "shop"."order ""items""" ("id", "price", "code") VALUES"#,
+                "\n(8, 'NaN', NULL),\n(NULL, '1,5', 'x')"
+            )
+        );
+    }
+
+    #[test]
+    fn tells_plain_numbers_from_other_text() {
+        for number in ["0", "-12", "3.25", "1e5", "-2.5E-3", "007"] {
+            assert!(is_plain_number(number), "{number}");
+        }
+        for other in [
+            "", "-", ".5", "5.", "1,5", "NaN", "Infinity", "1e", "0x1F", " 1", "+1",
+        ] {
+            assert!(!is_plain_number(other), "{other:?}");
+        }
     }
 
     #[test]

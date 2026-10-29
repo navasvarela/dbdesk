@@ -14,10 +14,13 @@ mod writer;
 pub use column::ExportColumn;
 pub use spec::{ExportChoice, ExportFormat, ExportSpec, export_choices};
 pub use text::{
-    CsvOptions, FieldSeparator, HtmlDocument, HtmlOptions, InvalidSeparator, LineEnding,
-    MarkdownOptions, Quoting, TextFormat, TsvOptions, render,
+    CsvOptions, FieldSeparator, HtmlDocument, HtmlOptions, InsertOptions, InsertSpec,
+    InvalidSeparator, LineEnding, MAX_ROWS_PER_INSERT, MarkdownOptions, Quoting, RowSource,
+    RowsPerInsert, SourceTable, TextFormat, TsvOptions, UpdateSpec, render,
 };
 pub use writer::{ExportError, ExportWriter, export_rows};
 
+#[cfg(test)]
+mod sql_tests;
 #[cfg(test)]
 mod tests;

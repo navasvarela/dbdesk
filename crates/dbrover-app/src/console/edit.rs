@@ -4,8 +4,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use dbrover_core::{Cell, ColumnInfo, Identifier, RelationName, Row, TableDescription};
+use dbrover_core::{Cell, ColumnInfo, Identifier, RelationName, Row, TableDescription, TableName};
 use dbrover_engine::RowEdit;
+use dbrover_export::SourceTable;
 use dbrover_sql::{ColumnValue, Dialect, RowSql, Token, TokenKind, first_word, tokenize};
 use dbrover_store::{NamedCell, ReplacedCell, RowChange, RowChangeKind};
 
@@ -46,6 +47,20 @@ pub struct EditTarget {
 impl EditTarget {
     pub fn is_editable(&self, column: usize) -> bool {
         self.editable.get(column).copied().unwrap_or(false)
+    }
+
+    /// The table, its columns and its key among the result's, for the SQL export formats.
+    pub fn source_table(&self) -> SourceTable {
+        SourceTable {
+            name: TableName {
+                schema: self.table.schema.clone(),
+                name: self.table.name.clone(),
+            },
+            columns: (0..self.editable.len())
+                .filter(|&column| self.is_editable(column))
+                .collect(),
+            key: Some(self.key.clone()),
+        }
     }
 }
 

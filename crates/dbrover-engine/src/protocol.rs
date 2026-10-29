@@ -7,7 +7,7 @@ use dbrover_core::{
     ProjectId, Rejection, RelationName, RoleDescription, Row, ServerInfo, TableDescription,
     TableName, TransactionStatus,
 };
-use dbrover_export::ExportFormat;
+use dbrover_export::ExportSpec;
 use dbrover_sql::{ExistingTable, ParameterValues};
 use dbrover_store::{
     ActionId, ConsoleKey, CustomFile, CustomFileKind, HistoryEntry, HistoryQuery, ImportPlan,
@@ -322,7 +322,7 @@ pub enum Command {
     ExportHistory {
         query: HistoryQuery,
         path: PathBuf,
-        format: ExportFormat,
+        spec: ExportSpec,
         names: HashMap<DataSourceId, String>,
     },
     /// Asks the release feed for the newest published release. Answered by

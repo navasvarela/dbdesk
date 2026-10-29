@@ -4,6 +4,7 @@ mod csv;
 mod html;
 mod json;
 mod markdown;
+mod sql;
 mod tsv;
 
 use std::io::{self, Write};
@@ -17,6 +18,11 @@ pub use self::html::{HtmlDocument, HtmlOptions};
 pub(crate) use self::json::{Json, JsonLines};
 pub(crate) use self::markdown::Markdown;
 pub use self::markdown::MarkdownOptions;
+pub(crate) use self::sql::{Insert, Update};
+pub use self::sql::{
+    InsertOptions, InsertSpec, MAX_ROWS_PER_INSERT, RowSource, RowsPerInsert, SourceTable,
+    UpdateSpec,
+};
 pub(crate) use self::tsv::Tsv;
 pub use self::tsv::TsvOptions;
 use crate::{ExportColumn, ExportSpec};

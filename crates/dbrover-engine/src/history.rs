@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use dbrover_core::{DataSourceId, describe_error};
-use dbrover_export::ExportFormat;
+use dbrover_export::ExportSpec;
 use dbrover_store::{History, HistoryEntry, HistoryFile, HistoryQuery, HistorySettings};
 use jiff::Timestamp;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
@@ -29,7 +29,7 @@ enum HistoryRequest {
 pub(crate) struct HistoryExport {
     pub(crate) query: HistoryQuery,
     pub(crate) path: PathBuf,
-    pub(crate) format: ExportFormat,
+    pub(crate) spec: ExportSpec,
     pub(crate) names: HashMap<DataSourceId, String>,
 }
 
@@ -103,7 +103,7 @@ fn serve(file: &HistoryFile, mut requests: UnboundedReceiver<HistoryRequest>, ev
             HistoryRequest::Export(export) => {
                 let result = match &history {
                     Ok(history) => history
-                        .export(&export.query, (&export.path, export.format), &export.names)
+                        .export(&export.query, (&export.path, &export.spec), &export.names)
                         .map_err(|error| describe_error(&error)),
                     Err(error) => Err(error.clone()),
                 };

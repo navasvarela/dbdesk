@@ -1,6 +1,6 @@
 # Exports and your own formats
 
-Status: **in progress** (2026-10-29); W7b is built. This is the design of W7 and W8 in
+Status: **in progress** (2026-10-29); W7b and W7c are built. This is the design of W7 and W8 in
 [A well-rounded app](well-rounded.md#w7--exports); the [roadmap](roadmap.md#well-rounded-track)
 tracks them.
 
@@ -321,7 +321,7 @@ Each layer is one pull request in a stack, and is useful and tested on its own.
   for awkward values (quotes, separators, line breaks, `|`, `<`, `NULL`, empty strings, emoji) and
   the paged-equals-whole test W5d has, for every format. The grid offers the new formats from its
   existing menu.
-- **W7c — SQL statements:** `INSERT` and `UPDATE` formats over `RowSql`, golden tests per dialect,
+- **W7c — SQL statements** (built): `INSERT` and `UPDATE` formats over `RowSql`, golden tests per dialect,
   and a round trip on SQLite: export as `INSERT`, run into an empty copy, compare.
 - **W7d — Excel:** `.xlsx` through `rust_xlsxwriter`: cell typing, header, freeze, autofilter,
   widths, sheets past a million rows. Tests read the file back with

@@ -45,7 +45,7 @@ pub use dialect::{
     Capabilities, Dialect, ExplainSetting, ForeignKeySwitch, Savepoint, SchemaCreation,
     TableChange, UserModel, ViewReplacement,
 };
-pub use dml::{ColumnValue, RowSql, Table};
+pub use dml::{ColumnValue, RowSql, Table, TypedColumn};
 pub use format::{FormatError, FormatOptions, Formatted, KeywordCase, format_ranges, same_meaning};
 pub use keywords::{is_keyword, keywords};
 pub use lexer::{Token, TokenKind, first_word, tokenize};

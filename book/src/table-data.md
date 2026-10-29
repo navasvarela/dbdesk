@@ -107,9 +107,16 @@ The formats:
 | **CSV for Excel** | The same, starting with a byte order mark: without one, Excel reads a UTF-8 file's accents and other non-English letters wrongly. Excel set to a language whose list separator is a semicolon (much of Europe) puts each line in one column; import it with **Data › From Text/CSV** instead. |
 | **TSV** | Tab-separated, as ⌘C copies cells: a header line, `NULL` written out, fields with tabs, line breaks or quotes quoted the way spreadsheets read them. |
 | **Markdown** | A table for a pull request, an issue or a chat: pipes escaped, line breaks as `<br>`, `NULL` written out. |
+| **SQL INSERT** | An `INSERT` a row into the table the rows came from, of its columns only. Numbers in numeric columns are written as numbers, every other value as a string, which the database turns into the column's type. |
 | **JSON** | A list of objects, one a row, keyed by column name. Values are text, and `NULL` is `null`. A repeated column name gets `_2`, `_3`. |
 | **JSON Lines** | The same objects, one a line, as data pipelines and `jq -c` read them. |
 | **HTML** | A web page with the rows as a table, every value escaped, that prints with its header on each page. |
+| **SQL UPDATE** | An `UPDATE` a row, setting each of the table's columns but the key, and naming the row by its primary key, as the grid's own edits do. |
+
+The SQL formats need to know the table: they are offered for rows the grid can edit (selected
+from one table, with its whole primary key), and greyed out elsewhere, saying why. Their
+statements are in the data source's own SQL, with its quoting; moving rows to a different kind
+of database may need them edited.
 
 Values are written as the database printed them, exactly as the grid shows them: dates and
 numbers are never reformatted. To change how they look, format them in the query (`to_char`,

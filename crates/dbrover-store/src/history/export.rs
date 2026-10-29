@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use dbrover_core::{DataSourceId, Row};
-use dbrover_export::{ExportColumn, ExportError, ExportFormat, ExportWriter};
+use dbrover_export::{ExportColumn, ExportError, ExportSpec, ExportWriter};
 
 use super::{History, HistoryEntry, HistoryError, HistoryQuery, HistorySource, format_timestamp};
 
@@ -46,12 +46,12 @@ impl History {
     pub fn export(
         &self,
         query: &HistoryQuery,
-        target: (&Path, ExportFormat),
+        target: (&Path, &ExportSpec),
         names: &HashMap<DataSourceId, String>,
     ) -> Result<usize, HistoryExportError> {
-        let (path, format) = target;
+        let (path, spec) = target;
         let columns = COLUMNS.map(ExportColumn::text);
-        let mut writer = ExportWriter::create(path, &format.default_spec(), &columns)?;
+        let mut writer = ExportWriter::create(path, spec, &columns)?;
         let mut page = Vec::with_capacity(PAGE);
         let written = self.each_match(query, None, |entry| {
             page.push(row(&entry, names));
@@ -151,7 +151,10 @@ mod tests {
         let written = history
             .export(
                 &HistoryQuery::everywhere(),
-                (&csv, ExportFormat::Csv),
+                (
+                    &csv,
+                    &ExportSpec::Csv(dbrover_export::CsvOptions::default()),
+                ),
                 &names,
             )
             .unwrap();
@@ -169,7 +172,7 @@ mod tests {
         let json = dir.path().join("history.json");
         let only_shop = HistoryQuery::all(shop);
         history
-            .export(&only_shop, (&json, ExportFormat::Json), &names)
+            .export(&only_shop, (&json, &ExportSpec::Json), &names)
             .unwrap();
         let parsed: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&json).unwrap()).unwrap();
@@ -197,7 +200,7 @@ mod tests {
         let written = history
             .export(
                 &HistoryQuery::all(shop),
-                (&path, ExportFormat::Json),
+                (&path, &ExportSpec::Json),
                 &HashMap::new(),
             )
             .unwrap();
@@ -216,7 +219,10 @@ mod tests {
         let path = dir.path().join("missing folder/history.csv");
         let failed = history.export(
             &HistoryQuery::everywhere(),
-            (&path, ExportFormat::Csv),
+            (
+                &path,
+                &ExportSpec::Csv(dbrover_export::CsvOptions::default()),
+            ),
             &HashMap::new(),
         );
         assert!(matches!(failed, Err(HistoryExportError::Write(_))));

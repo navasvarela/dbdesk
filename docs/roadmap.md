@@ -1108,7 +1108,7 @@ The gaps that keep DbRover from being an everyday tool. The full plan is in
     row, a footer, to any writer) for files, the clipboard and MCP alike; CSV with options
     (separator, quoting, header, `NULL` text, line ending, a BOM) and a **CSV for Excel** preset,
     TSV, Markdown, JSON, JSON Lines and HTML; each column's kind from its declared type.
-  - **W7c — SQL statements:** `INSERT` (to the result's table or one named, up to 1,000 rows a
+  - **W7c — SQL statements** (built): `INSERT` (to the result's table or one named, up to 1,000 rows a
     statement) and `UPDATE` (for rows the grid could edit), built by `RowSql`.
   - **W7d — Excel:** `.xlsx` with `rust_xlsxwriter` in constant memory, cells typed from declared
     types or, without one, from the text (leading zeros, long ids and offsets stay text), a frozen
