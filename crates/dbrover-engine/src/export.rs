@@ -8,7 +8,7 @@ use dbrover_export::{ExportColumn, ExportError, ExportSpec};
 use dbrover_sql::ParameterValues;
 
 use crate::events::EventSink;
-use crate::{ConsoleId, Event, RunId};
+use crate::{ConsoleId, Event, Exporter, RunId};
 
 /// Rows to write, and where.
 #[derive(Debug)]
@@ -66,7 +66,7 @@ pub(crate) async fn run(console: ConsoleId, export: Export, events: EventSink) {
         tracing::error!("export failed: {error}");
     }
     events.send(Event::ExportFinished {
-        console,
+        exporter: Exporter::Console(console),
         path,
         result,
     });

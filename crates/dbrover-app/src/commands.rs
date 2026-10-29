@@ -30,6 +30,7 @@ pub enum AppCommand {
     ResetLayout,
     Format,
     FormatAll,
+    RunToFile,
     CheckForUpdates,
     About,
     ReportProblem,
@@ -79,6 +80,7 @@ impl AppCommand {
             Self::SaveAs => keymap::Action::SaveAs.id(),
             Self::Format => keymap::Action::Format.id(),
             Self::FormatAll => keymap::Action::FormatAll.id(),
+            Self::RunToFile => keymap::Action::RunToFile.id(),
             Self::ShowSettings => keymap::Action::Settings.id(),
             Self::OpenRecent(_) => "file.open-recent",
             Self::ClearRecentFiles => "file.clear-recent",
@@ -126,6 +128,7 @@ impl AppCommand {
             Self::ResetLayout => "Reset layout",
             Self::Format => "Format",
             Self::FormatAll => "Format all",
+            Self::RunToFile => "Run to file…",
             Self::CheckForUpdates => "Check for updates…",
             Self::About => "About DbRover",
             Self::ReportProblem => "Report a problem…",
@@ -144,6 +147,7 @@ impl AppCommand {
             Self::SaveAs => Some(keymap::Action::SaveAs),
             Self::Format => Some(keymap::Action::Format),
             Self::FormatAll => Some(keymap::Action::FormatAll),
+            Self::RunToFile => Some(keymap::Action::RunToFile),
             Self::ShowSettings => Some(keymap::Action::Settings),
             Self::Copy(copy) => Some(copy_action(*copy)),
             _ => None,
@@ -180,7 +184,10 @@ impl AppCommand {
             keymap::Action::SaveAs => Some(Self::SaveAs),
             keymap::Action::Format => Some(Self::Format),
             keymap::Action::FormatAll => Some(Self::FormatAll),
+            keymap::Action::RunToFile => Some(Self::RunToFile),
             keymap::Action::Settings => Some(Self::ShowSettings),
+            keymap::Action::CopyWithHeaders => Some(Self::Copy(ClipboardCopy::WithHeaders)),
+            keymap::Action::CopyAs(format) => Some(Self::Copy(ClipboardCopy::As(format))),
             _ => None,
         }
     }
@@ -220,7 +227,7 @@ impl AppCommand {
     pub fn disabled_reason(&self) -> Option<&'static str> {
         match self {
             Self::ExportDataSources => Some("There are no data sources to export yet"),
-            Self::Save | Self::SaveAs | Self::Format | Self::FormatAll => {
+            Self::Save | Self::SaveAs | Self::Format | Self::FormatAll | Self::RunToFile => {
                 Some("Select a query console first")
             }
             Self::RunAction(_) => Some("Select something the action applies to first"),
@@ -231,9 +238,12 @@ impl AppCommand {
 
     pub fn enabled(&self, state: &CommandState) -> bool {
         match self {
-            Self::Save | Self::SaveAs | Self::Format | Self::FormatAll | Self::Copy(_) => {
-                state.console_focused
-            }
+            Self::Save
+            | Self::SaveAs
+            | Self::Format
+            | Self::FormatAll
+            | Self::RunToFile
+            | Self::Copy(_) => state.console_focused,
             Self::ExportDataSources => state.has_data_sources,
             Self::RunAction(action) => state.subject.is_some_and(|subject| subject.offers(action)),
             _ => true,
@@ -582,6 +592,8 @@ fn code() -> Menu {
         entries: vec![
             Entry::Command(AppCommand::Format),
             Entry::Command(AppCommand::FormatAll),
+            Entry::Separator,
+            Entry::Command(AppCommand::RunToFile),
         ],
     }
 }

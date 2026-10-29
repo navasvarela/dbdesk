@@ -457,6 +457,94 @@ fn copies_the_selected_cells_in_other_formats() {
     assert_eq!(copied(&harness).as_deref(), Some("2\t\"tab\tquote\"\"\""));
 }
 
+/// Export data… on a table writes every row on the explorer's connection; the dialog shows the
+/// table's columns once described, and how the export went.
+#[test]
+fn exports_a_table_from_the_explorer() {
+    let dir = tempfile::tempdir().unwrap();
+    save_shop(
+        dir.path(),
+        "CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT);
+         INSERT INTO orders VALUES (1, 'a'), (2, NULL);",
+    );
+    let export_path = dir.path().join("orders.csv");
+    let (_layer, feed) = log_console::pipeline();
+    let mut harness = start_app(dir.path(), feed);
+    let picked = export_path.clone();
+    harness.state_mut().pick_export_path = Box::new(move |_, _| Some(picked.clone()));
+    for expand in ["Expand shop", "Expand main", "Expand tables"] {
+        step_until_visible(&mut harness, expand);
+        harness.get_by_label(expand).click();
+    }
+    step_until_visible(&mut harness, "Expand orders");
+    harness.get_by_label("orders").click_secondary();
+    harness.run();
+    harness.get_by_label("Export data…").click();
+    harness.run();
+    step_until_visible(&mut harness, "id,customer");
+
+    confirm_export(&mut harness);
+    step_until_visible(&mut harness, "Exported 2 rows");
+    assert_eq!(
+        std::fs::read_to_string(&export_path).unwrap(),
+        "id,customer\r\n1,a\r\n2,\r\n"
+    );
+    harness.get_by_label("Close").click();
+    harness.run();
+    assert!(harness.state().export_dialog.is_none());
+}
+
+/// Run to file (⌥⌘↵) asks for the format and file, then the statement's parameters, and writes
+/// its rows without loading the grid, which says where they went.
+#[test]
+fn runs_a_statement_straight_to_a_file() {
+    let dir = tempfile::tempdir().unwrap();
+    save_shop(
+        dir.path(),
+        "CREATE TABLE orders (id INTEGER PRIMARY KEY);
+         INSERT INTO orders VALUES (1), (2), (3);",
+    );
+    let export_path = dir.path().join("big.jsonl");
+    let (_layer, feed) = log_console::pipeline();
+    let mut harness = start_app(dir.path(), feed);
+    let picked = export_path.clone();
+    harness.state_mut().pick_export_path = Box::new(move |_, _| Some(picked.clone()));
+    open_console(&mut harness);
+    harness
+        .get_by_role(Role::MultilineTextInput)
+        .type_text("SELECT id FROM orders WHERE id >= :min ORDER BY id");
+    // Steps rather than `run`: the console's checks of what was typed keep it repainting.
+    harness.run_steps(2);
+
+    harness.key_press_modifiers(
+        egui::Modifiers::COMMAND | egui::Modifiers::ALT,
+        egui::Key::Enter,
+    );
+    step_until_visible(&mut harness, "Run to file");
+    harness.run_steps(2);
+    open_format_list(&mut harness);
+    harness.get_by_label("JSON Lines").click();
+    harness.run();
+    confirm_export(&mut harness);
+    step_until_visible(&mut harness, "Parameter values");
+    harness.run_steps(2);
+    harness
+        .get_by_role_and_label(Role::TextInput, ":min")
+        .type_text("2");
+    harness.run();
+    harness.key_press(egui::Key::Enter);
+    step_until_visible(&mut harness, "Exported 2 rows to");
+
+    assert_eq!(
+        std::fs::read_to_string(&export_path).unwrap(),
+        "{\"id\":\"2\"}\n{\"id\":\"3\"}\n"
+    );
+    assert!(
+        harness.query_by_label("Add row").is_none(),
+        "the grid didn't load the rows"
+    );
+}
+
 /// Saves `shop` with an orders table at `safety`, starts the app, and opens Import CSV… on
 /// the table with `csv` as the file.
 fn import_csv_into_orders(

@@ -10,8 +10,8 @@ use egui::{Id, Margin, ScrollArea, TextEdit, Ui, vec2};
 use super::highlight::Marks;
 use super::{
     Candidate, ClipboardCopy, Disk, FormatScope, Found, LintOptions, QueryConsole,
-    RecentCompletions, RowsToOpen, RunScope, RunState, SubmittedRun, TreeCatalog, cell_viewer,
-    completion_popup, find_bar, highlight, results,
+    RecentCompletions, RowsToOpen, RunDestination, RunScope, RunState, SubmittedRun, TreeCatalog,
+    cell_viewer, completion_popup, find_bar, highlight, results,
 };
 use crate::icons::{self, Role};
 use crate::keymap::{Action, Keymap};
@@ -28,9 +28,10 @@ use dbrover_store::{ActionId, CustomAction, Snippet};
 use crate::custom_actions::GridCells;
 
 /// What the console's keys can do while its editor has focus.
-const EDITOR_ACTIONS: [Action; 16] = [
+const EDITOR_ACTIONS: [Action; 17] = [
     Action::Complete,
     Action::RunCurrent,
+    Action::RunToFile,
     Action::RunAll,
     Action::Explain,
     Action::Cancel,
@@ -66,6 +67,8 @@ pub enum ConsoleAction {
     OpenExportDialog,
     /// Puts the selected cells on the clipboard; the app has the export options.
     Copy(ClipboardCopy),
+    /// Opens the export dialog for the statement at the cursor, to run it into a file.
+    RunToFile,
     /// Opens the data source's query history, to insert a past statement here.
     ShowHistory,
     /// Loads these catalog levels into the explorer's cache, for completion.
@@ -252,6 +255,10 @@ fn perform(console: &QueryConsole, action: Action, actions: &mut Vec<ConsoleActi
             actions.push(ConsoleAction::Format(FormatScope::All));
             return;
         }
+        Action::RunToFile => {
+            actions.push(ConsoleAction::RunToFile);
+            return;
+        }
         // The grid and the editor handle these themselves, and the app the files.
         Action::ViewCell
         | Action::EditCell
@@ -280,13 +287,16 @@ fn perform(console: &QueryConsole, action: Action, actions: &mut Vec<ConsoleActi
             purpose,
             parameters: dbrover_sql::ParameterValues::default(),
             origin: RunOrigin::Console,
+            destination: RunDestination::Grid,
         }));
     }
 }
 
 fn is_enabled(console: &QueryConsole, action: Action) -> bool {
     match action {
-        Action::RunCurrent | Action::RunAll | Action::Explain => !console.is_running(),
+        Action::RunCurrent | Action::RunAll | Action::Explain | Action::RunToFile => {
+            !console.is_running()
+        }
         Action::Cancel => console.cancellable_run().is_some(),
         Action::Commit | Action::Rollback => console.has_open_transaction(),
         Action::ShowHistory
@@ -350,6 +360,7 @@ fn toolbar_icon(action: Action) -> Option<(&'static str, Role)> {
         Action::Format => Some((icons::TEXT_INDENT, Role::Primary)),
         Action::Commit
         | Action::Rollback
+        | Action::RunToFile
         | Action::FormatAll
         | Action::NextProblem
         | Action::PreviousProblem

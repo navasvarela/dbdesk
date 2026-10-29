@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use dbrover_core::{CancelHandle, DriverError, ResultCursor, Row, describe_error};
 use dbrover_export::{ExportColumn, ExportWriter};
+use dbrover_sql::{ParameterValues, RowSql};
 
 use crate::export_file::create_writer;
 use dbrover_store::{HistoryEntry, HistoryOutcome, HistorySource};
@@ -13,8 +14,8 @@ use jiff::Timestamp;
 use super::guard::{self, ReadOnly};
 use super::parameters::Sendable;
 use super::query::PAGE_SIZE;
-use super::{Disconnected, SessionOwner, Worker, cancel_running_statement};
-use crate::{Event, ExportAll, RunPurpose};
+use super::{Disconnected, Worker, cancel_running_statement};
+use crate::{Event, ExportAll, RunPurpose, TableExport};
 
 /// Why an export stopped short. The partial file is removed either way.
 enum Stopped {
@@ -31,14 +32,35 @@ impl Stopped {
     }
 }
 
-/// Runs the export's statement, writes its rows, and reports [`Event::ExportFinished`].
+/// Exports every row of a table: its `SELECT *`, written as [`write_all`] writes a
+/// statement's rows.
+pub(super) async fn write_table(
+    worker: &mut Worker<'_>,
+    export: TableExport,
+) -> Result<(), Disconnected> {
+    let TableExport {
+        run,
+        table,
+        path,
+        spec,
+    } = export;
+    let sql = RowSql::new(worker.context.dialect(), table.as_table()).select_all();
+    let statement = ExportAll {
+        run,
+        sql,
+        parameters: ParameterValues::default(),
+        path,
+        spec,
+    };
+    write_all(worker, statement).await
+}
+
+/// Runs the export's statement, writes its rows, and reports [`Event::ExportFinished`] to
+/// whoever the session works for.
 pub(super) async fn write_all(
     worker: &mut Worker<'_>,
     export: ExportAll,
 ) -> Result<(), Disconnected> {
-    let SessionOwner::Console(console) = worker.context.owner else {
-        return Ok(());
-    };
     let started_at = Timestamp::now();
     let started = Instant::now();
     let dialect = worker.context.dialect();
@@ -77,7 +99,7 @@ pub(super) async fn write_all(
         }
     }
     worker.context.send(Event::ExportFinished {
-        console,
+        exporter: worker.context.owner.exporter(),
         path: export.path,
         result,
     });
@@ -156,12 +178,10 @@ async fn export_rows(
                 return Ok(Err(Stopped::Failed(error)));
             }
         };
-        if let SessionOwner::Console(console) = worker.context.owner {
-            worker.context.send(Event::ExportProgress {
-                console,
-                rows: writer.rows(),
-            });
-        }
+        worker.context.send(Event::ExportProgress {
+            exporter: worker.context.owner.exporter(),
+            rows: writer.rows(),
+        });
         if cursor.is_exhausted() {
             break;
         }

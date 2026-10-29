@@ -8,6 +8,7 @@ On Linux and Windows, read Ctrl wherever this page says ⌘.
 | --- | --- | --- |
 | ⌘↵ | Run the selection, or the statement at the cursor | the console's editor has focus |
 | ⇧⌘↵ | Run every statement in the console | the editor has focus |
+| ⌥⌘↵ | Run the statement at the cursor straight into a file | the editor has focus |
 | ⌥⌘E | Explain the statement at the cursor | the editor has focus |
 | ⌘. | Cancel the running statement, or discard rows not yet loaded | the editor has focus |
 | ⌃Space | Suggest names and keywords at the cursor | the editor has focus |

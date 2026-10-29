@@ -32,6 +32,7 @@ rebind it. Status: implemented in M5.
 | `console.complete` | ⌃Space | Suggest names and keywords at the cursor |
 | `console.run` | ⌘↵ | Run the selection or the statement at the cursor |
 | `console.run-all` | ⇧⌘↵ | Run every statement in the console |
+| `console.run-to-file` | ⌥⌘↵ | Run the statement at the cursor straight into a file |
 | `console.explain` | ⌥⌘E | Explain the statement at the cursor |
 | `console.cancel` | ⌘. | Stop the running statement or discard unread rows |
 | `console.history` | — | Open the data source's query history |

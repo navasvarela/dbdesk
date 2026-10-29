@@ -1119,7 +1119,7 @@ The gaps that keep DbRover from being an everyday tool. The full plan is in
     last choices remembered in `app.ron`.
   - **W7g — Copy as** (built): every text format from the cell menu and the Edit menu, **Copy with
     headers** (⇧⌘C), and **Copy row** quoting as **Copy selection** does.
-  - **W7h — The explorer and Run to file:** **Export data…** on tables and views, streamed on the
+  - **W7h — The explorer and Run to file** (built): **Export data…** on tables and views, streamed on the
     explorer's connection; **Run to file…** (⌥⌘↵) writes a statement's rows without loading the
     grid.
   - **W7i — MCP:** the `query` tool's `format` (`json`, `csv`, `markdown`, `jsonl`), as text

@@ -36,8 +36,8 @@ use crate::passwords::{Prompting, SessionPasswords};
 use crate::read_only;
 use crate::tunnels::Tunnels;
 use crate::{
-    ConsoleId, Event, ExportAll, RowEdit, RowsImport, RunId, RunOrigin, RunPurpose, SessionState,
-    TransactionEnd, TransactionMode,
+    ConsoleId, Event, ExportAll, Exporter, RowEdit, RowsImport, RunId, RunOrigin, RunPurpose,
+    SessionState, TableExport, TransactionEnd, TransactionMode,
 };
 use guard::ReadOnly;
 use loss::{Loss, Watched};
@@ -59,6 +59,7 @@ pub(crate) enum SessionRequest {
     /// Prepares statements without running them; see [`crate::Command::ValidateStatements`].
     Validate(Vec<String>),
     ExportAll(ExportAll),
+    ExportTable(TableExport),
     ImportRows(RowsImport),
 }
 
@@ -79,6 +80,16 @@ pub(crate) struct Script {
 pub(crate) enum SessionOwner {
     Explorer(DataSourceId),
     Console(ConsoleId),
+}
+
+impl SessionOwner {
+    /// Who the session's exports report to.
+    pub(crate) fn exporter(self) -> Exporter {
+        match self {
+            Self::Explorer(data_source) => Exporter::DataSource(data_source),
+            Self::Console(console) => Exporter::Console(console),
+        }
+    }
 }
 
 /// What a session needs from the engine.
@@ -591,6 +602,7 @@ impl Worker<'_> {
             SessionRequest::ApplyEdits(statements) => edits::apply(self, &statements).await,
             SessionRequest::ApplyDdl(statements) => ddl::apply(self, &statements).await,
             SessionRequest::ExportAll(export) => export::write_all(self, export).await,
+            SessionRequest::ExportTable(export) => export::write_table(self, export).await,
             SessionRequest::ImportRows(import) => import::import(self, &import).await,
             SessionRequest::Ddl(path) => {
                 let work = ddl::load(self.context, &mut *self.connection, path);

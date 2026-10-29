@@ -7,7 +7,7 @@ use dbrover_core::{
     ProjectId, Rejection, RelationName, RoleDescription, Row, ServerInfo, TableDescription,
     TableName, TransactionStatus,
 };
-use dbrover_export::ExportSpec;
+use dbrover_export::{ExportSpec, SqlTable};
 use dbrover_sql::{ExistingTable, ParameterValues};
 use dbrover_store::{
     ActionId, ConsoleKey, CustomFile, CustomFileKind, HistoryEntry, HistoryQuery, ImportPlan,
@@ -315,6 +315,27 @@ pub enum Command {
         console: ConsoleId,
         export: ExportAll,
     },
+    /// Writes every row of a table or view to a file, as `SELECT *` on the explorer's
+    /// connection to the data source, a page at a time, as [`Command::ExportAllRows`] does.
+    /// Cancelled by [`Command::CancelTableExport`]. Recorded in the history. Reports
+    /// [`Event::ExportProgress`] after each page, then [`Event::ExportFinished`].
+    ExportTable {
+        data_source: DataSourceId,
+        export: TableExport,
+    },
+    /// Stops a [`Command::ExportTable`] and removes its partial file.
+    CancelTableExport {
+        data_source: DataSourceId,
+        run: RunId,
+    },
+    /// Runs a statement from a console straight into a file, as [`Command::ExportAllRows`]
+    /// does, starting the console's connection as [`Command::Execute`] does if it has none:
+    /// Run to file, which may be the console's first statement.
+    RunToFile {
+        console: ConsoleId,
+        data_source: DataSourceId,
+        export: ExportAll,
+    },
     /// Looks up past statements, newest first. Answered by [`Event::HistoryFound`].
     SearchHistory(HistoryQuery),
     /// Writes every statement a search finds, without its usual limit, to a file, naming data
@@ -522,15 +543,15 @@ pub enum Event {
         data_source: DataSourceId,
         result: Result<u64, ImportFailure>,
     },
-    /// How many rows [`Command::ExportAllRows`] has written so far.
+    /// How many rows [`Command::ExportAllRows`] or [`Command::ExportTable`] has written so far.
     ExportProgress {
-        console: ConsoleId,
+        exporter: Exporter,
         rows: usize,
     },
-    /// The answer to [`Command::ExportRows`] and [`Command::ExportAllRows`]: how many rows were
-    /// written, or why the file wasn't.
+    /// The answer to [`Command::ExportRows`], [`Command::ExportAllRows`] and
+    /// [`Command::ExportTable`]: how many rows were written, or why the file wasn't.
     ExportFinished {
-        console: ConsoleId,
+        exporter: Exporter,
         path: PathBuf,
         result: Result<usize, String>,
     },
@@ -687,6 +708,23 @@ pub struct EditFailure {
     /// the transaction around them).
     pub statement: Option<usize>,
     pub message: String,
+}
+
+/// Who an export reports to: a console, for its rows, or a data source, for a table's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Exporter {
+    Console(ConsoleId),
+    DataSource(DataSourceId),
+}
+
+/// Every row of a table or view to write to a file.
+#[derive(Debug, Clone)]
+pub struct TableExport {
+    /// Identifies the export for [`Command::CancelTableExport`]; chosen by the UI.
+    pub run: RunId,
+    pub table: SqlTable,
+    pub path: PathBuf,
+    pub spec: ExportSpec,
 }
 
 /// A CSV file to insert into a table.

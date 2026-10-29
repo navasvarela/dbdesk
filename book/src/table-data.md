@@ -178,6 +178,26 @@ more rows stops loading (its summary says `rest discarded`); the rows already in
 The export runs in the console's open transaction, if there is one, and sees its temporary
 tables.
 
+### A whole table, from the explorer
+
+Right-click a table or view in the explorer and choose **Export data…**. The same dialog opens,
+for every row of it; once DbRover has read the table's columns, the preview shows them, and the
+SQL formats write to that table (**SQL UPDATE** by its primary key). **Export…** asks where to
+save the file, and the dialog stays open to count the rows as they are written, with **Cancel
+export**, then says where they went. The rows are read with `SELECT *` on the explorer's
+connection, a page at a time, so a table of any size never has to fit in memory. It reads only,
+so it works on a read-only data source too, and it is recorded in the history.
+
+### Running a query straight to a file
+
+**Run to file…** (⌥⌘↵, or **Code › Run to file…**) runs the statement at the cursor, or the one
+selected, into a file without loading the grid: for a query whose rows you want in a file rather
+than on screen, however many there are. It opens the export dialog first, for the format, its
+options and the file; then it asks for the statement's `:name` parameters and confirmations as a
+run does. Where the grid would be, the console counts the rows as they are written, with
+**Cancel export**, then says *Exported 1204331 rows to …*. The file's columns are the
+statement's; for **SQL INSERT**, name the table to insert into.
+
 ## Importing a CSV file
 
 Right-click a table in the explorer and choose **Import CSV…**, then pick the file.

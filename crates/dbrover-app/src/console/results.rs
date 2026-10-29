@@ -47,6 +47,16 @@ pub fn show(
             .map(ConsoleAction::DescribeTable),
     );
     actions.extend(console.take_reload().map(ConsoleAction::Run));
+    if let Some(path) = &console.to_file {
+        file_run(
+            ui,
+            path,
+            console.exporting,
+            console.export_status.as_ref(),
+            actions,
+        );
+        return;
+    }
     let Some(run) = console.run.as_mut() else {
         ui.weak("Run the statement at the cursor with ⌘↵, or the whole console with ⇧⌘↵.");
         return;
@@ -270,6 +280,33 @@ fn arrangement_note(ui: &mut Ui, statement: &StatementView) {
     } else if statement.wrapped {
         ui.weak("Sorted and filtered by the database");
     }
+}
+
+/// A statement run to a file: its rows as they are written, with Cancel, then where they went
+/// or why they didn't, where its rows would show.
+fn file_run(
+    ui: &mut Ui,
+    path: &std::path::Path,
+    exporting: Option<(RunId, usize)>,
+    status: Option<&Result<String, String>>,
+    actions: &mut Vec<ConsoleAction>,
+) {
+    ui.horizontal(|ui| match (exporting, status) {
+        (Some((run, rows)), _) => {
+            ui.spinner();
+            ui.label(format!("Writing to {}… {rows} rows", path.display()));
+            if ui.button("Cancel export").clicked() {
+                actions.push(ConsoleAction::Cancel(run));
+            }
+        }
+        (None, Some(Ok(done))) => {
+            ui.label(done.as_str());
+        }
+        (None, Some(Err(error))) => {
+            ui.colored_label(ui.visuals().error_fg_color, error.as_str());
+        }
+        (None, None) => {}
+    });
 }
 
 /// Export…, which opens the export dialog, and how the last export went, or, while every row

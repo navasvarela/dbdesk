@@ -42,7 +42,7 @@ fn source(dialect: Dialect) -> RowSource {
                 schema: Some("shop".to_owned()),
                 name: "order items".to_owned(),
             },
-            columns: vec![0, 1, 3],
+            columns: Some(vec![0, 1, 3]),
             key: Some(vec![0]),
         }),
     }
@@ -177,7 +177,7 @@ fn says_why_rows_cant_be_written_as_sql() {
 
     let mut only_key = source(Dialect::Postgres);
     if let Some(table) = &mut only_key.table {
-        table.columns = vec![0];
+        table.columns = Some(vec![0]);
     }
     let refusal = ExportFormat::SqlUpdate.default_spec(&only_key).unwrap_err();
     assert!(refusal.contains("nothing to update"), "{refusal}");
@@ -210,7 +210,7 @@ break', -1e3, 'x'),
                     schema: Some("main".to_owned()),
                     name: "copy".to_owned(),
                 },
-                columns: (0..columns.len()).collect(),
+                columns: None,
                 key: Some(vec![0]),
             }),
         };
@@ -274,7 +274,7 @@ fn narrows_the_source_to_the_selected_columns() {
     let source = source(Dialect::Postgres);
     let narrowed = source.select_columns(&[3, 0]);
     let table = narrowed.table.as_ref().unwrap();
-    assert_eq!(table.columns, [1, 0]);
+    assert_eq!(table.columns.as_deref(), Some(&[1, 0][..]));
     assert_eq!(table.key.as_deref(), Some(&[1][..]));
     assert_eq!(
         insert_of(&narrowed, &[3, 0]),

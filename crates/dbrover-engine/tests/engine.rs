@@ -281,7 +281,7 @@ fn exports_rows_to_a_file_and_reports_failures() {
         export: export(written.clone()),
     });
     engine.expect(Event::ExportFinished {
-        console,
+        exporter: dbrover_engine::Exporter::Console(console),
         path: written.clone(),
         result: Ok(2),
     });

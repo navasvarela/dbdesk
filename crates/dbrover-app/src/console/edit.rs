@@ -56,9 +56,11 @@ impl EditTarget {
                 schema: Some(self.table.schema.clone()),
                 name: self.table.name.clone(),
             },
-            columns: (0..self.editable.len())
-                .filter(|&column| self.is_editable(column))
-                .collect(),
+            columns: Some(
+                (0..self.editable.len())
+                    .filter(|&column| self.is_editable(column))
+                    .collect(),
+            ),
             key: Some(self.key.clone()),
         }
     }

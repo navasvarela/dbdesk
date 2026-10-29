@@ -32,7 +32,10 @@ impl RowSource {
             dialect: self.dialect,
             table: self.table.as_ref().map(|table| SourceTable {
                 name: table.name.clone(),
-                columns: table.columns.iter().filter_map(position).collect(),
+                columns: table
+                    .columns
+                    .as_ref()
+                    .map(|columns| columns.iter().filter_map(position).collect()),
                 key: table
                     .key
                     .as_ref()
@@ -59,7 +62,8 @@ pub struct SqlTable {
 }
 
 impl SqlTable {
-    fn as_table(&self) -> Table<'_> {
+    /// The name as `RowSql` takes it.
+    pub fn as_table(&self) -> Table<'_> {
         Table {
             schema: self.schema.as_deref(),
             name: &self.name,
@@ -72,9 +76,10 @@ impl SqlTable {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceTable {
     pub name: SqlTable,
-    /// The positions of the result's columns that are the table's, in result order. The
-    /// others, such as computed values, are left out of the statements.
-    pub columns: Vec<usize>,
+    /// The positions of the result's columns that are the table's, in result order, the others
+    /// (computed values) being left out of the statements; `None` when every column is: a
+    /// whole table's rows, or rows for a table the user named.
+    pub columns: Option<Vec<usize>>,
     /// The positions of the result's columns holding the table's primary key, in key order;
     /// `None` when the result can't tell rows apart, without a key or without all of it.
     pub key: Option<Vec<usize>>,
@@ -158,8 +163,11 @@ impl UpdateSpec {
             .key
             .clone()
             .ok_or("Only for rows the grid can edit: select the table's whole primary key")?;
-        let set: Vec<usize> = table
+        let columns = table
             .columns
+            .as_ref()
+            .ok_or("Only for rows the grid can edit, whose columns DbRover knows")?;
+        let set: Vec<usize> = columns
             .iter()
             .copied()
             .filter(|column| !key.contains(column))
@@ -199,6 +207,8 @@ pub(crate) struct Insert {
     spec: InsertSpec,
     /// The table's columns, by name and kind, in the order the statements list them.
     columns: Vec<(String, ValueKind)>,
+    /// Their positions among the rows' cells.
+    positions: Vec<usize>,
     /// Rows waiting for a full batch, each with the table's columns only.
     batch: Vec<Vec<Cell>>,
 }
@@ -208,6 +218,7 @@ impl Insert {
         Self {
             spec,
             columns: Vec::new(),
+            positions: Vec::new(),
             batch: Vec::new(),
         }
     }
@@ -230,10 +241,12 @@ impl Insert {
 
 impl TextFormat for Insert {
     fn header(&mut self, _out: &mut dyn Write, columns: &[ExportColumn]) -> io::Result<()> {
+        self.positions = match &self.spec.table.columns {
+            Some(positions) => positions.clone(),
+            None => (0..columns.len()).collect(),
+        };
         self.columns = self
-            .spec
-            .table
-            .columns
+            .positions
             .iter()
             .filter_map(|&index| columns.get(index))
             .map(|column| (column.name.clone(), column.kind))
@@ -242,7 +255,7 @@ impl TextFormat for Insert {
     }
 
     fn row(&mut self, out: &mut dyn Write, row: &[Cell]) -> io::Result<()> {
-        self.batch.push(pick(row, &self.spec.table.columns));
+        self.batch.push(pick(row, &self.positions));
         if self.batch.len() >= usize::from(self.spec.options.rows_per_statement.get()) {
             self.write_batch(out)?;
         }

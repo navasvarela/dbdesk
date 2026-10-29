@@ -15,7 +15,7 @@ use dbrover_store::{ConsoleKey, ConsoleName, SqlFileContents};
 
 use crate::console::{
     ConsoleAction, ExportedRows, FormatScope, QueryConsole, RecentCompletions, RowsToOpen,
-    RunScope, SubmittedRun,
+    RunDestination, RunScope, SubmittedRun,
 };
 use crate::hazard_dialog::{
     self, HazardChoice, HazardConfirmation, Pending, Review, ReviewContext,
@@ -262,6 +262,7 @@ impl Consoles {
             purpose: RunPurpose::Run,
             parameters: ParameterValues::default(),
             origin: RunOrigin::Console,
+            destination: RunDestination::Grid,
         };
         let command = self.start_run(&key, run)?;
         Some((key, command))
@@ -288,6 +289,7 @@ impl Consoles {
             purpose: RunPurpose::Run,
             parameters: ParameterValues::default(),
             origin,
+            destination: RunDestination::Grid,
         };
         let command = self.submit(&key, run);
         (key, command)
@@ -466,11 +468,35 @@ impl Consoles {
             ConsoleAction::ShowHistory
             | ConsoleAction::OpenExportDialog
             | ConsoleAction::Copy(_)
+            | ConsoleAction::RunToFile
             | ConsoleAction::LoadCatalog(_)
             | ConsoleAction::Format(_)
             | ConsoleAction::OpenRows(_)
             | ConsoleAction::RunAction(..) => None,
         }
+    }
+
+    /// The SQL dialect of the console's data source, if the console is open.
+    pub fn dialect(&self, key: &ConsoleKey) -> Option<dbrover_sql::Dialect> {
+        Some(self.open.get(key)?.dialect())
+    }
+
+    /// A new run's id, for a run the app starts itself: a table's export.
+    pub fn new_run_id(&mut self) -> RunId {
+        self.next_run += 1;
+        RunId(self.next_run)
+    }
+
+    /// Runs `run`'s statement into its file: Run to file, once the format and file are chosen,
+    /// going through the parameters and confirmations a run goes through.
+    pub fn run_to_file(&mut self, key: &ConsoleKey, run: SubmittedRun) -> Option<Command> {
+        self.submit(key, run)
+    }
+
+    /// The statement at the console's cursor, as Run to file runs it. `None` if the console
+    /// is closed or there is no one statement there.
+    pub fn statement_to_file(&self, key: &ConsoleKey) -> Option<SubmittedRun> {
+        self.open.get(key)?.statement_to_file()
     }
 
     /// Runs the statements, first asking for the values of their parameters if the run
@@ -529,6 +555,10 @@ impl Consoles {
         let console = self.open.get_mut(key)?;
         self.next_run += 1;
         let run = RunId(self.next_run);
+        if let RunDestination::File { path, spec } = submitted.destination {
+            let statement = submitted.statements.into_iter().next()?;
+            return console.run_to_file(run, statement.sql, submitted.parameters, path, spec);
+        }
         console.begin_run(run, &submitted.statements);
         Some(Command::Execute {
             console: console.id(),
@@ -629,6 +659,7 @@ mod tests {
             purpose: RunPurpose::Run,
             parameters,
             origin: RunOrigin::Console,
+            destination: RunDestination::Grid,
         })
     }
 
