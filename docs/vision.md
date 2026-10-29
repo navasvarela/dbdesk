@@ -23,8 +23,10 @@
 
 ## Non-goals (for now)
 
-- Feature parity with full database IDEs such as DBeaver or DataGrip. In particular: schema
-  diffing, ER diagrams, refactorings, VCS integration, and a full SQL language server.
+- Feature parity with full database IDEs such as DBeaver or DataGrip. In particular:
+  refactorings, VCS integration, and a full SQL language server. ER diagrams and schema
+  diffing were on this list until 2026-10-29; both are now planned, though not soon (ER1 and
+  W13 in the [roadmap](roadmap.md)).
 - A plugin system that loads native code. Extension happens through files, external commands
   and, later, sandboxed WebAssembly plugins (see [Hackability](hackability.md) and
   [ADR 0005](adr/0005-customisation-files-commands-then-wasm.md)). New database engines are
