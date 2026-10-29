@@ -33,7 +33,7 @@ fn spec(format: ExportFormat) -> ExportSpec {
 
 fn rendered(spec: &ExportSpec) -> String {
     let (columns, rows) = sample();
-    render(spec, &columns, &rows)
+    render(spec, &columns, &rows).unwrap()
 }
 
 #[test]
@@ -76,7 +76,7 @@ fn quotes_csv_null_text_only_where_it_needs_it() {
     };
     let columns = [ExportColumn::text("x")];
     assert_eq!(
-        render(&ExportSpec::Csv(options), &columns, &[vec![None]]),
+        render(&ExportSpec::Csv(options), &columns, &[vec![None]]).unwrap(),
         "x\r\n\"a|b\"\r\n"
     );
 }
@@ -128,7 +128,10 @@ fn writes_a_markdown_table() {
          | 3 | x \\| <b>&</b>\ttab; |  |\n\
          | 4 | 🦀<br>crab | NULL |\n"
     );
-    assert_eq!(render(&spec(ExportFormat::Markdown), &[], &[vec![]]), "");
+    assert_eq!(
+        render(&spec(ExportFormat::Markdown), &[], &[vec![]]).unwrap(),
+        ""
+    );
 }
 
 #[test]
@@ -150,7 +153,7 @@ fn writes_json_objects_with_keys_in_column_order() {
         serde_json::to_string_pretty(&parsed).unwrap() + "\n",
         "laid out as serde_json lays out the whole array"
     );
-    assert_eq!(render(&ExportSpec::Json, &sample().0, &[]), "[]\n");
+    assert_eq!(render(&ExportSpec::Json, &sample().0, &[]).unwrap(), "[]\n");
 }
 
 #[test]
@@ -201,13 +204,17 @@ fn types_columns_from_the_dialect() {
     assert_eq!(exported.type_name.as_deref(), Some("numeric(10,2)"));
 }
 
-/// Every format writes the same file a row at a time as all at once, and as [`render`] does.
+/// Every text format writes the same file a row at a time as all at once, and as [`render`]
+/// does.
 #[test]
 fn writes_the_same_file_a_page_at_a_time_in_every_format() {
     let dir = tempfile::tempdir().unwrap();
     let (columns, rows) = sample();
     for choice in export_choices(&source()) {
         let Ok(spec) = &choice.spec else {
+            continue;
+        };
+        let Some(text) = render(spec, &columns, &rows) else {
             continue;
         };
         let extension = spec.format().extension();
@@ -228,7 +235,7 @@ fn writes_the_same_file_a_page_at_a_time_in_every_format() {
             "{}",
             choice.name
         );
-        assert_eq!(paged, render(spec, &columns, &rows), "{}", choice.name);
+        assert_eq!(paged, text, "{}", choice.name);
     }
 }
 

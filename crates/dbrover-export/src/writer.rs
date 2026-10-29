@@ -17,6 +17,55 @@ pub struct ExportError {
     source: io::Error,
 }
 
+/// A format that writes a file of its own: started for a path and its columns, given rows a
+/// page at a time, then finished into that path.
+pub trait FileFormat: Send {
+    /// Appends rows, each with a cell per column.
+    ///
+    /// # Errors
+    ///
+    /// The file couldn't be written.
+    fn write(&mut self, rows: &[Vec<Cell>]) -> io::Result<()>;
+
+    /// Ends the file.
+    ///
+    /// # Errors
+    ///
+    /// The file couldn't be written.
+    fn finish(self: Box<Self>) -> io::Result<()>;
+}
+
+/// A text format writing to a file through a buffer.
+pub(crate) struct TextFile {
+    out: BufWriter<File>,
+    format: Box<dyn TextFormat>,
+}
+
+impl TextFile {
+    /// Creates the file at `path` and writes the format's header.
+    pub(crate) fn create(
+        path: &Path,
+        mut format: Box<dyn TextFormat>,
+        columns: &[ExportColumn],
+    ) -> io::Result<Self> {
+        let mut out = BufWriter::new(File::create(path)?);
+        format.header(&mut out, columns)?;
+        Ok(Self { out, format })
+    }
+}
+
+impl FileFormat for TextFile {
+    fn write(&mut self, rows: &[Vec<Cell>]) -> io::Result<()> {
+        rows.iter()
+            .try_for_each(|row| self.format.row(&mut self.out, row))
+    }
+
+    fn finish(mut self: Box<Self>) -> io::Result<()> {
+        self.format.footer(&mut self.out)?;
+        self.out.flush()
+    }
+}
+
 /// Writes `rows` under a header of `columns` to `path`, replacing it.
 ///
 /// # Errors
@@ -39,8 +88,7 @@ pub fn export_rows(
 /// [`ExportWriter::finish`]: an export that fails or is abandoned never leaves half a file
 /// under the name chosen, nor replaces a file that was there.
 pub struct ExportWriter {
-    out: BufWriter<File>,
-    format: Box<dyn TextFormat>,
+    format: Box<dyn FileFormat>,
     /// How many rows were written so far.
     rows: usize,
     path: PathBuf,
@@ -48,7 +96,7 @@ pub struct ExportWriter {
 }
 
 impl ExportWriter {
-    /// Starts the file, writing the format's header.
+    /// Starts the file in the format `spec` says.
     ///
     /// # Errors
     ///
@@ -58,23 +106,31 @@ impl ExportWriter {
         spec: &ExportSpec,
         columns: &[ExportColumn],
     ) -> Result<Self, ExportError> {
+        Self::with_format(path, |partial| spec.file_format(partial, columns))
+    }
+
+    /// Starts the file in a format made by `start`, which is given the path to write to.
+    ///
+    /// # Errors
+    ///
+    /// [`ExportError`] if `start` fails.
+    pub fn with_format(
+        path: &Path,
+        start: impl FnOnce(&Path) -> io::Result<Box<dyn FileFormat>>,
+    ) -> Result<Self, ExportError> {
         let mut partial_name = path.file_name().unwrap_or_default().to_owned();
         partial_name.push(".partial");
         let partial = path.with_file_name(partial_name);
-        let failed = |source| ExportError {
-            path: path.to_owned(),
-            source,
-        };
-        let mut out = BufWriter::new(File::create(&partial).map_err(failed)?);
-        let mut format = spec.text_format();
-        if let Err(error) = format.header(&mut out, columns) {
-            drop(out);
-            // The header failed to write; the partial file's removal can only add to that.
+        let format = start(&partial).map_err(|source| {
+            // Starting failed; the partial file's removal, if there is one, can only add to
+            // that.
             let _ = fs::remove_file(&partial);
-            return Err(failed(error));
-        }
+            ExportError {
+                path: path.to_owned(),
+                source,
+            }
+        })?;
         Ok(Self {
-            out,
             format,
             rows: 0,
             path: path.to_owned(),
@@ -88,12 +144,10 @@ impl ExportWriter {
     ///
     /// [`ExportError`] if the file can't be written.
     pub fn write(&mut self, rows: &[Vec<Cell>]) -> Result<(), ExportError> {
-        for row in rows {
-            self.format
-                .row(&mut self.out, row)
-                .map_err(|source| self.error(source))?;
-            self.rows += 1;
-        }
+        self.format
+            .write(rows)
+            .map_err(|source| self.error(source))?;
+        self.rows += rows.len();
         Ok(())
     }
 
@@ -107,19 +161,27 @@ impl ExportWriter {
     /// # Errors
     ///
     /// [`ExportError`] if the file can't be written or renamed.
-    pub fn finish(mut self) -> Result<(), ExportError> {
-        let finished = self
-            .format
-            .footer(&mut self.out)
-            .and_then(|()| self.out.flush())
-            .and_then(|()| fs::rename(&self.partial, &self.path));
-        finished.map_err(|source| self.error(source))
+    pub fn finish(self) -> Result<(), ExportError> {
+        let Self {
+            format,
+            path,
+            partial,
+            ..
+        } = self;
+        let finished = format.finish().and_then(|()| fs::rename(&partial, &path));
+        finished.map_err(|source| {
+            // Nothing more can be done about a partial file that won't go.
+            let _ = fs::remove_file(&partial);
+            ExportError { path, source }
+        })
     }
 
     /// Stops writing and removes what was written.
     pub fn abandon(self) {
-        let Self { out, partial, .. } = self;
-        drop(out);
+        let Self {
+            format, partial, ..
+        } = self;
+        drop(format);
         // Nothing more can be done about a partial file that won't go; its name says what it is.
         let _ = fs::remove_file(partial);
     }

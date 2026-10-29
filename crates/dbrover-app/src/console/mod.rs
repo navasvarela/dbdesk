@@ -183,6 +183,8 @@ pub struct QueryConsole {
     /// An export of every row in progress: its run, to cancel it, and how many rows it has
     /// written.
     exporting: Option<(RunId, usize)>,
+    /// The format of the export last sent, for what its status says.
+    last_export: Option<ExportSpec>,
     storage: Storage,
     /// The values the console's parameters last ran with, which the parameters dialog starts
     /// from, and which running a shown statement again reuses.
@@ -382,6 +384,7 @@ impl QueryConsole {
             snippet_fields: None,
             export_status: None,
             exporting: None,
+            last_export: None,
             storage: Storage::Config(ConfigFile::default()),
             parameters: ParameterValues::default(),
             data_source_name: String::new(),
@@ -634,12 +637,13 @@ impl QueryConsole {
 
     /// The export of the rows the grid shows for the selected statement, in the order and
     /// with the filter it shows them. `None` if there are no rows to export.
-    pub fn export(&self, spec: ExportSpec, path: PathBuf) -> Option<Command> {
+    pub fn export(&mut self, spec: ExportSpec, path: PathBuf) -> Option<Command> {
         let run = self.run.as_ref()?;
         let statement = run.statements.get(run.selected)?;
         if statement.columns.is_empty() {
             return None;
         }
+        self.last_export = Some(spec.clone());
         Some(Command::ExportRows {
             console: self.id,
             export: Export {
@@ -655,6 +659,24 @@ impl QueryConsole {
         })
     }
 
+    /// What a finished export says: how many rows went where, and into how many sheets when
+    /// they filled more than one.
+    fn exported(&self, rows: usize, path: &Path) -> String {
+        let sheets = self
+            .last_export
+            .as_ref()
+            .and_then(|spec| spec.sheets(rows))
+            .filter(|&sheets| sheets > 1);
+        match sheets {
+            Some(sheets) => format!(
+                "Exported {rows} rows to {}, in {sheets} sheets: an Excel sheet holds \
+                 1,048,576 rows",
+                path.display()
+            ),
+            None => format!("Exported {rows} rows to {}", path.display()),
+        }
+    }
+
     /// The export of every row of the selected statement: it runs again, as the grid shows it
     /// (wrapped, if the database sorts and filters it), and the engine writes its rows as they
     /// come. `None` if the statement returns no rows.
@@ -667,6 +689,7 @@ impl QueryConsole {
         let sql = statement.resubmission(self.dialect).ok()?.sql;
         self.exporting = Some((run, 0));
         self.export_status = None;
+        self.last_export = Some(spec.clone());
         Some(Command::ExportAllRows {
             console: self.id,
             export: ExportAll {
@@ -1383,12 +1406,11 @@ impl QueryConsole {
                 result,
             } if *console == self.id => {
                 self.exporting = None;
-                self.export_status = Some(
-                    result
-                        .as_ref()
-                        .map(|rows| format!("Exported {rows} rows to {}", path.display()))
-                        .map_err(Clone::clone),
-                );
+                let status = result
+                    .as_ref()
+                    .map(|&rows| self.exported(rows, path))
+                    .map_err(Clone::clone);
+                self.export_status = Some(status);
             }
             Event::TableDescribed {
                 data_source,

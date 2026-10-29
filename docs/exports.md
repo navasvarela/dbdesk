@@ -1,6 +1,6 @@
 # Exports and your own formats
 
-Status: **in progress** (2026-10-29); W7b and W7c are built. This is the design of W7 and W8 in
+Status: **in progress** (2026-10-29); W7b, W7c and W7d are built. This is the design of W7 and W8 in
 [A well-rounded app](well-rounded.md#w7--exports); the [roadmap](roadmap.md#well-rounded-track)
 tracks them.
 
@@ -323,7 +323,7 @@ Each layer is one pull request in a stack, and is useful and tested on its own.
   existing menu.
 - **W7c — SQL statements** (built): `INSERT` and `UPDATE` formats over `RowSql`, golden tests per dialect,
   and a round trip on SQLite: export as `INSERT`, run into an empty copy, compare.
-- **W7d — Excel:** `.xlsx` through `rust_xlsxwriter`: cell typing, header, freeze, autofilter,
+- **W7d — Excel** (built): `.xlsx` through `rust_xlsxwriter`: cell typing, header, freeze, autofilter,
   widths, sheets past a million rows. Tests read the file back with
   [`calamine`](https://crates.io/crates/calamine) (a dev-dependency) and check each cell's type and
   value; one writes a little over a sheet's worth of rows, in the slow tests.

@@ -58,6 +58,7 @@ fn insert(dialect: Dialect, rows_per_statement: u16) -> String {
         &columns(dialect),
         &rows(),
     )
+    .unwrap()
 }
 
 fn update(dialect: Dialect) -> String {
@@ -67,6 +68,7 @@ fn update(dialect: Dialect) -> String {
         &columns(dialect),
         &rows(),
     )
+    .unwrap()
 }
 
 #[test]
@@ -216,7 +218,7 @@ break', -1e3, 'x'),
             rows_per_statement: RowsPerInsert::clamped(rows_per_statement),
         };
         let spec = ExportSpec::SqlInsert(Box::new(InsertSpec::for_rows(&source, options).unwrap()));
-        let sql = render(&spec, &columns, &rows);
+        let sql = render(&spec, &columns, &rows).unwrap();
         database.execute_batch(&sql).unwrap();
 
         let typed = "SELECT id, typeof(note), note, typeof(price), price, typeof(code), code";

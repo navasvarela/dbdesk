@@ -1,15 +1,22 @@
 //! The formats, and a format with its options: what an export is asked to write.
 
+use std::io;
+use std::path::Path;
+
+use crate::ExportColumn;
 use crate::text::{
     Csv, CsvOptions, Html, HtmlOptions, Insert, InsertOptions, InsertSpec, Json, JsonLines,
     Markdown, MarkdownOptions, RowSource, TextFormat, Tsv, TsvOptions, Update, UpdateSpec,
 };
+use crate::writer::{FileFormat, TextFile};
+use crate::xlsx::{XlsxFile, XlsxOptions, xlsx_sheets};
 
 /// A format DbRover writes. What each one is, where it can go and what its file is called are
 /// methods here, so adding a format is one compiler-checked change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ExportFormat {
     Csv,
+    Xlsx,
     Tsv,
     Markdown,
     SqlInsert,
@@ -21,8 +28,9 @@ pub enum ExportFormat {
 
 impl ExportFormat {
     /// In the order menus list them: the most asked for first.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Csv,
+        Self::Xlsx,
         Self::Tsv,
         Self::Markdown,
         Self::SqlInsert,
@@ -36,6 +44,7 @@ impl ExportFormat {
     pub fn name(self) -> &'static str {
         match self {
             Self::Csv => "CSV",
+            Self::Xlsx => "Excel",
             Self::Tsv => "TSV",
             Self::Markdown => "Markdown",
             Self::SqlInsert => "SQL INSERT",
@@ -50,6 +59,7 @@ impl ExportFormat {
     pub fn extension(self) -> &'static str {
         match self {
             Self::Csv => "csv",
+            Self::Xlsx => "xlsx",
             Self::Tsv => "tsv",
             Self::Markdown => "md",
             Self::SqlInsert | Self::SqlUpdate => "sql",
@@ -63,6 +73,7 @@ impl ExportFormat {
     pub fn description(self) -> &'static str {
         match self {
             Self::Csv => "Comma-separated values, as RFC 4180 describes them",
+            Self::Xlsx => "An Excel workbook, with numbers and dates typed and the header frozen",
             Self::Tsv => "Tab-separated values, as Copy puts them on the clipboard",
             Self::Markdown => "A table for a pull request, an issue or a chat",
             Self::SqlInsert => "INSERT statements that put the rows into their table",
@@ -81,6 +92,7 @@ impl ExportFormat {
     pub fn default_spec(self, source: &RowSource) -> Result<ExportSpec, &'static str> {
         Ok(match self {
             Self::Csv => ExportSpec::Csv(CsvOptions::default()),
+            Self::Xlsx => ExportSpec::Xlsx(XlsxOptions::default()),
             Self::Tsv => ExportSpec::Tsv(TsvOptions::default()),
             Self::Markdown => ExportSpec::Markdown(MarkdownOptions::default()),
             Self::SqlInsert => {
@@ -101,6 +113,7 @@ impl ExportFormat {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExportSpec {
     Csv(CsvOptions),
+    Xlsx(XlsxOptions),
     Tsv(TsvOptions),
     Markdown(MarkdownOptions),
     SqlInsert(Box<InsertSpec>),
@@ -115,6 +128,7 @@ impl ExportSpec {
     pub fn format(&self) -> ExportFormat {
         match self {
             Self::Csv(_) => ExportFormat::Csv,
+            Self::Xlsx(_) => ExportFormat::Xlsx,
             Self::Tsv(_) => ExportFormat::Tsv,
             Self::Markdown(_) => ExportFormat::Markdown,
             Self::SqlInsert(_) => ExportFormat::SqlInsert,
@@ -125,9 +139,18 @@ impl ExportSpec {
         }
     }
 
-    /// A writer of this format, ready for its header.
-    pub(crate) fn text_format(&self) -> Box<dyn TextFormat> {
+    /// How many sheets `rows` rows fill, for a format that has sheets.
+    pub fn sheets(&self, rows: usize) -> Option<usize> {
         match self {
+            Self::Xlsx(options) => Some(xlsx_sheets(rows, options.header)),
+            _ => None,
+        }
+    }
+
+    /// What writes this format: the one place each format's writer is chosen.
+    fn writer(&self) -> Writer {
+        Writer::Text(match self {
+            Self::Xlsx(options) => return Writer::Xlsx(options.clone()),
             Self::Csv(options) => Box::new(Csv::new(options.clone())),
             Self::Tsv(options) => Box::new(Tsv::new(options.clone())),
             Self::Markdown(options) => Box::new(Markdown::new(options.clone())),
@@ -136,8 +159,35 @@ impl ExportSpec {
             Self::JsonLines => Box::<JsonLines>::default(),
             Self::Html(options) => Box::new(Html::new(options.clone())),
             Self::SqlUpdate(spec) => Box::new(Update::new(spec.as_ref().clone())),
+        })
+    }
+
+    /// The format's writer for a file at `path` with `columns`.
+    pub(crate) fn file_format(
+        &self,
+        path: &Path,
+        columns: &[ExportColumn],
+    ) -> io::Result<Box<dyn FileFormat>> {
+        Ok(match self.writer() {
+            Writer::Text(format) => Box::new(TextFile::create(path, format, columns)?),
+            Writer::Xlsx(options) => Box::new(XlsxFile::create(path, options, columns)?),
+        })
+    }
+
+    /// A writer of this format, ready for its header; `None` for a format that only writes
+    /// files.
+    pub(crate) fn text_format(&self) -> Option<Box<dyn TextFormat>> {
+        match self.writer() {
+            Writer::Text(format) => Some(format),
+            Writer::Xlsx(_) => None,
         }
     }
+}
+
+/// How a format is written: as text, which can go anywhere, or as a file of its own kind.
+enum Writer {
+    Text(Box<dyn TextFormat>),
+    Xlsx(XlsxOptions),
 }
 
 /// An entry in a list of formats to export to: a format with its defaults, or a preset of one.

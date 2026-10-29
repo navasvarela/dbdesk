@@ -166,6 +166,20 @@ against a real server, such as a cancel arriving after the last row.
 - The DuckDB driver checks that two connections to one file see each other's changes.
 - The app's W5 UI tests are in `app/tests/grid.rs`, against SQLite.
 
+### Exports
+
+- `dbrover-export` has golden tests of every text format on awkward values, the SQL formats in
+  every dialect, a SQLite round trip of `INSERT`s, and `.xlsx` files read back with `calamine`
+  (each cell's type and value, the header, frozen panes and filter from the sheet's XML, and
+  sheets past a full one, with a small sheet). The table-driven typing rules are unit tests of
+  `xlsx::typing`.
+- `fills_a_whole_sheet_and_starts_another` writes a real sheet's worth of rows plus one; it
+  takes a few seconds, so it is ignored by default:
+
+  ```bash
+  cargo test -p dbrover-export -- --ignored
+  ```
+
 ### Files and parameters
 
 - `dbrover_sql::parameters` has a corpus per dialect in `dbrover-sql/tests/parameters/`, read by

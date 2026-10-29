@@ -10,6 +10,7 @@ mod column;
 mod spec;
 mod text;
 mod writer;
+mod xlsx;
 
 pub use column::ExportColumn;
 pub use spec::{ExportChoice, ExportFormat, ExportSpec, export_choices};
@@ -18,9 +19,12 @@ pub use text::{
     InvalidSeparator, LineEnding, MAX_ROWS_PER_INSERT, MarkdownOptions, Quoting, RowSource,
     RowsPerInsert, SourceTable, TextFormat, TsvOptions, UpdateSpec, render,
 };
-pub use writer::{ExportError, ExportWriter, export_rows};
+pub use writer::{ExportError, ExportWriter, FileFormat, export_rows};
+pub use xlsx::{EXCEL_MAX_ROWS, InvalidSheetName, SheetName, XlsxOptions};
 
 #[cfg(test)]
 mod sql_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod xlsx_tests;
