@@ -3759,18 +3759,23 @@ mod tests {
 
     /// Opens the `orders` table of a saved `shop` data source in a console, which runs
     /// `SELECT * FROM main.orders`, and waits for its rows.
+    /// Frames for a modal to be sized, placed and faded in.
+    const MODAL_STEPS: usize = 8;
+
     /// Opens the grid's export dialog, picks `rows` ("Loaded rows" or "All rows") and, when
     /// given, `format` from the format list, and leaves the dialog open for the options.
     fn open_export_dialog(harness: &mut Harness<'_, DbRoverApp>, rows: &str, format: Option<&str>) {
         harness.get_by_label("Export…").click();
-        // The modal sizes itself over its first frames: run until it is still before clicking.
-        harness.run();
+        // The modal sizes and fades in over its first frames. A fixed number of them rather
+        // than `run`: a console still loading rows keeps repainting, more frames than `run`
+        // allows on a slow machine.
+        harness.run_steps(MODAL_STEPS);
         harness.get_by_label_contains(rows).click();
-        harness.run();
+        harness.run_steps(2);
         if let Some(format) = format {
             open_format_list(harness);
             harness.get_by_label(format).click();
-            harness.run();
+            harness.run_steps(2);
         }
     }
 
@@ -3790,7 +3795,7 @@ mod tests {
                         .is_some_and(|value| names.contains(&value.as_str()))
             })
             .click();
-        harness.run();
+        harness.run_steps(2);
     }
 
     /// Clicks the export dialog's Export…, the last on screen: the toolbar has one too. One
