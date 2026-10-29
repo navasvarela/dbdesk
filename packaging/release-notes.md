@@ -13,6 +13,9 @@ Settings › Privacy & Security**, scroll down, and click **Open Anyway**. After
 macOS also asks once more for access to every saved password; choose **Always Allow**. Signed
 builds, planned for a later release, will remove both.
 
+With Homebrew, `brew install --cask navasvarela/tap/dbrover` installs it instead. DbRover then
+updates itself as usual.
+
 **Linux:** make the AppImage executable (`chmod +x dbrover-*.AppImage`) and run it, or install the
 `.deb` with `sudo apt install ./dbrover_*_amd64.deb`. Saved passwords need a Secret Service such
 as GNOME Keyring or KWallet, which desktop environments run already.

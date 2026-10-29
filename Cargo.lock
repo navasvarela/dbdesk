@@ -1583,7 +1583,7 @@ checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 
 [[package]]
 name = "dbrover-app"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1622,7 +1622,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-core"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "async-trait",
  "serde",
@@ -1634,7 +1634,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-driver-clickhouse"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "async-trait",
  "clickhouse",
@@ -1652,7 +1652,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-driver-duckdb"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "async-trait",
  "dbrover-core",
@@ -1665,7 +1665,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-driver-mysql"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "async-trait",
  "dbrover-core",
@@ -1679,7 +1679,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-driver-postgres"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "async-trait",
  "dbrover-core",
@@ -1694,7 +1694,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-driver-sqlite"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "async-trait",
  "dbrover-core",
@@ -1705,7 +1705,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-driver-sqlserver"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "async-trait",
  "dbrover-core",
@@ -1723,7 +1723,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-engine"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "async-trait",
  "cargo-packager-updater",
@@ -1750,7 +1750,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-mcp"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "dbrover-core",
  "dbrover-engine",
@@ -1770,7 +1770,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-sql"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "base64 0.22.1",
  "dbrover-core",
@@ -1783,7 +1783,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-ssh"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "data-encoding",
  "dbrover-core",
@@ -1799,7 +1799,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-store"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "dbrover-core",
  "directories",
@@ -1815,7 +1815,7 @@ dependencies = [
 
 [[package]]
 name = "dbrover-tls"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "dbrover-core",
  "rustls",
