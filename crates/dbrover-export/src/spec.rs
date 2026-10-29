@@ -4,6 +4,7 @@ use std::io;
 use std::path::Path;
 
 use crate::ExportColumn;
+use crate::parquet::ParquetOptions;
 use crate::text::{
     Csv, CsvOptions, Html, HtmlOptions, Insert, InsertOptions, InsertSpec, Json, JsonLines,
     Markdown, MarkdownOptions, RowSource, TextFormat, Tsv, TsvOptions, Update, UpdateSpec,
@@ -22,13 +23,14 @@ pub enum ExportFormat {
     SqlInsert,
     Json,
     JsonLines,
+    Parquet,
     Html,
     SqlUpdate,
 }
 
 impl ExportFormat {
     /// In the order menus list them: the most asked for first.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Csv,
         Self::Xlsx,
         Self::Tsv,
@@ -36,6 +38,7 @@ impl ExportFormat {
         Self::SqlInsert,
         Self::Json,
         Self::JsonLines,
+        Self::Parquet,
         Self::Html,
         Self::SqlUpdate,
     ];
@@ -50,6 +53,7 @@ impl ExportFormat {
             Self::SqlInsert => "SQL INSERT",
             Self::Json => "JSON",
             Self::JsonLines => "JSON Lines",
+            Self::Parquet => "Parquet",
             Self::Html => "HTML",
             Self::SqlUpdate => "SQL UPDATE",
         }
@@ -65,6 +69,7 @@ impl ExportFormat {
             Self::SqlInsert | Self::SqlUpdate => "sql",
             Self::Json => "json",
             Self::JsonLines => "jsonl",
+            Self::Parquet => "parquet",
             Self::Html => "html",
         }
     }
@@ -79,6 +84,7 @@ impl ExportFormat {
             Self::SqlInsert => "INSERT statements that put the rows into their table",
             Self::Json => "An array of objects, one a row, every value a string",
             Self::JsonLines => "One JSON object a line, as data pipelines and jq -c read",
+            Self::Parquet => "A typed, compressed file for data tools: DuckDB, pandas, Spark",
             Self::Html => "A web page with the rows as a table",
             Self::SqlUpdate => "UPDATE statements that set each row's values, by its primary key",
         }
@@ -101,6 +107,7 @@ impl ExportFormat {
             }
             Self::Json => ExportSpec::Json,
             Self::JsonLines => ExportSpec::JsonLines,
+            Self::Parquet => ExportSpec::Parquet(ParquetOptions::default()),
             Self::Html => ExportSpec::Html(HtmlOptions::default()),
             Self::SqlUpdate => ExportSpec::SqlUpdate(Box::new(UpdateSpec::for_rows(source)?)),
         })
@@ -120,6 +127,7 @@ pub enum ExportSpec {
     /// An array of objects, values as strings: what DbRover has always written.
     Json,
     JsonLines,
+    Parquet(ParquetOptions),
     Html(HtmlOptions),
     SqlUpdate(Box<UpdateSpec>),
 }
@@ -134,6 +142,7 @@ impl ExportSpec {
             Self::SqlInsert(_) => ExportFormat::SqlInsert,
             Self::Json => ExportFormat::Json,
             Self::JsonLines => ExportFormat::JsonLines,
+            Self::Parquet(_) => ExportFormat::Parquet,
             Self::Html(_) => ExportFormat::Html,
             Self::SqlUpdate(_) => ExportFormat::SqlUpdate,
         }
@@ -151,6 +160,7 @@ impl ExportSpec {
     fn writer(&self) -> Writer {
         Writer::Text(match self {
             Self::Xlsx(options) => return Writer::Xlsx(options.clone()),
+            Self::Parquet(_) => return Writer::Engine,
             Self::Csv(options) => Box::new(Csv::new(options.clone())),
             Self::Tsv(options) => Box::new(Tsv::new(options.clone())),
             Self::Markdown(options) => Box::new(Markdown::new(options.clone())),
@@ -163,6 +173,10 @@ impl ExportSpec {
     }
 
     /// The format's writer for a file at `path` with `columns`.
+    ///
+    /// Parquet is refused: DuckDB writes it, which the engine has and this crate doesn't, so
+    /// that the crates writing only text don't carry DuckDB. The engine starts it with
+    /// `ExportWriter::with_format`.
     pub(crate) fn file_format(
         &self,
         path: &Path,
@@ -171,6 +185,12 @@ impl ExportSpec {
         Ok(match self.writer() {
             Writer::Text(format) => Box::new(TextFile::create(path, format, columns)?),
             Writer::Xlsx(options) => Box::new(XlsxFile::create(path, options, columns)?),
+            Writer::Engine => {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "Parquet files are written by the engine",
+                ));
+            }
         })
     }
 
@@ -179,7 +199,7 @@ impl ExportSpec {
     pub(crate) fn text_format(&self) -> Option<Box<dyn TextFormat>> {
         match self.writer() {
             Writer::Text(format) => Some(format),
-            Writer::Xlsx(_) => None,
+            Writer::Xlsx(_) | Writer::Engine => None,
         }
     }
 }
@@ -188,6 +208,8 @@ impl ExportSpec {
 enum Writer {
     Text(Box<dyn TextFormat>),
     Xlsx(XlsxOptions),
+    /// Written by the engine, with DuckDB.
+    Engine,
 }
 
 /// An entry in a list of formats to export to: a format with its defaults, or a preset of one.

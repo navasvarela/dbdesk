@@ -1113,7 +1113,7 @@ The gaps that keep DbRover from being an everyday tool. The full plan is in
   - **W7d — Excel** (built): `.xlsx` with `rust_xlsxwriter` in constant memory, cells typed from declared
     types or, without one, from the text (leading zeros, long ids and offsets stay text), a frozen
     header with an autofilter, a new sheet past a million rows.
-  - **W7e — Parquet:** written by an in-memory DuckDB that spills to disk, each column given the
+  - **W7e — Parquet** (built): written by an in-memory DuckDB that spills to disk, each column given the
     narrowest type all its values fit.
   - **W7f — The export dialog:** loaded or all rows, the format, its options and a preview, the
     last choices remembered in `app.ron`.

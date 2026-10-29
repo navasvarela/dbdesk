@@ -1,6 +1,6 @@
 # Exports and your own formats
 
-Status: **in progress** (2026-10-29); W7b, W7c and W7d are built. This is the design of W7 and W8 in
+Status: **in progress** (2026-10-29); W7b to W7e are built. This is the design of W7 and W8 in
 [A well-rounded app](well-rounded.md#w7--exports); the [roadmap](roadmap.md#well-rounded-track)
 tracks them.
 
@@ -214,8 +214,9 @@ depends on `dbrover-core` and `dbrover-sql` (for the SQL formats' quoting), and 
   `Vec<u8>`) and MCP's answer, which is what keeps them identical. A format keeps whatever state
   it needs (JSON's comma, a multi-row `INSERT`'s batch) and flushes it in `footer`.
 - **Binary formats** (`.xlsx`, Parquet) write only files, and own them: they get rows a page at a
-  time and finish into the path. Parquet's writer lives in the engine, which already depends on
-  the DuckDB driver; the others in `dbrover-export`.
+  time and finish into the path, through `dbrover-export`'s `FileFormat` trait. Parquet's writer
+  is in the DuckDB driver, which owns DuckDB, and the engine adapts it to `FileFormat`, so
+  `dbrover-export` doesn't depend on DuckDB; the others are in `dbrover-export`.
 - **`ExportWriter`** stays the one way to write a file: it takes an `ExportSpec` (a format and
   its options), keeps W5d's `.partial` file and rename, and counts rows. Both loaded-rows and
   all-rows exports go through it, as now.
@@ -327,7 +328,7 @@ Each layer is one pull request in a stack, and is useful and tested on its own.
   widths, sheets past a million rows. Tests read the file back with
   [`calamine`](https://crates.io/crates/calamine) (a dev-dependency) and check each cell's type and
   value; one writes a little over a sheet's worth of rows, in the slow tests.
-- **W7e — Parquet:** the DuckDB writer, its type inference, compression; tests read the file
+- **W7e — Parquet** (built): the DuckDB writer, its type inference, compression; tests read the file
   back through DuckDB and check its schema and values.
 - **W7f — The export dialog:** format, options, preview, loaded or all rows, the options
   remembered; kittest tests on SQLite.

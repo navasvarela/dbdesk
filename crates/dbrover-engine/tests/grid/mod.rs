@@ -446,8 +446,8 @@ pub(super) fn export_all(
     }
 }
 
-/// Every row of a statement that returns more rows than a page, written as they come, in both
-/// formats.
+/// Every row of a statement that returns more rows than a page, written as they come, as CSV,
+/// JSON and Parquet.
 #[test]
 fn exports_every_row_on_every_engine() {
     let dir = tempfile::tempdir().unwrap();
@@ -508,9 +508,49 @@ fn exports_every_row_on_every_engine() {
             serde_json::from_str(&std::fs::read_to_string(&json).unwrap()).unwrap();
         assert_eq!(parsed[1199]["n"], "1199", "{}", source.name);
 
-        run_ok(&mut engine, &source, 4, &[&format!("DROP TABLE {digits}")]);
+        let parquet = dir.path().join(format!("{}.parquet", source.name));
+        let (_, result) = export_all(
+            &mut engine,
+            4,
+            &sql,
+            (
+                &parquet,
+                dbrover_export::ExportSpec::Parquet(Default::default()),
+            ),
+        );
+        assert_eq!(result, Ok(1200), "{}", source.name);
+        assert_eq!(
+            read_parquet(
+                &parquet,
+                "SELECT count(*), min(n), max(n), typeof(min(n)) FROM rows"
+            ),
+            [["1200", "0", "1199", "BIGINT"].map(|value| Some(value.to_owned()))],
+            "{}",
+            source.name
+        );
+
+        run_ok(&mut engine, &source, 5, &[&format!("DROP TABLE {digits}")]);
     }
     engine.shut_down();
+}
+
+/// Runs `sql` on the Parquet file at `path`, as a table named `rows`, through DuckDB.
+fn read_parquet(path: &std::path::Path, sql: &str) -> Vec<Vec<Option<String>>> {
+    use dbrover_core::Connection as _;
+
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        let config = dbrover_core::DuckDbConfig {
+            database: dbrover_core::DuckDbDatabase::InMemory,
+        };
+        let mut connection = dbrover_driver_duckdb::connect(&config).await.unwrap();
+        let file = path.to_string_lossy().replace('\'', "''");
+        let sql = format!("WITH rows AS (SELECT * FROM '{file}') {sql}");
+        let mut cursor = connection.execute(&sql).await.unwrap();
+        let rows = cursor.next_page(100).await.unwrap();
+        cursor.finish().await.unwrap();
+        rows
+    })
 }
 
 /// Cancelling stops the statement and removes the partial file; a failing statement leaves no

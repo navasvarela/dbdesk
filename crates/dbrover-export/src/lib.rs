@@ -7,12 +7,14 @@
 //! the clipboard get the same bytes.
 
 mod column;
+mod parquet;
 mod spec;
 mod text;
 mod writer;
 mod xlsx;
 
 pub use column::ExportColumn;
+pub use parquet::{ParquetCompression, ParquetOptions};
 pub use spec::{ExportChoice, ExportFormat, ExportSpec, export_choices};
 pub use text::{
     CsvOptions, FieldSeparator, HtmlDocument, HtmlOptions, InsertOptions, InsertSpec,

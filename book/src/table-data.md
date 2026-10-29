@@ -111,6 +111,7 @@ The formats:
 | **SQL INSERT** | An `INSERT` a row into the table the rows came from, of its columns only. Numbers in numeric columns are written as numbers, every other value as a string, which the database turns into the column's type. |
 | **JSON** | A list of objects, one a row, keyed by column name. Values are text, and `NULL` is `null`. A repeated column name gets `_2`, `_3`. |
 | **JSON Lines** | The same objects, one a line, as data pipelines and `jq -c` read them. |
+| **Parquet** | A compressed, typed file for data tools (DuckDB, pandas, Polars, Spark), with each column typed (see below). |
 | **HTML** | A web page with the rows as a table, every value escaped, that prints with its header on each page. |
 | **SQL UPDATE** | An `UPDATE` a row, setting each of the table's columns but the key, and naming the row by its primary key, as the grid's own edits do. |
 
@@ -128,6 +129,13 @@ changing a value:
 - A sheet holds 1,048,576 rows. More rows go on in a second sheet, *Rows 2*, and so on, each
   with the header, and the export's message says how many sheets there are.
 - A cell holds 32,767 characters; a longer value is cut there.
+
+**Parquet** columns are typed too: each takes the narrowest type (whole numbers, decimals,
+floating-point numbers, booleans, dates, timestamps) that every one of its values converts to and
+back without changing, starting with the type the database declares; otherwise it is text. A zip
+code with a leading zero stays text, and a timestamp with an offset isn't moved to UTC. Rows are
+gathered in a temporary DuckDB database that spills to disk, so a large export doesn't fill the
+memory, and the file is compressed with zstd.
 
 The SQL formats need to know the table: they are offered for rows the grid can edit (selected
 from one table, with its whole primary key), and greyed out elsewhere, saying why. Their

@@ -5,6 +5,8 @@ use std::time::Instant;
 
 use dbrover_core::{CancelHandle, DriverError, ResultCursor, Row, describe_error};
 use dbrover_export::{ExportColumn, ExportWriter};
+
+use crate::export_file::create_writer;
 use dbrover_store::{HistoryEntry, HistoryOutcome, HistorySource};
 use jiff::Timestamp;
 
@@ -122,10 +124,9 @@ async fn export_rows(
         .map(|column| ExportColumn::new(column, dialect))
         .collect();
     let (path, spec) = (export.path.clone(), export.spec.clone());
-    let created = blocking(move || {
-        ExportWriter::create(&path, &spec, &columns).map_err(|e| describe_error(&e))
-    })
-    .await;
+    let created =
+        blocking(move || create_writer(&path, &spec, &columns).map_err(|e| describe_error(&e)))
+            .await;
     let mut writer = match created {
         Ok(writer) => writer,
         Err(error) => {

@@ -224,7 +224,7 @@ fn exports_every_row_not_only_those_loaded() {
 
 /// Export › Loaded rows offers every format, each saved under its own extension: CSV for
 /// Excel starts with a byte order mark, Markdown writes a table, the SQL formats write to the
-/// table the grid edits, and Excel writes a workbook.
+/// table the grid edits, and Excel and Parquet write their own kinds of file.
 #[test]
 fn exports_the_loaded_rows_in_other_formats() {
     let dir = tempfile::tempdir().unwrap();
@@ -288,13 +288,24 @@ fn exports_the_loaded_rows_in_other_formats() {
     step_until_visible(&mut harness, "orders4.xlsx");
     let workbook = std::fs::read(&picked.lock().unwrap()[4]).unwrap();
     assert!(workbook.starts_with(b"PK"), "an .xlsx is a zip file");
+    harness.get_by_label("Export").click();
+    harness.run();
+    harness.get_by_label("Loaded rows ⏵").click();
+    harness.run();
+    harness.get_by_label("Parquet…").click();
+    step_until_visible(&mut harness, "orders5.parquet");
+    let parquet = std::fs::read(&picked.lock().unwrap()[5]).unwrap();
+    assert!(
+        parquet.starts_with(b"PAR1"),
+        "a Parquet file starts with its magic number"
+    );
     let extensions: Vec<String> = picked
         .lock()
         .unwrap()
         .iter()
         .filter_map(|path| Some(path.extension()?.to_str()?.to_owned()))
         .collect();
-    assert_eq!(extensions, ["csv", "md", "sql", "sql", "xlsx"]);
+    assert_eq!(extensions, ["csv", "md", "sql", "sql", "xlsx", "parquet"]);
 }
 
 /// The SQL formats need to know the table: for rows from a join they are greyed out.

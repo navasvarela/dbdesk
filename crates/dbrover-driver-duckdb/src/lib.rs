@@ -6,6 +6,7 @@
 mod catalog;
 mod errors;
 mod execution;
+mod parquet;
 mod table;
 mod values;
 
@@ -21,6 +22,8 @@ use dbrover_core::{
     TableDescription, TableName, TransactionStatus,
 };
 use duckdb::AccessMode;
+
+pub use parquet::{ParquetCompression, ParquetWriter};
 
 const PRODUCT: &str = "DuckDB";
 
