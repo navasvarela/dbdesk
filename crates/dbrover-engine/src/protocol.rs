@@ -721,7 +721,8 @@ pub struct RowEdit {
     pub change: Option<RowChange>,
 }
 
-/// Why the grid's changes weren't applied. None were: they were rolled back.
+/// Why the grid's changes weren't applied. In a transaction, none were: they were rolled back.
+/// One command at a time (Redis), those before `statement` were applied, and stay.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditFailure {
     /// The index of the statement that failed, if one did (rather than starting or ending

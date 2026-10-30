@@ -21,6 +21,16 @@ use dbrover_core::{DriverKind, Quoting};
 use dbrover_sql::Dialect;
 pub use dbrover_sql::{Analysis, NamedSchemas, StatementKind, Token, TokenKind, Unclassified};
 
+/// How the grid's edits of rows are applied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditsRun {
+    /// In a transaction of the dialect's, all or none.
+    Transaction(Dialect),
+    /// One command at a time, each taking effect as it runs: Redis has no transaction to undo
+    /// the ones before a command that fails.
+    OneByOne,
+}
+
 /// The language of a data source's console, of the MCP server's statements, and of the
 /// commands the safety checks classify.
 ///
@@ -52,6 +62,28 @@ impl QueryLanguage {
         match self {
             Self::Sql(dialect) => Some(dialect),
             Self::Redis => None,
+            #[cfg(any(test, feature = "test-language"))]
+            Self::Test => None,
+        }
+    }
+
+    /// How the grid's edits are applied, for a language whose results the grid can edit;
+    /// `None` for one whose results it can't.
+    pub fn edits_run(self) -> Option<EditsRun> {
+        match self {
+            Self::Sql(dialect) => Some(EditsRun::Transaction(dialect)),
+            Self::Redis => Some(EditsRun::OneByOne),
+            #[cfg(any(test, feature = "test-language"))]
+            Self::Test => None,
+        }
+    }
+
+    /// The key `command` reads whole, which the grid edits a command at a time and the key bar
+    /// acts on; `None` for any other command, and in a language without keys.
+    pub fn key_view(self, command: &str) -> Option<redis::KeyView> {
+        match self {
+            Self::Redis => redis::KeyView::of(command),
+            Self::Sql(_) => None,
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,
         }

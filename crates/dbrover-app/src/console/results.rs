@@ -1,8 +1,10 @@
 //! The results panel: one tab per statement, a summary line, and a virtualized grid whose
 //! loaded rows can be sorted, filtered, selected, copied and exported.
 
+use dbrover_core::SafetyLevel;
 use dbrover_core::{Cell, ColumnInfo, Row};
 use dbrover_engine::{RunId, StatementSummary};
+use dbrover_language::redis::KeyView;
 use dbrover_sql::first_word;
 use dbrover_store::{ActionId, CustomAction};
 use egui::{Align, Label, Layout, RichText, Sense, TextEdit, Ui};
@@ -41,6 +43,8 @@ pub fn show(
     actions: &mut Vec<ConsoleAction>,
 ) {
     let dialect = console.dialect();
+    let language = console.language;
+    let read_only = console.safety == SafetyLevel::ReadOnly;
     actions.extend(
         console
             .tables_to_describe()
@@ -70,6 +74,9 @@ pub fn show(
     let Some(statement) = run.statements.get_mut(run.selected) else {
         return;
     };
+    if let Some(view) = language.key_view(&statement.sql) {
+        key_bar(ui, &view, &mut statement.key_bar, read_only, actions);
+    }
     let load_clicked = summary(ui, statement, running, dialect);
     let mut grid_output = GridOutput::default();
     if statement.returns_rows() {
@@ -379,6 +386,131 @@ fn export_button(ui: &mut Ui, toolbar: &Toolbar<'_>, actions: &mut Vec<ConsoleAc
     }
 }
 
+/// What the key bar is asking for, before it acts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyQuestion {
+    /// How many seconds until the key expires.
+    Ttl,
+    /// The key's new name.
+    Rename,
+    /// Whether to delete the key.
+    Delete,
+}
+
+/// The bar above a Redis key's value, and what it is asking.
+#[derive(Debug, Default)]
+pub struct KeyBar {
+    asking: Option<KeyQuestion>,
+    /// The seconds or the new name typed in.
+    answer: String,
+}
+
+impl KeyBar {
+    fn ask(&mut self, question: KeyQuestion, answer: String) {
+        self.asking = Some(question);
+        self.answer = answer;
+    }
+
+    fn close(&mut self) {
+        self.asking = None;
+        self.answer.clear();
+    }
+}
+
+/// The Redis key a result shows whole, its type, and what can be done to it: each a command,
+/// run as a typed command is, then the key read again. Nothing changes a read-only data
+/// source's keys, so it offers nothing there.
+fn key_bar(
+    ui: &mut Ui,
+    view: &KeyView,
+    bar: &mut KeyBar,
+    read_only: bool,
+    actions: &mut Vec<ConsoleAction>,
+) {
+    let name = String::from_utf8_lossy(view.key()).into_owned();
+    let mut act = |command: String, then: KeyView| {
+        actions.push(ConsoleAction::KeyCommand { command, then });
+    };
+    ui.horizontal_wrapped(|ui| {
+        ui.label(RichText::new(&name).strong());
+        ui.weak(view.shape().label());
+        if read_only {
+            return;
+        }
+        ui.separator();
+        match bar.asking {
+            None => {
+                if ui
+                    .button("Set TTL…")
+                    .on_hover_text("Make the key expire")
+                    .clicked()
+                {
+                    bar.ask(KeyQuestion::Ttl, String::new());
+                }
+                if ui
+                    .button("Persist")
+                    .on_hover_text("Keep the key from expiring")
+                    .clicked()
+                {
+                    act(view.persist(), view.clone());
+                }
+                if ui.button("Rename…").clicked() {
+                    bar.ask(KeyQuestion::Rename, name.clone());
+                }
+                if ui.button("Delete…").clicked() {
+                    bar.ask(KeyQuestion::Delete, String::new());
+                }
+            }
+            Some(KeyQuestion::Ttl) => {
+                ui.label("Expire in");
+                ui.add(TextEdit::singleline(&mut bar.answer).desired_width(80.0));
+                ui.label("seconds");
+                let seconds = bar.answer.trim().parse::<u64>().ok();
+                if ui
+                    .add_enabled(seconds.is_some(), egui::Button::new("Set"))
+                    .clicked()
+                    && let Some(seconds) = seconds
+                {
+                    act(view.expire(seconds), view.clone());
+                    bar.close();
+                }
+                if ui.button("Cancel").clicked() {
+                    bar.close();
+                }
+            }
+            Some(KeyQuestion::Rename) => {
+                ui.label("New name");
+                ui.add(TextEdit::singleline(&mut bar.answer).desired_width(200.0));
+                let renamed = !bar.answer.is_empty() && bar.answer != name;
+                if ui
+                    .add_enabled(renamed, egui::Button::new("Rename"))
+                    .clicked()
+                {
+                    let new = bar.answer.as_bytes().to_vec();
+                    act(view.rename(&new), view.renamed(new));
+                    bar.close();
+                }
+                if ui.button("Cancel").clicked() {
+                    bar.close();
+                }
+            }
+            Some(KeyQuestion::Delete) => {
+                ui.colored_label(
+                    ui.visuals().warn_fg_color,
+                    format!("Delete {name}? This can't be undone."),
+                );
+                if ui.button("Delete").clicked() {
+                    act(view.delete_key(), view.clone());
+                    bar.close();
+                }
+                if ui.button("Cancel").clicked() {
+                    bar.close();
+                }
+            }
+        }
+    });
+}
+
 /// Whether the rows can be edited, Add row and Delete rows, and the pending changes with
 /// Submit and Revert.
 fn edit_status(ui: &mut Ui, statement: &mut StatementView, actions: &mut Vec<ConsoleAction>) {
@@ -414,11 +546,12 @@ fn edit_status(ui: &mut Ui, statement: &mut StatementView, actions: &mut Vec<Con
     }
     if let Some(summary) = pending_summary(&edits.pending) {
         ui.colored_label(ui.visuals().warn_fg_color, summary);
-        if ui
-            .button("Submit")
-            .on_hover_text("Write the changes, one statement per row, all or none")
-            .clicked()
-        {
+        let how = if edits.key_view().is_some() {
+            "Write the changes, one command each: those before a failing one stay made"
+        } else {
+            "Write the changes, one statement per row, all or none"
+        };
+        if ui.button("Submit").on_hover_text(how).clicked() {
             actions.push(ConsoleAction::SubmitEdits);
         }
         if ui.button("Revert").clicked() {
@@ -815,6 +948,18 @@ enum NewCell {
 
 /// What each result column of an added row starts as.
 fn new_row_defaults(columns: &[ColumnInfo], edits: &EditSession) -> Vec<NewCell> {
+    if let Some(view) = edits.key_view() {
+        // Redis has no defaults: what isn't typed in is empty, and a list's index is the server's.
+        return (0..columns.len())
+            .map(|column| {
+                if view.edits_new(column) {
+                    NewCell::Null
+                } else {
+                    NewCell::Absent
+                }
+            })
+            .collect();
+    }
     let Some(target) = edits.target() else {
         return Vec::new();
     };

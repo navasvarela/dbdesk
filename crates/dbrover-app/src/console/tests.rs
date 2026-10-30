@@ -865,3 +865,148 @@ mod test_language {
         }
     }
 }
+
+/// A Redis key's value, shown whole, is edited a command per change, and its key bar acts on it
+/// (`docs/nosql.md`, N1).
+mod redis_keys {
+    use dbrover_core::ColumnInfo;
+    use dbrover_engine::RowEdit;
+
+    use super::*;
+
+    fn column(name: &str) -> ColumnInfo {
+        ColumnInfo {
+            name: name.to_owned(),
+            type_name: None,
+        }
+    }
+
+    fn cells(values: &[&str]) -> Vec<Option<String>> {
+        values
+            .iter()
+            .map(|value| Some((*value).to_owned()))
+            .collect()
+    }
+
+    /// A console that ran `command`, whose result was `columns` and `rows`.
+    fn shown(command: &str, columns: &[&str], rows: Vec<Row>) -> QueryConsole {
+        let mut console = console_in(command, QueryLanguage::Redis);
+        let statements = console.statements_to_run(RunScope::All);
+        let run = RunId(1);
+        console.begin_run(run, &statements);
+        console.apply(&Event::StatementStarted {
+            run,
+            statement: 0,
+            columns: columns.iter().map(|name| column(name)).collect(),
+            shape: ResultShape::Rows,
+        });
+        console.apply(&Event::RowsFetched {
+            run,
+            statement: 0,
+            rows,
+            more: false,
+        });
+        assert!(console.tables_to_describe().is_empty());
+        console
+    }
+
+    fn statement(console: &mut QueryConsole) -> &mut StatementView {
+        &mut console.run.as_mut().unwrap().statements[0]
+    }
+
+    #[test]
+    fn edits_a_hash_a_command_per_change() {
+        let mut console = shown(
+            "HSCAN user:42 0 COUNT 1000",
+            &["field", "value"],
+            vec![cells(&["name", "Ada"]), cells(&["city", "Paris"])],
+        );
+        let shown = statement(&mut console);
+        assert!(matches!(shown.edits.editability, Editability::Key(_)));
+        assert!(
+            !shown.edits.is_editable(edit::RowRef::Loaded(0), 0),
+            "a field names its row"
+        );
+        assert!(shown.edits.is_editable(edit::RowRef::Loaded(0), 1));
+        let rows = shown.rows.clone();
+        shown.edits.pending.set(
+            &rows,
+            edit::RowRef::Loaded(0),
+            1,
+            Some("Ada Lovelace".to_owned()),
+        );
+        shown.edits.delete_rows(&[edit::RowRef::Loaded(1)]);
+        shown.edits.add_row();
+        shown
+            .edits
+            .pending
+            .set(&rows, edit::RowRef::New(0), 0, Some("born".to_owned()));
+        shown
+            .edits
+            .pending
+            .set(&rows, edit::RowRef::New(0), 1, Some("1815".to_owned()));
+
+        let Some(Command::ApplyEdits { statements, .. }) = console.submit_edits() else {
+            panic!("nothing submitted");
+        };
+        let commands: Vec<&str> = statements.iter().map(|edit| edit.sql.as_str()).collect();
+        assert_eq!(
+            commands,
+            [
+                "HDEL user:42 city",
+                "HSET user:42 name \"Ada Lovelace\"",
+                "HSET user:42 born 1815",
+            ]
+        );
+        let RowEdit { change, .. } = &statements[1];
+        let revert = change.as_ref().and_then(|change| change.revert.as_deref());
+        assert_eq!(revert, Some("HSET user:42 name Ada"));
+
+        console.apply(&Event::EditsApplied {
+            console: ConsoleId(1),
+            result: Ok(()),
+        });
+        // A row was added, so the key is read again to show it as the server has it.
+        assert!(console.take_reload().is_some());
+    }
+
+    #[test]
+    fn an_added_field_needs_its_name() {
+        let mut console = shown("HGETALL h", &["field", "value"], vec![cells(&["a", "1"])]);
+        statement(&mut console).edits.add_row();
+        assert!(console.submit_edits().is_none());
+        assert_eq!(
+            statement(&mut console).edits.error.as_deref(),
+            Some("New row 1: type field and value first")
+        );
+    }
+
+    #[test]
+    fn partial_reads_are_read_only() {
+        let mut console = shown("LRANGE q 0 10", &["value"], vec![cells(&["a"])]);
+        assert!(matches!(
+            statement(&mut console).edits.editability,
+            Editability::ReadOnly(_)
+        ));
+        let mut console = shown("HGET h f", &["value"], vec![cells(&["a"])]);
+        assert!(matches!(
+            statement(&mut console).edits.editability,
+            Editability::ReadOnly(_)
+        ));
+    }
+
+    #[test]
+    fn the_key_bar_renames_the_key_and_reads_it_again() {
+        let mut console = shown("GET greeting", &["value"], vec![cells(&["hello"])]);
+        let view = dbrover_language::redis::KeyView::of("GET greeting").unwrap();
+        let renamed = view.renamed(b"welcome".to_vec());
+        let run = console
+            .key_command_run(view.rename(b"welcome"), &renamed)
+            .unwrap();
+        assert_eq!(
+            sqls(&run.statements),
+            ["RENAMENX greeting welcome", "GET welcome"]
+        );
+        assert_eq!(console.text, "GET welcome");
+    }
+}

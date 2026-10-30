@@ -461,7 +461,7 @@ were. From N1·3 on, each runs against `redis:8-alpine` and `valkey/valkey:9-alp
     engine;
   - `TYPE` and `PTTL` for a page's keys go in one pipelined round trip; `SCAN`'s `TYPE` option,
     a filter by type, has no place in the explorer's filter box yet, and isn't offered.
-- **N1·5 — Key viewers and edits:** **Open data** on a key opens a console with its type's
+- **N1·5 — Key viewers and edits** (built): **Open data** on a key opens a console with its type's
   read command (`GET`, `HSCAN`, `LRANGE`, `SSCAN`, `ZRANGE … WITHSCORES`, `XREVRANGE`,
   `JSON.GET`), run at once, and the driver pages through a large value. Above its result, a
   key bar shows the key's type, TTL and memory, where the server answers, with **Set TTL…**,
@@ -470,7 +470,24 @@ were. From N1·3 on, each runs against `redis:8-alpine` and `valkey/valkey:9-alp
   and `ZREM`, `XADD` and `XDEL`, `SET … KEEPTTL`, `JSON.SET`), each run as a typed command is:
   checked against the safety level, written to the log and recorded in the history. Tests:
   each type opened and edited on both servers, and the console's key bar and edits fed
-  results in kittests.
+  results in kittests. How it came out:
+  - the commands that read a key whole are recognised wherever they are typed, so `HGETALL`
+    in a console is edited as **Open data**'s `HSCAN` is; the driver reads `LRANGE`,
+    `ZRANGE … WITHSCORES` by index and `XRANGE`/`XREVRANGE` without `COUNT` a page at a
+    time, a list's items with their index;
+  - the grid's edits go through the engine's edits, which run a language without
+    transactions one command at a time (`EditsRun::OneByOne`): on a failure, those before it
+    stay made, and the key is read again; each is in the history with the command that
+    undoes it;
+  - the key bar's actions run as typed commands do, followed by the key's read command:
+    **Set TTL…** (`EXPIRE`), **Persist**, **Rename…** (`RENAMENX`, so it never replaces
+    another key) and **Delete…**, which asks first;
+  - left out: the key's TTL and memory use in the bar (the explorer shows the TTL; nothing
+    asks the server for either from a console yet), a stream's entries added and deleted in
+    the grid (documents aren't edited there yet; `XADD` and `XDEL` work in the console), a
+    JSON document's paths (the whole document is set with `JSON.SET key $`), and the size of
+    a value of another type, which shows its `TYPE` only. A list item is deleted with
+    `LREM key 1 value`, the first item equal to it, since Redis removes list items by value.
 - **N1·6 — Safety and MCP:** the read-only level's dialog suggests an ACL user with only
   `+@read`; the MCP server serves a Redis data source only through its MCP login, its `query`
   tool takes a command, and `list_objects` pages keys, with a token for the next page. Tests:

@@ -22,6 +22,7 @@ use dbrover_core::{SafetyLevel, TransactionStatus};
 use dbrover_engine::{
     RunId, RunOrigin, RunOutcome, RunPurpose, SessionState, TransactionEnd, TransactionMode,
 };
+use dbrover_language::redis::KeyView;
 use dbrover_sql::{Dialect, ProblemSource, Severity};
 use dbrover_store::{ActionId, CustomAction, Snippet};
 
@@ -89,6 +90,12 @@ pub enum ConsoleAction {
     OpenRows(RowsToOpen),
     /// Runs a custom action from `actions.toml` on the grid's selected cells.
     RunAction(ActionId, GridCells),
+    /// Changes the shown Redis key from its key bar with `command`, then reads it again with
+    /// `then`'s command: the same key, or the key it was renamed to.
+    KeyCommand {
+        command: String,
+        then: KeyView,
+    },
 }
 
 /// What a console draws with besides its own state.
