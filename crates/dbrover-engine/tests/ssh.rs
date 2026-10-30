@@ -8,6 +8,7 @@ mod common;
 use std::sync::Arc;
 
 use common::{MemorySecrets, SshTestServer, TestEngine, ssh_test_server};
+use dbrover_core::ChildrenQuery;
 use dbrover_core::{CatalogPath, DataSource, DataSourceId, SshLogin};
 use dbrover_engine::{
     Command, ConsoleId, Event, PasswordKept, PasswordNeeded, PasswordUpdate, RunId, RunOrigin,
@@ -101,10 +102,11 @@ fn browses_and_queries_postgres_through_the_tunnel_with_a_key() {
     machine.engine.send(Command::LoadChildren {
         id,
         path: CatalogPath::root(),
+        query: ChildrenQuery::default(),
     });
     match machine.engine.next_event() {
         Event::ChildrenLoaded { result, .. } => {
-            let databases = result.unwrap();
+            let databases = result.unwrap().nodes;
             assert!(
                 databases
                     .iter()

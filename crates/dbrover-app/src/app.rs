@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use dbrover_core::{CatalogPath, DataSource, DataSourceId};
+use dbrover_core::{CatalogPath, ChildrenQuery, DataSource, DataSourceId};
 use dbrover_engine::{
     Command, EngineConfig, EngineError, EngineHandle, Event, PasswordKept, Repaint, RunOrigin,
 };
@@ -54,7 +54,7 @@ use crate::rollback_dialog::{Closing, RollbackChoice, RollbackConfirmation};
 use crate::settings::AppSettings;
 use crate::settings_window::{self, SettingsWindowAction};
 use crate::sql_files::{self, Destination, OpenFileAction, OpenFileDialog, SqlFiles};
-use crate::state::{AppState, EngineStatus};
+use crate::state::{AppState, DataSources, EngineStatus};
 use crate::system_look::SystemLook;
 use crate::theme::{self, Palette};
 use crate::title_bar;
@@ -74,6 +74,18 @@ const LAYOUT_STORAGE_KEY: &str = "dock_layout_v2";
 /// Asks where to export `what` ("rows", "history") in a format; `None` if cancelled.
 type PickExportPath = dyn Fn(ExportFormat, &str) -> Option<PathBuf>;
 
+/// How long typing in the explorer's filter must pause before a level the server pages is asked
+/// for again with it. Chosen to sit between keystrokes of steady typing, and short enough that
+/// the tree follows without seeming to wait.
+const SERVER_FILTER_PAUSE: Duration = Duration::from_millis(300);
+
+/// The explorer's filter text, and when it last changed, until the pause after that passes.
+#[derive(Default)]
+struct ServerFilter {
+    text: String,
+    changed: Option<Instant>,
+}
+
 /// Asks where to save a file, suggesting a name for it.
 type PickSavePath = Box<dyn Fn(&str) -> Option<PathBuf>>;
 
@@ -84,6 +96,8 @@ pub struct DbRoverApp {
     dock: DockState<Tab>,
     log_console: LogConsole,
     explorer_options: ExplorerOptions,
+    /// The explorer's filter as the server last saw it, or is about to.
+    server_filter: ServerFilter,
     data_source_dialog: Option<DataSourceDialog>,
     delete_confirmation: Option<DeleteConfirmation>,
     project_dialog: Option<ProjectNameDialog>,
@@ -196,6 +210,7 @@ impl DbRoverApp {
             dock,
             log_console: LogConsole::new(log_feed, &cc.egui_ctx),
             explorer_options: ExplorerOptions::default(),
+            server_filter: ServerFilter::default(),
             data_source_dialog: None,
             delete_confirmation: None,
             project_dialog: None,
@@ -923,6 +938,15 @@ impl DbRoverApp {
                     catalog.collapse(&path);
                 }
             }
+            ExplorerAction::LoadMore(id, path) => {
+                let more = self
+                    .state
+                    .catalog_mut(id)
+                    .and_then(|catalog| catalog.load_more(&path));
+                if let Some(query) = more {
+                    self.send(Command::LoadChildren { id, path, query });
+                }
+            }
             ExplorerAction::Refresh(id, path) => {
                 let needs_loading = self
                     .state
@@ -1093,7 +1117,49 @@ impl DbRoverApp {
             loads.push(changed);
         }
         for path in loads {
-            self.send(Command::LoadChildren { id, path });
+            self.send(Command::LoadChildren {
+                id,
+                path,
+                query: ChildrenQuery::default(),
+            });
+        }
+    }
+
+    /// Passes the explorer's filter to the server for the levels it pages, once typing has
+    /// paused, so each keystroke doesn't send a catalog query per paged level.
+    fn filter_paged_levels(&mut self, ctx: &egui::Context) {
+        let typed = self.explorer_options.filter.trim();
+        let now = Instant::now();
+        if typed != self.server_filter.text {
+            self.server_filter = ServerFilter {
+                text: typed.to_owned(),
+                changed: Some(now),
+            };
+        }
+        if let Some(changed) = self.server_filter.changed {
+            if let Some(left) = SERVER_FILTER_PAUSE.checked_sub(now.duration_since(changed)) {
+                ctx.request_repaint_after(left);
+                return;
+            }
+            self.server_filter.changed = None;
+        }
+        let filter = Some(self.server_filter.text.as_str()).filter(|text| !text.is_empty());
+        let DataSources::Loaded(entries) = &mut self.state.data_sources else {
+            return;
+        };
+        let mut requests = Vec::new();
+        for entry in entries {
+            let id = entry.data_source.id;
+            requests.extend(
+                entry
+                    .catalog
+                    .filter_paged_levels(filter)
+                    .into_iter()
+                    .map(|(path, query)| Command::LoadChildren { id, path, query }),
+            );
+        }
+        for request in requests {
+            self.send(request);
         }
     }
 
@@ -1110,7 +1176,11 @@ impl DbRoverApp {
 
     fn load_children_if(&self, needs_loading: bool, id: DataSourceId, path: CatalogPath) {
         if needs_loading {
-            self.send(Command::LoadChildren { id, path });
+            self.send(Command::LoadChildren {
+                id,
+                path,
+                query: ChildrenQuery::default(),
+            });
         }
     }
 
@@ -1996,6 +2066,7 @@ impl eframe::App for DbRoverApp {
         }
         self.maximize_window_once(ctx);
         self.drain_engine_events();
+        self.filter_paged_levels(ctx);
         if std::mem::take(&mut self.theme_changed) {
             theme::install_palettes(ctx, self.custom_files.palettes());
         }
@@ -3256,6 +3327,39 @@ mod tests {
         }
         harness.get_by_label("text, not null");
         step_until_visible(&mut harness, "1 connected");
+    }
+
+    /// N0a's explorer that pages, on SQLite: a schema of more tables than a page shows the
+    /// first page and **Load more…**, which loads the rest, and the explorer's filter is passed
+    /// to the server for that level once typing pauses.
+    #[test]
+    fn pages_a_large_schema_and_filters_it_on_the_server() {
+        let dir = tempfile::tempdir().unwrap();
+        let tables: String = (1..=1_100)
+            .map(|n| format!("CREATE TABLE t_{n:04} (id INTEGER);"))
+            .collect();
+        save_shop(dir.path(), &format!("BEGIN; {tables} COMMIT;"));
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        expand_shop_tables(&mut harness, "t_0001");
+        harness.get_by_label("Expand t_1000");
+        assert!(harness.query_by_label("Expand t_1001").is_none());
+        harness.get_by_label("Load more…");
+
+        // t_1050 isn't loaded yet, so only the server can find it.
+        replace_filter(&mut harness, "", "T_105");
+        step_until_visible(&mut harness, "Expand t_1050");
+        let shown = harness.query_all_by_label_contains("Expand t_").count();
+        assert_eq!(shown, 10, "t_1050 to t_1059");
+        assert!(harness.query_by_label("Load more…").is_none());
+
+        replace_filter(&mut harness, "T_105", "");
+        step_until_visible(&mut harness, "Expand t_0001");
+        harness.get_by_label("Load more…").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Load more…").click();
+        step_until_visible(&mut harness, "Expand t_1100");
+        assert!(harness.query_by_label("Load more…").is_none());
     }
 
     /// Expands the `shop` data source down to its tables folder, and waits until `table` shows.

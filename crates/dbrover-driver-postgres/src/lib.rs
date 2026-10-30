@@ -15,9 +15,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use dbrover_core::{
-    CancelHandle, CatalogNode, CatalogPath, Connection, DriverError, NodeKind, Password,
-    PostgresConfig, Rejection, RelationName, ResultCursor, RoleDescription, Route, ServerInfo,
-    TableConstraints, TableDescription, TableName, TransactionStatus,
+    CancelHandle, CatalogNode, CatalogPath, ChildrenPage, ChildrenQuery, Connection, DriverError,
+    NodeKind, Password, PostgresConfig, Rejection, RelationName, ResultCursor, RoleDescription,
+    Route, ServerInfo, TableConstraints, TableDescription, TableName, TransactionStatus,
 };
 use tokio::task::{JoinError, JoinHandle};
 use tokio_postgres::tls::MakeTlsConnect;
@@ -254,6 +254,15 @@ impl Connection for PostgresConnection {
     async fn children(&mut self, path: &CatalogPath) -> Result<Vec<CatalogNode>, DriverError> {
         let client = self.client_for(path).await?;
         catalog::children(client, path).await
+    }
+
+    async fn children_page(
+        &mut self,
+        path: &CatalogPath,
+        query: &ChildrenQuery,
+    ) -> Result<ChildrenPage, DriverError> {
+        let client = self.client_for(path).await?;
+        catalog::children_page(client, path, query).await
     }
 
     async fn definition(&mut self, path: &CatalogPath) -> Result<String, DriverError> {

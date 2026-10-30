@@ -5,7 +5,8 @@
 //! confusing in a browsing tool. See `docs/features/connection-explorer.md`.
 
 use dbrover_core::{
-    CatalogNode, CatalogPath, DriverError, FolderKind, NodeKind, PathSegment, Quoting,
+    CatalogNode, CatalogPath, ChildrenPage, ChildrenQuery, DriverError, FolderKind, NodeKind,
+    PageToken, PathSegment, Quoting, like_contains,
 };
 use tokio_postgres::types::ToSql;
 use tokio_postgres::{Client, Row};
@@ -217,30 +218,112 @@ async fn schemas(client: &Client, path: &CatalogPath) -> Result<Vec<CatalogNode>
         .collect()
 }
 
+/// Part of the level at `path`, as `query` asks. A schema's tables, views, materialized views
+/// and sequences are paged by name, with the filter applied by the server, since a schema can
+/// hold tens of thousands of them; every other level is listed whole and filtered here.
+pub(crate) async fn children_page(
+    client: &Client,
+    path: &CatalogPath,
+    query: &ChildrenQuery,
+) -> Result<ChildrenPage, DriverError> {
+    if let Some(Level::SchemaObjects { schema, folder }) = Level::of(path)
+        && let Some(relations) = Relations::in_folder(folder)
+    {
+        return relations.page(client, path, schema, query).await;
+    }
+    Ok(ChildrenPage::whole(children(client, path).await?, query))
+}
+
 async fn schema_objects(
     client: &Client,
     path: &CatalogPath,
     schema: &str,
     folder: FolderKind,
 ) -> Result<Vec<CatalogNode>, DriverError> {
-    let (kind, relkinds): (NodeKind, &[&str]) = match folder {
-        FolderKind::Tables => (NodeKind::Table, &["r", "p"]),
-        FolderKind::Views => (NodeKind::View, &["v"]),
-        FolderKind::MaterializedViews => (NodeKind::MaterializedView, &["m"]),
-        FolderKind::Sequences => (NodeKind::Sequence, &["S"]),
-        FolderKind::Functions => return functions(client, path, schema).await,
-        _ => return Err(DriverError::InvalidPath(path.clone())),
+    if folder == FolderKind::Functions {
+        return functions(client, path, schema).await;
+    }
+    let relations =
+        Relations::in_folder(folder).ok_or_else(|| DriverError::InvalidPath(path.clone()))?;
+    let everything = ChildrenQuery {
+        filter: None,
+        after: None,
+        limit: None,
     };
-    let sql = "SELECT c.relname FROM pg_class c \
-               JOIN pg_namespace n ON n.oid = c.relnamespace \
-               WHERE n.nspname = $1 AND c.relkind::text = ANY($2) ORDER BY c.relname";
-    let is_relation = relation_folder(kind).is_some();
-    let has_definition = matches!(kind, NodeKind::View | NodeKind::MaterializedView);
-    query(client, sql, &[&schema, &relkinds])
+    Ok(relations
+        .page(client, path, schema, &everything)
         .await?
-        .iter()
-        .map(|row| Ok(node(path, kind, text(row, 0)?, is_relation, has_definition)))
-        .collect()
+        .nodes)
+}
+
+/// The relations of one kind a schema folder lists, from `pg_class`.
+struct Relations {
+    kind: NodeKind,
+    relkinds: &'static [&'static str],
+}
+
+impl Relations {
+    fn in_folder(folder: FolderKind) -> Option<Self> {
+        let (kind, relkinds): (NodeKind, &[&str]) = match folder {
+            FolderKind::Tables => (NodeKind::Table, &["r", "p"]),
+            FolderKind::Views => (NodeKind::View, &["v"]),
+            FolderKind::MaterializedViews => (NodeKind::MaterializedView, &["m"]),
+            FolderKind::Sequences => (NodeKind::Sequence, &["S"]),
+            _ => return None,
+        };
+        Some(Self { kind, relkinds })
+    }
+
+    /// The relations named after `wanted`'s token and containing its filter, by name.
+    ///
+    /// Keyset paging: each page continues after the last name of the one before, so a page
+    /// costs the same however deep it is, and a table created meanwhile shifts nothing. Names
+    /// are compared and sorted as `text` in the "C" collation, byte by byte, so the order
+    /// and the `>` agree whatever the database's collation is. One row more than the limit is
+    /// read to know whether there is a next page.
+    async fn page(
+        &self,
+        client: &Client,
+        path: &CatalogPath,
+        schema: &str,
+        wanted: &ChildrenQuery,
+    ) -> Result<ChildrenPage, DriverError> {
+        let sql = "SELECT c.relname FROM pg_class c \
+                   JOIN pg_namespace n ON n.oid = c.relnamespace \
+                   WHERE n.nspname = $1 AND c.relkind::text = ANY($2) \
+                   AND ($3::text IS NULL OR c.relname::text COLLATE \"C\" > $3::text) \
+                   AND ($4::text IS NULL OR c.relname::text ILIKE $4::text) \
+                   ORDER BY c.relname::text COLLATE \"C\" LIMIT $5";
+        let after = wanted.after.as_ref().map(PageToken::as_str);
+        let pattern = wanted.filter.as_deref().map(like_contains);
+        let read = wanted
+            .limit
+            .map(|limit| i64::try_from(limit.saturating_add(1)).unwrap_or(i64::MAX));
+        let rows = query(
+            client,
+            sql,
+            &[&schema, &self.relkinds, &after, &pattern, &read],
+        )
+        .await?;
+        let mut names = rows
+            .iter()
+            .map(|row| text(row, 0))
+            .collect::<Result<Vec<String>, _>>()?;
+        let next = match wanted.limit {
+            Some(limit) if names.len() > limit => {
+                names.truncate(limit);
+                names.last().cloned().map(PageToken::new)
+            }
+            _ => None,
+        };
+        let is_relation = relation_folder(self.kind).is_some();
+        let has_definition = matches!(self.kind, NodeKind::View | NodeKind::MaterializedView);
+        let nodes = names
+            .into_iter()
+            .map(|name| node(path, self.kind, name, is_relation, has_definition))
+            .collect();
+        Ok(ChildrenPage { nodes, next })
+    }
 }
 
 /// Functions are named with their argument list, `add(integer, integer)`, because overloads

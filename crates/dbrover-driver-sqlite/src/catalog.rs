@@ -6,7 +6,8 @@
 //! statement of every table, view, index and trigger, which is what "definition" returns.
 
 use dbrover_core::{
-    CatalogNode, CatalogPath, DriverError, FolderKind, NodeKind, PathSegment, Quoting,
+    CatalogNode, CatalogPath, ChildrenPage, ChildrenQuery, DriverError, FolderKind, NodeKind,
+    PageToken, PathSegment, Quoting, like_contains,
 };
 use rusqlite::{Connection, Params, Row};
 
@@ -104,7 +105,14 @@ pub(crate) fn children(
     match level {
         Level::Schemas => schemas(connection, path),
         Level::SchemaFolders => Ok(folders(path, SCHEMA_FOLDERS)),
-        Level::SchemaObjects { schema, folder } => relations(connection, path, schema, folder),
+        Level::SchemaObjects { schema, folder } => {
+            let everything = ChildrenQuery {
+                filter: None,
+                after: None,
+                limit: None,
+            };
+            Ok(relations(connection, path, schema, folder, &everything)?.nodes)
+        }
         Level::RelationFolders { relation_kind } => {
             Ok(folders(path, relation_folders(relation_kind)))
         }
@@ -176,25 +184,65 @@ fn schemas(connection: &Connection, path: &CatalogPath) -> Result<Vec<CatalogNod
         .collect())
 }
 
+/// Part of the level at `path`, as `query` asks: a schema's tables and views are paged by
+/// name, with the filter applied in the query; every other level is listed whole and filtered
+/// here.
+pub(crate) fn children_page(
+    connection: &Connection,
+    path: &CatalogPath,
+    query: &ChildrenQuery,
+) -> Result<ChildrenPage, DriverError> {
+    match Level::of(path) {
+        Some(Level::SchemaObjects { schema, folder }) => {
+            relations(connection, path, schema, folder, query)
+        }
+        _ => Ok(ChildrenPage::whole(children(connection, path)?, query)),
+    }
+}
+
+/// A schema's tables or views named after `query`'s token and containing its filter, by name.
+/// Keyset paging, as the PostgreSQL driver's: each page continues after the last name of the
+/// one before, and one row more than the limit tells whether there is a next page. Names
+/// compare and sort with SQLite's default `BINARY` collation, so the two agree; `LIKE` ignores
+/// the case of ASCII letters.
 fn relations(
     connection: &Connection,
     path: &CatalogPath,
     schema: &str,
     folder: FolderKind,
-) -> Result<Vec<CatalogNode>, DriverError> {
+    query: &ChildrenQuery,
+) -> Result<ChildrenPage, DriverError> {
     let (kind, object_type) = match folder {
         FolderKind::Tables => (NodeKind::Table, "table"),
         FolderKind::Views => (NodeKind::View, "view"),
         _ => return Err(DriverError::InvalidPath(path.clone())),
     };
     let sql = format!(
-        "SELECT name FROM {}.sqlite_schema WHERE type = ?1 ORDER BY name",
+        "SELECT name FROM {}.sqlite_schema WHERE type = ?1 \
+         AND (?2 IS NULL OR name > ?2) AND (?3 IS NULL OR name LIKE ?3 ESCAPE '\\') \
+         ORDER BY name LIMIT ?4",
         Quoting::STANDARD.identifier_if_needed(schema)
     );
-    let names = rows(connection, &sql, [object_type], |row| {
-        row.get::<_, String>(0)
-    })?;
-    Ok(names
+    let after = query.after.as_ref().map(PageToken::as_str);
+    let pattern = query.filter.as_deref().map(like_contains);
+    // A negative limit is no limit, in SQLite.
+    let read = query.limit.map_or(-1, |limit| {
+        i64::try_from(limit.saturating_add(1)).unwrap_or(i64::MAX)
+    });
+    let mut names = rows(
+        connection,
+        &sql,
+        rusqlite::params![object_type, after, pattern, read],
+        |row| row.get::<_, String>(0),
+    )?;
+    let next = match query.limit {
+        Some(limit) if names.len() > limit => {
+            names.truncate(limit);
+            names.last().cloned().map(PageToken::new)
+        }
+        _ => None,
+    };
+    let nodes = names
         .into_iter()
         .map(|name| CatalogNode {
             has_children: true,
@@ -203,7 +251,8 @@ fn relations(
             system: name.starts_with("sqlite_"),
             ..node(path, kind, name)
         })
-        .collect())
+        .collect();
+    Ok(ChildrenPage { nodes, next })
 }
 
 fn columns(

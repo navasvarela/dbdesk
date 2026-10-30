@@ -12,6 +12,7 @@ use common::{
     FakeInstaller, FixedReleases, MemorySecrets, TestEngine, postgres_test_server,
     sqlite_data_source, sqlite_database,
 };
+use dbrover_core::ChildrenQuery;
 use dbrover_core::{
     CatalogPath, ConnectionConfig, DataSource, DataSourceId, FolderKind, NodeKind, Password,
     PostgresConfig, ServerConfig, SshConfig, SshLogin, TlsMode,
@@ -551,6 +552,7 @@ fn loading_children_connects_first_and_answers_catalog_requests() {
     engine.send(Command::LoadChildren {
         id,
         path: CatalogPath::root(),
+        query: ChildrenQuery::default(),
     });
 
     assert_eq!(engine.expect_session(id), SessionState::Connecting);
@@ -562,9 +564,10 @@ fn loading_children_connects_first_and_answers_catalog_requests() {
         Event::ChildrenLoaded {
             id: loaded,
             path,
-            result: Ok(nodes),
+            result: Ok(page),
+            ..
         } if loaded == id && path.is_root() => {
-            let labels: Vec<_> = nodes.iter().map(|node| node.label.as_str()).collect();
+            let labels: Vec<_> = page.nodes.iter().map(|node| node.label.as_str()).collect();
             assert_eq!(labels, ["main"]);
         }
         other => panic!("expected the root's children, got {other:?}"),

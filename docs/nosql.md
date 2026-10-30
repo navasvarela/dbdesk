@@ -1,7 +1,8 @@
 # NoSQL databases
 
-Status: **N0a being built** (from 2026-10-30), in the layers listed under
-[N0a](#n0a--groundwork-languages-safety-and-the-explorer). W7 (exports) has landed.
+Status: **N0a built** (2026-10-30), in the layers listed under
+[N0a](#n0a--groundwork-languages-safety-and-the-explorer); N0b and N1 are next. W7 (exports)
+has landed.
 
 DbRover speaks seven SQL engines. Many of the teams that use them keep a Redis beside their
 PostgreSQL, documents in MongoDB, or logs in Elasticsearch, and today they open another tool for
@@ -199,13 +200,19 @@ is exercised by the SQL engines and by the test language.
   refused by the read-only check and planned by the MCP server through its own
   classification, its warnings, and, on the SQL Server test server, MCP serving a data source
   only through its MCP login and reading as that login.
-- **N0a·4 — An explorer that pages:** `Connection::children_page` returns part of a level, with
-  a token for the next part, and takes a filter the server applies; its default returns the whole
-  level, as `children` does. PostgreSQL pages the objects of a schema 1,000 at a time, by name,
-  with the filter as a case-insensitive `ILIKE`. The tree shows **Load more…** at the end of a
-  partial level, and the explorer's filter box asks the server again for a partial level. Engine
-  tests on the PostgreSQL test server: a schema of 2,500 tables in three pages, a filter applied
-  by the server, and an ignored test with 20,000.
+- **N0a·4 — An explorer that pages** (built): `Connection::children_page` returns part of a
+  level, with a token for the next part, and takes a filter the server applies; its default
+  lists the whole level with `children` and filters it in DbRover. PostgreSQL and SQLite page
+  the tables, views, materialized views and sequences of a schema 1,000 at a time, by name
+  (keyset paging), with the filter as a case-insensitive `ILIKE` (`LIKE` on SQLite). The tree
+  shows **Load more…** at the end of a partial level, and the explorer's filter box asks the
+  server again for a partial level once typing pauses for 300 ms; a level loaded whole is still
+  filtered by the explorer alone. Tests: a conformance check that the pages add up to the whole
+  level and the server's filter matches DbRover's (SQLite, 2,500 tables); engine tests on the
+  PostgreSQL test server, 2,500 tables in three pages and the filter, and an ignored one with
+  20,000; and a kittest on SQLite that finds a table not yet loaded through the filter, then
+  loads more. SQLite pages too, beyond the plan, so the explorer is tested end to end without a
+  server. The MCP server's `list_objects` still lists a level whole; N1 pages it for keys.
 
 The manual changes in the layer that changes what a user sees: N0a·3 (read-only data sources and
 MCP logins on SQL Server and ClickHouse) and N0a·4 (**Load more…** and the filter).

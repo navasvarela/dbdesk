@@ -15,6 +15,10 @@ Implemented:
   test can assert on its own fixture: a schema with one object of every kind.
 - `check_invalid_path` (M2): nonsense paths are `DriverError::InvalidPath`, without touching the
   server. (This caught the Postgres driver trying to connect to a "database" named in a bogus path.)
+- `check_children_pages` (N0a): paging through a level with `children_page` gives exactly what
+  `children` lists, in its order and in the expected number of pages, and a filtered page holds
+  exactly the nodes whose label contains the filter. For drivers that page a level themselves;
+  SQLite runs it on 2,500 tables, and the engine's `explorer` tests do the same on PostgreSQL.
 - `check_execution` (M3): DDL, a 1200-row insert with its count, paging through it in pages
   of at most 500, `NULL` vs empty text, abandoning a cursor halfway, and a syntax error's byte
   position. Uses SQL both engines accept and a temporary table.

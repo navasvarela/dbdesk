@@ -13,9 +13,9 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use dbrover_core::{
-    BoxError, CancelHandle, CatalogNode, CatalogPath, Cell, Connection, DriverError, Rejection,
-    RelationName, ResultCursor, ServerInfo, SqliteConfig, TableConstraints, TableDescription,
-    TableName, TransactionStatus,
+    BoxError, CancelHandle, CatalogNode, CatalogPath, Cell, ChildrenPage, ChildrenQuery,
+    Connection, DriverError, Rejection, RelationName, ResultCursor, ServerInfo, SqliteConfig,
+    TableConstraints, TableDescription, TableName, TransactionStatus,
 };
 use rusqlite::OpenFlags;
 
@@ -163,6 +163,16 @@ impl Connection for SqliteConnection {
             .await
     }
 
+    async fn children_page(
+        &mut self,
+        path: &CatalogPath,
+        query: &ChildrenQuery,
+    ) -> Result<ChildrenPage, DriverError> {
+        let (path, query) = (path.clone(), query.clone());
+        self.run_blocking(move |connection| catalog::children_page(connection, &path, &query))
+            .await
+    }
+
     async fn definition(&mut self, path: &CatalogPath) -> Result<String, DriverError> {
         let path = path.clone();
         self.run_blocking(move |connection| catalog::definition(connection, &path))
@@ -247,6 +257,40 @@ mod tests {
             .execute_batch("CREATE TABLE t (id INTEGER PRIMARY KEY)")
             .unwrap();
         file
+    }
+
+    #[tokio::test]
+    async fn pages_a_schemas_tables_by_name_with_the_filter_in_the_query() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let creates: String = (0..2_500)
+            .map(|n| format!("CREATE TABLE t_{n:04} (id INTEGER);"))
+            .collect();
+        rusqlite::Connection::open(file.path())
+            .unwrap()
+            .execute_batch(&format!(
+                "BEGIN; {creates} CREATE TABLE \"Odd_%\" (id); COMMIT;"
+            ))
+            .unwrap();
+        let mut connection = connect(&SqliteConfig {
+            path: file.path().to_owned(),
+            read_only: true,
+        })
+        .await
+        .unwrap();
+        let tables = CatalogPath::root()
+            .child(NodeKind::Schema, "main")
+            .child(NodeKind::Folder(FolderKind::Tables), "tables");
+
+        let labels =
+            conformance::check_children_pages(&mut connection, &tables, 1_000, 3, "t_12").await;
+        assert_eq!(labels.len(), 2_501);
+        let wildcard = ChildrenQuery {
+            filter: Some("_%".to_owned()),
+            after: None,
+            limit: None,
+        };
+        let odd = connection.children_page(&tables, &wildcard).await.unwrap();
+        assert_eq!(odd.nodes.len(), 1, "% and _ match themselves");
     }
 
     #[tokio::test]

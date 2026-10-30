@@ -6,8 +6,8 @@
 use std::time::{Duration, Instant};
 
 use crate::{
-    CatalogNode, CatalogPath, Connection, DriverError, Identifier, NodeKind, RejectionKind,
-    RelationName, ResultCursor, TransactionStatus, describe_error,
+    CatalogNode, CatalogPath, ChildrenQuery, Connection, DriverError, Identifier, NodeKind,
+    RejectionKind, RelationName, ResultCursor, TransactionStatus, describe_error,
 };
 
 /// A fresh connection reports its server, answers pings, and closes cleanly.
@@ -19,6 +19,66 @@ pub async fn check_lifecycle(mut connection: Box<dyn Connection>) {
     connection.ping().await.expect("first ping");
     connection.ping().await.expect("second ping");
     connection.close().await.expect("close");
+}
+
+/// Paging through the level at `path`, `limit` nodes at a time, gives exactly what
+/// [`Connection::children`] lists, in its order, in `pages` pages; and a page filtered by
+/// `filter` holds exactly the nodes whose label contains it, ignoring case. Returns the
+/// labels, for the caller's own checks.
+pub async fn check_children_pages(
+    connection: &mut dyn Connection,
+    path: &CatalogPath,
+    limit: usize,
+    pages: usize,
+    filter: &str,
+) -> Vec<String> {
+    let labels = |nodes: &[CatalogNode]| -> Vec<String> {
+        nodes.iter().map(|node| node.label.clone()).collect()
+    };
+    let whole = labels(&connection.children(path).await.expect("the whole level"));
+
+    let mut paged = Vec::new();
+    let mut query = ChildrenQuery {
+        filter: None,
+        after: None,
+        limit: Some(limit),
+    };
+    let mut read = 0;
+    loop {
+        let page = connection
+            .children_page(path, &query)
+            .await
+            .expect("a page of the level");
+        read += 1;
+        assert!(page.nodes.len() <= limit, "page {read} is over the limit");
+        paged.extend(labels(&page.nodes));
+        match page.next {
+            Some(next) => query = query.after(next),
+            None => break,
+        }
+    }
+    assert_eq!(
+        paged, whole,
+        "the pages of {path} differ from the whole level"
+    );
+    assert_eq!(read, pages, "{path} came in {read} pages");
+
+    let filtered = ChildrenQuery {
+        filter: Some(filter.to_owned()),
+        after: None,
+        limit: None,
+    };
+    let page = connection
+        .children_page(path, &filtered)
+        .await
+        .expect("the filtered level");
+    let expected: Vec<String> = whole
+        .iter()
+        .filter(|label| filtered.matches(label))
+        .cloned()
+        .collect();
+    assert_eq!(labels(&page.nodes), expected, "{path} filtered by {filter}");
+    whole
 }
 
 /// A port on this machine that forwards every connection to `server` (`host:port`), standing

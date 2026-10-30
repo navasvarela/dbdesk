@@ -5,9 +5,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
 use dbrover_core::{
-    CancelHandle, CatalogNode, CatalogPath, Cell, ColumnInfo, Connection, DriverError, Rejection,
-    RelationName, ResultCursor, RoleDescription, Row, ServerInfo, TableConstraints,
-    TableDescription, TableName, TransactionStatus, describe_error,
+    CancelHandle, CatalogNode, CatalogPath, Cell, ChildrenPage, ChildrenQuery, ColumnInfo,
+    Connection, DriverError, Rejection, RelationName, ResultCursor, RoleDescription, Row,
+    ServerInfo, TableConstraints, TableDescription, TableName, TransactionStatus, describe_error,
 };
 
 use super::{SessionContext, SessionOwner, SessionRequest};
@@ -67,6 +67,15 @@ impl Connection for Watched {
 
     async fn children(&mut self, path: &CatalogPath) -> Result<Vec<CatalogNode>, DriverError> {
         self.loss.watch(self.connection.children(path).await)
+    }
+
+    async fn children_page(
+        &mut self,
+        path: &CatalogPath,
+        query: &ChildrenQuery,
+    ) -> Result<ChildrenPage, DriverError> {
+        self.loss
+            .watch(self.connection.children_page(path, query).await)
     }
 
     async fn definition(&mut self, path: &CatalogPath) -> Result<String, DriverError> {
@@ -204,9 +213,10 @@ pub(super) fn refuse(context: &SessionContext, request: SessionRequest, reason: 
                 .map(|sql| (sql, StatementCheck::Skipped))
                 .collect(),
         },
-        (SessionRequest::Children(path), _) => Event::ChildrenLoaded {
+        (SessionRequest::Children(path, query), _) => Event::ChildrenLoaded {
             id,
             path,
+            query,
             result: Err(message),
         },
         (SessionRequest::Definition(path), _) => Event::DefinitionLoaded {

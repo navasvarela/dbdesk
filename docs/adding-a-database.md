@@ -98,7 +98,8 @@ What each `Connection` method must do is documented on the trait in
 
 Tests use the conformance suite in `dbrover-core/src/conformance.rs`:
 - `check_lifecycle` and `check_connect_failure`;
-- `walk_catalog` and `check_invalid_path`;
+- `walk_catalog` and `check_invalid_path`, and `check_children_pages` if the driver pages a
+  level that can grow large (`Connection::children_page`; the default loads it whole);
 - `check_execution`, `check_transactions`, `check_describe_table`, `check_validate`, and
   `check_cancel` (with a statement that runs long, such as MySQL's `SLEEP`).
 

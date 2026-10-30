@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use dbrover_core::{
-    CatalogNode, CatalogPath, ColumnInfo, DataSource, DataSourceId, DriverKind, Password,
-    ProjectId, Rejection, RelationName, RoleDescription, Row, ServerInfo, TableDescription,
-    TableName, TransactionStatus,
+    CatalogPath, ChildrenPage, ChildrenQuery, ColumnInfo, DataSource, DataSourceId, DriverKind,
+    Password, ProjectId, Rejection, RelationName, RoleDescription, Row, ServerInfo,
+    TableDescription, TableName, TransactionStatus,
 };
 use dbrover_export::{ExportSpec, SqlTable};
 use dbrover_sql::{ExistingTable, ParameterValues};
@@ -127,11 +127,12 @@ pub enum Command {
     /// Disconnects the explorer's connection and every console's connection to the data
     /// source, rolling back their open transactions.
     Disconnect(DataSourceId),
-    /// Lists the children of a catalog node, connecting first if needed.
-    /// Answered by [`Event::ChildrenLoaded`].
+    /// Lists the children of a catalog node, or the part of them `query` asks for,
+    /// connecting first if needed. Answered by [`Event::ChildrenLoaded`].
     LoadChildren {
         id: DataSourceId,
         path: CatalogPath,
+        query: ChildrenQuery,
     },
     /// Answered by [`Event::DefinitionLoaded`].
     LoadDefinition {
@@ -618,7 +619,9 @@ pub enum Event {
     ChildrenLoaded {
         id: DataSourceId,
         path: CatalogPath,
-        result: Result<Vec<CatalogNode>, String>,
+        /// What was asked for, so the answer to a query since replaced can be told apart.
+        query: ChildrenQuery,
+        result: Result<ChildrenPage, String>,
     },
     DefinitionLoaded {
         id: DataSourceId,
