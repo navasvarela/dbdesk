@@ -11,8 +11,9 @@ use std::path::{Path, PathBuf};
 
 use dbrover_core::{
     ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase,
-    McpLogin, MysqlConfig, PasswordCommand, Port, PostgresConfig, ProjectId, SafetyLevel,
-    ServerConfig, SourceColor, SqlServerConfig, SqliteConfig, SshConfig, SshLogin, TlsMode,
+    McpLogin, MysqlConfig, PasswordCommand, Port, PostgresConfig, ProjectId, RedisConfig,
+    SafetyLevel, ServerConfig, SourceColor, SqlServerConfig, SqliteConfig, SshConfig, SshLogin,
+    TlsMode,
 };
 use serde::{Deserialize, Serialize};
 
@@ -160,6 +161,7 @@ enum PortableConfig {
     DuckDb(PortableDuckDb),
     #[serde(rename = "clickhouse")]
     ClickHouse(PortableServer),
+    Redis(PortableServer),
 }
 
 impl PortableConfig {
@@ -176,6 +178,9 @@ impl PortableConfig {
             }
             ConnectionConfig::ClickHouse(ClickHouseConfig { server }) => {
                 Self::ClickHouse(PortableServer::export(server, path))
+            }
+            ConnectionConfig::Redis(RedisConfig { server }) => {
+                Self::Redis(PortableServer::export(server, path))
             }
             ConnectionConfig::Sqlite(SqliteConfig {
                 path: file,
@@ -211,6 +216,9 @@ impl PortableConfig {
                 server: server.import(path),
             }),
             Self::ClickHouse(server) => ConnectionConfig::ClickHouse(ClickHouseConfig {
+                server: server.import(path),
+            }),
+            Self::Redis(server) => ConnectionConfig::Redis(RedisConfig {
                 server: server.import(path),
             }),
             Self::Sqlite(PortableSqlite {

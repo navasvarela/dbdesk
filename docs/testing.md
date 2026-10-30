@@ -65,6 +65,17 @@ Each driver crate runs the suite against its own backend:
   `check_cancel` with `Spelling::STANDARD`, but not `check_transactions` (ClickHouse has none
   to speak of) or `check_describe_table` (no key tells a table's rows apart, so results are
   never editable).
+- **Redis and Valkey**: the `redis` container (Redis 8, port 56379, and TLS on 56443 with the
+  `postgres-tls` certificate) and the `valkey` container (Valkey 9, port 56380), skipped when
+  `DBROVER_TEST_REDIS_URL`, `DBROVER_TEST_REDIS_TLS_URL` or `DBROVER_TEST_VALKEY_URL` is unset.
+  Each test runs on both servers, signing in as the ACL user `dbrover`. They run the parts of
+  the suite that apply to an engine without SQL: `check_lifecycle`, `check_connect_failure`,
+  `walk_catalog`, `check_invalid_path`, `check_lost` and `check_cancel`, the last with a
+  `BLPOP` (ended by `CLIENT UNBLOCK`) and a script (ended by `SCRIPT KILL`). The servers let a
+  script be killed after 100 ms rather than 5 s, and allow `DEBUG SLEEP`, for the command
+  nothing stops. A test also checks that the command table `dbrover-language` ships classifies
+  every command as each server's `COMMAND INFO` flags it, and prints the table's lines for any
+  that differ. Dragonfly isn't in CI: it is tried by hand before a release.
 - **SQL Server**: the `sqlserver` container (2022, port 51433), skipped when
   `DBROVER_TEST_SQLSERVER_URL` is unset. Its image is x86-64 only: native on CI's Linux runner,
   emulated (slowly, and it can crash) by Docker on an Apple-silicon Mac. The image can't

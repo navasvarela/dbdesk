@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use common::{
     TestEngine, clickhouse_test_server, mysql_test_servers, postgres_test_server,
-    sqlite_data_source, sqlite_database, sqlserver_test_server,
+    redis_test_servers, sqlite_data_source, sqlite_database, sqlserver_test_server,
 };
 use dbrover_core::{
     ConnectionConfig, DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase, Identifier,
@@ -888,6 +888,73 @@ fn keeps_a_clickhouse_session_across_runs() {
             assert_eq!(rows, [[Some("ada".to_owned())]]);
             break;
         }
+    }
+}
+
+/// A Redis or Valkey console runs commands as typed and shows each reply by its shape: a hash
+/// as field and value, a list as one column. Needs `DBROVER_TEST_REDIS_URL` or
+/// `DBROVER_TEST_VALKEY_URL`; skipped without them.
+#[test]
+fn runs_redis_commands_and_shows_their_replies() {
+    for (config, password) in redis_test_servers() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+        engine.expect_started(vec![]);
+        let data_source = DataSource {
+            id: DataSourceId::generate(),
+            name: "cache".to_owned(),
+            color: None,
+            safety: dbrover_core::SafetyLevel::Normal,
+            project: None,
+            mcp_login: None,
+            config: ConnectionConfig::Redis(config),
+        };
+        let id = data_source.id;
+        engine.send(Command::SaveDataSource {
+            data_source,
+            password: PasswordUpdate::Set(password),
+            ssh_secret: PasswordUpdate::Keep,
+        });
+        assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
+
+        let key = format!("dbrover:engine:{}", std::process::id());
+        execute(
+            &engine,
+            id,
+            1,
+            &[
+                &format!("DEL {key}"),
+                &format!("HSET {key} name \"Ada Lovelace\""),
+                &format!("HGETALL {key}"),
+            ],
+        );
+        let (columns, rows) = loop {
+            match next_run_event(&mut engine) {
+                Event::StatementStarted {
+                    statement: 2,
+                    columns,
+                    ..
+                } => {
+                    let Event::RowsFetched { rows, .. } = next_run_event(&mut engine) else {
+                        panic!("expected the hash's fields");
+                    };
+                    break (columns, rows);
+                }
+                Event::StatementFinished {
+                    result: Err(error), ..
+                } => panic!("{}", error.message),
+                _ => {}
+            }
+        };
+        let names: Vec<&str> = columns.iter().map(|column| column.name.as_str()).collect();
+        assert_eq!(names, ["field", "value"]);
+        assert_eq!(
+            rows,
+            [[Some("name".to_owned()), Some("Ada Lovelace".to_owned())]]
+        );
+        finish_run(&mut engine, 1);
+        execute(&engine, id, 2, &[&format!("DEL {key}")]);
+        finish_run(&mut engine, 2);
     }
 }
 

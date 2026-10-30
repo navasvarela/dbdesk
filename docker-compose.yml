@@ -149,6 +149,69 @@ services:
       timeout: 5s
       retries: 60
 
+  # Redis 8, plain on 6379 and over TLS on 6380 with the certificate postgres-tls serves. The
+  # tests sign in as the ACL user `dbrover`. A script answers other clients after 100 ms rather
+  # than 5 s, so a test can kill one promptly, and DEBUG is allowed, for a command nothing
+  # stops (`DEBUG SLEEP`).
+  redis:
+    image: redis:8-alpine
+    ports:
+      - "56379:6379"
+      - "56443:6380"
+    volumes:
+      - ./docker/postgres-tls:/tls:ro
+    command:
+      - redis-server
+      - --user
+      - dbrover
+      - "on"
+      - ">dbrover"
+      - "~*"
+      - "&*"
+      - "+@all"
+      - --busy-reply-threshold
+      - "100"
+      - --enable-debug-command
+      - "yes"
+      - --tls-port
+      - "6380"
+      - --tls-cert-file
+      - /tls/server.crt
+      - --tls-key-file
+      - /tls/server.key
+      - --tls-auth-clients
+      - "no"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 1s
+      timeout: 5s
+      retries: 30
+
+  # Valkey 9, set up as the Redis service is, without TLS: the TLS code is the driver's, which
+  # one server tests.
+  valkey:
+    image: valkey/valkey:9-alpine
+    ports:
+      - "56380:6379"
+    command:
+      - valkey-server
+      - --user
+      - dbrover
+      - "on"
+      - ">dbrover"
+      - "~*"
+      - "&*"
+      - "+@all"
+      - --busy-reply-threshold
+      - "100"
+      - --enable-debug-command
+      - "yes"
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli ping | grep -q PONG"]
+      interval: 1s
+      timeout: 5s
+      retries: 30
+
   # OpenSSH on Alpine (docker/ssh), for the SSH tunnel tests: signs in `dbrover` with the test
   # keys there or its password, and forwards only to the postgres service. Built from a few
   # lines rather than pulled, so it stays a 10 MB image with fixed host and client keys.

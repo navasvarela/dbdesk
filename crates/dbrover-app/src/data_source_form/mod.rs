@@ -6,19 +6,21 @@ mod ssh;
 
 use dbrover_core::{
     ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DriverKind, DuckDbConfig,
-    DuckDbDatabase, McpLogin, MysqlConfig, Password, Port, PostgresConfig, ProjectId, SafetyLevel,
-    SourceColor, SqlServerConfig, SqliteConfig, TemplateError, has_placeholder,
+    DuckDbDatabase, McpLogin, MysqlConfig, Password, Port, PostgresConfig, ProjectId, RedisConfig,
+    SafetyLevel, SourceColor, SqlServerConfig, SqliteConfig, TemplateError, has_placeholder,
 };
 use dbrover_engine::PasswordUpdate;
 
-pub use server::{ServerDefaults, ServerFields, TlsChoice, TlsOffer};
+pub use server::{DatabaseField, ServerDefaults, ServerFields, TlsChoice, TlsOffer, UserField};
 pub use ssh::{SshFields, SshLoginChoice};
 
 const POSTGRES_DEFAULTS: ServerDefaults = ServerDefaults {
     host: "localhost",
     port: PostgresConfig::DEFAULT_PORT,
     database: "postgres",
+    database_field: DatabaseField::Name,
     user: "postgres",
+    user_field: UserField::Required,
     tls: TlsOffer::Negotiated,
 };
 
@@ -28,7 +30,9 @@ const MYSQL_DEFAULTS: ServerDefaults = ServerDefaults {
     host: "localhost",
     port: MysqlConfig::DEFAULT_PORT,
     database: "mysql",
+    database_field: DatabaseField::Name,
     user: "root",
+    user_field: UserField::Required,
     tls: TlsOffer::Negotiated,
 };
 
@@ -38,7 +42,9 @@ const SQL_SERVER_DEFAULTS: ServerDefaults = ServerDefaults {
     host: "localhost",
     port: SqlServerConfig::DEFAULT_PORT,
     database: "master",
+    database_field: DatabaseField::Name,
     user: "sa",
+    user_field: UserField::Required,
     tls: TlsOffer::Negotiated,
 };
 
@@ -48,8 +54,23 @@ const CLICKHOUSE_DEFAULTS: ServerDefaults = ServerDefaults {
     host: "localhost",
     port: ClickHouseConfig::DEFAULT_PORT,
     database: "default",
+    database_field: DatabaseField::Name,
     user: "default",
+    user_field: UserField::Required,
     tls: TlsOffer::OwnPort(ClickHouseConfig::DEFAULT_TLS_PORT),
+};
+
+/// Every server has database `0` and the `default` user, which signs in with no user name.
+/// TLS is a port of its own, set in the server's configuration with no usual number, so the
+/// port stays 6379 until changed.
+const REDIS_DEFAULTS: ServerDefaults = ServerDefaults {
+    host: "localhost",
+    port: RedisConfig::DEFAULT_PORT,
+    database: RedisConfig::DEFAULT_DATABASE,
+    database_field: DatabaseField::Number,
+    user: "default",
+    user_field: UserField::Optional,
+    tls: TlsOffer::OwnPort(RedisConfig::DEFAULT_PORT),
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -60,6 +81,8 @@ pub enum FormError {
     InvalidPort,
     #[error("Database is required.")]
     DatabaseMissing,
+    #[error("Database number must be a number such as 0, or a ${{VARIABLE}}.")]
+    InvalidDatabaseNumber,
     #[error("User is required.")]
     UserMissing,
     #[error("File is required.")]
@@ -120,6 +143,7 @@ pub enum DriverFields {
     SqlServer(SqlServerFields),
     DuckDb(DuckDbFields),
     ClickHouse(ClickHouseFields),
+    Redis(RedisFields),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,6 +163,12 @@ pub struct SqlServerFields {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClickHouseFields {
+    pub server: ServerFields,
+}
+
+/// Redis, Valkey and Dragonfly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RedisFields {
     pub server: ServerFields,
 }
 
@@ -187,6 +217,9 @@ impl DriverFields {
             DriverKind::ClickHouse => Self::ClickHouse(ClickHouseFields {
                 server: ServerFields::new(CLICKHOUSE_DEFAULTS),
             }),
+            DriverKind::Redis => Self::Redis(RedisFields {
+                server: ServerFields::new(REDIS_DEFAULTS),
+            }),
         }
     }
 
@@ -220,6 +253,9 @@ impl DriverFields {
             ConnectionConfig::ClickHouse(config) => Self::ClickHouse(ClickHouseFields {
                 server: ServerFields::from_config(&config.server, CLICKHOUSE_DEFAULTS),
             }),
+            ConnectionConfig::Redis(config) => Self::Redis(RedisFields {
+                server: ServerFields::from_config(&config.server, REDIS_DEFAULTS),
+            }),
         }
     }
 
@@ -231,6 +267,7 @@ impl DriverFields {
             Self::SqlServer(_) => DriverKind::SqlServer,
             Self::DuckDb(_) => DriverKind::DuckDb,
             Self::ClickHouse(_) => DriverKind::ClickHouse,
+            Self::Redis(_) => DriverKind::Redis,
         }
     }
 
@@ -241,6 +278,7 @@ impl DriverFields {
             Self::Mysql(fields) => Some(&fields.server),
             Self::SqlServer(fields) => Some(&fields.server),
             Self::ClickHouse(fields) => Some(&fields.server),
+            Self::Redis(fields) => Some(&fields.server),
             Self::Sqlite(_) | Self::DuckDb(_) => None,
         }
     }
@@ -259,6 +297,9 @@ impl DriverFields {
             }),
             Self::DuckDb(fields) => ConnectionConfig::DuckDb(fields.to_config()?),
             Self::ClickHouse(fields) => ConnectionConfig::ClickHouse(ClickHouseConfig {
+                server: fields.server.to_config()?,
+            }),
+            Self::Redis(fields) => ConnectionConfig::Redis(RedisConfig {
                 server: fields.server.to_config()?,
             }),
         })

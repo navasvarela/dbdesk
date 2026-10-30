@@ -1,0 +1,29 @@
+[package]
+name = "dbrover-driver-redis"
+description = "Redis, Valkey and Dragonfly driver for DbRover."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+dbrover-core.workspace = true
+dbrover-language.workspace = true
+dbrover-tls.workspace = true
+redis.workspace = true
+rustls.workspace = true
+# Nested replies reach the grid as JSON text, which the cell viewer shows as a tree.
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["net"] }
+tokio-rustls.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+dbrover-core = { workspace = true, features = ["conformance"] }
+
+[lints]
+workspace = true

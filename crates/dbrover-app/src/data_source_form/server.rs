@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use dbrover_core::{PasswordCommand, ServerConfig, TlsMode};
+use dbrover_core::{PasswordCommand, ServerConfig, TlsMode, has_placeholder};
 
 use super::{FormError, SshFields, parse_port, required};
 
@@ -16,8 +16,56 @@ pub struct ServerDefaults {
     /// [`TlsOffer::Negotiated`].
     pub port: u16,
     pub database: &'static str,
+    pub database_field: DatabaseField,
     pub user: &'static str,
+    pub user_field: UserField,
     pub tls: TlsOffer,
+}
+
+/// What a server's Database field names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DatabaseField {
+    /// A database by its name.
+    Name,
+    /// One of Redis's numbered databases.
+    Number,
+}
+
+impl DatabaseField {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Name => "Database",
+            Self::Number => "Database number",
+        }
+    }
+
+    fn parse(self, text: &str) -> Result<String, FormError> {
+        let database = required(text, FormError::DatabaseMissing)?;
+        match self {
+            Self::Name => Ok(database),
+            Self::Number if has_placeholder(&database) || database.parse::<u32>().is_ok() => {
+                Ok(database)
+            }
+            Self::Number => Err(FormError::InvalidDatabaseNumber),
+        }
+    }
+}
+
+/// Whether a server needs a user name to sign in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UserField {
+    Required,
+    /// Left empty, the server's default user signs in, as Redis's `default` does.
+    Optional,
+}
+
+impl UserField {
+    fn parse(self, text: &str) -> Result<String, FormError> {
+        match self {
+            Self::Required => required(text, FormError::UserMissing),
+            Self::Optional => Ok(text.trim().to_owned()),
+        }
+    }
 }
 
 /// How a server offers TLS, which decides the modes the form lists.
@@ -142,8 +190,8 @@ impl ServerFields {
         Ok(ServerConfig {
             host: required(&self.host, FormError::HostMissing)?,
             port: parse_port(&self.port, FormError::InvalidPort)?,
-            database: required(&self.database, FormError::DatabaseMissing)?,
-            user: required(&self.user, FormError::UserMissing)?,
+            database: self.defaults.database_field.parse(&self.database)?,
+            user: self.defaults.user_field.parse(&self.user)?,
             tls: self.tls_mode(),
             ssh: self.ssh.to_config()?,
             password_command: self.parsed_password_command()?,
@@ -247,7 +295,9 @@ mod tests {
         host: "localhost",
         port: 5432,
         database: "postgres",
+        database_field: DatabaseField::Name,
         user: "postgres",
+        user_field: UserField::Required,
         tls: TlsOffer::Negotiated,
     };
 
@@ -273,6 +323,34 @@ mod tests {
         for (edit, expected) in cases {
             assert_eq!(fields(edit).to_config(), Err(expected));
         }
+    }
+
+    /// Redis's database is a number, and its user may be left out for the `default` user.
+    #[test]
+    fn a_numbered_database_and_an_optional_user() {
+        let redis = ServerDefaults {
+            database: "0",
+            database_field: DatabaseField::Number,
+            user: "default",
+            user_field: UserField::Optional,
+            ..DEFAULTS
+        };
+        let with = |database: &str, user: &str| {
+            let mut fields = ServerFields::new(redis);
+            database.clone_into(&mut fields.database);
+            user.clone_into(&mut fields.user);
+            fields
+                .to_config()
+                .map(|config| (config.database, config.user))
+        };
+        assert_eq!(with(" 3 ", ""), Ok(("3".to_owned(), String::new())));
+        assert_eq!(
+            with("${DB}", "app"),
+            Ok(("${DB}".to_owned(), "app".to_owned()))
+        );
+        assert_eq!(with("app", ""), Err(FormError::InvalidDatabaseNumber));
+        assert_eq!(with("", ""), Err(FormError::DatabaseMissing));
+        assert_eq!(DatabaseField::Number.label(), "Database number");
     }
 
     #[test]

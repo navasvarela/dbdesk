@@ -7,7 +7,8 @@ keychain, never in that file.
 ## Adding one
 
 Click **+** at the top of the explorer (or **New data source** on the Welcome tab) and choose
-**PostgreSQL**, **SQLite**, **MySQL / MariaDB**, **SQL Server**, **DuckDB** or **ClickHouse**.
+**PostgreSQL**, **SQLite**, **MySQL / MariaDB**, **SQL Server**, **DuckDB**, **ClickHouse** or
+**Redis / Valkey**.
 
 ![The New PostgreSQL data source dialog](images/data-source-dialog.png)
 
@@ -117,6 +118,23 @@ HTTPS, with a publicly signed certificate, so `verify-full` with no CA file work
 
 **Test connection** says which server it reached ("Connected to ClickHouse 25.8.33.6").
 
+**Redis / Valkey** serves Redis, Valkey and Dragonfly, which speak the same protocol. It has the
+same fields, with these defaults:
+
+| Field | Default | Notes |
+| --- | --- | --- |
+| Host | `localhost` | Name or IP address of the server. |
+| Port | `6379` | |
+| Database number | `0` | The numbered database the console uses, as `SELECT` would choose. The explorer lists every database that holds keys. |
+| User | `default` | An ACL user, or `default`, the user every server starts with. Left empty, DbRover signs in as `default`. |
+| TLS | `disable` | `disable`, `require` or `verify-full`, as for ClickHouse: Redis serves TLS on a port of its own, set in its configuration, with no usual number, so the port stays as it is. |
+| Password | none | The ACL user's password, or the server's `requirepass`. Stored in the keychain when you save. |
+| MCP login | none | Required for AI assistants, since Redis has no read-only mode: an ACL user that may only read; see [The MCP login](mcp.md#the-mcp-login). |
+| MCP password | none | Shown once there is an MCP login. Stored in the keychain apart from the password. |
+
+**Test connection** says which server it reached and its version ("Connected to Valkey 9.1.3").
+DbRover connects to one server; Redis Cluster and Sentinel aren't supported yet.
+
 **SQLite** adds:
 
 ![The New SQLite data source dialog](images/sqlite-data-source-dialog.png)
@@ -155,7 +173,7 @@ version it is ("Connected to DuckDB 1.5.6").
 Many databases only accept connections from inside their own network, through a *jump host*
 (or *bastion*) you reach with SSH. Tick **Connect through an SSH server** and DbRover opens an
 SSH tunnel for you before connecting: no `ssh -L` to run first, and nothing to install. Every
-server engine has it: PostgreSQL, MySQL and MariaDB, SQL Server and ClickHouse.
+server engine has it: PostgreSQL, MySQL and MariaDB, SQL Server, ClickHouse and Redis.
 
 ![A PostgreSQL data source behind a bastion, signing in with a key file](images/ssh-data-source-dialog.png)
 

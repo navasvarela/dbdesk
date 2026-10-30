@@ -318,6 +318,9 @@ async fn connect(
         ConnectionConfig::ClickHouse(config) => {
             Box::new(dbrover_driver_clickhouse::connect(config, password, route).await?)
         }
+        ConnectionConfig::Redis(config) => {
+            Box::new(dbrover_driver_redis::connect(config, password, route).await?)
+        }
     })
 }
 
