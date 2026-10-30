@@ -10,8 +10,9 @@ keys, sorting and filtering in the database, exporting every row, importing CSV)
 find and replace), v0.11.0 (a native look on macOS: the menu bar, an integrated title bar,
 the system font and accent colour), v0.12.0 (modifying tables, custom actions, snippets and
 themes in files, the Windows installer), v0.13.0 (the rename to DbRover, command actions,
-updates on Windows) and v0.14.0 (Help › Report a problem… and Ask a question…). R3's update
-notice is built, ahead of R2 (see [R3](#r3--updates)).
+updates on Windows), v0.14.0 (Help › Report a problem… and Ask a question…) and v0.15.0
+(exports in every common format, Copy as, Run to file). R3's update notice is built,
+ahead of R2 (see [R3](#r3--updates)).
 Decisions settled on 2026-10-23 (see [Decisions](#decisions)).
 
 Today the only way to run DbRover is to install Rust and build it from source (see the manual's
