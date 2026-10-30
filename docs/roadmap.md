@@ -466,11 +466,11 @@ shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.
 ## NoSQL track
 
 Redis, MongoDB and the other most used non-SQL stores, in the same explorer, console and grid,
-each in its own query language. Planned on 2026-10-29, not scheduled: building starts after W7,
-which changes the grid and results code first. The full plan, with the order, the groundwork and
-the decisions, is in [NoSQL databases](nosql.md).
+each in its own query language. Planned on 2026-10-29; N0a is being built since 2026-10-30,
+after W7 landed. The full plan, with the order, the groundwork, N0a's layers and the decisions,
+is in [NoSQL databases](nosql.md).
 
-- **N0a — Groundwork: languages, safety and the explorer:**
+- **N0a — Groundwork: languages, safety and the explorer** (being built, in four layers):
   - query languages beside SQL, each splitting, highlighting, completing and classifying its
     own commands;
   - safety levels, warnings and MCP permissions for every language, with a read-only login as
