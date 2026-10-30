@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dbrover_core::{Connection, DataSource, DataSourceId, ServerInfo, describe_error};
-use dbrover_engine::{OpenError, Tunnels, open_data_source_for_mcp};
+use dbrover_engine::{OpenError, PasswordCommands, Tunnels, open_data_source_for_mcp};
 use dbrover_store::SecretStore;
 use tokio::sync::{MappedMutexGuard, Mutex, MutexGuard};
 
@@ -20,6 +20,8 @@ const SWEEP_EVERY: Duration = Duration::from_secs(30);
 pub(crate) struct Connections {
     secrets: Arc<dyn SecretStore>,
     tunnels: Tunnels,
+    /// Only those the user trusted in the app: the server can't ask anyone.
+    commands: PasswordCommands,
     slots: HashMap<DataSourceId, Slot>,
 }
 
@@ -75,6 +77,7 @@ impl Connections {
     pub(crate) fn new(
         secrets: Arc<dyn SecretStore>,
         tunnels: Tunnels,
+        commands: PasswordCommands,
         data_sources: &[DataSource],
     ) -> Arc<Self> {
         let slots = data_sources
@@ -91,6 +94,7 @@ impl Connections {
         Arc::new(Self {
             secrets,
             tunnels,
+            commands,
             slots,
         })
     }
@@ -172,8 +176,13 @@ impl Connections {
             ),
             None => tracing::info!(data_source = %slot.data_source.name, "connecting"),
         }
-        let connection =
-            open_data_source_for_mcp(&slot.data_source, &self.secrets, &self.tunnels).await?;
+        let connection = open_data_source_for_mcp(
+            &slot.data_source,
+            &self.secrets,
+            &self.tunnels,
+            &self.commands,
+        )
+        .await?;
         tracing::info!(
             data_source = %slot.data_source.name,
             "connected to {}",

@@ -41,11 +41,16 @@ jobs:
         with:
           tool: mdbook@0.5.4,mdbook-linkcheck2@0.13.0
       # GitHub's latest release is never a draft, so the page only links to files that exist.
+      # Publishing a release is the exception: for a few seconds afterwards GitHub can still
+      # report the previous release as the latest, and v0.15.0's page went out naming v0.14.0.
+      # So a release event takes the version from the release it was published for. A
+      # prerelease is never the latest, so it falls back to asking GitHub.
       - id: release
         env:
           GH_TOKEN: ${{ github.token }}
+          PUBLISHED_TAG: ${{ github.event_name == 'release' && !github.event.release.prerelease && github.event.release.tag_name || '' }}
         run: |
-          tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          tag=${PUBLISHED_TAG:-$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)}
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
       - run: site/build.sh _site
         env:

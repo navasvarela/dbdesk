@@ -137,6 +137,7 @@ mod tests {
             user: "u".to_owned(),
             tls: TlsMode::Prefer,
             ssh: None,
+            password_command: None,
         }
     }
 

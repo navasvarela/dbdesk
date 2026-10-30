@@ -175,6 +175,7 @@ mod tests {
                         user: "deploy".to_owned(),
                         login,
                     }),
+                    password_command: None,
                 },
             }),
         }
