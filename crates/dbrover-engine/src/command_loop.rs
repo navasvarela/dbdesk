@@ -243,8 +243,8 @@ impl Engine {
                     .await;
             }
             Command::Disconnect(id) => self.disconnect(id),
-            Command::LoadChildren { id, path } => {
-                self.request(id, SessionRequest::Children(path));
+            Command::LoadChildren { id, path, query } => {
+                self.request(id, SessionRequest::Children(path, query));
             }
             Command::LoadDefinition { id, path } => {
                 self.request(id, SessionRequest::Definition(path));

@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use dbrover_core::{CatalogPath, Connection, RelationName, describe_error};
+use dbrover_core::{CatalogPath, ChildrenQuery, Connection, RelationName, describe_error};
 
 use super::SessionContext;
 use crate::Event;
@@ -9,16 +9,18 @@ pub(super) async fn children(
     context: &SessionContext,
     connection: &mut dyn Connection,
     path: CatalogPath,
+    query: ChildrenQuery,
 ) {
     let name = context.name();
     let started = Instant::now();
-    let result = connection.children(&path).await;
+    let result = connection.children_page(&path, &query).await;
     match &result {
-        Ok(nodes) => tracing::debug!(
+        Ok(page) => tracing::debug!(
             data_source = %name,
             elapsed_ms = started.elapsed().as_millis(),
+            partial = page.next.is_some(),
             "loaded {} nodes under {path}",
-            nodes.len()
+            page.nodes.len()
         ),
         Err(error) => tracing::warn!(
             data_source = %name,
@@ -29,6 +31,7 @@ pub(super) async fn children(
     context.send(Event::ChildrenLoaded {
         id: context.data_source.id,
         path,
+        query,
         result: result.map_err(|error| describe_error(&error)),
     });
 }

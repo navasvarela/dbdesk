@@ -150,9 +150,14 @@ impl AppState {
                     entry.set_session(state);
                 }
             }
-            Event::ChildrenLoaded { id, path, result } => {
+            Event::ChildrenLoaded {
+                id,
+                path,
+                query,
+                result,
+            } => {
                 if let Some(catalog) = self.catalog_mut(*id) {
-                    catalog.loaded(path, result);
+                    catalog.loaded(path, query, result);
                 }
             }
             // The dialogs, the definition window and the consoles track these themselves.

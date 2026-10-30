@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use common::{MemorySecrets, ParsedUrl, TestEngine, postgres_test_server};
+use dbrover_core::ChildrenQuery;
 use dbrover_core::{
     CatalogPath, Connection, ConnectionConfig, DataSource, DataSourceId, PostgresConfig, Route,
     SafetyLevel,
@@ -283,6 +284,7 @@ fn browse(engine: &mut TestEngine, id: DataSourceId) -> Vec<Event> {
     engine.send(Command::LoadChildren {
         id,
         path: CatalogPath::root(),
+        query: ChildrenQuery::default(),
     });
     let mut events = Vec::new();
     loop {

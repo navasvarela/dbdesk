@@ -243,7 +243,7 @@ mod tests {
 
     fn load(tree: &mut CatalogTree, path: &CatalogPath, children: Vec<CatalogNode>) {
         assert!(tree.request(path));
-        tree.loaded(path, &Ok(children));
+        tree.loaded_whole(path, Ok(children));
     }
 
     #[test]
@@ -277,9 +277,9 @@ mod tests {
                 .missing(&references)
                 .loading
         );
-        tree.loaded(
+        tree.loaded_whole(
             &root,
-            &Ok(vec![
+            Ok(vec![
                 node(main.clone(), false),
                 node(root.child(NodeKind::Schema, "temp"), true),
             ]),

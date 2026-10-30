@@ -15,7 +15,7 @@ use egui::{
     TextStyle, Ui, WidgetInfo, WidgetType, vec2,
 };
 
-use crate::catalog_tree::{CatalogTree, Children};
+use crate::catalog_tree::{CatalogTree, Children, LevelEnd};
 use crate::consoles::SavedConsoles;
 use crate::custom_actions;
 use crate::icons;
@@ -37,6 +37,8 @@ pub enum ExplorerAction {
     Disconnect(DataSourceId),
     Expand(DataSourceId, CatalogPath),
     Collapse(DataSourceId, CatalogPath),
+    /// **Load more…** at the end of a partial level: the next page of the node's children.
+    LoadMore(DataSourceId, CatalogPath),
     Refresh(DataSourceId, CatalogPath),
     ShowDefinition {
         id: DataSourceId,
@@ -117,8 +119,8 @@ pub enum Helper {
 /// The explorer's own view settings.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ExplorerOptions {
-    /// Case-insensitive text matched against loaded node labels. Never triggers loading, so
-    /// typing doesn't send a catalog query per keystroke.
+    /// Case-insensitive text matched against loaded node labels. A level the server pages is
+    /// asked for again with it, by the app, once typing pauses; a level loaded whole never is.
     pub filter: String,
     /// Show `pg_catalog`, `information_schema`, `sqlite_sequence` and the like.
     pub show_system: bool,
@@ -805,6 +807,34 @@ fn children(
                     Visibility::LeadsToMatch => node_row(ui, tree, node, true, filter, actions),
                 }
             }
+            level_end(ui, tree, path, actions);
+        }
+    }
+}
+
+/// **Load more…** after the loaded children of a partial level, or a spinner while the next
+/// page loads.
+fn level_end(
+    ui: &mut Ui,
+    tree: &TreeView<'_>,
+    path: &CatalogPath,
+    actions: &mut Vec<ExplorerAction>,
+) {
+    match tree.catalog.level_end(path) {
+        LevelEnd::Complete => {}
+        LevelEnd::LoadingMore => {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.weak("Loading more…");
+            });
+        }
+        LevelEnd::More(error) => {
+            if let Some(error) = error {
+                ui.colored_label(ui.visuals().error_fg_color, error);
+            }
+            if ui.link("Load more…").clicked() {
+                actions.push(ExplorerAction::LoadMore(tree.id, path.clone()));
+            }
         }
     }
 }
@@ -1253,9 +1283,9 @@ mod tests {
         let pg_catalog = node(&root, "pg_catalog", true);
         let mut catalog = CatalogTree::default();
         assert!(catalog.expand(&root));
-        catalog.loaded(&root, &Ok(vec![public.clone(), pg_catalog.clone()]));
+        catalog.loaded_whole(&root, Ok(vec![public.clone(), pg_catalog.clone()]));
         assert!(catalog.expand(&public.path));
-        catalog.loaded(&public.path, &Ok(vec![users.clone()]));
+        catalog.loaded_whole(&public.path, Ok(vec![users.clone()]));
 
         let cases = [
             (None, false, &public, Visibility::Shown),

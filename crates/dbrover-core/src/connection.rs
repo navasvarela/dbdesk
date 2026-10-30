@@ -5,8 +5,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::{
-    CancelHandle, CatalogNode, CatalogPath, Cell, DriverError, RelationName, ResultCursor,
-    RoleDescription, TableConstraints, TableDescription, TableName, TransactionStatus,
+    CancelHandle, CatalogNode, CatalogPath, Cell, ChildrenPage, ChildrenQuery, DriverError,
+    RelationName, ResultCursor, RoleDescription, TableConstraints, TableDescription, TableName,
+    TransactionStatus,
 };
 
 /// What a server reported about itself when the connection was opened.
@@ -63,6 +64,22 @@ pub trait Connection: Send {
     /// [`DriverError::InvalidPath`] for a path this driver never returns, or
     /// [`DriverError::Connection`] if the catalog query fails.
     async fn children(&mut self, path: &CatalogPath) -> Result<Vec<CatalogNode>, DriverError>;
+
+    /// Part of the children of the node at `path`, as `query` asks: those whose label contains
+    /// its filter, after its token, up to its limit. A driver pages the levels that can grow
+    /// too large to load whole, and applies the filter in the server; by default the whole
+    /// level is loaded with [`Connection::children`] and filtered here.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Connection::children`].
+    async fn children_page(
+        &mut self,
+        path: &CatalogPath,
+        query: &ChildrenQuery,
+    ) -> Result<ChildrenPage, DriverError> {
+        Ok(ChildrenPage::whole(self.children(path).await?, query))
+    }
 
     /// The source of the object at `path` (a `CREATE VIEW`, function body, index definition,
     /// …), for nodes whose [`CatalogNode::has_definition`] is set.

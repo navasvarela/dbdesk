@@ -203,8 +203,17 @@ matching are hidden while you type.
 
 ![The explorer filtered by "order"](images/explorer-filter.png)
 
-The filter only searches what has already been loaded: it never asks the database for more.
-Expand the parts you want to search first.
+The filter searches what has already been loaded: expand the parts you want to search first.
+The exception is a schema with more objects than the explorer shows at once (below): there,
+once you stop typing, the database is asked for the objects whose names contain the text, so
+the filter finds them all, loaded or not.
+
+## Large schemas
+
+A schema's tables, views, materialized views and sequences load 1,000 at a time on PostgreSQL
+and SQLite, in order of name, so a schema of tens of thousands of tables opens as quickly as a
+small one. **Load more…** at the end of the list loads the next 1,000. The other databases, and
+the other levels of the tree, load whole.
 
 ## System objects
 

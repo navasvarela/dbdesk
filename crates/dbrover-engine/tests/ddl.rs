@@ -16,6 +16,7 @@ use common::{
     TestEngine, clickhouse_test_server, mysql_test_servers, postgres_test_server, sql_dialect,
     sqlite_data_source, sqlite_database, sqlserver_test_server,
 };
+use dbrover_core::ChildrenQuery;
 use dbrover_core::{
     CatalogNode, CatalogPath, ConnectionConfig, DataSource, DataSourceId, DriverKind, DuckDbConfig,
     DuckDbDatabase, FolderKind, Identifier, Identity, IdentityGeneration, NodeKind, Password,
@@ -545,6 +546,7 @@ fn the_history_keeps_ddl_apart_from_catalog_queries() {
     engine.send(Command::LoadChildren {
         id: app.id,
         path: CatalogPath::root(),
+        query: ChildrenQuery::default(),
     });
     loop {
         if let Event::ChildrenLoaded { .. } = engine.next_event() {
@@ -654,6 +656,7 @@ fn load_children(
     engine.send(Command::LoadChildren {
         id: data_source,
         path: path.clone(),
+        query: ChildrenQuery::default(),
     });
     loop {
         match engine.next_event() {
@@ -661,7 +664,7 @@ fn load_children(
                 path: loaded,
                 result,
                 ..
-            } if loaded == path => return result.expect("the children"),
+            } if loaded == path => return result.expect("the children").nodes,
             Event::SessionChanged { .. } => {}
             other => panic!("expected ChildrenLoaded, got {other:?}"),
         }
