@@ -82,9 +82,11 @@ inside DbRover.
 - **A typed document in `dbrover-core`** (the `bson` crate's `Document`, or `serde_json`'s
   `Value`): every crate between the driver and the grid would learn one engine's types, and the
   engine's events, the history and the exports would each need a second path beside rows.
-- **`serde_json::Value` as the reader:** it sorts an object's fields unless `preserve_order` is
-  on, a feature that would change every other crate's JSON in the workspace, and it reads
-  numbers into `f64`, `i64` or `u64`, which changes `1.10` to `1.1` and rounds large integers.
+- **`serde_json::Value` as the reader:** the workspace turns on its `preserve_order`, so it
+  keeps fields in order, but it reads numbers into `f64`, `i64` or `u64`, which changes `1.10`
+  to `1.1` and rounds integers past 2⁶⁴, and it keeps only the last of two fields with the same
+  name. Its `arbitrary_precision` feature keeps numbers as written, but would change how every
+  other crate in the workspace reads and writes JSON numbers.
 - **Relaxed Extended JSON:** shorter and closer to plain JSON, but `7` could be a 32- or 64-bit
   integer or a double, so an edited document would come back with its types changed.
 - **The driver flattens documents into rows:** every driver would repeat it, and the grid would
