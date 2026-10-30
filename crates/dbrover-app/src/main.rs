@@ -46,6 +46,7 @@ mod previous_install;
 mod project_dialog;
 mod project_settings;
 mod relaunch;
+mod repaint;
 mod rollback_dialog;
 #[cfg(test)]
 mod screenshots;

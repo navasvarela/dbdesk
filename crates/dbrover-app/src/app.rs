@@ -63,7 +63,7 @@ use crate::unsaved_dialog::{UnsavedChoice, UnsavedConfirmation};
 use crate::update_dialog::{self, UpdateAction};
 use crate::updates::Updates;
 use crate::workspace::{self, Panels, Tab};
-use crate::{feedback, fonts, relaunch, welcome, widgets};
+use crate::{feedback, fonts, relaunch, repaint, welcome, widgets};
 
 /// Where the dock layout is saved. Versioned so a change to the default layout reaches people
 /// who already have one saved: layouts under an older key are ignored once, and the default
@@ -915,7 +915,7 @@ impl DbRoverApp {
         let (saves, next_due) = self.consoles.due_saves(Instant::now());
         self.send_all(saves);
         if let Some(delay) = next_due {
-            ctx.request_repaint_after(delay);
+            repaint::request_repaint_after_pause(ctx, delay);
         }
     }
 
@@ -1185,7 +1185,7 @@ impl DbRoverApp {
         }
         if let Some(changed) = self.server_filter.changed {
             if let Some(left) = SERVER_FILTER_PAUSE.checked_sub(now.duration_since(changed)) {
-                ctx.request_repaint_after(left);
+                repaint::request_repaint_after_pause(ctx, left);
                 return;
             }
             self.server_filter.changed = None;
@@ -4871,7 +4871,9 @@ mod tests {
         };
 
         harness.get_by_label("ada").click();
-        harness.run();
+        // One frame lands the click. The engine is still describing the table, and each of its
+        // answers wakes the app, so `run` here could exceed its steps; the loop below waits.
+        harness.step();
         // F2 edits once the table has been described; until then it does nothing.
         let deadline = std::time::Instant::now() + WAIT_TIMEOUT;
         while !cell_editor(harness) {
