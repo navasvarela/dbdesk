@@ -170,15 +170,36 @@ pub fn start_app(
     builder.build_eframe(|cc| DbRoverApp::new(cc, log_feed, config).unwrap())
 }
 
-/// Steps the app until at least one widget labelled with something containing `text`
-/// appears; engine events arrive asynchronously, so a fixed number of steps would be flaky.
-pub fn step_until_visible(harness: &mut Harness<'_, DbRoverApp>, text: &str) {
+/// Steps the app until `done` holds; engine events arrive asynchronously, so a fixed number of
+/// steps would be flaky.
+///
+/// It steps once before the first check. A click the caller has just queued only lands in the
+/// next frame, so until then the tree is the one from before the click, and `done` may hold
+/// there and nowhere after. The foreign key dialog test lost that race: picking a referenced
+/// table replaces its columns' menu button with "Loading its columns…" until the engine
+/// answers, but the stale tree still showed the button, so the test clicked it in the same
+/// frame as the table, and the menu stayed shut whenever the engine answered after that frame.
+pub fn step_until(
+    harness: &mut Harness<'_, DbRoverApp>,
+    what: &str,
+    done: impl Fn(&Harness<'_, DbRoverApp>) -> bool,
+) {
     let deadline = Instant::now() + WAIT_TIMEOUT;
-    while harness.query_all_by_label_contains(text).next().is_none() {
-        assert!(Instant::now() < deadline, "{text:?} never appeared");
+    harness.step();
+    while !done(harness) {
+        assert!(Instant::now() < deadline, "{what} never happened");
         std::thread::sleep(Duration::from_millis(10));
         harness.step();
     }
+}
+
+/// Steps the app until at least one widget labelled with something containing `text` appears.
+/// It looks for any match, not exactly one: a label can briefly show twice, as a combo box's
+/// button and its open popup do, and kittest's single-match queries panic on that.
+pub fn step_until_visible(harness: &mut Harness<'_, DbRoverApp>, text: &str) {
+    step_until(harness, &format!("{text:?} appearing"), |harness| {
+        harness.query_all_by_label_contains(text).next().is_some()
+    });
 }
 
 /// `Harness::new_ui` with DbRover's fonts, which widgets that draw icons need. egui applies new

@@ -1,10 +1,10 @@
-//! The server section of the data source form: host, port, database, user, password, TLS and
-//! SSH, shared by every network engine. An engine embeds [`ServerFields`] in its own fields and
+//! The server section of the data source form: host, port, database, user, password (or the
+//! command that prints it), TLS and SSH, shared by every network engine. An engine embeds [`ServerFields`] in its own fields and
 //! adds only what is particular to it.
 
 use std::path::PathBuf;
 
-use dbrover_core::{ServerConfig, TlsMode};
+use dbrover_core::{PasswordCommand, ServerConfig, TlsMode};
 
 use super::{FormError, SshFields, parse_port, required};
 
@@ -59,6 +59,11 @@ pub struct ServerFields {
     pub user: String,
     /// Empty means "keep the saved password" (or none, for a new data source).
     pub password: String,
+    /// Whether the password comes from [`Self::password_command`] rather than the keychain.
+    pub password_from_command: bool,
+    /// The program, then each argument, one per line. Kept while the keychain is chosen, so
+    /// switching back doesn't lose it.
+    pub password_command: String,
     pub tls: TlsChoice,
     /// Only used by [`TlsChoice::VerifyFull`], but kept while another mode is chosen so
     /// switching back doesn't lose it. Empty trusts the public web authorities.
@@ -75,6 +80,8 @@ impl ServerFields {
             database: defaults.database.to_owned(),
             user: defaults.user.to_owned(),
             password: String::new(),
+            password_from_command: false,
+            password_command: String::new(),
             tls: defaults.tls.initial_choice(),
             ca_file: String::new(),
             ssh: SshFields::default(),
@@ -118,6 +125,12 @@ impl ServerFields {
             database: config.database.clone(),
             user: config.user.clone(),
             password: String::new(),
+            password_from_command: config.password_command.is_some(),
+            password_command: config
+                .password_command
+                .as_ref()
+                .map(|command| command.source().join("\n"))
+                .unwrap_or_default(),
             tls: TlsChoice::from(&config.tls),
             ca_file,
             ssh: SshFields::from_config(config.ssh.as_ref()),
@@ -133,7 +146,31 @@ impl ServerFields {
             user: required(&self.user, FormError::UserMissing)?,
             tls: self.tls_mode(),
             ssh: self.ssh.to_config()?,
+            password_command: self.parsed_password_command()?,
         })
+    }
+
+    /// Whether the password typed in the form counts: not when a command prints it.
+    pub fn typed_password(&self) -> Option<&str> {
+        (!self.password_from_command && !self.password.is_empty()).then_some(self.password.as_str())
+    }
+
+    /// One item per line, each trimmed, blank lines skipped: a trailing newline or a stray
+    /// space would otherwise become an argument no one can see.
+    fn parsed_password_command(&self) -> Result<Option<PasswordCommand>, FormError> {
+        if !self.password_from_command {
+            return Ok(None);
+        }
+        let items: Vec<String> = self
+            .password_command
+            .lines()
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(str::to_owned)
+            .collect();
+        PasswordCommand::parse(&items)
+            .map(Some)
+            .map_err(FormError::PasswordCommand)
     }
 
     fn tls_mode(&self) -> TlsMode {
@@ -256,6 +293,7 @@ mod tests {
                 user: "postgres".to_owned(),
                 tls: TlsMode::Prefer,
                 ssh: None,
+                password_command: None,
             }
         );
     }
@@ -326,11 +364,74 @@ mod tests {
                 user: "juan".to_owned(),
                 tls,
                 ssh: None,
+                password_command: None,
             };
 
             let fields = ServerFields::from_config(&config, DEFAULTS);
 
             assert_eq!(fields.to_config(), Ok(config));
+        }
+    }
+
+    #[test]
+    fn reads_the_password_command_one_item_per_line_and_back() {
+        let config = fields(|f| {
+            f.password = "typed, then left".to_owned();
+            f.password_from_command = true;
+            f.password_command =
+                " aws \nrds\n\ngenerate-db-auth-token\n--hostname\n{host}\n".to_owned();
+        })
+        .to_config()
+        .unwrap();
+
+        let command = config.password_command.as_ref().unwrap();
+        assert_eq!(
+            command.source(),
+            [
+                "aws",
+                "rds",
+                "generate-db-auth-token",
+                "--hostname",
+                "{host}"
+            ]
+        );
+        let fields = ServerFields::from_config(&config, DEFAULTS);
+        assert!(fields.password_from_command);
+        assert_eq!(fields.typed_password(), None);
+        assert_eq!(fields.to_config(), Ok(config));
+    }
+
+    #[test]
+    fn keeps_the_command_aside_while_the_keychain_is_chosen() {
+        let fields = fields(|f| {
+            f.password = "secret".to_owned();
+            f.password_command = "printf\ndbrover".to_owned();
+        });
+        assert_eq!(fields.to_config().unwrap().password_command, None);
+        assert_eq!(fields.typed_password(), Some("secret"));
+    }
+
+    #[test]
+    fn says_what_is_wrong_with_the_command() {
+        let cases = [
+            (
+                "",
+                "the command is empty; its first item is the program to run",
+            ),
+            (
+                "op\nread\n{table}",
+                "{table} can't be in a password command, which can only have {host}, {port}, \
+                 {user} and {database}",
+            ),
+        ];
+        for (command, message) in cases {
+            let error = fields(|f| {
+                f.password_from_command = true;
+                f.password_command = command.to_owned();
+            })
+            .to_config()
+            .unwrap_err();
+            assert_eq!(error.to_string(), format!("Password command: {message}."));
         }
     }
 

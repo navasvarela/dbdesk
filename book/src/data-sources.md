@@ -31,6 +31,7 @@ Every kind has:
 | TLS | `prefer` | Whether to encrypt the connection; see below. |
 | SSH | off | Connect through an SSH server; see [SSH tunnels](#ssh-tunnels). |
 | Password | none | Stored in the keychain when you save. See below. |
+| Password from a command | off | Run a program for the password instead, for cloud tokens and secret stores; see [Password from a command](#password-from-a-command). |
 | MCP login | none | Another user, only for AI assistants; see [The MCP login](mcp.md#the-mcp-login). |
 | MCP password | none | Shown once there is an MCP login. Stored in the keychain apart from the password. |
 
@@ -287,6 +288,56 @@ string that never changes even if you rename the data source.
 ![Connecting asks for the password a data source has none saved for](images/password-prompt.png)
 
 SQLite data sources have no password, so DbRover never asks the keychain for them.
+
+## Password from a command
+
+Some passwords aren't for keeping: an AWS RDS or Google Cloud SQL login token lasts fifteen
+minutes or an hour, and a password in 1Password or Vault belongs there, not in a second store.
+Tick **Password from a command** and DbRover runs a program on every connection, and its output
+is the password. Every server engine has it: PostgreSQL, MySQL and MariaDB, SQL Server and
+ClickHouse.
+
+**Password command** takes the program, then each argument, **one per line**. There is no shell,
+so nothing is quoted: a line is one argument, spaces and all, and `|`, `>` or `$(…)` mean nothing
+special. `{host}`, `{port}`, `{user}` and `{database}` are filled in from the data source, after
+its [placeholders](#placeholders-variable) are resolved. Some commands that work:
+
+| For | Command, one line each |
+| --- | --- |
+| AWS RDS and Aurora (IAM) | `aws` `rds` `generate-db-auth-token` `--hostname` `{host}` `--port` `{port}` `--username` `{user}` `--region` `eu-west-1` |
+| Google Cloud SQL (IAM) | `gcloud` `sql` `generate-login-token` |
+| Azure Database (Entra ID) | `az` `account` `get-access-token` `--resource-type` `oss-rdbms` `--query` `accessToken` `--output` `tsv` |
+| 1Password | `op` `read` `op://Work/{host}/password` |
+| HashiCorp Vault | `vault` `kv` `get` `-field=password` `secret/db/{user}` |
+
+What the program writes to standard output, without the spaces and line break around it, is the
+password. It is never saved: not in the keychain, the log, the history or any file. Each
+connection runs the program again (the explorer, each console, reconnecting after a dropped
+connection), so a token that has expired is never reused. Through an [SSH tunnel](#ssh-tunnels)
+it runs once the tunnel is open, and `{host}` is still the database's own host.
+
+**The first time** a data source's command runs, DbRover shows it in full, as the list it runs,
+and asks **Run this command for a password?** **Run and connect** remembers it and connects;
+from then on it runs without asking. Change the command, even one argument, and it asks again.
+What you trusted is kept in `trusted_commands.toml` with the commands of
+[actions](customising.md#the-first-run), on this machine only: a data source you
+[import](sharing.md) brings its command, and asks before it first runs here. **Test connection**
+runs the command in the form without asking, since you are looking at it, and remembers nothing.
+
+![Connecting the first time shows the password command and asks](images/password-command-prompt.png)
+
+A command that fails stops the connection with how it ended and what it wrote to standard
+error: *could not get the password: aws failed (exit status: 255): Unable to locate
+credentials*. It may take up to a minute, enough for `op` or a browser sign-in to wait for you;
+then it is stopped. One that prints nothing, or more than 4 MB, is an error too.
+
+On a Mac, an app opened from the Finder doesn't see your shell's `PATH`, so `aws`, `gcloud` or
+`op` installed with Homebrew are "not found". Write the program's full path on the first line:
+`which aws` in a terminal prints it, such as `/opt/homebrew/bin/aws`.
+
+[`dbrover mcp`](mcp.md) runs a data source's password command too, but only once you have
+trusted it in DbRover: it has nobody to ask. A data source's [MCP login](mcp.md#the-mcp-login)
+signs in with its own saved password, never the command's.
 
 ## Editing, connecting and deleting
 

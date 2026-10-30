@@ -9,8 +9,10 @@ use std::sync::Arc;
 
 use common::{MemorySecrets, sqlite_data_source, sqlite_database};
 use dbrover_core::{Connection, DriverKind};
-use dbrover_engine::{Tunnels, open_data_source, read_only, read_write};
-use dbrover_store::SecretStore;
+use dbrover_engine::{
+    PasswordCommands, ProcessRunner, Tunnels, open_data_source, read_only, read_write,
+};
+use dbrover_store::{SecretStore, TrustedCommands};
 
 async fn run(connection: &mut dyn Connection, sql: &str) -> Result<Option<String>, String> {
     let mut cursor = connection
@@ -34,6 +36,7 @@ async fn reads_refuse_writes_and_changes_commit_or_roll_back() {
         &data_source,
         &secrets,
         &Tunnels::new(dir.path().join("known_hosts")),
+        &PasswordCommands::new(TrustedCommands::default(), Arc::new(ProcessRunner)),
     )
     .await
     .unwrap();

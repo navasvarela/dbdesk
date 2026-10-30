@@ -109,6 +109,14 @@ skipped, and the rest of the file applies. Click the message to see each problem
 and click **Reload**. For `theme.toml` it can also be a colour that leaves some text too faint to
 read; that colour still applies. See [Actions, snippets and themes](customising.md).
 
+## A password command fails
+
+Connecting shows what the command wrote to standard error after its exit status. Run the same
+command in a terminal to see it for yourself: most failures are a sign-in that has expired
+(`aws sso login`, `gcloud auth login`, `op signin`). A program "not found" is the `PATH`, below:
+write its full path on the command's first line. See
+[Password from a command](data-sources.md#password-from-a-command).
+
 ## A command action says its program "was not found"
 
 DbRover looked for the program in the folders of its `PATH`, which the window lists. A Mac app

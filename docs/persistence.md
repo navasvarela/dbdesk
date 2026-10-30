@@ -15,7 +15,7 @@ dbrover/
 ├── consoles/             # M4
 │   └── <data-source-id>/<console-name>.sql
 ├── history.sqlite        # M4, query history
-├── trusted_commands.toml # H2, command actions trusted to run (data folder, see below)
+├── trusted_commands.toml # H2 and W9, commands trusted to run (data folder, see below)
 └── logs/dbrover.<date>.log # daily rolling file log, last 7 kept
 ```
 
@@ -23,9 +23,12 @@ dbrover/
 macOS, `~/.local/share/dbrover` on Linux (the config is in `~/.config/dbrover`), and
 `%APPDATA%\dbrover\data` on Windows (the config is in `%APPDATA%\dbrover\config`).
 `trusted_commands.toml` lists each command action the user chose **Run** for, by its id,
-command as written and stdin, written atomically by the engine. It is kept apart from
-`actions.toml` so a config folder copied from elsewhere brings its actions but no trust: each
+command as written and stdin, and each data source's password command (W9) the user chose
+**Run and connect** for, by the data source's id and the command as written. The engine writes
+it atomically. It is kept apart from `actions.toml` and `data_sources.toml` so a config folder
+copied from elsewhere, or an imported data source, brings its commands but no trust: each
 command asks before its first run on every machine. A file that can't be read trusts nothing.
+`dbrover mcp` reads it at start-up and runs only the password commands it lists.
 
 ## Data sources
 

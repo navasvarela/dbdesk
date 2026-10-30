@@ -5,6 +5,8 @@
 //! Its first argument says what to do:
 //! - `dump` writes back, as JSON, its other arguments, its environment, its folder and its
 //!   stdin;
+//! - `print-file` writes the file its second argument names to stdout, as a password command
+//!   whose output the test changes between runs;
 //! - `fail` writes to stderr and exits with status 3;
 //! - `wait` sleeps until it is killed;
 //! - `flood` writes to stdout until it is killed, even once nobody reads it.
@@ -35,6 +37,10 @@ fn run() -> io::Result<ExitCode> {
     let mode = arguments.next().unwrap_or_default();
     match mode.as_str() {
         "dump" => dump(arguments.collect())?,
+        "print-file" => {
+            let path = arguments.next().unwrap_or_default();
+            io::stdout().write_all(&std::fs::read(path)?)?;
+        }
         "fail" => {
             eprint!("it went wrong");
             return Ok(ExitCode::from(FAILED));
