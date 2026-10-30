@@ -245,7 +245,8 @@ against a real server, such as a cancel arriving after the last row.
 - `dbrover-mcp/tests/stdio.rs` starts the server as another process (the test binary again, so
   it has no libtest harness: libtest would print onto the protocol's standard output) and
   drives it with rmcp's client over stdin and stdout. It runs against SQLite always, and
-  against PostgreSQL, MySQL and MariaDB when their `DBROVER_TEST_*_URL` is set. Each engine gets
+  against PostgreSQL, MySQL and MariaDB when their `DBROVER_TEST_*_URL` is set. It asks `query` for each
+  `format` (CSV, Markdown, JSON Lines) and checks the text and the row limit. Each engine gets
   a table and a function that writes, both with a random suffix so runs sharing the servers
   don't clash. The MySQL one needs `log_bin_trust_function_creators`, which
   `docker-compose.yml` sets.
