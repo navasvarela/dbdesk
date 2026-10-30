@@ -1162,10 +1162,10 @@ fn viewed_cell(
     cell: CellPos,
 ) -> Option<ViewedCell> {
     let row = rows.get(*grid.order().get(cell.row)?)?;
-    Some(ViewedCell {
-        column: columns.get(cell.column)?.name.clone(),
-        value: row.get(cell.column)?.clone(),
-    })
+    Some(ViewedCell::new(
+        columns.get(cell.column)?.name.clone(),
+        row.get(cell.column)?.clone(),
+    ))
 }
 
 /// ⌘C copies the selected cells, unless a text field has focus and copies its own text.

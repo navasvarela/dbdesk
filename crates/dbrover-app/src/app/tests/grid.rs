@@ -641,3 +641,64 @@ fn a_failed_import_names_its_line_and_imports_nothing() {
         .unwrap();
     assert_eq!(count, 1);
 }
+
+/// A JSON value opens as a tree (N0b): an object or array folds and unfolds, numbers stay as
+/// written, and each line copies its value or its path.
+#[test]
+fn opens_a_json_value_as_a_tree_and_copies_a_path() {
+    let dir = tempfile::tempdir().unwrap();
+    save_shop(
+        dir.path(),
+        r#"CREATE TABLE orders (id INTEGER PRIMARY KEY, detail TEXT);
+           INSERT INTO orders VALUES
+             (1, '{"items": [{"sku": "a-1", "qty": 2}, {"sku": "b-2", "qty": 1.10}], "gift": true}');"#,
+    );
+    let (_layer, feed) = log_console::pipeline();
+    let mut harness = start_app(dir.path(), feed);
+    open_orders(&mut harness, "1 rows");
+
+    harness
+        .get_by_label_contains(r#"{"items": [{"sku""#)
+        .click();
+    harness.run();
+    harness.key_press(egui::Key::Space);
+    harness.run();
+    harness.get_by_label("Value of detail");
+    harness.get_by_label("[2 items]");
+    assert!(
+        harness.query_by_label("b-2").is_none(),
+        "items starts folded"
+    );
+
+    harness.get_by_label("items").click();
+    harness.run();
+    harness
+        .get_all_by_label("{2 fields}")
+        .last()
+        .unwrap()
+        .click();
+    harness.run();
+    harness.get_by_label("b-2");
+
+    let copy = |harness: &mut Harness<'_, DbRoverApp>, line: &str, item: &str| {
+        harness.get_by_label(line).click_secondary();
+        harness.run();
+        harness.get_by_label(item).click();
+        harness.step();
+        let text = copied(harness);
+        harness.run();
+        text
+    };
+    assert_eq!(
+        copy(&mut harness, "1.10", "Copy path").as_deref(),
+        Some("items[1].qty")
+    );
+    assert_eq!(
+        copy(&mut harness, "1.10", "Copy value").as_deref(),
+        Some("1.10")
+    );
+    assert_eq!(
+        copy(&mut harness, "b-2", "Copy all").as_deref(),
+        Some(r#"{"items":[{"sku":"a-1","qty":2},{"sku":"b-2","qty":1.10}],"gift":true}"#)
+    );
+}

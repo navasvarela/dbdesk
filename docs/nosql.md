@@ -263,7 +263,7 @@ exercise each.
 
 - **N0b·1 — Plan:** this list, [ADR 0006](adr/0006-documents-as-extended-json-text.md), the
   decisions N0b takes (in [Decisions](#decisions)), and the roadmap's status.
-- **N0b·2 — A tree for JSON values:** a new crate, `dbrover-document`, with no engine in it,
+- **N0b·2 — A tree for JSON values** (built): a new crate, `dbrover-document`, with no engine in it,
   reads JSON text: its own reader, which keeps an object's fields in the order written and each
   number as written. It knows Extended JSON's types and shows each as the shell does
   (`ObjectId("…")`, `ISODate("…")`, `NumberLong(7)`), names each value's type, and writes a

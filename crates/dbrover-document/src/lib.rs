@@ -1,0 +1,168 @@
+//! Documents and JSON values as DbRover reads and shows them, with no engine in it: MongoDB's
+//! documents, a SQL engine's JSON column and a Redis JSON string all go through here.
+//!
+//! A document travels as canonical Extended JSON text (ADR 0006). [`Value::parse`] reads it,
+//! or any JSON, keeping each object's fields in the order written and each number as written,
+//! and [`Value::shown`] says how a value reads: its type and its text, with Extended JSON's
+//! types written the way the MongoDB shell writes them when the text is read as
+//! [`Syntax::ExtendedJson`].
+
+mod extended;
+mod path;
+mod read;
+mod write;
+
+pub use extended::ValueType;
+pub use path::{Path, Step};
+pub use read::{MAX_DEPTH, ParseError};
+
+/// A JSON value, as written.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Value {
+    Null,
+    Bool(bool),
+    /// The number's text as written, so `1.10` stays `1.10` and a 30-digit integer keeps every
+    /// digit: DbRover shows numbers and never computes with them.
+    Number(String),
+    String(String),
+    Array(Vec<Value>),
+    /// Fields in the order written. A name written twice is kept twice, as the text has it.
+    Object(Vec<(String, Value)>),
+}
+
+/// How to read a value's special objects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Syntax {
+    /// Plain JSON, from a SQL engine's JSON column or a Redis string: `{"$oid": "…"}` is an
+    /// object with one field.
+    Json,
+    /// MongoDB's Extended JSON, for documents: `{"$oid": "…"}` is an object id, shown as
+    /// `ObjectId("…")`.
+    ExtendedJson,
+}
+
+/// A value as the tree and the grid show it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Shown {
+    pub value_type: ValueType,
+    /// A scalar's text, as the shell writes it (`ObjectId("…")`, a string without its
+    /// quotes); an object's or array's size (`{3 fields}`, `[12 items]`).
+    pub text: String,
+}
+
+impl Value {
+    /// Reads `text`, which must hold one JSON value, with whitespace around it allowed.
+    ///
+    /// # Errors
+    ///
+    /// [`ParseError`] if the text isn't JSON, holds more than one value, or nests deeper than
+    /// [`MAX_DEPTH`] levels.
+    pub fn parse(text: &str) -> Result<Self, ParseError> {
+        read::parse(text)
+    }
+
+    /// The value as compact JSON, numbers as written: what copying an object copies.
+    pub fn to_json(&self) -> String {
+        write::compact(self)
+    }
+
+    /// The value as JSON indented by two spaces, one field or item a line.
+    pub fn to_pretty_json(&self) -> String {
+        write::pretty(self)
+    }
+
+    /// The value's type and text, as the tree and the grid show them.
+    pub fn shown(&self, syntax: Syntax) -> Shown {
+        extended::shown(self, syntax)
+    }
+
+    /// The fields or items a tree unfolds this value into, each with its step from here: none
+    /// for a scalar, nor for an Extended JSON special object, which shows as one value.
+    pub fn children(&self, syntax: Syntax) -> Vec<(Step, &Value)> {
+        if syntax == Syntax::ExtendedJson && extended::is_special(self) {
+            return Vec::new();
+        }
+        match self {
+            Self::Array(items) => items
+                .iter()
+                .enumerate()
+                .map(|(index, item)| (Step::Index(index), item))
+                .collect(),
+            Self::Object(fields) => fields
+                .iter()
+                .map(|(name, value)| (Step::Field(name.clone()), value))
+                .collect(),
+            Self::Null | Self::Bool(_) | Self::Number(_) | Self::String(_) => Vec::new(),
+        }
+    }
+
+    /// What copying the value gives: a scalar as shown, so an object id pastes into the shell
+    /// as `ObjectId("…")`; an object or array as compact JSON.
+    pub fn copied(&self, syntax: Syntax) -> String {
+        if self.children(syntax).is_empty() && !self.is_empty_container() {
+            self.shown(syntax).text
+        } else {
+            self.to_json()
+        }
+    }
+
+    fn is_empty_container(&self) -> bool {
+        match self {
+            Self::Array(items) => items.is_empty(),
+            Self::Object(fields) => fields.is_empty(),
+            Self::Null | Self::Bool(_) | Self::Number(_) | Self::String(_) => false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ORDER: &str = r#"{"_id": {"$oid": "5f1d7f0e2b5c3a0001a1b2c3"}, "total": {"$numberLong": "7"}, "items": [{"sku": "a-1"}], "note": null, "tags": []}"#;
+
+    #[test]
+    fn unfolds_objects_and_arrays_but_not_extended_json_values() {
+        let order = Value::parse(ORDER).unwrap();
+        let steps = |value: &Value, syntax| -> Vec<Step> {
+            value
+                .children(syntax)
+                .into_iter()
+                .map(|(step, _)| step)
+                .collect()
+        };
+        let fields: Vec<Step> = ["_id", "total", "items", "note", "tags"]
+            .map(|name| Step::Field(name.to_owned()))
+            .into();
+        assert_eq!(steps(&order, Syntax::ExtendedJson), fields);
+        let id = &order.children(Syntax::ExtendedJson)[0].1;
+        assert_eq!(steps(id, Syntax::ExtendedJson), []);
+        assert_eq!(steps(id, Syntax::Json), [Step::Field("$oid".to_owned())]);
+        let items = &order.children(Syntax::Json)[2].1;
+        assert_eq!(steps(items, Syntax::Json), [Step::Index(0)]);
+    }
+
+    #[test]
+    fn copies_scalars_as_shown_and_containers_as_json() {
+        let order = Value::parse(ORDER).unwrap();
+        let copied: Vec<String> = order
+            .children(Syntax::ExtendedJson)
+            .into_iter()
+            .map(|(_, value)| value.copied(Syntax::ExtendedJson))
+            .collect();
+        assert_eq!(
+            copied,
+            [
+                r#"ObjectId("5f1d7f0e2b5c3a0001a1b2c3")"#,
+                "NumberLong(7)",
+                r#"[{"sku":"a-1"}]"#,
+                "null",
+                "[]",
+            ]
+        );
+        assert_eq!(
+            Value::parse(r#""plain""#).unwrap().copied(Syntax::Json),
+            "plain"
+        );
+    }
+}

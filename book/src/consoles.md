@@ -267,7 +267,13 @@ doesn't, yet).
   it one. On macOS they are in the Edit menu too. **Copy row** quotes values with tabs or line
   breaks, as **Copy selection** does, so they paste into the right cells.
 - **Viewing a long value.** Double-click a cell, or select it and press Space, to see the whole
-  value in a window. JSON and XML are shown indented; **Copy** copies it as stored.
+  value in a window. XML is shown indented; **Copy** copies it as stored.
+- **JSON as a tree.** A JSON object or array opens as a tree: a PostgreSQL `json` or `jsonb`,
+  MySQL `JSON`, DuckDB or ClickHouse `JSON` column, or JSON text in SQLite. Each field and item
+  is on a line with its type; click an object or array to unfold or fold it. Right-click a line
+  for **Copy value**, **Copy path** (such as `items[1].qty`) or **Copy all**. Numbers are shown
+  as the database wrote them, so `1.10` stays `1.10`. **Text** shows the value indented
+  instead.
 - **Sorting and filtering.** Click a column header to sort by it (ascending, descending, off),
   and type in **Filter loaded rows** to keep the rows with a cell containing the text. Both
   work on the rows loaded so far, without asking the database again, and the grid says so.

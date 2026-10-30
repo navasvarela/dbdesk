@@ -1,34 +1,88 @@
 //! A window showing one cell's whole value, for text too long for the grid. JSON objects and
-//! arrays are pretty-printed, and XML (SQL Server's plans and `FOR XML` results) is indented.
+//! arrays show as a tree, or as text pretty-printed, and XML (SQL Server's plans and `FOR XML`
+//! results) is indented.
 
+use dbrover_document::{Syntax, Value};
 use egui::{Id, RichText, ScrollArea, TextEdit, Window};
 
 use super::{QueryConsole, ViewedCell};
+use crate::json_tree::JsonTree;
 
 const DEFAULT_SIZE: [f32; 2] = [520.0, 360.0];
 
 /// Draws the console's cell viewer, if one is open, and closes it when the user does.
 pub fn show(ctx: &egui::Context, console: &mut QueryConsole) {
-    let Some(viewed) = &console.viewed_cell else {
+    let console_id = console.id.0;
+    let Some(viewed) = &mut console.viewed_cell else {
         return;
     };
     let mut open = true;
     Window::new(format!("Value of {}", viewed.column))
-        .id(Id::new(("cell_viewer", console.id.0)))
+        .id(Id::new(("cell_viewer", console_id)))
         .open(&mut open)
         .default_size(DEFAULT_SIZE)
-        .show(ctx, |ui| contents(ui, viewed));
+        .show(ctx, |ui| contents(ui, viewed, console_id));
     if !open {
         console.viewed_cell = None;
     }
 }
 
-fn contents(ui: &mut egui::Ui, viewed: &ViewedCell) {
+/// How a value with a tree is shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShownAs {
+    Tree,
+    Text,
+}
+
+/// `text` read as JSON, if it is an object or an array: a scalar has nothing to unfold.
+pub fn json_tree(text: &str) -> Option<Value> {
+    if !text.trim_start().starts_with(['{', '[']) {
+        return None;
+    }
+    Value::parse(text)
+        .ok()
+        .filter(|value| matches!(value, Value::Object(_) | Value::Array(_)))
+}
+
+fn contents(ui: &mut egui::Ui, viewed: &mut ViewedCell, console: u64) {
     let Some(value) = &viewed.value else {
         ui.label(RichText::new("NULL").italics().weak());
         return;
     };
-    text_view(ui, value);
+    if viewed.tree.is_none() {
+        text_view(ui, value);
+        return;
+    }
+    ui.horizontal(|ui| {
+        ui.selectable_value(&mut viewed.shown_as, ShownAs::Tree, "Tree");
+        ui.selectable_value(&mut viewed.shown_as, ShownAs::Text, "Text");
+    });
+    match viewed.shown_as {
+        ShownAs::Tree => tree_view(ui, viewed, console),
+        ShownAs::Text => text_view(ui, value),
+    }
+}
+
+/// A JSON value as a tree, with **Copy** for it as stored.
+fn tree_view(ui: &mut egui::Ui, viewed: &ViewedCell, console: u64) {
+    let (Some(stored), Some(value)) = (&viewed.value, &viewed.tree) else {
+        return;
+    };
+    ui.horizontal(|ui| {
+        if ui.button("Copy").clicked() {
+            ui.ctx().copy_text(stored.to_owned());
+        }
+        ui.weak("Right-click a field to copy it or its path.");
+    });
+    ScrollArea::both().auto_shrink(false).show(ui, |ui| {
+        JsonTree {
+            id: Id::new(("cell_viewer_tree", console)),
+            root: &viewed.column,
+            value,
+            syntax: Syntax::Json,
+        }
+        .show(ui);
+    });
 }
 
 /// Long text laid out for reading, JSON and XML indented, with **Copy** for it as it is. The
@@ -146,15 +200,10 @@ fn tag_end(text: &str) -> Option<usize> {
     None
 }
 
-/// `value` indented, if it is a JSON object or array. Scalars are left alone: a number or a
-/// quoted word looks the same either way.
+/// `value` indented, if it is a JSON object or array, with its numbers as written. Scalars are
+/// left alone: a number or a quoted word looks the same either way.
 fn pretty_json(value: &str) -> Option<String> {
-    let trimmed = value.trim_start();
-    if !trimmed.starts_with(['{', '[']) {
-        return None;
-    }
-    let parsed: serde_json::Value = serde_json::from_str(value).ok()?;
-    serde_json::to_string_pretty(&parsed).ok()
+    json_tree(value).map(|tree| tree.to_pretty_json())
 }
 
 #[cfg(test)]
@@ -164,8 +213,8 @@ mod tests {
     #[test]
     fn pretty_prints_objects_and_arrays_keeping_key_order() {
         assert_eq!(
-            pretty_json(r#"{"b":1,"a":[true,null]}"#).as_deref(),
-            Some("{\n  \"b\": 1,\n  \"a\": [\n    true,\n    null\n  ]\n}")
+            pretty_json(r#"{"b":1.10,"a":[true,null]}"#).as_deref(),
+            Some("{\n  \"b\": 1.10,\n  \"a\": [\n    true,\n    null\n  ]\n}")
         );
         for not_json in ["42", "\"word\"", "{not json", "plain text"] {
             assert_eq!(pretty_json(not_json), None, "{not_json}");

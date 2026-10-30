@@ -33,6 +33,7 @@ flowchart LR
 | `dbrover-core` | Domain types (`DataSource`, `ConnectionConfig`, `Password`, …) and the `Connection` trait. No I/O. | — |
 | `dbrover-sql` | A forgiving SQL lexer: statement splitting, statement at the cursor, highlighting tokens, the UPDATE/DELETE-without-WHERE check, the formatter, and the syntax checker (`sqlparser`) and lint rules. What differs between dialects lives in its `dialect` module. | core, sqlparser |
 | `dbrover-language` | `QueryLanguage`, what a driver speaks: `Sql(Dialect)` for every engine today, and the languages beside SQL as NoSQL engines arrive ([nosql.md](nosql.md)). Each language splits a script into commands, yields tokens to highlight, lists completion words and classifies a command; SQL-only features ask it for its `Dialect`. A `Test` language, behind the `test-language` feature, exists only for tests. | core, sql |
+| `dbrover-document` | JSON and documents with no engine in them ([ADR 0006](adr/0006-documents-as-extended-json-text.md)): a reader that keeps fields in order and numbers as written, MongoDB's Extended JSON types shown as the shell writes them, and paths (`items[2].sku`). What the app's JSON tree draws, for documents, SQL engines' JSON columns and Redis's JSON. | — |
 | `dbrover-driver-postgres` | `tokio-postgres` implementation of `Connection`. | core, tls |
 | `dbrover-driver-sqlite` | `rusqlite` implementation, run on `spawn_blocking`. | core |
 | `dbrover-driver-mysql` | `mysql_async` implementation for MySQL and MariaDB; a statement's task owns the connection while its result is open, and cancel is `KILL QUERY` from a second connection. | core |
@@ -44,7 +45,7 @@ flowchart LR
 | `dbrover-engine` | Session lifecycle, command handling, cancellation, transactions, event emission. | core, sql, language, store, export, drivers |
 | `dbrover-export` | The export formats (`ExportSpec`: a format and its options), the `TextFormat` trait that writes a header, rows and a footer to any writer, and `ExportWriter`, which writes a file a page at a time beside its final name. See [exports.md](exports.md). | core, sql |
 | `dbrover-store` | Data source file (TOML), secrets (`SecretStore`, OS keychain via `keyring`), console files, query history (`rusqlite`) and its export. All blocking; the engine calls it from the blocking pool. | core, export |
-| `dbrover-app` | `eframe` binary: panels, widgets, app state, keymap. | core, engine, sql, language, store, export |
+| `dbrover-app` | `eframe` binary: panels, widgets, app state, keymap. | core, document, engine, sql, language, store, export |
 
 `dbrover-app` depends on the engine only through its public `EngineHandle` (a command sender
 and an event receiver), so the UI can be driven by a fake engine in tests.

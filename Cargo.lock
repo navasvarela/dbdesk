@@ -1624,6 +1624,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "dbrover-core",
+ "dbrover-document",
  "dbrover-engine",
  "dbrover-export",
  "dbrover-language",
@@ -1668,6 +1669,14 @@ dependencies = [
  "tokio",
  "toml",
  "uuid",
+]
+
+[[package]]
+name = "dbrover-document"
+version = "0.15.0"
+dependencies = [
+ "data-encoding",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
