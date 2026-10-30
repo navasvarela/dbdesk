@@ -2193,7 +2193,7 @@ mod tests {
 
     use super::*;
     use crate::log_console;
-    use crate::test_support::FixedReleases;
+    use crate::test_support::{FixedReleases, step_until, step_until_visible};
 
     const WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -2246,30 +2246,6 @@ mod tests {
     fn start_app(dir: &Path, log_feed: LogFeed) -> Harness<'static, DbRoverApp> {
         let config = engine_config(dir);
         harness_at_default_size().build_eframe(|cc| DbRoverApp::new(cc, log_feed, config).unwrap())
-    }
-
-    /// Steps the app until `done` holds; engine events arrive asynchronously, so a fixed
-    /// number of steps would be flaky.
-    fn step_until(
-        harness: &mut Harness<'_, DbRoverApp>,
-        what: &str,
-        done: impl Fn(&Harness<'_, DbRoverApp>) -> bool,
-    ) {
-        let deadline = std::time::Instant::now() + WAIT_TIMEOUT;
-        while !done(harness) {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "{what} never happened"
-            );
-            std::thread::sleep(Duration::from_millis(10));
-            harness.step();
-        }
-    }
-
-    fn step_until_visible(harness: &mut Harness<'_, DbRoverApp>, text: &str) {
-        step_until(harness, &format!("{text:?} appearing"), |harness| {
-            harness.query_by_label_contains(text).is_some()
-        });
     }
 
     /// Saves one SQLite data source named `shop`, over a database with `schema`.
@@ -3332,18 +3308,27 @@ mod tests {
         harness.run_steps(2);
     }
 
-    /// Opens a menu button and ticks or picks `item` in it. A menu's items may come from the
-    /// catalog, which loads in the background (a referenced table's columns), so the item is
-    /// waited for: picking it at once lost that race when the app tests ran together.
+    /// Opens a menu button and ticks `item` in it. The button and its items may both wait on
+    /// the catalog, which loads in the background (a referenced table's columns show
+    /// "Loading its columns…" in the button's place), so both are waited for: clicking either
+    /// at once lost that race when the app tests ran together. The item is found by role, so
+    /// another label with the same text, such as a column of the same name, can't match it.
     fn pick(harness: &mut Harness<'_, DbRoverApp>, menu: &str, item: &str) {
+        step_until(harness, &format!("the {menu:?} menu"), |harness| {
+            harness.query_by_label(menu).is_some()
+        });
         harness.get_by_label(menu).click();
         harness.run_steps(2);
         step_until(
             harness,
             &format!("{item:?} in the {menu:?} menu"),
-            |harness| harness.query_by_label(item).is_some(),
+            |harness| {
+                harness
+                    .query_by_role_and_label(Role::CheckBox, item)
+                    .is_some()
+            },
         );
-        harness.get_by_label(item).click();
+        harness.get_by_role_and_label(Role::CheckBox, item).click();
         harness.run_steps(2);
         harness.key_press(egui::Key::Escape);
         harness.run_steps(2);
@@ -3380,7 +3365,6 @@ mod tests {
         harness.get_by_label("Foreign key 1 references").click();
         harness.run_steps(2);
         harness.get_by_label("main.customers").click();
-        step_until_visible(&mut harness, "Foreign key 1 referenced columns");
         pick(&mut harness, "Foreign key 1 referenced columns", "id");
 
         let expected = "CREATE TABLE main.orders (
@@ -3431,9 +3415,6 @@ mod tests {
         expand_shop_tables(&mut harness, "orders");
 
         node_menu(&mut harness, "orders", "New index…");
-        step_until(&mut harness, "the table's columns loading", |harness| {
-            harness.query_by_label("Index columns").is_some()
-        });
         pick(&mut harness, "Index columns", "customer");
         assert!(
             harness
