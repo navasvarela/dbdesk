@@ -719,7 +719,7 @@ fn editor(
     let reveal = move_cursor(ui, console, editor_id);
     let checked = console.check_problems(catalog, context.lint, Instant::now());
     if let Some(wait) = checked.repaint_after {
-        ui.ctx().request_repaint_after(wait);
+        crate::repaint::request_repaint_after_pause(ui.ctx(), wait);
     }
     if !checked.ask_database.is_empty() {
         actions.push(ConsoleAction::Validate(checked.ask_database));

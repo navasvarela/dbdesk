@@ -279,6 +279,14 @@ ignored, print the widget's rect and egui's `interaction_snapshot` before suspec
 under test. Modals are measured on their first frame and placed on the next, so run a frame
 before clicking inside one.
 
+`Harness::run` steps until egui stops asking to repaint at once, and gives up after four steps.
+Two things in the app ask for that while a test still has work to wait for. Each answer from the
+engine wakes the app, so after an action the engine is still answering, step until the effect
+shows (`test_support::step_until`) instead of `run`. And egui takes a frame's predicted length
+(a quarter of a second in kittest) off any delayed repaint, treating what's left of a shorter one
+as immediate. So a wait the app measures on the wall clock, such as typing settling, asks for
+its repaint through `repaint::request_repaint_after_pause`, which keeps it a delayed one.
+
 ### Screenshots
 
 `screenshots::regenerate_screenshots` renders the app with egui_kittest's `wgpu` renderer and
