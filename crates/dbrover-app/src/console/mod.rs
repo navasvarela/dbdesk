@@ -1006,11 +1006,7 @@ impl QueryConsole {
             ),
             None => (
                 Vec::new(),
-                completion::word_candidates(
-                    &point.prefix,
-                    self.language.completion_words(),
-                    recent,
-                ),
+                completion::word_candidates(&point.prefix, self.language, recent),
             ),
         };
         let snippets = if point.qualifier.is_none() {

@@ -500,9 +500,20 @@ fn typed_in_upper_case(prefix: &str) -> bool {
     prefix.chars().any(|c| c.is_ascii_uppercase())
 }
 
-/// The candidates for a language without a SQL dialect: its own words, best first.
-pub fn word_candidates(prefix: &str, words: &[&str], recent: &RecentCompletions) -> Vec<Candidate> {
-    ranking::rank(language_words(prefix, words), prefix, recent)
+/// The candidates for a language without a SQL dialect: its own words, best first, each with
+/// what the language says of it (a Redis command's arguments) or as a keyword.
+pub fn word_candidates(
+    prefix: &str,
+    language: QueryLanguage,
+    recent: &RecentCompletions,
+) -> Vec<Candidate> {
+    let mut candidates = language_words(prefix, language.completion_words());
+    for candidate in &mut candidates {
+        if let Some(detail) = language.completion_detail(&candidate.insert) {
+            candidate.detail = Some(detail.to_owned());
+        }
+    }
+    ranking::rank(candidates, prefix, recent)
 }
 
 /// Keywords, in the case being typed. None for an empty prefix: every keyword matches it,

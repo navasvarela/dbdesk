@@ -1,0 +1,156 @@
+# Redis commands and what classify must call them, one command per line, each after a comment
+# naming its kind, as the test language's corpus does. See tests.rs.
+
+# Reading.
+# expect: read
+GET user:42
+# expect: read
+hgetall "user:42"
+# expect: read
+HGET user:42 name
+# expect: read
+LRANGE queue 0 -1
+# expect: read
+ZRANGE leaderboard 0 9 WITHSCORES
+# expect: read
+XREVRANGE events + - COUNT 100
+# expect: read
+SCAN 0 MATCH "order:*" COUNT 1000 TYPE hash
+# expect: read
+HSCAN user:42 0 COUNT 1000
+# expect: read
+KEYS user:*
+# expect: read
+TYPE user:42
+# expect: read
+TTL user:42
+# expect: read
+PTTL user:42
+# expect: read
+EXISTS a b c
+# expect: read
+DBSIZE
+# expect: read
+OBJECT ENCODING user:42
+# expect: read
+MEMORY USAGE user:42 SAMPLES 0
+# expect: read
+PING
+# expect: read
+ECHO 'it\'s'
+# expect: read
+INFO keyspace
+# expect: read
+TIME
+# expect: read
+COMMAND DOCS get
+# expect: read
+CLUSTER INFO
+# expect: read
+XINFO STREAM events
+# expect: read
+EVAL_RO "return redis.call('GET', KEYS[1])" 1 user:42
+# expect: read
+FCALL_RO myfunc 0
+# expect: read
+WAIT 1 1000
+# expect: read
+OBJECT HELP
+
+# Blocking commands keep their flags.
+# expect: write
+BLPOP queue 5
+# expect: read
+XREAD BLOCK 5000 STREAMS events $
+
+# Writing.
+# expect: write
+SET user:42 "Ada \"the first\" Lovelace" KEEPTTL
+# expect: write
+set 'it\'s' "\x00\xff"
+# expect: write
+HSET user:42 name Ada city London
+# expect: write
+DEL user:1 user:2
+# expect: write
+EXPIRE user:42 3600
+# expect: write
+PERSIST user:42
+# expect: write
+RENAME user:42 user:43
+# expect: write
+LPUSH queue job
+# expect: write
+ZADD leaderboard 10 ada
+# expect: write
+XADD events * kind login
+# expect: write
+SADD tags red
+# expect: write
+INCR visits
+# expect: write
+EVAL "return redis.call('SET', KEYS[1], 1)" 1 counter
+# expect: write
+EVALSHA abc123 0
+# expect: write
+FCALL myfunc 1 counter
+# expect: write
+MOVE user:42 1
+# expect: write
+SWAPDB 0 1
+
+# Transaction control.
+# expect: transaction
+MULTI
+# expect: transaction
+EXEC
+# expect: transaction
+DISCARD
+# expect: transaction
+WATCH user:42
+# expect: transaction
+UNWATCH
+
+# Administration.
+# expect: admin
+SELECT 1
+# expect: admin
+CONFIG GET maxmemory
+# expect: admin
+CONFIG SET maxmemory 100mb
+# expect: admin
+CLIENT LIST
+# expect: admin
+CLIENT ID
+# expect: admin
+FLUSHALL
+# expect: admin
+flushdb async
+# expect: admin
+SHUTDOWN NOSAVE
+# expect: admin
+AUTH default secret
+# expect: admin
+HELLO 3 AUTH default secret
+# expect: admin
+ACL SETUSER mcp on >secret ~* +@read
+# expect: admin
+SCRIPT KILL
+# expect: admin
+FUNCTION KILL
+# expect: admin
+DEBUG SLEEP 1
+# expect: admin
+SUBSCRIBE news
+# expect: admin
+PUBLISH news hello
+# expect: admin
+MONITOR
+
+# Not readable, or not known.
+# expect: unparseable
+GET "unclosed
+# expect: unparseable
+GET "closed"right-after
+# expect: unparseable
+NOSUCHCOMMAND a b

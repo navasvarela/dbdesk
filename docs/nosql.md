@@ -383,7 +383,8 @@ were. From N1·3 on, each runs against `redis:8-alpine` and `valkey/valkey:9-alp
 
 - **N1·1 — Plan:** this list, the decisions N1 takes (in [Decisions](#decisions)), and the
   roadmap's status.
-- **N1·2 — The Redis language:** a `redis` module of `dbrover-language`, with no driver yet:
+- **N1·2 — The Redis language** (built): a `redis` module of `dbrover-language`, with no
+  driver yet:
   - a script splits one command per line, and each command reads as `redis-cli` reads it:
     words, `"…"` strings with backslash escapes (`\n`, `\"`, `\x41`), `'…'` strings, and a
     line that starts with `#` as a comment;
@@ -401,7 +402,9 @@ were. From N1·3 on, each runs against `redis:8-alpine` and `valkey/valkey:9-alp
   - completion of command names, each with its arguments' syntax.
 
   Tests: a classification corpus, as the SQL dialects and the test language have; the
-  splitter and tokens against `redis-cli`'s quoting; the warnings.
+  splitter and tokens against `redis-cli`'s quoting; the warnings. The table holds 477 commands
+  and subcommands; until N1·3 checks it against live servers, it comes from the sources'
+  definitions alone.
 - **N1·3 — The driver and the console:** a new crate, `dbrover-driver-redis`, on the `redis`
   crate over a TCP or TLS stream DbRover opens itself, so TLS is `dbrover-tls`'s rustls
   configuration on ring and an SSH tunnel works as for the others:

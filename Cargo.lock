@@ -1820,6 +1820,7 @@ version = "0.15.0"
 dependencies = [
  "dbrover-core",
  "dbrover-sql",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
