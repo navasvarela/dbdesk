@@ -7,7 +7,7 @@ mod ssh;
 use dbrover_core::{
     ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DriverKind, DuckDbConfig,
     DuckDbDatabase, McpLogin, MysqlConfig, Password, Port, PostgresConfig, ProjectId, SafetyLevel,
-    SourceColor, SqlServerConfig, SqliteConfig, has_placeholder,
+    SourceColor, SqlServerConfig, SqliteConfig, TemplateError, has_placeholder,
 };
 use dbrover_engine::PasswordUpdate;
 
@@ -52,7 +52,7 @@ const CLICKHOUSE_DEFAULTS: ServerDefaults = ServerDefaults {
     tls: TlsOffer::OwnPort(ClickHouseConfig::DEFAULT_TLS_PORT),
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum FormError {
     #[error("Host is required.")]
     HostMissing,
@@ -72,6 +72,8 @@ pub enum FormError {
     SshUserMissing,
     #[error("Key file is required to sign in with a key file.")]
     SshKeyFileMissing,
+    #[error("Password command: {0}.")]
+    PasswordCommand(TemplateError),
 }
 
 /// Text as the user typed it. Converted to a [`DataSource`] only on Test or Save.
@@ -338,11 +340,9 @@ impl DataSourceForm {
     }
 
     pub fn password_update(&self) -> PasswordUpdate {
-        match self.fields.server() {
-            Some(server) if !server.password.is_empty() => {
-                PasswordUpdate::Set(Password::new(server.password.clone()))
-            }
-            _ => PasswordUpdate::Keep,
+        match self.fields.server().and_then(ServerFields::typed_password) {
+            Some(password) => PasswordUpdate::Set(Password::new(password)),
+            None => PasswordUpdate::Keep,
         }
     }
 
@@ -447,6 +447,7 @@ mod tests {
                         ca_file: Some("/etc/ca.pem".into()),
                     },
                     ssh: None,
+                    password_command: None,
                 },
             }),
             ConnectionConfig::Mysql(MysqlConfig {
@@ -464,6 +465,7 @@ mod tests {
                             key_file: "/home/juan/.ssh/id_ed25519".into(),
                         },
                     }),
+                    password_command: None,
                 },
             }),
         ];

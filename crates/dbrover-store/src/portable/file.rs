@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 
 use dbrover_core::{
     ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase,
-    McpLogin, MysqlConfig, Port, PostgresConfig, ProjectId, SafetyLevel, ServerConfig, SourceColor,
-    SqlServerConfig, SqliteConfig, SshConfig, SshLogin, TlsMode,
+    McpLogin, MysqlConfig, PasswordCommand, Port, PostgresConfig, ProjectId, SafetyLevel,
+    ServerConfig, SourceColor, SqlServerConfig, SqliteConfig, SshConfig, SshLogin, TlsMode,
 };
 use serde::{Deserialize, Serialize};
 
@@ -246,6 +246,11 @@ struct PortableServer {
     tls: PortableTls,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     ssh: Option<PortableSsh>,
+    /// Travels as written: it names a program and the server's settings, never a secret. The
+    /// trust to run it stays on each machine, in `trusted_commands.toml`, so an imported
+    /// command asks before it first runs there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    password_command: Option<PasswordCommand>,
 }
 
 impl PortableServer {
@@ -257,6 +262,7 @@ impl PortableServer {
             user,
             tls,
             ssh,
+            password_command,
         } = server;
         Self {
             host: host.clone(),
@@ -265,6 +271,7 @@ impl PortableServer {
             user: user.clone(),
             tls: PortableTls::export(tls, path),
             ssh: ssh.as_ref().map(|ssh| PortableSsh::export(ssh, path)),
+            password_command: password_command.clone(),
         }
     }
 
@@ -276,6 +283,7 @@ impl PortableServer {
             user,
             tls,
             ssh,
+            password_command,
         } = self;
         ServerConfig {
             host,
@@ -284,6 +292,7 @@ impl PortableServer {
             user,
             tls: tls.import(path),
             ssh: ssh.map(|ssh| ssh.import(path)),
+            password_command,
         }
     }
 }

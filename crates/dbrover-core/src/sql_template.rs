@@ -114,6 +114,11 @@ pub enum TemplateError {
          depends on what was selected"
     )]
     PlaceholderInProgram,
+    #[error(
+        "{0} can't be in a password command, which can only have {{host}}, {{port}}, {{user}} \
+         and {{database}}"
+    )]
+    NotForPasswords(Placeholder),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

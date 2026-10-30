@@ -22,6 +22,7 @@ fn unreachable_postgres() -> DataSource {
         user: "juan".to_owned(),
         tls: TlsMode::Disable,
         ssh: None,
+        password_command: None,
     })
 }
 

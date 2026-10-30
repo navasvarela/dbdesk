@@ -199,6 +199,7 @@ mod tests {
                 user: "ada".to_owned(),
                 tls: TlsMode::default(),
                 ssh: None,
+                password_command: None,
             },
         }))
     }

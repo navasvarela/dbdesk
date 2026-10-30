@@ -478,6 +478,12 @@ fn server_settings(server: &ServerConfig, settings: &mut Settings) {
         }
     };
     settings.push(("TLS", mode.to_owned()));
+    let password = match &server.password_command {
+        // As a list, so an argument with a space in it reads as one.
+        Some(command) => format!("from {:?}", command.source()),
+        None => "from the keychain".to_owned(),
+    };
+    settings.push(("Password", password));
     let Some(ssh) = &server.ssh else {
         settings.push(("SSH", "none".to_owned()));
         return;
