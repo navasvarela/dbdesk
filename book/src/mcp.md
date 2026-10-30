@@ -135,7 +135,8 @@ DbRover checks each statement in up to three ways:
    in a read-only transaction that is then rolled back: `BEGIN READ ONLY` on PostgreSQL,
    `START TRANSACTION READ ONLY` on MySQL and MariaDB. SQLite files are opened read-only. This
    stops a `SELECT` that calls a function which writes, because DbRover can't see inside the
-   function.
+   function. SQL Server and ClickHouse have no such mode DbRover uses; there, the MCP login's
+   grants do this (see below).
 3. **The database's own grants,** through an [MCP login](#the-mcp-login). This is the only
    layer that is airtight beyond reading.
 
@@ -144,8 +145,13 @@ or a procedure can do anything, whatever the statement that calls it looks like.
 Project settings warns when a project allows changes and one of its data sources has no MCP
 login.
 
-SQL Server has no read-only transaction, so DbRover doesn't serve SQL Server data sources to
-MCP clients yet. The server's log says so when it starts.
+SQL Server has no read-only transaction, and DbRover doesn't use ClickHouse's read-only setting
+yet, so their data sources are served to MCP clients only through an
+[MCP login](#the-mcp-login) whose grants allow nothing but reading. Without one, a data source
+isn't served, and the server's log says why when it starts; Project settings lists it too. They
+are served for reading only: `execute` is refused on them, whatever the project allows, since
+DbRover has no transaction to run changes in there. DuckDB files have no logins, so they aren't
+served yet.
 
 ## The MCP login
 
@@ -162,6 +168,23 @@ CREATE ROLE assistant LOGIN PASSWORD '…';
 GRANT CONNECT ON DATABASE shop TO assistant;
 GRANT USAGE ON SCHEMA public TO assistant;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO assistant;
+```
+
+On SQL Server, a login that can only read the database is a login, a user for it, and the
+`db_datareader` role:
+
+```sql
+CREATE LOGIN assistant WITH PASSWORD = '…';
+-- In the data source's database:
+CREATE USER assistant FOR LOGIN assistant;
+ALTER ROLE db_datareader ADD MEMBER assistant;
+```
+
+On ClickHouse, a user with the `readonly` setting can read and nothing else:
+
+```sql
+CREATE USER assistant IDENTIFIED BY '…' SETTINGS readonly = 1;
+GRANT SELECT ON shop.* TO assistant;
 ```
 
 The MCP password is kept in the keychain under its own entry, separate from the data source's

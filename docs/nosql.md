@@ -189,14 +189,16 @@ is exercised by the SQL engines and by the test language.
   (edits, sorting in the database, copying and exporting) ask for the dialect and are hidden or
   refused without one. The test language has a classification corpus, as each SQL dialect has,
   and console tests that split, highlight and complete its commands.
-- **N0a·3 — Safety for every language:** the warning before a risky command becomes "this
+- **N0a·3 — Safety for every language** (built): the warning before a risky command becomes "this
   command may touch everything", listed by each language (`UPDATE` and `DELETE` without `WHERE`
   for SQL). An engine without a read-only session is guarded by its login: the console's
   read-only level refuses writes with the check alone and the dialog says to use a login with
   read-only grants, and the MCP server serves such a data source for reading when, and only when,
-  it has an MCP login. SQL Server and ClickHouse are the first to use it. Tests: the test
-  language refused on a read-only data source and in an MCP project, its warnings, and MCP
-  serving a SQL Server data source only with an MCP login.
+  it has an MCP login. SQL Server and ClickHouse are the first to use it; `execute` is refused on
+  them, since DbRover has no transaction to run changes in there. Tests: the test language
+  refused by the read-only check and planned by the MCP server through its own
+  classification, its warnings, and, on the SQL Server test server, MCP serving a data source
+  only through its MCP login and reading as that login.
 - **N0a·4 — An explorer that pages:** `Connection::children_page` returns part of a level, with
   a token for the next part, and takes a filter the server applies; its default returns the whole
   level, as `children` does. PostgreSQL pages the objects of a schema 1,000 at a time, by name,

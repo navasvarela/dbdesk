@@ -10,7 +10,7 @@
 //!
 //! The parser has already refused statements the project doesn't allow, but it can't see
 //! inside a function; for reading, the read-only transaction is what stops
-//! `SELECT writes_something()`.
+//! `SELECT writes_something()`, or, on an engine without one, the MCP login's grants.
 
 use std::future::Future;
 use std::sync::Arc;
@@ -19,7 +19,7 @@ use std::time::Duration;
 use dbrover_core::{
     CancelHandle, ColumnInfo, Connection, DriverError, DriverKind, Row, describe_error,
 };
-use dbrover_engine::read_only::{self, ReadOnlyMode};
+use dbrover_engine::read_only::{self, Guard, ReadOnlyMode};
 use dbrover_engine::read_write::{self, WriteMode};
 
 /// How long a cancelled statement gets to give up before its connection is given up on.
@@ -31,6 +31,10 @@ pub(crate) enum RunError {
     Driver(#[from] DriverError),
     #[error("cancelled after the statement timeout of {0:?}")]
     TimedOut(Duration),
+    /// The engine has no transaction for the call's access: changes on an engine without a
+    /// read-write mode (see `read_write::mode`).
+    #[error("DbRover has no transaction to run this in on {0} for MCP clients")]
+    NoTransaction(&'static str),
 }
 
 impl RunError {
@@ -68,6 +72,10 @@ pub(crate) enum Access {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CallMode {
     Read(ReadOnlyMode),
+    /// Reading on an engine without a read-only mode, through the data source's MCP login
+    /// (`read_only::Guard::Login`): nothing is opened or rolled back, and the login's grants
+    /// refuse writes.
+    ReadAsLogin,
     Write(WriteMode),
 }
 
@@ -76,10 +84,14 @@ pub(crate) enum CallMode {
 /// file is only when the project allows them (see `ServedProject`).
 pub(crate) fn mode(driver: DriverKind, access: Access, writable: bool) -> Option<CallMode> {
     match access {
-        Access::Read if writable => {
-            read_only::mode_on_writable_connection(driver).map(CallMode::Read)
-        }
-        Access::Read => read_only::mode(driver).map(CallMode::Read),
+        Access::Read => match read_only::guard(driver) {
+            Guard::Session(_) if writable => {
+                read_only::mode_on_writable_connection(driver).map(CallMode::Read)
+            }
+            Guard::Session(mode) => Some(CallMode::Read(mode)),
+            Guard::Login => Some(CallMode::ReadAsLogin),
+            Guard::CheckOnly => None,
+        },
         Access::Write => read_write::mode(driver).map(CallMode::Write),
     }
 }
@@ -103,6 +115,7 @@ pub(crate) async fn begin(
         CallMode::Write(mode) => {
             read_write::begin(connection, mode, Some(settings.timeout)).await?;
         }
+        CallMode::ReadAsLogin => {}
     }
     if let Some(search_path) = settings.search_path {
         connection.execute(search_path).await?.finish().await?;
@@ -141,6 +154,7 @@ async fn rollback(connection: &mut dyn Connection, mode: CallMode) -> Result<(),
     let rolled_back = match mode {
         CallMode::Read(mode) => read_only::rollback(connection, mode).await,
         CallMode::Write(_) => read_write::rollback(connection).await,
+        CallMode::ReadAsLogin => Ok(()),
     };
     rolled_back.map_err(|error| DriverError::Connection(Box::new(error)))
 }

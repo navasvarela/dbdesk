@@ -77,8 +77,9 @@ install. Client certificates aren't supported yet.
 One data source type serves both: DbRover tells MySQL and MariaDB apart once it connects, and
 **Test connection** says which it found ("Connected to MariaDB 11.4.4").
 
-**SQL Server** has the same fields too, for SQL Server and Azure SQL, with these defaults. It has
-no MCP login, since [MCP clients](mcp.md) can't use SQL Server yet.
+**SQL Server** has the same fields too, for SQL Server and Azure SQL, with these defaults. Its MCP
+login is required for [MCP clients](mcp.md) to use it at all, since SQL Server has no read-only
+mode: see [How the permissions are enforced](mcp.md#how-the-permissions-are-enforced).
 
 ![The New SQL Server data source dialog](images/sqlserver-data-source-dialog.png)
 
@@ -106,6 +107,8 @@ SQL Server 2022).
 | User | `default` | |
 | TLS | `disable` | `disable`, `require` or `verify-full`; see below. |
 | Password | none | Stored in the keychain when you save. |
+| MCP login | none | Required for AI assistants, since DbRover doesn't use ClickHouse's read-only setting yet; see [The MCP login](mcp.md#the-mcp-login). |
+| MCP password | none | Shown once there is an MCP login. Stored in the keychain apart from the password. |
 
 ClickHouse serves HTTPS on a port of its own (8443) rather than offering encryption on the HTTP
 one, so there is no `prefer`: choosing `require` or `verify-full` moves the port to `8443`, and
@@ -233,7 +236,9 @@ Read-only uses the same checks as an AI assistant's read-only projects (see
   read-only.
 - **SQL Server**, **DuckDB** and **ClickHouse** have no read-only mode DbRover uses yet:
   statements are still checked, but a write inside a procedure or function isn't stopped. The
-  dialog says so. (A DuckDB file can also be opened with its own **Read-only** box ticked.)
+  dialog says so. On SQL Server and ClickHouse, sign in as a user with read-only grants to have
+  the database refuse it; [The MCP login](mcp.md#the-mcp-login) shows how to make one. (A
+  DuckDB file can also be opened with its own **Read-only** box ticked.)
 - Anything that isn't a plain read is refused, including `SET`, `BEGIN` and statements DbRover
   can't parse, since what they do can't be told.
 

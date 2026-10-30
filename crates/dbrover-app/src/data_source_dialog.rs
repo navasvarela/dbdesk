@@ -6,7 +6,8 @@ use dbrover_core::{
     DataSource, DataSourceId, DriverKind, SafetyLevel, ServerInfo, SourceColor, expand,
     expand_path, has_placeholder,
 };
-use dbrover_engine::{DatabaseFile, Event, PasswordUpdate, ProcessEnvironment, read_only};
+use dbrover_engine::read_only::{self, Guard};
+use dbrover_engine::{DatabaseFile, Event, PasswordUpdate, ProcessEnvironment};
 use egui::{
     Align, Button, Color32, Grid, Id, Layout, Modal, RichText, Sense, Stroke, TextEdit, Ui,
     WidgetInfo, WidgetType, vec2,
@@ -188,9 +189,11 @@ impl DataSourceDialog {
                     DriverFields::DuckDb(fields) => return duckdb_rows(ui, fields),
                 };
                 server_rows(ui, server, password_hint);
-                // Only where `dbrover mcp` serves the engine; elsewhere it would never be used.
-                if dbrover_engine::read_only::mode(self.form.driver()).is_some() {
-                    mcp_login_rows(ui, &mut self.form.mcp_login);
+                // Only where `dbrover mcp` can serve the engine; elsewhere it would never be used.
+                match read_only::guard(self.form.driver()) {
+                    Guard::Session(_) => mcp_login_rows(ui, &mut self.form.mcp_login, false),
+                    Guard::Login => mcp_login_rows(ui, &mut self.form.mcp_login, true),
+                    Guard::CheckOnly => {}
                 }
                 None
             })
@@ -460,15 +463,26 @@ fn ssh_rows(ui: &mut Ui, fields: &mut SshFields, secret_hint: &str) {
 
 /// The login `dbrover mcp` signs in as, so the database's grants limit what an assistant can
 /// do; the project settings warn when a project allows changes without one.
-fn mcp_login_rows(ui: &mut Ui, fields: &mut McpLoginFields) {
-    let label = ui.label("MCP login").on_hover_text(
+/// The MCP login's user and password. `required` where the engine has no read-only mode, so
+/// MCP clients are served only through such a login.
+fn mcp_login_rows(ui: &mut Ui, fields: &mut McpLoginFields, required: bool) {
+    let label = ui.label("MCP login").on_hover_text(if required {
+        "Another user for MCP clients to sign in as, used only by dbrover mcp. This engine has \
+         no read-only mode, so MCP clients are served only through such a login: give it \
+         nothing but reading."
+    } else {
         "Another user for MCP clients to sign in as, used only by dbrover mcp. Give it only the \
          grants an assistant should have: beyond reading, only the database's grants are \
-         airtight.",
-    );
+         airtight."
+    });
+    let hint = if required {
+        "none: not served to MCP clients"
+    } else {
+        "none: the user above"
+    };
     ui.add(
         TextEdit::singleline(&mut fields.user)
-            .hint_text("none: the user above")
+            .hint_text(hint)
             .desired_width(FIELD_WIDTH),
     )
     .labelled_by(label.id);
@@ -648,16 +662,24 @@ fn safety_rows(ui: &mut Ui, form: &mut DataSourceForm) {
         });
         ui.end_row();
     }
-    if form.safety == SafetyLevel::ReadOnly && read_only::mode(form.driver()).is_none() {
+    let partly = match read_only::guard(form.driver()) {
+        Guard::Session(_) => None,
+        Guard::Login => Some(
+            "has no read-only mode DbRover can use: statements are checked, but a write inside \
+             a procedure or function isn't stopped. Sign in as a user with read-only grants to \
+             have the database refuse it.",
+        ),
+        Guard::CheckOnly => Some(
+            "has no read-only mode DbRover can use: statements are checked, but a write inside \
+             a procedure or function isn't stopped.",
+        ),
+    };
+    if let Some(partly) = partly.filter(|_| form.safety == SafetyLevel::ReadOnly) {
         ui.label("");
         ui.label(
-            RichText::new(format!(
-                "{} has no read-only mode DbRover can use: statements are checked, but a \
-                 write inside a procedure or function isn't stopped.",
-                form.driver().display_name()
-            ))
-            .small()
-            .color(palette.warning),
+            RichText::new(format!("{} {partly}", form.driver().display_name()))
+                .small()
+                .color(palette.warning),
         );
         ui.end_row();
     }

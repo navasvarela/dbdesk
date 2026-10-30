@@ -2,11 +2,12 @@
 //! of read-only data sources. One implementation, so both refuse the same statements.
 //!
 //! Changes are refused twice:
-//! 1. [`check`] classifies each statement from its parse tree before it is sent, and refuses
-//!    anything that doesn't only read, or can't be read;
-//! 2. the statement runs in the database's own read-only mode ([`mode`]): a read-only
-//!    transaction, or a read-only connection for SQLite. That is what stops
-//!    `SELECT writes_something()`, since the parser can't see inside a function.
+//! 1. [`check`] classifies each statement, in its data source's language, before it is sent,
+//!    and refuses anything that doesn't only read, or can't be classified;
+//! 2. the database refuses what the check can't see, such as `SELECT writes_something()`:
+//!    the statement runs in the engine's own read-only mode ([`mode`]), a read-only transaction
+//!    or a read-only SQLite connection; or, on an engine without one, the login's grants do
+//!    ([`Guard::Login`]).
 
 use std::time::Duration;
 
@@ -49,6 +50,64 @@ pub fn mode(driver: DriverKind) -> Option<ReadOnlyMode> {
         // setting) isn't wired into its driver yet. The plan (docs/mcp-server.md) has each
         // such engine name its equivalent, such as a read-only login, before MCP serves it.
         DriverKind::SqlServer | DriverKind::DuckDb | DriverKind::ClickHouse => None,
+    }
+}
+
+/// What the database itself does to refuse a write that [`check`] can't see.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Guard {
+    /// The engine's own read-only mode.
+    Session(ReadOnlyMode),
+    /// The engine has no read-only mode, but has logins: only one whose grants allow nothing
+    /// but reading makes the database refuse writes. The MCP server serves such a data source
+    /// only through its MCP login (`docs/nosql.md`, N0a).
+    Login,
+    /// Neither, as for a DuckDB file: the check is all there is, so MCP clients aren't served.
+    CheckOnly,
+}
+
+/// The database's own guard on `driver`'s data sources.
+pub fn guard(driver: DriverKind) -> Guard {
+    match mode(driver) {
+        Some(mode) => Guard::Session(mode),
+        None if driver.uses_password() => Guard::Login,
+        None => Guard::CheckOnly,
+    }
+}
+
+/// Whether the MCP server serves a data source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpServing {
+    /// Through the engine's read-only mode, or through the data source's MCP login.
+    Served,
+    /// The engine has no read-only mode: the data source is served once it has an MCP login
+    /// whose grants allow only reading.
+    NeedsMcpLogin,
+    /// The engine has neither a read-only mode nor logins.
+    NotServed,
+}
+
+impl McpServing {
+    pub fn of(data_source: &DataSource) -> Self {
+        match guard(data_source.config.driver()) {
+            Guard::Session(_) => Self::Served,
+            Guard::Login if data_source.mcp_login.is_some() => Self::Served,
+            Guard::Login => Self::NeedsMcpLogin,
+            Guard::CheckOnly => Self::NotServed,
+        }
+    }
+
+    /// Why the data source isn't served, for the log and the project's settings.
+    pub fn reason(self, driver: DriverKind) -> Option<String> {
+        let engine = driver.display_name();
+        match self {
+            Self::Served => None,
+            Self::NeedsMcpLogin => Some(format!(
+                "{engine} has no read-only mode, so it is served only through an MCP login \
+                 whose grants allow nothing but reading"
+            )),
+            Self::NotServed => Some(format!("DbRover can't make {engine} read-only yet")),
+        }
     }
 }
 
@@ -188,5 +247,44 @@ mod tests {
             Refusal::Changes(StatementKind::Write).reason(),
             "this statement changes data"
         );
+    }
+
+    /// What a Redis or MongoDB console will go through: the language's own classification,
+    /// with anything it can't classify refused.
+    #[test]
+    fn refuses_whatever_does_not_only_read_in_every_language() {
+        let cases = [
+            ("get user:1", None),
+            ("set user:1 x", Some(Refusal::Changes(StatementKind::Write))),
+            ("drop index", Some(Refusal::Changes(StatementKind::Schema))),
+            ("begin", Some(Refusal::Changes(StatementKind::Transaction))),
+            ("flush", Some(Refusal::Changes(StatementKind::Admin))),
+        ];
+        for (command, expected) in cases {
+            assert_eq!(
+                check(command, QueryLanguage::Test).err(),
+                expected,
+                "{command}"
+            );
+        }
+        assert!(matches!(
+            check("shutdown", QueryLanguage::Test),
+            Err(Refusal::Unknown(_))
+        ));
+    }
+
+    #[test]
+    fn guards_each_engine_with_its_read_only_mode_or_a_login() {
+        let guards = DriverKind::ALL.map(|driver| (driver, guard(driver)));
+        for (driver, guard) in guards {
+            let expected = match driver {
+                DriverKind::Postgres | DriverKind::Mysql | DriverKind::Sqlite => {
+                    matches!(guard, Guard::Session(_))
+                }
+                DriverKind::SqlServer | DriverKind::ClickHouse => guard == Guard::Login,
+                DriverKind::DuckDb => guard == Guard::CheckOnly,
+            };
+            assert!(expected, "{driver:?}: {guard:?}");
+        }
     }
 }
