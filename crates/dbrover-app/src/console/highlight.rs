@@ -4,7 +4,7 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use dbrover_sql::{Dialect, TokenKind, is_keyword, tokenize};
+use dbrover_language::{QueryLanguage, TokenKind};
 use egui::text::LayoutJob;
 use egui::{FontId, Galley, Stroke, Style, TextBuffer, TextFormat, TextStyle, Ui};
 
@@ -32,21 +32,21 @@ pub struct Marks {
 /// enough to spot every match, while the selected one stands out at full strength.
 const MATCH_STRENGTH: f32 = 0.45;
 
-/// A `TextEdit` layouter that highlights SQL as [`layout_job`] does, wrapping at the
-/// editor's width.
+/// A `TextEdit` layouter that highlights the console's language as [`layout_job`] does,
+/// wrapping at the editor's width.
 pub fn layouter(
-    dialect: Dialect,
+    language: QueryLanguage,
     marks: &Marks,
 ) -> impl FnMut(&Ui, &dyn TextBuffer, f32) -> Arc<Galley> + '_ {
     move |ui, text, wrap_width| {
-        let mut job = layout_job(text.as_str(), dialect, marks, ui.style());
+        let mut job = layout_job(text.as_str(), language, marks, ui.style());
         job.wrap.max_width = wrap_width;
         ui.fonts_mut(|fonts| fonts.layout_job(job))
     }
 }
 
-/// Lays out `text` with SQL colours and the `marks`.
-pub fn layout_job(text: &str, dialect: Dialect, marks: &Marks, style: &Style) -> LayoutJob {
+/// Lays out `text` with its language's colours and the `marks`.
+pub fn layout_job(text: &str, language: QueryLanguage, marks: &Marks, style: &Style) -> LayoutJob {
     let font = TextStyle::Monospace.resolve(style);
     let colors = SyntaxColors::for_visuals(&style.visuals);
     let error_stroke = Stroke::new(ERROR_UNDERLINE_WIDTH, style.visuals.error_fg_color);
@@ -63,8 +63,10 @@ pub fn layout_job(text: &str, dialect: Dialect, marks: &Marks, style: &Style) ->
     let current_match_background = style.visuals.selection.bg_fill;
 
     let mut job = LayoutJob::default();
-    for token in tokenize(text, dialect) {
-        let token_format = format_for(token.kind, &text[token.range.clone()], &font, &colors);
+    for token in language.tokens(text) {
+        let fragment = &text[token.range.clone()];
+        let keyword = token.kind == TokenKind::Word && language.is_keyword(fragment);
+        let token_format = format_for(token.kind, keyword, &font, &colors);
         // A match can start or end inside a token (part of a word), so the token is split
         // where matches begin and end.
         for piece in pieces(&token.range, &marks.matches) {
@@ -118,9 +120,9 @@ fn pieces(range: &Range<usize>, matches: &[Range<usize>]) -> Vec<Range<usize>> {
     pieces
 }
 
-fn format_for(kind: TokenKind, fragment: &str, font: &FontId, colors: &SyntaxColors) -> TextFormat {
+fn format_for(kind: TokenKind, keyword: bool, font: &FontId, colors: &SyntaxColors) -> TextFormat {
     let color = match kind {
-        TokenKind::Word if is_keyword(fragment) => colors.keyword,
+        TokenKind::Word if keyword => colors.keyword,
         TokenKind::String => colors.string,
         TokenKind::Number => colors.number,
         TokenKind::LineComment | TokenKind::BlockComment => colors.comment,
@@ -140,8 +142,9 @@ fn overlaps(a: &Range<usize>, b: &Range<usize>) -> bool {
 
 /// The text to underline for an error reported at byte `offset`: the token there, or one
 /// character if the offset falls on whitespace or past the end.
-pub fn error_marker(text: &str, dialect: Dialect, offset: usize) -> Range<usize> {
-    tokenize(text, dialect)
+pub fn error_marker(text: &str, language: QueryLanguage, offset: usize) -> Range<usize> {
+    language
+        .tokens(text)
         .into_iter()
         .find(|token| token.range.contains(&offset) && token.kind != TokenKind::Whitespace)
         .map(|token| token.range)
@@ -157,7 +160,39 @@ pub fn error_marker(text: &str, dialect: Dialect, offset: usize) -> Range<usize>
 
 #[cfg(test)]
 mod tests {
+    use dbrover_sql::Dialect;
+
     use super::*;
+
+    #[test]
+    fn colours_each_languages_own_words() {
+        let colors_of = |text: &str, language: QueryLanguage| -> Vec<(String, egui::Color32)> {
+            layout_job(text, language, &Marks::default(), &Style::default())
+                .sections
+                .iter()
+                .map(|section| {
+                    let range = section.byte_range.start.0..section.byte_range.end.0;
+                    (text[range].to_owned(), section.format.color)
+                })
+                .filter(|(fragment, _)| !fragment.trim().is_empty())
+                .collect()
+        };
+        let colors = SyntaxColors::for_visuals(&Style::default().visuals);
+
+        let test = colors_of("get \"k\" 42 # why", QueryLanguage::Test);
+        assert_eq!(
+            test,
+            [
+                ("get".to_owned(), colors.keyword),
+                ("\"k\"".to_owned(), colors.string),
+                ("42".to_owned(), colors.number),
+                ("# why".to_owned(), colors.comment),
+            ]
+        );
+        // `select` is a SQL keyword, not one of the test language's.
+        let sql_word = colors_of("select", QueryLanguage::Test);
+        assert_eq!(sql_word, [("select".to_owned(), colors.plain)]);
+    }
 
     #[test]
     fn shades_the_current_statement_and_underlines_the_error() {
@@ -168,7 +203,12 @@ mod tests {
             ..Marks::default()
         };
 
-        let job = layout_job(text, Dialect::Postgres, &marks, &Style::default());
+        let job = layout_job(
+            text,
+            QueryLanguage::Sql(Dialect::Postgres),
+            &marks,
+            &Style::default(),
+        );
 
         let shaded: String = job
             .sections
@@ -196,7 +236,7 @@ mod tests {
         };
         let style = Style::default();
 
-        let job = layout_job(text, Dialect::Postgres, &marks, &style);
+        let job = layout_job(text, QueryLanguage::Sql(Dialect::Postgres), &marks, &style);
 
         let section_text = |section: &egui::text::LayoutSection| {
             &text[section.byte_range.start.0..section.byte_range.end.0]
@@ -223,11 +263,11 @@ mod tests {
         let text = "SELECT * FROM missing_table";
 
         assert_eq!(
-            &text[error_marker(text, Dialect::Postgres, 14)],
+            &text[error_marker(text, QueryLanguage::Sql(Dialect::Postgres), 14)],
             "missing_table"
         );
         assert_eq!(
-            error_marker(text, Dialect::Postgres, 99),
+            error_marker(text, QueryLanguage::Sql(Dialect::Postgres), 99),
             text.len()..text.len()
         );
     }

@@ -44,7 +44,17 @@ pub(super) async fn write_table(
         path,
         spec,
     } = export;
-    let sql = RowSql::new(worker.context.dialect(), table.as_table()).select_all();
+    let Some(dialect) = worker.context.dialect() else {
+        worker.context.send(Event::ExportFinished {
+            exporter: worker.context.owner.exporter(),
+            path,
+            result: Err(worker
+                .context
+                .needs_sql("its tables can't be exported here")),
+        });
+        return Ok(());
+    };
+    let sql = RowSql::new(dialect, table.as_table()).select_all();
     let statement = ExportAll {
         run,
         sql,
@@ -115,7 +125,7 @@ async fn read_only_check(
     let Some(read_only) = worker.context.read_only else {
         return Ok(Ok(()));
     };
-    if let Err(refusal) = ReadOnly::check(sql, worker.context.dialect(), worker.context.name()) {
+    if let Err(refusal) = ReadOnly::check(sql, worker.context.language(), worker.context.name()) {
         return Ok(Err(refusal));
     }
     Ok(guard::open(worker, read_only)
@@ -143,7 +153,7 @@ async fn export_rows(
     let columns: Vec<ExportColumn> = cursor
         .columns()
         .iter()
-        .map(|column| ExportColumn::new(column, dialect))
+        .map(|column| ExportColumn::typed_by(column, dialect))
         .collect();
     let (path, spec) = (export.path.clone(), export.spec.clone());
     let created =

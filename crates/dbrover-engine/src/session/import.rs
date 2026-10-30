@@ -9,7 +9,7 @@ use std::io::BufReader;
 use std::time::Instant;
 
 use dbrover_core::{Cell, DriverError, describe_error};
-use dbrover_sql::{RowSql, Savepoint};
+use dbrover_sql::{Dialect, RowSql, Savepoint};
 use dbrover_store::{CsvError, CsvReader, CsvRecord, HistoryEntry, HistoryOutcome, HistorySource};
 use jiff::Timestamp;
 
@@ -28,24 +28,30 @@ pub(super) async fn import(
     import: &RowsImport,
 ) -> Result<(), Disconnected> {
     let context = worker.context;
-    let refusal = if context.read_only.is_some() {
-        Some(format!(
+    let dialect = if context.read_only.is_some() {
+        Err(format!(
             "Refused: \u{201c}{}\u{201d} is read-only, so nothing can be imported into it.",
             context.name()
         ))
     } else {
-        context.dialect().import_refusal().map(str::to_owned)
+        match context.dialect() {
+            Some(dialect) => match dialect.import_refusal() {
+                Some(refusal) => Err(refusal.to_owned()),
+                None => Ok(dialect),
+            },
+            None => Err(context.needs_sql("rows can't be imported into it from a file")),
+        }
     };
-    let result = match refusal {
-        Some(message) => Err(ImportFailure {
+    let result = match dialect {
+        Err(message) => Err(ImportFailure {
             lines: None,
             message,
         }),
-        None => {
+        Ok(dialect) => {
             let started_at = Timestamp::now();
             let started = Instant::now();
-            let result = in_transaction(worker, import).await?;
-            record(worker, import, &result, (started_at, started));
+            let result = in_transaction(worker, dialect, import).await?;
+            record(worker, dialect, import, &result, (started_at, started));
             result
         }
     };
@@ -72,6 +78,7 @@ pub(super) async fn import(
 /// which are the file's, how many went in, and the file.
 fn record(
     worker: &Worker<'_>,
+    dialect: Dialect,
     import: &RowsImport,
     result: &Result<u64, ImportFailure>,
     (started_at, started): (Timestamp, Instant),
@@ -81,7 +88,7 @@ fn record(
         .iter()
         .map(|(column, _)| column.as_str())
         .collect();
-    let insert = RowSql::new(worker.context.dialect(), &import.table).insert_rows(&columns, &[]);
+    let insert = RowSql::new(dialect, &import.table).insert_rows(&columns, &[]);
     let (rows, outcome) = match result {
         Ok(rows) => (Some(*rows), HistoryOutcome::Ok),
         Err(_) => (None, HistoryOutcome::Error),
@@ -103,6 +110,7 @@ fn record(
 /// first failure.
 async fn in_transaction(
     worker: &mut Worker<'_>,
+    dialect: Dialect,
     import: &RowsImport,
 ) -> Result<Result<u64, ImportFailure>, Disconnected> {
     let unblamed = |message: String| ImportFailure {
@@ -115,11 +123,11 @@ async fn in_transaction(
         Ok(Err(error)) => return Ok(Err(csv_failure(&error))),
         Err(failure) => return Ok(Err(failure)),
     };
-    let begin = worker.context.dialect().begin_transaction();
+    let begin = dialect.begin_transaction();
     if let Err(error) = transaction::run_counting(worker, begin, None).await? {
         return Ok(Err(unblamed(describe_error(&error))));
     }
-    let failure = match insert_all(worker, import, reader).await? {
+    let failure = match insert_all(worker, dialect, import, reader).await? {
         Ok(rows) => match transaction::run_counting(worker, "COMMIT", None).await? {
             Ok(_) => return Ok(Ok(rows)),
             Err(error) => unblamed(describe_error(&error)),
@@ -139,6 +147,7 @@ async fn in_transaction(
 /// Reads the file a batch at a time and inserts each batch. Returns how many rows went in.
 async fn insert_all(
     worker: &mut Worker<'_>,
+    dialect: Dialect,
     import: &RowsImport,
     mut reader: Reader,
 ) -> Result<Result<u64, ImportFailure>, Disconnected> {
@@ -164,6 +173,7 @@ async fn insert_all(
             Err(failure) => return Ok(Err(failure)),
         };
         let batch = Batch {
+            dialect,
             import,
             records: &records,
             rows: &rows,
@@ -222,20 +232,21 @@ fn rows_of(
 
 /// A batch of the file's records and the rows they make.
 struct Batch<'a> {
+    dialect: Dialect,
     import: &'a RowsImport,
     records: &'a [CsvRecord],
     rows: &'a [Vec<Cell>],
 }
 
 impl Batch<'_> {
-    fn insert(&self, worker: &Worker<'_>, rows: &[Vec<Cell>]) -> String {
+    fn insert(&self, rows: &[Vec<Cell>]) -> String {
         let columns: Vec<&str> = self
             .import
             .mapping
             .iter()
             .map(|(column, _)| column.as_str())
             .collect();
-        RowSql::new(worker.context.dialect(), &self.import.table).insert_rows(&columns, rows)
+        RowSql::new(self.dialect, &self.import.table).insert_rows(&columns, rows)
     }
 
     /// The batch's first and last lines.
@@ -249,7 +260,7 @@ async fn insert_batch(
     worker: &mut Worker<'_>,
     batch: &Batch<'_>,
 ) -> Result<Result<(), ImportFailure>, Disconnected> {
-    let savepoint = worker.context.dialect().edits_savepoint();
+    let savepoint = batch.dialect.edits_savepoint();
     if let Some(savepoint) = &savepoint
         && let Err(error) = transaction::run_counting(worker, savepoint.open, None).await?
     {
@@ -258,7 +269,7 @@ async fn insert_batch(
             message: describe_error(&error),
         }));
     }
-    let sql = batch.insert(worker, batch.rows);
+    let sql = batch.insert(batch.rows);
     let error = match transaction::run_counting(worker, &sql, None).await? {
         Ok(_) => {
             for keep in savepoint.iter().flat_map(|savepoint| savepoint.keep) {
@@ -302,7 +313,7 @@ async fn find_refused_line(
         }
     }
     for (record, row) in batch.records.iter().zip(batch.rows) {
-        let sql = batch.insert(worker, std::slice::from_ref(row));
+        let sql = batch.insert(std::slice::from_ref(row));
         if let Err(error) = transaction::run_counting(worker, &sql, None).await? {
             return Ok(Some(ImportFailure {
                 lines: Some((record.line, record.line)),

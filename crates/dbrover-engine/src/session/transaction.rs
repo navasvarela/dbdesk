@@ -16,13 +16,17 @@ pub(super) async fn begin_if_needed(
     run: RunId,
     sql: &str,
 ) -> Result<Result<(), DriverError>, Disconnected> {
+    // Manual mode is only offered for SQL, whose transactions DbRover knows how to open.
+    let Some(dialect) = worker.context.dialect() else {
+        return Ok(Ok(()));
+    };
     let needed = mode == TransactionMode::Manual
         && worker.transaction == TransactionStatus::Idle
-        && !controls_transactions(sql, worker.context.dialect());
+        && !controls_transactions(sql, dialect);
     if !needed {
         return Ok(Ok(()));
     }
-    let begin = worker.context.dialect().begin_transaction();
+    let begin = dialect.begin_transaction();
     let begun = run_command(worker, begin, Some(run)).await?;
     if begun.is_ok() {
         set(worker, TransactionStatus::InTransaction);

@@ -3,7 +3,7 @@
 use std::time::Instant;
 
 use dbrover_core::{DriverError, TransactionStatus, describe_error};
-use dbrover_sql::Savepoint;
+use dbrover_sql::{Dialect, Savepoint};
 use dbrover_store::{HistoryEntry, HistoryOutcome, HistorySource, redact_secrets};
 use jiff::Timestamp;
 
@@ -15,8 +15,7 @@ use crate::{EditFailure, Event, RowEdit};
 /// fail). Both are spelt as the dialect writes them. `None` inside an open transaction on a
 /// database without savepoints (DuckDB): a failed edit couldn't be undone without undoing the
 /// whole transaction.
-fn wrapping(worker: &Worker<'_>) -> Option<Savepoint> {
-    let dialect = worker.context.dialect();
+fn wrapping(worker: &Worker<'_>, dialect: Dialect) -> Option<Savepoint> {
     match worker.transaction {
         TransactionStatus::Idle => Some(Savepoint {
             open: dialect.begin_transaction(),
@@ -52,7 +51,19 @@ pub(super) async fn apply(
         });
         return Ok(());
     }
-    let Some(wrapping) = wrapping(worker) else {
+    let Some(dialect) = worker.context.dialect() else {
+        worker.context.send(Event::EditsApplied {
+            console,
+            result: Err(EditFailure {
+                statement: None,
+                message: worker
+                    .context
+                    .needs_sql("its rows can't be edited from the grid"),
+            }),
+        });
+        return Ok(());
+    };
+    let Some(wrapping) = wrapping(worker, dialect) else {
         let failure = EditFailure {
             statement: None,
             message: "This database has no savepoints, so edits can't be applied inside an open \

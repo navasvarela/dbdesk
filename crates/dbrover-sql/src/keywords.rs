@@ -195,12 +195,12 @@ const KEYWORDS: &[&str] = &[
     "without",
 ];
 
-/// Whether `word` is a highlighted SQL keyword, ignoring case.
 /// The keywords, lowercase and sorted, for completion.
 pub fn keywords() -> &'static [&'static str] {
     KEYWORDS
 }
 
+/// Whether `word` is a highlighted SQL keyword, ignoring case.
 pub fn is_keyword(word: &str) -> bool {
     KEYWORDS
         .binary_search(&word.to_ascii_lowercase().as_str())

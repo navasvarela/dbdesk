@@ -37,10 +37,8 @@ use dbrover_engine::{
 use dbrover_export::{ExportColumn, ExportOptions, ExportSpec, RowSource};
 
 use crate::export_dialog::{ExportPreview, PREVIEW_ROWS};
-use dbrover_sql::{
-    Dialect, FormatOptions, ParameterValues, format_ranges, split_statements, statement_at,
-    tokenize,
-};
+use dbrover_language::{QueryLanguage, command_at};
+use dbrover_sql::{Dialect, FormatOptions, ParameterValues, format_ranges};
 use dbrover_store::{ConsoleKey, Snippet, SnippetBody, SqlFileContents};
 
 use edit::{EditTarget, Editability};
@@ -156,7 +154,7 @@ pub struct QueryConsole {
     /// The console's file, which outlives the app.
     key: ConsoleKey,
     title: String,
-    dialect: Dialect,
+    language: QueryLanguage,
     text: String,
     /// The editor's cursor or selection as byte offsets into `text`, in either order.
     selection: Range<usize>,
@@ -322,7 +320,7 @@ impl StatementView {
 
     /// The statement to run to show this result again, sorted and filtered as the grid now
     /// asks: wrapped if the database is to sort and filter it, as typed otherwise.
-    fn resubmission(&self, dialect: Dialect) -> Result<SubmittedStatement, String> {
+    fn resubmission(&self, dialect: Option<Dialect>) -> Result<SubmittedStatement, String> {
         let as_typed = SubmittedStatement {
             sql: self.sql.clone(),
             range: self.range.clone(),
@@ -337,6 +335,7 @@ impl StatementView {
             .iter()
             .map(|column| column.name.clone())
             .collect();
+        let dialect = dialect.ok_or("Only SQL results are sorted and filtered in the database")?;
         let sort = self.grid.sort();
         let arranged = dbrover_sql::arrange(
             &self.sql,
@@ -401,14 +400,14 @@ impl QueryConsole {
         id: ConsoleId,
         key: ConsoleKey,
         title: String,
-        dialect: Dialect,
+        language: QueryLanguage,
         text: String,
     ) -> Self {
         Self {
             id,
             key,
             title,
-            dialect,
+            language,
             text,
             selection: 0..0,
             session: SessionState::Disconnected,
@@ -522,7 +521,7 @@ impl QueryConsole {
     /// is editable and which foreign keys can be followed from it. A read-only data source's
     /// tables are described too, for their keys.
     pub fn tables_to_describe(&mut self) -> Vec<RelationName> {
-        let dialect = self.dialect;
+        let language = self.language;
         let read_only = (self.safety == SafetyLevel::ReadOnly)
             .then(|| format!("\u{201c}{}\u{201d} is read-only", self.data_source_name));
         let Some(run) = self.run.as_mut() else {
@@ -533,6 +532,13 @@ impl QueryConsole {
             if statement.columns.is_empty() || statement.edits.editability != Editability::Unknown {
                 continue;
             }
+            let Some(dialect) = language.dialect() else {
+                statement.edits.editability = Editability::ReadOnly(format!(
+                    "Results in {} can't be edited",
+                    language.display_name()
+                ));
+                continue;
+            };
             if let Some(reason) = dialect.read_only_results() {
                 statement.edits.editability = Editability::ReadOnly(reason.to_owned());
                 continue;
@@ -575,7 +581,7 @@ impl QueryConsole {
                 Ok(Some(description)) => edit::edit_target(description.clone(), &statement.columns),
                 Ok(None) => Editability::ReadOnly(format!(
                     "{} isn't a table",
-                    table.to_sql(self.dialect.quoting())
+                    table.to_sql(self.language.quoting())
                 )),
                 Err(error) => Editability::ReadOnly(format!("Couldn't look up the table: {error}")),
             };
@@ -585,6 +591,7 @@ impl QueryConsole {
     /// The statements for the shown statement's pending changes, marking them as submitted.
     /// `None` if there is nothing to submit.
     pub fn submit_edits(&mut self) -> Option<Command> {
+        let dialect = self.dialect()?;
         let run = self.run.as_mut()?;
         let statement = run.statements.get_mut(run.selected)?;
         let target = statement.edits.target()?;
@@ -594,7 +601,7 @@ impl QueryConsole {
         let statements = statement
             .edits
             .pending
-            .statements(target, &statement.columns, &statement.rows, self.dialect)
+            .statements(target, &statement.columns, &statement.rows, dialect)
             .into_iter()
             .map(|(_, edit)| edit)
             .collect();
@@ -608,7 +615,7 @@ impl QueryConsole {
     }
 
     fn edits_applied(&mut self, result: &Result<(), EditFailure>) {
-        let dialect = self.dialect;
+        let dialect = self.dialect();
         let Some(run) = self.run.as_mut() else {
             return;
         };
@@ -631,6 +638,7 @@ impl QueryConsole {
                 // The same statements, in the same order, as were submitted.
                 let row = edits.target().and_then(|target| {
                     let index = failure.statement?;
+                    let dialect = dialect?;
                     let statements = edits.pending.statements(
                         target,
                         &statement.columns,
@@ -650,13 +658,14 @@ impl QueryConsole {
     /// Running the shown statement again, once rows were added to its result, so they show
     /// with what the database put in the columns left to their defaults.
     pub fn take_reload(&mut self) -> Option<SubmittedRun> {
+        let dialect = self.dialect();
         let run = self.run.as_mut()?;
         let statement = run
             .statements
             .iter_mut()
             .find(|statement| statement.edits.reload)?;
         statement.edits.reload = false;
-        let statement = statement.resubmission(self.dialect).ok()?;
+        let statement = statement.resubmission(dialect).ok()?;
         Some(SubmittedRun {
             statements: vec![statement],
             purpose: RunPurpose::Run,
@@ -669,7 +678,7 @@ impl QueryConsole {
     /// Runs the shown statement again so that the database sorts and filters its rows as the
     /// grid now asks, or, when the grid no longer asks, as typed. `Err` says why it can't be.
     pub fn rearrange(&mut self) -> Result<SubmittedRun, String> {
-        let dialect = self.dialect;
+        let dialect = self.dialect();
         let statement = self
             .run
             .as_ref()
@@ -690,7 +699,7 @@ impl QueryConsole {
     pub fn copy(&mut self, copy: ClipboardCopy, options: &ExportOptions) -> Option<String> {
         let run = self.run.as_ref()?;
         let statement = run.statements.get(run.selected)?;
-        let selection = statement.selection(self.dialect)?;
+        let selection = statement.selection(self.dialect()?)?;
         match copy.text(&selection, options) {
             Ok(text) => Some(text),
             Err(reason) => {
@@ -748,6 +757,9 @@ impl QueryConsole {
     /// What the export dialog shows of the selected statement's rows. `None` if it returns
     /// none.
     pub fn export_preview(&self) -> Option<ExportPreview> {
+        // TODO(N0b): export the rows of a language without a SQL dialect, once results can be
+        // documents; the SQL formats need a dialect, the others don't.
+        let dialect = self.dialect()?;
         let run = self.run.as_ref()?;
         let statement = run.statements.get(run.selected)?;
         if statement.columns.is_empty() {
@@ -758,11 +770,11 @@ impl QueryConsole {
             columns: statement
                 .columns
                 .iter()
-                .map(|column| ExportColumn::new(column, self.dialect))
+                .map(|column| ExportColumn::new(column, dialect))
                 .collect(),
             loaded: shown.len(),
             sample: shown.into_iter().take(PREVIEW_ROWS).collect(),
-            source: statement.row_source(self.dialect),
+            source: statement.row_source(dialect),
         })
     }
 
@@ -783,7 +795,7 @@ impl QueryConsole {
                 columns: statement
                     .columns
                     .iter()
-                    .map(|column| ExportColumn::new(column, self.dialect))
+                    .map(|column| ExportColumn::typed_by(column, self.dialect()))
                     .collect(),
                 rows: statement.grid.shown_rows(&statement.rows),
             },
@@ -817,7 +829,7 @@ impl QueryConsole {
         if statement.columns.is_empty() {
             return None;
         }
-        let sql = statement.resubmission(self.dialect).ok()?.sql;
+        let sql = statement.resubmission(self.dialect()).ok()?.sql;
         self.exporting = Some((run, 0));
         self.export_status = None;
         self.last_export = Some(spec.clone());
@@ -869,7 +881,7 @@ impl QueryConsole {
         };
         let (start, end) = ordered(&self.selection);
         let point = (start == end)
-            .then(|| completion::completion_point(&self.text, end, self.dialect))
+            .then(|| completion::completion_point(&self.text, end, self.language))
             .flatten();
         let Some(point) = point else {
             self.completion = None;
@@ -882,18 +894,30 @@ impl QueryConsole {
             .filter(|range| point.replace.start <= range.end)
             .and_then(|range| Some((self.text.get(range.clone())?, range.start)))
             .unwrap_or_default();
-        let references = completion::table_references(statement, self.dialect);
-        let mut candidates = completion::candidates(&completion::CompletionInput {
-            point: &point,
-            statement,
-            prefix_start: point.replace.start.saturating_sub(statement_start),
-            dialect: self.dialect,
-            catalog: match catalog {
-                Some(catalog) => catalog,
-                None => &completion::NoCatalog,
-            },
-            recent,
-        });
+        let (references, mut candidates) = match self.language.dialect() {
+            Some(dialect) => (
+                completion::table_references(statement, dialect),
+                completion::candidates(&completion::CompletionInput {
+                    point: &point,
+                    statement,
+                    prefix_start: point.replace.start.saturating_sub(statement_start),
+                    dialect,
+                    catalog: match catalog {
+                        Some(catalog) => catalog,
+                        None => &completion::NoCatalog,
+                    },
+                    recent,
+                }),
+            ),
+            None => (
+                Vec::new(),
+                completion::word_candidates(
+                    &point.prefix,
+                    self.language.completion_words(),
+                    recent,
+                ),
+            ),
+        };
         let snippets = if point.qualifier.is_none() {
             snippet::offer(&mut candidates, snippets, &point.prefix);
             snippets
@@ -1063,8 +1087,15 @@ impl QueryConsole {
     /// Formats what `scope` covers, keeping the cursor on the token it was on. Leaves the
     /// text alone (and says why) if formatting would change what it does.
     pub fn format(&mut self, scope: FormatScope, options: &FormatOptions, now: Instant) {
+        let Some(dialect) = self.dialect() else {
+            self.format_error = Some(format!(
+                "DbRover formats SQL, and this console speaks {}",
+                self.language.display_name()
+            ));
+            return;
+        };
         let ranges = self.ranges_to_format(scope);
-        let formatted = match format_ranges(&self.text, &ranges, self.dialect, options) {
+        let formatted = match format_ranges(&self.text, &ranges, dialect, options) {
             Ok(formatted) => formatted,
             Err(error) => {
                 self.format_error = Some(error.to_string());
@@ -1086,16 +1117,18 @@ impl QueryConsole {
     /// it, and split where statements end, so a selection that starts or ends inside a
     /// string never formats half of it.
     fn ranges_to_format(&self, scope: FormatScope) -> Vec<Range<usize>> {
-        let statements = split_statements(&self.text, self.dialect);
+        let statements = self.language.split(&self.text);
         let (start, end) = ordered(&self.selection);
         match scope {
             FormatScope::All => statements,
-            FormatScope::Current if start == end => statement_at(&statements, end)
+            FormatScope::Current if start == end => command_at(&statements, end)
                 .map(|index| statements[index].clone())
                 .into_iter()
                 .collect(),
             FormatScope::Current => {
-                let inside: Vec<Range<usize>> = tokenize(&self.text, self.dialect)
+                let inside: Vec<Range<usize>> = self
+                    .language
+                    .tokens(&self.text)
                     .into_iter()
                     .filter(|token| {
                         !token.kind.is_trivia()
@@ -1126,9 +1159,12 @@ impl QueryConsole {
         let can_ask_database = matches!(self.session, SessionState::Connected(_))
             && self.cancellable_run().is_none()
             && self.transaction == TransactionStatus::Idle;
+        let Some(dialect) = self.dialect() else {
+            return problems::CheckOutcome::default();
+        };
         let input = problems::CheckInput {
             text: &self.text,
-            dialect: self.dialect,
+            dialect,
             catalog: match catalog {
                 Some(catalog) => catalog,
                 None => &completion::NoCatalog,
@@ -1345,8 +1381,15 @@ impl QueryConsole {
         }
     }
 
-    pub fn dialect(&self) -> Dialect {
-        self.dialect
+    pub fn language(&self) -> QueryLanguage {
+        self.language
+    }
+
+    /// The SQL dialect, for features with no meaning outside SQL: formatting, the linter,
+    /// parameters, explain, and what the grid does with a result's rows. They are hidden
+    /// without one.
+    pub fn dialect(&self) -> Option<Dialect> {
+        self.language.dialect()
     }
 
     pub fn transaction_mode(&self) -> TransactionMode {
@@ -1406,8 +1449,8 @@ impl QueryConsole {
         if start != end {
             return None;
         }
-        let ranges = split_statements(&self.text, self.dialect);
-        statement_at(&ranges, end).map(|index| ranges[index].clone())
+        let ranges = self.language.split(&self.text);
+        command_at(&ranges, end).map(|index| ranges[index].clone())
     }
 
     /// What `scope` would run right now. Empty if there is nothing but whitespace and
@@ -1428,20 +1471,23 @@ impl QueryConsole {
         match scope {
             RunScope::Current if start != end => {
                 let selected = &self.text[start..end];
-                submit(start, split_statements(selected, self.dialect), selected)
+                submit(start, self.language.split(selected), selected)
             }
             RunScope::Current => {
-                let ranges = split_statements(&self.text, self.dialect);
-                let current = statement_at(&ranges, end).map(|index| ranges[index].clone());
+                let ranges = self.language.split(&self.text);
+                let current = command_at(&ranges, end).map(|index| ranges[index].clone());
                 submit(0, current.into_iter().collect(), &self.text)
             }
-            RunScope::All => submit(0, split_statements(&self.text, self.dialect), &self.text),
+            RunScope::All => submit(0, self.language.split(&self.text), &self.text),
             RunScope::Explain => {
+                let Some(dialect) = self.dialect() else {
+                    return Vec::new();
+                };
                 let server = match &self.session {
                     SessionState::Connected(server) => Some(server),
                     _ => None,
                 };
-                let prefix = self.dialect.explain_prefix(server);
+                let prefix = dialect.explain_prefix(server);
                 self.statements_to_run(RunScope::Current)
                     .into_iter()
                     .take(1)
@@ -1647,7 +1693,7 @@ impl QueryConsole {
             let offset = (statement_view.range.start
                 + position.saturating_sub(statement_view.prefix_len))
             .min(statement_view.range.end);
-            self.error_marker = Some(highlight::error_marker(&self.text, self.dialect, offset));
+            self.error_marker = Some(highlight::error_marker(&self.text, self.language, offset));
         }
         if result.is_err() {
             view.selected = statement;

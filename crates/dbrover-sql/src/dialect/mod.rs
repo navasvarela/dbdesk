@@ -14,7 +14,7 @@ pub use capabilities::{
     Capabilities, ForeignKeySwitch, SchemaCreation, TableChange, UserModel, ViewReplacement,
 };
 
-use dbrover_core::{DriverKind, Quoting, ServerInfo};
+use dbrover_core::{Quoting, ServerInfo};
 use sqlparser::dialect::{
     ClickHouseDialect, DuckDbDialect, MsSqlDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect,
 };
@@ -580,19 +580,6 @@ fn has_tree_explain(server: &ServerInfo) -> bool {
 }
 
 /// The dialect each engine speaks.
-impl From<DriverKind> for Dialect {
-    fn from(driver: DriverKind) -> Self {
-        match driver {
-            DriverKind::Postgres => Self::Postgres,
-            DriverKind::Sqlite => Self::Sqlite,
-            DriverKind::Mysql => Self::Mysql,
-            DriverKind::SqlServer => Self::SqlServer,
-            DriverKind::DuckDb => Self::DuckDb,
-            DriverKind::ClickHouse => Self::ClickHouse,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -651,21 +638,5 @@ mod tests {
                 "{server:?}"
             );
         }
-    }
-
-    #[test]
-    fn every_driver_has_a_dialect() {
-        let dialects: Vec<Dialect> = DriverKind::ALL.into_iter().map(Dialect::from).collect();
-        assert_eq!(
-            dialects,
-            [
-                Dialect::Postgres,
-                Dialect::Sqlite,
-                Dialect::Mysql,
-                Dialect::SqlServer,
-                Dialect::DuckDb,
-                Dialect::ClickHouse
-            ]
-        );
     }
 }

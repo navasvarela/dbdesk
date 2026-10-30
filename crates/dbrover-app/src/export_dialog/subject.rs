@@ -8,6 +8,7 @@ use dbrover_core::{
 };
 use dbrover_engine::{Command, RunId};
 use dbrover_export::{ExportColumn, RowSource, SourceTable, SqlTable};
+use dbrover_language::QueryLanguage;
 use dbrover_sql::Dialect;
 use dbrover_store::ConsoleKey;
 
@@ -60,7 +61,7 @@ impl TableTarget {
                 NodeKind::Table | NodeKind::View | NodeKind::MaterializedView
             )
         })?;
-        let dialect = Dialect::from(data_source.config.driver());
+        let dialect = QueryLanguage::from(data_source.config.driver()).dialect()?;
         let schema = path.name_of(NodeKind::Schema);
         let quoted = |name: &str| Identifier {
             name: name.to_owned(),

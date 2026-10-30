@@ -1,6 +1,7 @@
 //! Fields the helpers' forms share.
 
 use dbrover_core::{CatalogPath, FolderKind, NodeKind};
+use dbrover_language::QueryLanguage;
 use dbrover_sql::Dialect;
 use egui::{Response, ScrollArea, TextEdit, Ui, WidgetType};
 
@@ -65,7 +66,7 @@ pub(super) fn loaded_columns(catalog: &CatalogTree, table: &CatalogPath) -> Opti
 /// An editable field of SQL, highlighted as the console highlights it.
 pub(super) fn sql_editor(ui: &mut Ui, text: &mut String, dialect: Dialect, id: &str) -> Response {
     let marks = Marks::default();
-    let mut layouter = highlight::layouter(dialect, &marks);
+    let mut layouter = highlight::layouter(QueryLanguage::Sql(dialect), &marks);
     ScrollArea::vertical()
         .id_salt((id, "scroll"))
         .max_height(EDITOR_MAX_HEIGHT)

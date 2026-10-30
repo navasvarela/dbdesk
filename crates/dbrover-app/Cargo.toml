@@ -17,6 +17,7 @@ anyhow.workspace = true
 dbrover-core.workspace = true
 dbrover-engine.workspace = true
 dbrover-export.workspace = true
+dbrover-language.workspace = true
 dbrover-mcp.workspace = true
 dbrover-sql.workspace = true
 dbrover-store.workspace = true
@@ -46,6 +47,7 @@ objc2-foundation.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true
+dbrover-language = { workspace = true, features = ["test-language"] }
 egui_kittest = { workspace = true, features = ["eframe", "snapshot", "wgpu"] }
 rmcp = { workspace = true, features = ["client", "transport-child-process"] }
 rusqlite.workspace = true

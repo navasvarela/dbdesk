@@ -23,6 +23,7 @@ use dbrover_core::{
     CancelHandle, CatalogPath, Connection, DataSource, DataSourceId, RelationName, SafetyLevel,
     TransactionStatus, describe_error,
 };
+use dbrover_language::QueryLanguage;
 use dbrover_sql::{Dialect, ParameterValues};
 use dbrover_store::{HistoryEntry, SecretStore};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
@@ -225,9 +226,24 @@ impl SessionContext {
         self.history.record(entry);
     }
 
-    /// The dialect of the SQL this session runs, for reading statements' first words.
-    fn dialect(&self) -> Dialect {
-        Dialect::from(self.data_source.config.driver())
+    /// The language of the commands this session runs.
+    fn language(&self) -> QueryLanguage {
+        QueryLanguage::from(self.data_source.config.driver())
+    }
+
+    /// The SQL dialect, for what only a SQL engine is sent: grid edits, DDL, imports, a table's
+    /// export, manual transactions and parameters. `None` for a language without one.
+    fn dialect(&self) -> Option<Dialect> {
+        self.language().dialect()
+    }
+
+    /// Why a request that needs SQL can't run on this data source.
+    fn needs_sql(&self, what: &str) -> String {
+        format!(
+            "\u{201c}{}\u{201d} speaks {}, not SQL, so {what}.",
+            self.name(),
+            self.language().display_name()
+        )
     }
 
     /// Tells a console about its connection's transaction. The explorer never opens one.

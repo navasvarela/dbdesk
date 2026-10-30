@@ -25,6 +25,19 @@ impl ExportColumn {
         }
     }
 
+    /// A result column, typed by `dialect`'s type names when the data source has a SQL
+    /// dialect, and undeclared when it speaks another language.
+    pub fn typed_by(column: &ColumnInfo, dialect: Option<Dialect>) -> Self {
+        match dialect {
+            Some(dialect) => Self::new(column, dialect),
+            None => Self {
+                name: column.name.clone(),
+                type_name: column.type_name.clone(),
+                kind: ValueKind::Undeclared,
+            },
+        }
+    }
+
     /// A column of text, for rows DbRover makes itself, such as the history's.
     pub fn text(name: impl Into<String>) -> Self {
         Self {

@@ -1626,6 +1626,7 @@ dependencies = [
  "dbrover-core",
  "dbrover-engine",
  "dbrover-export",
+ "dbrover-language",
  "dbrover-mcp",
  "dbrover-sql",
  "dbrover-store",
@@ -1772,6 +1773,7 @@ dependencies = [
  "dbrover-driver-sqlite",
  "dbrover-driver-sqlserver",
  "dbrover-export",
+ "dbrover-language",
  "dbrover-sql",
  "dbrover-ssh",
  "dbrover-store",
@@ -1803,12 +1805,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "dbrover-language"
+version = "0.15.0"
+dependencies = [
+ "dbrover-core",
+ "dbrover-sql",
+]
+
+[[package]]
 name = "dbrover-mcp"
 version = "0.15.0"
 dependencies = [
  "dbrover-core",
  "dbrover-engine",
  "dbrover-export",
+ "dbrover-language",
  "dbrover-sql",
  "dbrover-store",
  "jiff",

@@ -122,7 +122,8 @@ unset, so `cargo test` works offline (see the top of `dbrover-driver-mysql/src/t
   crate to `dbrover-engine/Cargo.toml` and the workspace dependencies.
 - **`dbrover-engine/tests/common/mod.rs`:** a helper reading the test server's URL, so engine
   and console tests can run against it.
-- **`dbrover-sql`:** the `From<DriverKind> for Dialect` arm.
+- **`dbrover-language`:** the `From<DriverKind> for QueryLanguage` arm, `QueryLanguage::Sql` with
+  the new dialect.
 
 ### 4. The app [#36, #37]
 

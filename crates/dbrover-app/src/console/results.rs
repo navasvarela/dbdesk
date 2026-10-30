@@ -39,7 +39,7 @@ pub fn show(
     cell_actions: &[&CustomAction],
     actions: &mut Vec<ConsoleAction>,
 ) {
-    let dialect = console.dialect;
+    let dialect = console.dialect();
     actions.extend(
         console
             .tables_to_describe()
@@ -124,7 +124,7 @@ fn summary(
     ui: &mut Ui,
     statement: &StatementView,
     running: bool,
-    dialect: dbrover_sql::Dialect,
+    dialect: Option<dbrover_sql::Dialect>,
 ) -> bool {
     ui.horizontal(|ui| {
         status(ui, statement, running, dialect);
@@ -136,7 +136,12 @@ fn summary(
     .inner
 }
 
-fn status(ui: &mut Ui, statement: &StatementView, running: bool, dialect: dbrover_sql::Dialect) {
+fn status(
+    ui: &mut Ui,
+    statement: &StatementView,
+    running: bool,
+    dialect: Option<dbrover_sql::Dialect>,
+) {
     match &statement.result {
         Some(Err(failure)) => {
             ui.add(
@@ -145,7 +150,8 @@ fn status(ui: &mut Ui, statement: &StatementView, running: bool, dialect: dbrove
             );
         }
         Some(Ok(summary)) if statement.columns.is_empty() => {
-            let changes_data = first_word(&statement.sql, dialect)
+            let changes_data = dialect
+                .and_then(|dialect| first_word(&statement.sql, dialect))
                 .is_some_and(|word| DATA_CHANGING.contains(&word.as_str()));
             let text = match summary.rows_changed {
                 Some(rows) if changes_data => format!("{rows} rows affected"),
@@ -189,7 +195,9 @@ fn row_count(statement: &StatementView, summary: Option<&StatementSummary>) -> S
 
 /// What the toolbar shows besides the statement's own state.
 struct Toolbar<'a> {
-    dialect: dbrover_sql::Dialect,
+    /// `None` for a language without a SQL dialect, whose rows the database can't be asked
+    /// to sort and filter.
+    dialect: Option<dbrover_sql::Dialect>,
     /// How the last export went.
     export_status: Option<&'a Result<String, String>>,
     /// An export of every row in progress: its run and the rows written so far.
@@ -238,9 +246,13 @@ fn grid_toolbar(
 fn database_switch(
     ui: &mut Ui,
     statement: &mut StatementView,
-    dialect: dbrover_sql::Dialect,
+    dialect: Option<dbrover_sql::Dialect>,
 ) -> bool {
-    let allowed = match statement.can_arrange(dialect) {
+    let arrangeable = dialect.map_or_else(
+        || Err("Only SQL results are sorted and filtered in the database".to_owned()),
+        |dialect| statement.can_arrange(dialect),
+    );
+    let allowed = match arrangeable {
         Ok(()) if !statement.edits.pending.is_empty() => Err(
             "Submit or revert the changes first: running the statement again drops them".to_owned(),
         ),

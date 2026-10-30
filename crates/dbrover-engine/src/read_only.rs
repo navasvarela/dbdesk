@@ -11,7 +11,7 @@
 use std::time::Duration;
 
 use dbrover_core::{Connection, ConnectionConfig, DataSource, DriverError, DriverKind};
-use dbrover_sql::{Dialect, StatementKind, Unclassified, classify};
+use dbrover_language::{QueryLanguage, StatementKind, Unclassified};
 
 /// How an engine refuses writes on its own, whatever the statement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,8 +95,8 @@ impl Refusal {
 ///
 /// [`Refusal`] for a statement that changes anything, controls the transaction, or can't be
 /// classified.
-pub fn check(sql: &str, dialect: Dialect) -> Result<(), Refusal> {
-    match classify(sql, dialect) {
+pub fn check(sql: &str, language: QueryLanguage) -> Result<(), Refusal> {
+    match language.classify(sql) {
         Ok(StatementKind::Read) => Ok(()),
         Ok(kind) => Err(Refusal::Changes(kind)),
         Err(unclassified) => Err(Refusal::Unknown(unclassified)),
@@ -154,10 +154,13 @@ pub(crate) async fn run_control(
 
 #[cfg(test)]
 mod tests {
+    use dbrover_sql::Dialect;
+
     use super::*;
 
     #[test]
     fn refuses_whatever_does_not_only_read() {
+        let postgres = QueryLanguage::Sql(Dialect::Postgres);
         let cases = [
             ("SELECT * FROM orders", None),
             (
@@ -175,10 +178,10 @@ mod tests {
             ),
         ];
         for (sql, expected) in cases {
-            assert_eq!(check(sql, Dialect::Postgres).err(), expected, "{sql}");
+            assert_eq!(check(sql, postgres).err(), expected, "{sql}");
         }
         assert!(matches!(
-            check("SELEC nonsense", Dialect::Postgres),
+            check("SELEC nonsense", postgres),
             Err(Refusal::Unknown(_))
         ));
         assert_eq!(

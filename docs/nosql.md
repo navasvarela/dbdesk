@@ -176,25 +176,27 @@ is exercised by the SQL engines and by the test language.
 
 - **N0a·1 — Plan:** this list, the decisions N0a takes (in [Decisions](#decisions)), and the
   roadmap's status.
-- **N0a·2 — Query languages:** a new crate, `dbrover-language`, holds `QueryLanguage`:
+- **N0a·2 — Query languages** (built): a new crate, `dbrover-language`, holds `QueryLanguage`:
   `Sql(Dialect)` for the seven engines, and `Test`, a language of one command per line built
   only for the tests, behind the crate's `test-language` feature. Each language splits a script
   into commands, finds the command at the cursor, yields tokens to highlight, lists completion
-  words and classifies a command into `StatementKind`, and says which `Dialect` it has, if any.
-  `QueryLanguage::from(DriverKind)` replaces `Dialect::from(DriverKind)` everywhere; the console
-  keeps a language rather than a dialect, and runs, highlights and completes through it, while
-  formatting, the linter, parameters, explain, grid edits and the SQL export formats ask for the
-  dialect and stay hidden without one. The test language has a classification corpus, as each
-  SQL dialect has, and a console test that splits and highlights its commands.
-- **N0a·3 — Safety for every language:** the read-only check, the MCP server's permissions and
-  the warnings classify through the language. The warning before a risky command becomes "this
+  words, classifies a command into `StatementKind` (and names its schemas, for the MCP server's
+  allow-list), and says which `Dialect` it has, if any. `QueryLanguage::from(DriverKind)`
+  replaces `Dialect::from(DriverKind)` everywhere. The console keeps a language rather than a
+  dialect, and runs, highlights and completes through it; the read-only check and the MCP
+  server classify through it. Formatting, the linter, parameters, explain, manual commit mode,
+  the object helpers, CSV import, **Open data**, and what the grid does with a result's rows
+  (edits, sorting in the database, copying and exporting) ask for the dialect and are hidden or
+  refused without one. The test language has a classification corpus, as each SQL dialect has,
+  and console tests that split, highlight and complete its commands.
+- **N0a·3 — Safety for every language:** the warning before a risky command becomes "this
   command may touch everything", listed by each language (`UPDATE` and `DELETE` without `WHERE`
   for SQL). An engine without a read-only session is guarded by its login: the console's
   read-only level refuses writes with the check alone and the dialog says to use a login with
   read-only grants, and the MCP server serves such a data source for reading when, and only when,
   it has an MCP login. SQL Server and ClickHouse are the first to use it. Tests: the test
-  language refused on a read-only data source, its warnings, and MCP serving a SQL Server data
-  source only with an MCP login.
+  language refused on a read-only data source and in an MCP project, its warnings, and MCP
+  serving a SQL Server data source only with an MCP login.
 - **N0a·4 — An explorer that pages:** `Connection::children_page` returns part of a level, with
   a token for the next part, and takes a filter the server applies; its default returns the whole
   level, as `children` does. PostgreSQL pages the objects of a schema 1,000 at a time, by name,
@@ -233,6 +235,8 @@ JSON values, and the JSON columns SQL engines already return. Can be built along
   so a PostgreSQL `jsonb`, MySQL `JSON` or SQLite JSON text column can be browsed too.
 - **Exports** (W7): JSON and JSON Lines write the documents themselves; CSV, TSV, Excel,
   Markdown and HTML write the flattened columns; the SQL formats aren't offered for documents.
+  Copying and exporting the rows of a language without a SQL dialect, which N0a leaves hidden,
+  come with them.
 - **Paging** is as for rows: 500 documents a page through `FetchMore`.
 
 **Exit:** a PostgreSQL query returning a `jsonb` column opens each value as a tree, and a

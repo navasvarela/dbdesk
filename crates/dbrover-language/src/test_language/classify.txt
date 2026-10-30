@@ -1,0 +1,56 @@
+# Test-language commands and what classify must call them, one command per line, each after a
+# comment naming its kind. See tests.rs.
+
+# Reading.
+# expect: read
+get user:1
+# expect: read
+GET "user 2"
+# expect: read
+keys user:*
+# expect: read
+scan 0 match "order:*" count 100
+# expect: read
+ping
+# expect: read
+exists a b c
+
+# Writing.
+# expect: write
+set user:1 "Ada \"the first\" Lovelace"
+# expect: write
+del user:1 user:2
+# expect: write
+incr visits   # with a trailing comment
+# expect: write
+SET "key with # inside" 1
+
+# The schema.
+# expect: schema
+create index orders
+# expect: schema
+drop index orders
+
+# Transactions.
+# expect: transaction
+begin
+# expect: transaction
+commit
+# expect: transaction
+rollback
+
+# Administration.
+# expect: admin
+flush
+# expect: admin
+config set maxmemory 100
+# expect: admin
+FLUSH
+
+# What can't be read.
+# expect: unparseable
+shutdown now
+# expect: unparseable
+"get" quoted
+# expect: unparseable
+42 get
