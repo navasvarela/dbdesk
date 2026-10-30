@@ -11,6 +11,7 @@ publish.workspace = true
 [dependencies]
 dbrover-core.workspace = true
 dbrover-engine.workspace = true
+dbrover-export.workspace = true
 dbrover-sql.workspace = true
 dbrover-store.workspace = true
 jiff.workspace = true

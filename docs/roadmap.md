@@ -1122,7 +1122,7 @@ The gaps that keep DbRover from being an everyday tool. The full plan is in
   - **W7h — The explorer and Run to file** (built): **Export data…** on tables and views, streamed on the
     explorer's connection; **Run to file…** (⌥⌘↵) writes a statement's rows without loading the
     grid.
-  - **W7i — MCP:** the `query` tool's `format` (`json`, `csv`, `markdown`, `jsonl`), as text
+  - **W7i — MCP** (built): the `query` tool's `format` (`json`, `csv`, `markdown`, `jsonl`), as text
     within the row limit; MCP clients write no files.
   - **W7j — Manual:** a chapter on exporting and copying, and this demo note.
 

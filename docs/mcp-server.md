@@ -149,7 +149,7 @@ engine has no such setting). Results are limited to `max_rows`.
   | `list_objects` | read | One level of the catalog, as the explorer loads it (`Connection::children`) |
   | `describe_table` | read | Columns, types, keys and indexes |
   | `get_definition` | read | A view's, function's or index's source |
-  | `query` | read | Runs one read statement and returns its rows (up to `max_rows`) |
+  | `query` | read | Runs one read statement and returns its rows (up to `max_rows`), as JSON or, with `format`, as CSV, Markdown or JSON Lines text (W7i) |
   | `explain` | read | The plan of one statement, without running it |
   | `execute` | write, schema or admin | Runs statements that change something, in one transaction where the engine allows |
 

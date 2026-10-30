@@ -10,6 +10,7 @@ use dbrover_core::{
     RelationName, describe_error,
 };
 use dbrover_engine::read_only::{self as guard, Refusal};
+use dbrover_export::{ExportColumn, ExportFormat, ExportSpec, RowSource, render};
 use dbrover_sql::{Dialect, NamedSchemas, StatementKind, analyze};
 use dbrover_store::{HistoryOutcome, SchemaScope};
 use jiff::Timestamp;
@@ -90,6 +91,51 @@ struct StatementArgs {
     data_source: String,
     /// One statement that only reads, such as a SELECT, in the data source's dialect.
     sql: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct QueryArgs {
+    /// The data source's name, as list_data_sources gives it (or its id).
+    data_source: String,
+    /// One statement that only reads, such as a SELECT, in the data source's dialect.
+    sql: String,
+    /// How the rows come back: json (the default), as columns and rows of text; or csv,
+    /// markdown or jsonl, as that text in `text`, a header line first for csv and markdown.
+    #[serde(default)]
+    format: QueryFormat,
+}
+
+/// The formats the query tool answers in.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+#[serde(rename_all = "lowercase")]
+enum QueryFormat {
+    /// Columns with their types, and rows as arrays of text or null.
+    #[default]
+    Json,
+    /// RFC 4180: comma-separated, a header line, quoted where needed, NULL as an empty field.
+    Csv,
+    /// A GitHub-flavoured table, NULL written out.
+    Markdown,
+    /// One object a line, keyed by column name.
+    Jsonl,
+}
+
+impl QueryFormat {
+    /// The export format that writes the rows as text; `None` for this tool's own JSON.
+    fn spec(self) -> Option<ExportSpec> {
+        let format = match self {
+            Self::Json => return None,
+            Self::Csv => ExportFormat::Csv,
+            Self::Markdown => ExportFormat::Markdown,
+            Self::Jsonl => ExportFormat::JsonLines,
+        };
+        // None of these formats needs to know where the rows came from.
+        format
+            .default_spec(&RowSource::untabled(Dialect::Sqlite))
+            .ok()
+    }
 }
 
 /// A failed call, as the client sees it: enough to fix the call and try again.
@@ -248,16 +294,31 @@ impl DbRoverMcp {
 
     /// Runs one statement that only reads, such as a SELECT, in a read-only transaction that
     /// is then rolled back. Returns at most the project's row limit, with `truncated` set
-    /// when there were more rows; cells are text, or null.
+    /// when there were more rows; cells are text, or null. With `format` csv, markdown or
+    /// jsonl, the rows come back as that text instead, ready to save or paste.
     #[tool(annotations(read_only_hint = true, open_world_hint = false))]
-    async fn query(&self, Parameters(args): Parameters<StatementArgs>) -> ToolResult {
-        reply(self.statement_json("query", args, false).await)
+    async fn query(&self, Parameters(args): Parameters<QueryArgs>) -> ToolResult {
+        let QueryArgs {
+            data_source,
+            sql,
+            format,
+        } = args;
+        let statement = StatementArgs { data_source, sql };
+        reply(
+            self.run_statement("query", statement, false)
+                .await
+                .map(|ran| ran.json(format)),
+        )
     }
 
     /// Shows how the database would run one read statement, without running it.
     #[tool(annotations(read_only_hint = true, open_world_hint = false))]
     async fn explain(&self, Parameters(args): Parameters<StatementArgs>) -> ToolResult {
-        reply(self.statement_json("explain", args, true).await)
+        reply(
+            self.run_statement("explain", args, true)
+                .await
+                .map(|ran| ran.json(QueryFormat::Json)),
+        )
     }
 
     /// Runs statements that change data or the schema, in order, in one transaction that is
@@ -398,12 +459,12 @@ impl DbRoverMcp {
     }
 
     /// `query` and `explain`: classify, refuse anything but reading, run, record.
-    async fn statement_json(
+    async fn run_statement(
         &self,
         tool: &'static str,
         args: StatementArgs,
         explain: bool,
-    ) -> Result<Value, ToolError> {
+    ) -> Result<QueryResult, ToolError> {
         let data_source = self.data_source(tool, &args.data_source)?;
         let dialect = Dialect::from(data_source.config.driver());
         let sql = args.sql.trim().trim_end_matches(';').trim_end();
@@ -477,7 +538,11 @@ impl DbRoverMcp {
             })
             .await;
         let rows = outcome.map_err(|error| self.failure(tool, data_source, error, prefix.len()))?;
-        Ok(rows_json(&rows, elapsed))
+        Ok(QueryResult {
+            rows,
+            elapsed,
+            dialect,
+        })
     }
 
     /// Runs catalog work in a read-only call, under the time limit as a whole.
@@ -566,6 +631,36 @@ impl DbRoverMcp {
             connection.discard();
         }
         outcome
+    }
+}
+
+/// A statement's rows, and what answering with them needs.
+struct QueryResult {
+    rows: Rows,
+    elapsed: std::time::Duration,
+    dialect: Dialect,
+}
+
+impl QueryResult {
+    /// The rows as `format` asks: this tool's JSON, or the text of an export format with
+    /// the same counts.
+    fn json(&self, format: QueryFormat) -> Value {
+        let Some(spec) = format.spec() else {
+            return rows_json(&self.rows, self.elapsed);
+        };
+        let columns: Vec<ExportColumn> = self
+            .rows
+            .columns
+            .iter()
+            .map(|column| ExportColumn::new(column, self.dialect))
+            .collect();
+        json!({
+            "format": spec.format().id(),
+            "text": render(&spec, &columns, &self.rows.rows).unwrap_or_default(),
+            "row_count": self.rows.rows.len(),
+            "truncated": self.rows.truncated,
+            "elapsed_ms": self.elapsed.as_millis(),
+        })
     }
 }
 

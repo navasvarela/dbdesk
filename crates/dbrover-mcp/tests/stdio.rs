@@ -131,6 +131,30 @@ async fn check_engine(client: &Client, engine: &Engine) {
     assert_eq!(queried["truncated"], true);
     assert_eq!(queried["columns"][1]["name"], "name");
 
+    let ordered = format!("SELECT id, name FROM {table} ORDER BY id");
+    let as_text = [
+        ("csv", "id,name\r\n1,one\r\n2,two\r\n"),
+        (
+            "markdown",
+            "| id | name |\n| --- | --- |\n| 1 | one |\n| 2 | two |\n",
+        ),
+        (
+            "jsonl",
+            "{\"id\":\"1\",\"name\":\"one\"}\n{\"id\":\"2\",\"name\":\"two\"}\n",
+        ),
+    ];
+    for (format, text) in as_text {
+        let formatted = ok(
+            client,
+            "query",
+            json!({ "data_source": name, "sql": ordered, "format": format }),
+        )
+        .await;
+        assert_eq!(formatted["text"], text, "{format}: {formatted}");
+        assert_eq!(formatted["truncated"], true, "{format}");
+        assert_eq!(formatted["row_count"], 2, "{format}");
+    }
+
     ok(
         client,
         "explain",

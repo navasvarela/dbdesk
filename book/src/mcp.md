@@ -86,7 +86,7 @@ Each statement it runs shows up in the data source's **History**, marked **MCP**
 | `list_objects` | One level of a data source's catalog, as the explorer shows it. Each object comes with the `path` that lists its children. |
 | `describe_table` | A table's columns with their types, its primary key, indexes and constraints. |
 | `get_definition` | The source of a view, function, trigger or index. |
-| `query` | Runs one statement that only reads, and returns its rows as text. |
+| `query` | Runs one statement that only reads, and returns its rows as text: as JSON, or with `format` set to `csv`, `markdown` or `jsonl`, as that text, ready to save or paste. |
 | `explain` | Shows how the database would run one read statement, without running it. |
 | `execute` | Runs statements that change something, in one transaction. Only offered when the project allows `write`, `schema` or `admin`. |
 

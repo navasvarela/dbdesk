@@ -1808,6 +1808,7 @@ version = "0.13.0"
 dependencies = [
  "dbrover-core",
  "dbrover-engine",
+ "dbrover-export",
  "dbrover-sql",
  "dbrover-store",
  "jiff",
