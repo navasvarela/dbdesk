@@ -1101,7 +1101,7 @@ The gaps that keep DbRover from being an everyday tool. The full plan is in
   (*1 of 2*), with **Aa**, **W** and **.\***; ⌥⌘F adds the replace field, and **Replace all**
   replaces every match in one undo step. Covered by the tests above; the engine tests ran on
   every server of the compose file.
-- **W7 — Exports:** in progress (2026-10-29). Rows out in the formats people use, from everywhere
+- **W7 — Exports:** built (2026-10-30). Rows out in the formats people use, from everywhere
   rows are, designed in [Exports and your own formats](exports.md). In layers, one PR each:
   - **W7a — Plan:** this entry and the design.
   - **W7b — Text formats** (built): a `dbrover-export` crate with one `TextFormat` trait (a header, each
@@ -1124,7 +1124,7 @@ The gaps that keep DbRover from being an everyday tool. The full plan is in
     grid.
   - **W7i — MCP** (built): the `query` tool's `format` (`json`, `csv`, `markdown`, `jsonl`), as text
     within the row limit; MCP clients write no files.
-  - **W7j — Manual:** a chapter on exporting and copying, and this demo note.
+  - **W7j — Manual** (built): a chapter on exporting and copying, and this demo note.
 
   Decisions, risks and tests are in [the design](exports.md#decisions). In short: values are
   never reformatted, only typed where the format has types; the BOM is off for CSV and on in the
@@ -1136,6 +1136,22 @@ The gaps that keep DbRover from being an everyday tool. The full plan is in
   a pull request as Markdown and into a SQLite console as `INSERT`s that run; **Export data…**
   writes a ten-million-row table to Parquet without DbRover's memory growing; **Run to file…**
   never loads the grid; an assistant gets rows as CSV over MCP.
+
+  **W7 demo note:** built. Run a query, click **Export…**: the dialog offers loaded or all rows,
+  every format with CSV for Excel among them, each format's options and a preview of the file's
+  first lines (for Excel and Parquet, what each column becomes), and opens next time on what you
+  chose. Excel writes a typed workbook with a frozen, filtered header, `007` and
+  `9007199254740993` kept as text, `9.50` a number and `2024-01-31` a date, and goes on in
+  *Rows 2* past a sheet's rows; Parquet types each column by what its values keep (`BIGINT`,
+  `DECIMAL(23,3)`, `DATE`, a zip code as `VARCHAR`). **SQL INSERT** and **UPDATE** write to the
+  table the grid edits; for a join, INSERT asks for a table. Select cells, right-click, **Copy as
+  › Markdown**, and paste a table; ⇧⌘C copies with headers. **Export data…** on a table writes
+  every row from the explorer, counting them in the dialog; **Run to file…** (⌥⌘↵) runs `SELECT
+  … WHERE id >= :min` into a JSON Lines file after asking for `:min`, without loading the grid.
+  Over MCP, `query` with `"format": "csv"` answers with CSV text. Covered by golden tests of every
+  format, `calamine` and DuckDB reading files back, engine tests on every server of the compose
+  file and kittest tests on SQLite. Still to try by eye: opening the files in Excel itself, and
+  watching DbRover's memory while it writes a ten-million-row table to Parquet.
 - **W8 — Your own export formats:** planned, after W7. `exports.toml`, beside `actions.toml` and
   read like it, defines named presets of the built-in formats, templates (a header, a row and a
   footer in MiniJinja, streamed, with no file access and a fuel limit) and programs that get the

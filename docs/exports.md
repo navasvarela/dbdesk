@@ -1,6 +1,6 @@
 # Exports and your own formats
 
-Status: **in progress** (2026-10-29); W7b to W7i are built. This is the design of W7 and W8 in
+Status: **W7 built** (2026-10-30); W8 planned. This is the design of W7 and W8 in
 [A well-rounded app](well-rounded.md#w7--exports); the [roadmap](roadmap.md#well-rounded-track)
 tracks them.
 
@@ -338,7 +338,7 @@ Each layer is one pull request in a stack, and is useful and tested on its own.
   **Run to file…**; engine tests on every engine with a test server (more rows than a page, a
   cancel, a read-only data source), kittest tests on SQLite.
 - **W7i — MCP** (built): the `query` tool's `format`, tested in the MCP crate's tests.
-- **W7j — Manual:** a chapter on exporting and copying, the troubleshooting entry for Excel and
+- **W7j — Manual** (built): a chapter on exporting and copying, the troubleshooting entry for Excel and
   CSV, [Testing](testing.md), and the demo note.
 
 **W8 — Your own formats**
