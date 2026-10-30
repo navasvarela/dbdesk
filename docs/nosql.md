@@ -432,7 +432,10 @@ were. From N1·3 on, each runs against `redis:8-alpine` and `valkey/valkey:9-alp
   a script, and `DEBUG SLEEP`, which nothing stops), TLS and a tunnel on the Redis server, an
   engine test of a console and a read-only data source refusing `SET`, and a check that each
   server's own `COMMAND INFO` classifies every command as the table does. Manual: the data
-  source, the console's commands, and the databases in the explorer.
+  source, the console's commands, and the databases in the explorer. That check found every
+  core command as the table had it, and the 229 commands of the modules `redis:8-alpine`
+  ships (search, JSON, time series, probabilistic structures, vector sets), which joined the
+  table from that server's answers: 706 commands and subcommands in all.
 - **N1·4 — Keys in the explorer:** under each database, keys grouped by a separator (`:` by
   default, set per data source), read with `SCAN … COUNT 1000` and never `KEYS`; the filter
   box as `SCAN`'s `MATCH`; each key with its type's icon and its TTL. Tests: the conformance

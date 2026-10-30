@@ -477,6 +477,7 @@ async fn lists_the_databases_with_their_key_counts() {
 #[tokio::test]
 async fn the_command_table_classifies_as_the_server_does() {
     let _server = SERVER.read().await;
+    let mut differences = Vec::new();
     for server in test_servers() {
         let mut connection = server.connect().await;
         let info = connection
@@ -497,14 +498,16 @@ async fn the_command_table_classifies_as_the_server_does() {
             .filter(|(name, entry)| !table_agrees(name, entry))
             .map(|(name, entry)| entry.line(name))
             .collect();
-        assert!(
-            mismatched.is_empty(),
-            "{}: the command table differs from the server for {} commands; their entries:\n{}",
-            server.variable,
-            mismatched.len(),
-            mismatched.join("\n")
-        );
+        if !mismatched.is_empty() {
+            differences.push(format!(
+                "{}: the command table differs from the server for {} commands; their entries:\n{}",
+                server.variable,
+                mismatched.len(),
+                mismatched.join("\n")
+            ));
+        }
     }
+    assert!(differences.is_empty(), "{}", differences.join("\n"));
 }
 
 /// One command as the server describes it.
