@@ -4,8 +4,8 @@ use std::time::{Duration, SystemTime};
 
 use dbrover_core::{
     CatalogPath, ChildrenPage, ChildrenQuery, ColumnInfo, DataSource, DataSourceId, DriverKind,
-    Password, ProjectId, Rejection, RelationName, RoleDescription, Row, ServerInfo,
-    TableDescription, TableName, TransactionStatus,
+    Password, PasswordCommand, ProjectId, Rejection, RelationName, RoleDescription, Row,
+    ServerInfo, TableDescription, TableName, TransactionStatus,
 };
 use dbrover_export::{ExportSpec, SqlTable};
 use dbrover_sql::{ExistingTable, ParameterValues};
@@ -123,6 +123,13 @@ pub enum Command {
     TrustHostKey {
         data_source: DataSourceId,
         key: HostKey,
+    },
+    /// Trusts the data source's password command that [`Event::PasswordCommandUntrusted`]
+    /// showed, as it was shown, by recording it in `trusted_commands.toml`. The UI connects
+    /// again afterwards. Answered by [`Event::TrustedCommandsLoaded`].
+    TrustPasswordCommand {
+        data_source: DataSourceId,
+        command: PasswordCommand,
     },
     /// Disconnects the explorer's connection and every console's connection to the data
     /// source, rolling back their open transactions.
@@ -590,6 +597,14 @@ pub enum Event {
     HostKeyUnknown {
         data_source: DataSourceId,
         key: HostKey,
+    },
+    /// A connection to the data source was not attempted because its password command hasn't
+    /// been trusted to run. The session reports [`SessionState::Failed`] too; the UI shows the
+    /// command in full and, if the user trusts it, answers with
+    /// [`Command::TrustPasswordCommand`].
+    PasswordCommandUntrusted {
+        data_source: DataSourceId,
+        command: PasswordCommand,
     },
     /// The answer to [`Command::TrustHostKey`]: whether `known_hosts` now holds the key.
     HostKeyTrusted {

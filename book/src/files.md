@@ -17,7 +17,7 @@ DbRover keeps everything in one folder per platform:
 | `keymap.toml` (settings folder) | Your shortcuts, if you changed any. See [Keyboard shortcuts](shortcuts.md#changing-them). |
 | `settings.toml` (settings folder) | Your choices in **View → Settings…**, such as how SQL is formatted and whether to check for updates. |
 | `actions.toml`, `snippets.toml`, `theme.toml` (settings folder) | Your own actions, snippets and colours, if you wrote any. See [Actions, snippets and themes](customising.md). |
-| `trusted_commands.toml` (window state folder) | The command actions you chose **Run** for, each as it was then. See [Commands](customising.md#the-first-run). |
+| `trusted_commands.toml` (window state folder) | The command actions and password commands you chose **Run** for, each as it was then. See [Commands](customising.md#the-first-run) and [Password from a command](data-sources.md#password-from-a-command). |
 | `app.ron` (window state folder) | The window's size and position, the panel layout, the theme you picked, the recent `.sql` files and which file each console tab shows. |
 | `logs/dbrover.YYYY-MM-DD.log` (window state folder) | One log file per day. The last seven are kept. |
 | `logs/dbrover-mcp.YYYY-MM-DD.log` (window state folder) | The same for `dbrover mcp`, the server AI assistants use. |

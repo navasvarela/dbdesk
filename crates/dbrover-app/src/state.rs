@@ -194,6 +194,7 @@ impl AppState {
             | Event::ConnectionTested { .. }
             | Event::PasswordNeeded { .. }
             | Event::HostKeyUnknown { .. }
+            | Event::PasswordCommandUntrusted { .. }
             | Event::HostKeyTrusted { .. }
             | Event::DataSourcesExported { .. }
             | Event::ImportPreviewed { .. }

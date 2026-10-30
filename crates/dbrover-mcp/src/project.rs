@@ -273,6 +273,7 @@ mod tests {
                     user: "reader".to_owned(),
                     tls: TlsMode::default(),
                     ssh: None,
+                    password_command: None,
                 },
             }),
             ..sqlite(name, project)

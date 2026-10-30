@@ -16,6 +16,7 @@ mod handle;
 mod history;
 mod keymap;
 mod open;
+mod password_commands;
 mod passwords;
 mod programs;
 mod projects;
@@ -39,6 +40,7 @@ pub use environment::ProcessEnvironment;
 pub use export::{Export, ExportAll};
 pub use handle::{EngineConfig, EngineError, EngineHandle, IDLE_PING_AFTER};
 pub use open::{OpenError, open_data_source, open_data_source_for_mcp};
+pub use password_commands::{PASSWORD_COMMAND_TIMEOUT, PasswordCommandError, PasswordCommands};
 pub use passwords::PasswordNeeded;
 pub use programs::{
     Invocation, ProcessRunner, ProgramFailure, ProgramId, ProgramOutput, ProgramRequest,

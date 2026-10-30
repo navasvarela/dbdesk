@@ -238,6 +238,13 @@ const SCENES: &[Scene] = &[
         needs: &[],
     },
     Scene {
+        name: "password-command-prompt",
+        data_sources: FixtureSources::Shop,
+        play: password_command_prompt,
+        keeps_pointer: false,
+        needs: &[],
+    },
+    Scene {
         name: "export-data-sources",
         data_sources: FixtureSources::Projects,
         play: export_data_sources,
@@ -699,6 +706,7 @@ fn postgres_data_source(url: &str) -> (DataSource, Password) {
                 user: user.to_owned(),
                 tls: TlsMode::default(),
                 ssh: None,
+                password_command: None,
             },
         }),
     };
@@ -909,6 +917,46 @@ fn password_prompt(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
     step_until_visible(harness, "Connect to staging");
 }
 
+/// An RDS data source whose password is an IAM token, saved through the dialog, then connected
+/// to for the first time. Nothing runs: the picture is the question before the first run.
+fn password_command_prompt(harness: &mut Harness<'static, DbRoverApp>, _: &Fixture) {
+    open_new_data_source_dialog(harness, "PostgreSQL");
+    retype(harness, "Name", "orders (production)");
+    retype(
+        harness,
+        "Host",
+        "orders.cluster-c9x2.eu-west-1.rds.amazonaws.com",
+    );
+    retype(harness, "User", "app_reader");
+    harness.get_by_label("Password from a command").click();
+    harness.run_ok();
+    let command = [
+        "aws",
+        "rds",
+        "generate-db-auth-token",
+        "--hostname",
+        "{host}",
+        "--port",
+        "{port}",
+        "--username",
+        "{user}",
+        "--region",
+        "eu-west-1",
+    ]
+    .join("\n");
+    harness
+        .get_by_role_and_label(Role::MultilineTextInput, "Password command")
+        .focus();
+    harness.run_ok();
+    harness
+        .get_by_role_and_label(Role::MultilineTextInput, "Password command")
+        .type_text(&command);
+    harness.run_ok();
+    harness.get_by_label("Save").click();
+    expand(harness, &["orders (production)"]);
+    step_until_visible(harness, "Run this command for a password?");
+}
+
 fn open_file_menu_item(harness: &mut Harness<'static, DbRoverApp>, item: &str) {
     harness.get_by_label("File").click();
     harness.run_ok();
@@ -958,6 +1006,7 @@ fn import_preview(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture)
                 user: "reporting".to_owned(),
                 tls: TlsMode::Require,
                 ssh: None,
+                password_command: None,
             },
         }),
     };

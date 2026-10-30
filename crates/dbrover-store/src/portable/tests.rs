@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use dbrover_core::{
     ClickHouseConfig, ConnectionConfig, DataSourceId, DuckDbConfig, DuckDbDatabase, MysqlConfig,
-    Port, PostgresConfig, ProjectId, ServerConfig, SourceColor, SqlServerConfig, SqliteConfig,
-    SshConfig, SshLogin, TlsMode, Variables,
+    PasswordCommand, Port, PostgresConfig, ProjectId, ServerConfig, SourceColor, SqlServerConfig,
+    SqliteConfig, SshConfig, SshLogin, TlsMode, Variables,
 };
 
 use super::*;
@@ -39,6 +39,7 @@ fn server(host: &str, port: u16, tls: TlsMode) -> ServerConfig {
         user: "juan".to_owned(),
         tls,
         ssh: None,
+        password_command: None,
     }
 }
 
@@ -105,6 +106,15 @@ fn every_kind(home: &Path, beside: &Path, project: ProjectId) -> Vec<DataSource>
                             key_file: home.join(".ssh/id_ed25519"),
                         },
                     }),
+                    password_command: Some(
+                        PasswordCommand::parse(&[
+                            "vault".to_owned(),
+                            "read".to_owned(),
+                            "-field=password".to_owned(),
+                            "secret/{host}/{user}".to_owned(),
+                        ])
+                        .unwrap(),
+                    ),
                     ..server("sql.internal", 1433, TlsMode::Disable)
                 },
             }),
@@ -204,6 +214,12 @@ fn writes_portable_paths_and_reads_them_back_for_another_home_and_folder() {
     assert!(text.contains(r#"key_file = "~/.ssh/id_ed25519""#), "{text}");
     assert!(text.contains(r#"login = "agent""#), "{text}");
     assert!(text.contains(r#"login = "password""#), "{text}");
+    assert!(
+        text.contains(
+            r#"password_command = ["vault", "read", "-field=password", "secret/{host}/{user}"]"#
+        ),
+        "{text}"
+    );
 
     let moved_to = dir.path().join("downloads/dbrover.toml");
     fs::create_dir_all(moved_to.parent().unwrap()).unwrap();
@@ -365,7 +381,12 @@ fn shows_what_differs_and_updates_or_copies_as_chosen() {
     let changed = DataSource {
         color: Some(SourceColor::Green),
         config: ConnectionConfig::Postgres(PostgresConfig {
-            server: server("db.internal", 6432, TlsMode::Prefer),
+            server: ServerConfig {
+                password_command: Some(
+                    PasswordCommand::parse(&["printf".to_owned(), "a b".to_owned()]).unwrap(),
+                ),
+                ..server("db.internal", 6432, TlsMode::Prefer)
+            },
         }),
         ..local.clone()
     };
@@ -387,6 +408,7 @@ fn shows_what_differs_and_updates_or_copies_as_chosen() {
             difference("Colour", "none", "Green"),
             difference("Host", "localhost", "db.internal"),
             difference("Port", "5432", "6432"),
+            difference("Password", "from the keychain", r#"from ["printf", "a b"]"#),
         ])
     );
     let choose = |choice| ImportChoices {

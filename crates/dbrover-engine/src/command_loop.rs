@@ -9,7 +9,7 @@ use dbrover_store::{
     SettingsFile, TrustedCommand, TrustedCommands, TrustedCommandsFile,
 };
 use tokio::sync::mpsc::UnboundedReceiver;
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
 use tokio::task::{JoinError, JoinSet};
 
 use crate::config_files;
@@ -18,7 +18,8 @@ use crate::events::EventSink;
 use crate::export;
 use crate::history::{HistoryExport, HistoryLog};
 use crate::keymap;
-use crate::open::{TypedSecrets, create_database_file, test_connection};
+use crate::open::{TestServices, TypedSecrets, create_database_file, test_connection};
+use crate::password_commands::PasswordCommands;
 use crate::passwords::SessionPasswords;
 use crate::programs::{self, ProgramFailure, ProgramId, ProgramRequest, ProgramRunner};
 use crate::projects::{ProjectError, ProjectRegistry};
@@ -62,6 +63,7 @@ pub(crate) async fn run(
     }
     let trusted = programs::load_trusted(&config.trusted_commands).await;
     events.send(Event::TrustedCommandsLoaded(trusted.clone()));
+    let (trusted, _) = watch::channel(trusted);
     let projects = ProjectRegistry::load(config.projects).await;
     events.send(projects.loaded_event());
     let registry = Registry::load(config.data_sources).await;
@@ -127,8 +129,9 @@ struct Engine {
     settings_file: SettingsFile,
     custom_files: CustomFiles,
     trusted_file: TrustedCommandsFile,
-    /// The command actions the user trusted; the engine runs no others.
-    trusted: TrustedCommands,
+    /// The commands the user trusted, actions' and password commands'; the engine runs no
+    /// others. Sessions watch it, since they run password commands from their own tasks.
+    trusted: watch::Sender<TrustedCommands>,
     program_runner: Arc<dyn ProgramRunner>,
     /// How to stop each program that may still be running. Dropping one stops its program,
     /// which is how shutting down stops them all.
@@ -210,9 +213,12 @@ impl Engine {
                         password,
                         ssh: ssh_secret,
                     },
-                    Arc::clone(&self.secrets),
-                    self.tunnels.clone(),
-                    self.events.clone(),
+                    TestServices {
+                        secrets: Arc::clone(&self.secrets),
+                        tunnels: self.tunnels.clone(),
+                        commands: self.password_commands().shown(),
+                        events: self.events.clone(),
+                    },
                 ));
             }
             Command::Connect(id) => self.connect(id),
@@ -227,6 +233,14 @@ impl Engine {
             }
             Command::TrustHostKey { data_source, key } => {
                 self.trust_host_key(data_source, key).await;
+            }
+            Command::TrustPasswordCommand {
+                data_source,
+                command,
+            } => {
+                self.let_go_of_failed_session(data_source);
+                self.trust_command(TrustedCommand::password(data_source, &command))
+                    .await;
             }
             Command::Disconnect(id) => self.disconnect(id),
             Command::LoadChildren { id, path, query } => {
@@ -888,7 +902,7 @@ impl Engine {
         &self,
         request: &ProgramRequest,
     ) -> Result<programs::Invocation, ProgramFailure> {
-        if !programs::is_trusted(&self.trusted, request) {
+        if !programs::is_trusted(&self.trusted.borrow(), request) {
             return Err(ProgramFailure::NotTrusted);
         }
         let data_source = self
@@ -899,10 +913,14 @@ impl Engine {
     }
 
     async fn trust_command(&mut self, command: TrustedCommand) {
-        self.trusted.trust(command);
-        programs::save_trusted(&self.trusted_file, &self.trusted).await;
-        self.events
-            .send(Event::TrustedCommandsLoaded(self.trusted.clone()));
+        self.trusted.send_modify(|trusted| trusted.trust(command));
+        let trusted = self.trusted.borrow().clone();
+        programs::save_trusted(&self.trusted_file, &trusted).await;
+        self.events.send(Event::TrustedCommandsLoaded(trusted));
+    }
+
+    fn password_commands(&self) -> PasswordCommands {
+        PasswordCommands::recorded(self.trusted.subscribe(), Arc::clone(&self.program_runner))
     }
 
     fn services(&self) -> Services {
@@ -911,6 +929,7 @@ impl Engine {
             secrets: Arc::clone(&self.secrets),
             passwords: self.passwords.clone(),
             tunnels: self.tunnels.clone(),
+            commands: self.password_commands(),
             events: self.events.clone(),
             history: self.history.clone(),
         }

@@ -329,17 +329,57 @@ fn server_rows(ui: &mut Ui, fields: &mut ServerFields, password_hint: &str) {
         Resolve::Text,
     );
     setting_row(ui, "User", &mut fields.user, defaults.user, Resolve::Text);
-    let label = ui.label("Password");
-    ui.add(
-        TextEdit::singleline(&mut fields.password)
-            .password(true)
-            .hint_text(password_hint)
-            .desired_width(FIELD_WIDTH),
-    )
-    .labelled_by(label.id);
-    ui.end_row();
+    password_rows(ui, fields, password_hint);
     tls_rows(ui, fields);
     ssh_rows(ui, &mut fields.ssh, password_hint);
+}
+
+/// The password to save in the keychain, or the command that prints one on every connection.
+fn password_rows(ui: &mut Ui, fields: &mut ServerFields, password_hint: &str) {
+    if fields.password_from_command {
+        password_command_row(ui, &mut fields.password_command);
+    } else {
+        let label = ui.label("Password");
+        ui.add(
+            TextEdit::singleline(&mut fields.password)
+                .password(true)
+                .hint_text(password_hint)
+                .desired_width(FIELD_WIDTH),
+        )
+        .labelled_by(label.id);
+        ui.end_row();
+    }
+    ui.label("");
+    ui.checkbox(&mut fields.password_from_command, "Password from a command")
+        .on_hover_text(
+            "For short-lived tokens and secret stores (aws, gcloud, az, op, vault): DbRover runs \
+             the command on every connection, and what it prints is the password",
+        );
+    ui.end_row();
+}
+
+fn password_command_row(ui: &mut Ui, command: &mut String) {
+    let label = ui.label("Password command");
+    ui.vertical(|ui| {
+        ui.add(
+            TextEdit::multiline(command)
+                .font(egui::TextStyle::Monospace)
+                .hint_text("op\nread\nop://Work/{host}/password")
+                .desired_rows(3)
+                .desired_width(FIELD_WIDTH),
+        )
+        .labelled_by(label.id);
+        let palette = &Palette::for_visuals(ui.visuals());
+        ui.label(
+            RichText::new(
+                "The program, then each argument, one per line, with no shell. {host}, {port}, \
+                 {user} and {database} are filled in.",
+            )
+            .small()
+            .color(palette.text_weak),
+        );
+    });
+    ui.end_row();
 }
 
 /// Whether to connect through an SSH server and, if so, where it is and how to sign in.

@@ -78,6 +78,7 @@ fn postgres() -> DataSource {
                 user: "admin".to_owned(),
                 tls: TlsMode::Disable,
                 ssh: None,
+                password_command: None,
             },
         }),
         ..shop(SafetyLevel::Normal, None)

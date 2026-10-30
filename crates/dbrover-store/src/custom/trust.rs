@@ -1,12 +1,15 @@
-//! `trusted_commands.toml`: the command actions the user chose to run, each by its exact
-//! definition, so a command that changes asks again. See `docs/hackability.md`.
+//! `trusted_commands.toml`: the commands the user chose to run, command actions' and data
+//! sources' password commands (W9), each by its exact definition, so a command that changes
+//! asks again. See `docs/hackability.md`.
 //!
 //! It lives in the data folder, not beside `actions.toml`: a config folder synced from another
-//! machine, or copied from a colleague, brings its actions but none of this file's trust.
+//! machine, or copied from a colleague, brings its actions but none of this file's trust. An
+//! imported data source likewise brings its password command but not the trust to run it.
 
 use std::path::{Path, PathBuf};
 use std::{fs, io};
 
+use dbrover_core::{DataSourceId, PasswordCommand};
 use serde::{Deserialize, Serialize};
 
 use super::actions::ActionId;
@@ -14,26 +17,61 @@ use super::commands::{CommandAction, StdinFormat};
 use crate::atomic::write_atomically;
 
 const HEADER: &str = "\
-# Commands from actions.toml that DbRover runs without asking first, each as it was when you
-# chose Run. DbRover writes this file; remove an entry to be asked again.
+# Commands DbRover runs without asking first, each as it was when you chose Run: command
+# actions from actions.toml, and data sources' password commands. DbRover writes this file;
+# remove an entry to be asked again.
 
 ";
 
-/// What the user saw and agreed to run: which action, the command as written, and what it
-/// reads on stdin. Where its output goes isn't part of it, since that can't do harm.
+/// What the user saw and agreed to run: whose command it is, and the command as written.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrustedCommand {
-    id: String,
+    #[serde(flatten)]
+    owner: Owner,
     command: Vec<String>,
-    stdin: StdinFormat,
+}
+
+/// Whose command was trusted. Untagged, so each is told apart by its own keys, and the entries
+/// written before password commands existed read as actions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+enum Owner {
+    /// A command action, with what it reads on stdin. Where its output goes isn't part of it,
+    /// since that can't do harm.
+    Action { id: String, stdin: StdinFormat },
+    /// A data source's password command, which reads nothing.
+    DataSource { data_source: DataSourceId },
+}
+
+impl Owner {
+    /// Whether both name the same action or data source, whatever else they say.
+    fn is(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Action { id, .. }, Self::Action { id: other, .. }) => id == other,
+            (Self::DataSource { data_source }, Self::DataSource { data_source: other }) => {
+                data_source == other
+            }
+            (Self::Action { .. }, Self::DataSource { .. })
+            | (Self::DataSource { .. }, Self::Action { .. }) => false,
+        }
+    }
 }
 
 impl TrustedCommand {
     pub fn of(id: &ActionId, action: &CommandAction) -> Self {
         Self {
-            id: id.as_str().to_owned(),
+            owner: Owner::Action {
+                id: id.as_str().to_owned(),
+                stdin: action.stdin,
+            },
             command: action.command.source().to_vec(),
-            stdin: action.stdin,
+        }
+    }
+
+    pub fn password(data_source: DataSourceId, command: &PasswordCommand) -> Self {
+        Self {
+            owner: Owner::DataSource { data_source },
+            command: command.source().to_vec(),
         }
     }
 }
@@ -46,10 +84,10 @@ impl TrustedCommands {
         self.0.contains(command)
     }
 
-    /// Trusts `command` from now on, in place of whatever its action was trusted to run
-    /// before, which no longer exists in that form.
+    /// Trusts `command` from now on, in place of whatever its action or data source was
+    /// trusted to run before, which no longer exists in that form.
     pub fn trust(&mut self, command: TrustedCommand) {
-        self.0.retain(|trusted| trusted.id != command.id);
+        self.0.retain(|trusted| !trusted.owner.is(&command.owner));
         self.0.push(command);
     }
 }
@@ -192,6 +230,55 @@ mod tests {
         retrusted.trust(changed[0].clone());
         assert!(!retrusted.contains(&jq));
         assert!(retrusted.contains(&changed[0]));
+    }
+
+    fn password(data_source: DataSourceId, command: &[&str]) -> TrustedCommand {
+        let command: Vec<String> = command.iter().map(|&item| item.to_owned()).collect();
+        TrustedCommand::password(data_source, &PasswordCommand::parse(&command).unwrap())
+    }
+
+    #[test]
+    fn keeps_password_commands_beside_actions_each_by_its_owner() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = TrustedCommandsFile::new(dir.path().join("trusted_commands.toml"));
+        let shop = DataSourceId::generate();
+        let printf = password(shop, &["printf", "dbrover"]);
+        let mut trusted = TrustedCommands::default();
+        trusted.trust(command("jq", r#"["jq", "."]"#, "json"));
+        trusted.trust(printf.clone());
+        file.save(&trusted).unwrap();
+        let text = fs::read_to_string(file.path()).unwrap();
+        assert!(
+            text.contains(&format!("data_source = \"{shop}\"")),
+            "{text}"
+        );
+        let loaded = file.load().unwrap();
+        assert_eq!(loaded, trusted);
+        assert!(loaded.contains(&printf));
+
+        let elsewhere = password(DataSourceId::generate(), &["printf", "dbrover"]);
+        let changed = password(shop, &["printf", "{user}"]);
+        assert!(!loaded.contains(&elsewhere), "another data source asks");
+        assert!(!loaded.contains(&changed), "a changed command asks");
+
+        let mut retrusted = loaded;
+        retrusted.trust(changed.clone());
+        assert!(retrusted.contains(&changed));
+        assert!(!retrusted.contains(&printf));
+        assert!(retrusted.contains(&command("jq", r#"["jq", "."]"#, "json")));
+    }
+
+    #[test]
+    fn reads_the_actions_trusted_before_password_commands_existed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("trusted_commands.toml");
+        fs::write(
+            &path,
+            "[[command]]\nid = \"jq\"\ncommand = [\"jq\", \".\"]\nstdin = \"json\"\n",
+        )
+        .unwrap();
+        let loaded = TrustedCommandsFile::new(&path).load().unwrap();
+        assert!(loaded.contains(&command("jq", r#"["jq", "."]"#, "json")));
     }
 
     #[test]
