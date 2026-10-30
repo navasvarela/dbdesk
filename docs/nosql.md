@@ -388,9 +388,10 @@ were. From N1·3 on, each runs against `redis:8-alpine` and `valkey/valkey:9-alp
     words, `"…"` strings with backslash escapes (`\n`, `\"`, `\x41`), `'…'` strings, and a
     line that starts with `#` as a comment;
   - a table of every command and subcommand of Redis 8 and Valkey 9, with its arity, its
-    flags (`readonly`, `write`, `admin`, `blocking`), whether its ACL categories call it
-    `dangerous`, and its arguments' syntax, generated from the servers' own command
-    definitions (what `COMMAND INFO` and `COMMAND DOCS` answer);
+    flags (`readonly`, `write`, `admin`, `blocking`) and its arguments' syntax, generated
+    from the servers' own command definitions (what `COMMAND INFO` and `COMMAND DOCS`
+    answer). The `dangerous` ACL category isn't kept: it marks `INFO` and `KEYS` as well as
+    `FLUSHALL`, so it says nothing the flags and the warnings don't;
   - classification from those flags, with the plan's exceptions: `MULTI`, `EXEC`, `DISCARD`,
     `WATCH` and `UNWATCH` are transaction control; scripts are writes unless read-only
     (`EVAL_RO`, `FCALL_RO`); `SELECT`, `CONFIG`, `CLIENT`, `AUTH`, `HELLO`, `FLUSHALL`,
