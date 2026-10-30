@@ -1,6 +1,6 @@
 //! Golden tests of the SQL formats in every dialect, and a round trip through SQLite.
 
-use dbrover_core::{Cell, ColumnInfo, TableName};
+use dbrover_core::{Cell, ColumnInfo};
 use dbrover_sql::Dialect;
 
 use super::*;
@@ -38,8 +38,8 @@ fn source(dialect: Dialect) -> RowSource {
     RowSource {
         dialect,
         table: Some(SourceTable {
-            name: TableName {
-                schema: "shop".to_owned(),
+            name: SqlTable {
+                schema: Some("shop".to_owned()),
                 name: "order items".to_owned(),
             },
             columns: vec![0, 1, 3],
@@ -206,8 +206,8 @@ break', -1e3, 'x'),
         let source = RowSource {
             dialect: Dialect::Sqlite,
             table: Some(SourceTable {
-                name: TableName {
-                    schema: "main".to_owned(),
+                name: SqlTable {
+                    schema: Some("main".to_owned()),
                     name: "copy".to_owned(),
                 },
                 columns: (0..columns.len()).collect(),

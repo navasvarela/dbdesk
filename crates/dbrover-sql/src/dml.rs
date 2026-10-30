@@ -12,17 +12,19 @@ use dbrover_core::{Cell, Quoting, TableDescription, TableName, ValueKind};
 
 use crate::Dialect;
 
-/// A table as the database resolved it.
+/// A table as the database resolved it, or as the user named it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Table<'a> {
-    pub schema: &'a str,
+    /// `None` for a name the user gave without one, which the database resolves by its
+    /// search path.
+    pub schema: Option<&'a str>,
     pub name: &'a str,
 }
 
 impl<'a> From<&'a TableDescription> for Table<'a> {
     fn from(table: &'a TableDescription) -> Self {
         Self {
-            schema: &table.schema,
+            schema: Some(&table.schema),
             name: &table.name,
         }
     }
@@ -31,7 +33,7 @@ impl<'a> From<&'a TableDescription> for Table<'a> {
 impl<'a> From<&'a TableName> for Table<'a> {
     fn from(table: &'a TableName) -> Self {
         Self {
-            schema: &table.schema,
+            schema: Some(&table.schema),
             name: &table.name,
         }
     }
@@ -179,14 +181,13 @@ impl<'a> RowSql<'a> {
         self.dialect.quoting()
     }
 
-    /// Schema-qualified and always quoted, so it means exactly this table whatever the search
-    /// path and whatever the names spell.
+    /// Always quoted, so it means exactly this table whatever the names spell, and
+    /// schema-qualified when the schema is known, so whatever the search path.
     fn table_name(&self) -> String {
-        format!(
-            "{}.{}",
-            self.name(self.table.schema),
-            self.name(self.table.name)
-        )
+        match self.table.schema {
+            Some(schema) => format!("{}.{}", self.name(schema), self.name(self.table.name)),
+            None => self.name(self.table.name),
+        }
     }
 
     fn name(&self, name: &str) -> String {
@@ -247,7 +248,7 @@ mod tests {
     use super::*;
 
     const TABLE: Table<'static> = Table {
-        schema: "shop",
+        schema: Some("shop"),
         name: "order \"items\"",
     };
 
@@ -360,6 +361,18 @@ mod tests {
                 r#"INSERT INTO "shop"."order ""items""" ("id", "price", "code") VALUES"#,
                 "\n(8, 'NaN', NULL),\n(NULL, '1,5', 'x')"
             )
+        );
+    }
+
+    #[test]
+    fn names_a_table_without_its_schema_when_none_is_given() {
+        let table = Table {
+            schema: None,
+            name: "order items",
+        };
+        assert_eq!(
+            RowSql::new(Dialect::SqlServer, table).insert(&[]),
+            "INSERT INTO [order items] DEFAULT VALUES"
         );
     }
 

@@ -3,6 +3,7 @@
 use std::io::{self, Write};
 
 use dbrover_core::Cell;
+use serde::{Deserialize, Serialize};
 
 use super::TextFormat;
 use crate::ExportColumn;
@@ -16,7 +17,8 @@ td.null { color: #777; font-style: italic; }
 thead { display: table-header-group; }
 ";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct HtmlOptions {
     pub document: HtmlDocument,
     /// What a `NULL` is shown as: by default `NULL`, as the grid shows it.
@@ -33,7 +35,8 @@ impl Default for HtmlOptions {
 }
 
 /// How much of a document is written around the table.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum HtmlDocument {
     /// A whole UTF-8 page, with a little CSS that prints well.
     #[default]

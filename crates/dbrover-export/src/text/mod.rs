@@ -21,7 +21,7 @@ pub use self::markdown::MarkdownOptions;
 pub(crate) use self::sql::{Insert, Update};
 pub use self::sql::{
     InsertOptions, InsertSpec, MAX_ROWS_PER_INSERT, RowSource, RowsPerInsert, SourceTable,
-    UpdateSpec,
+    SqlTable, UpdateSpec,
 };
 pub(crate) use self::tsv::Tsv;
 pub use self::tsv::TsvOptions;

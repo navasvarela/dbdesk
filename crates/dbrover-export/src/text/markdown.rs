@@ -3,11 +3,13 @@
 use std::io::{self, Write};
 
 use dbrover_core::Cell;
+use serde::{Deserialize, Serialize};
 
 use super::{TextFormat, or_null};
 use crate::ExportColumn;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct MarkdownOptions {
     /// What a `NULL` is shown as: by default `NULL`, as the grid shows it.
     pub null_text: String,

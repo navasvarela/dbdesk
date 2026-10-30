@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use dbrover_core::Cell;
 use rust_xlsxwriter::{ExcelDateTime, Format, Workbook, Worksheet, XlsxError};
+use serde::{Deserialize, Serialize};
 
 use self::typing::{CellValue, Date, cell_value};
 use crate::ExportColumn;
@@ -25,7 +26,8 @@ const EXCEL_MAX_TEXT: usize = 32_767;
 const MIN_WIDTH: usize = 8;
 const MAX_WIDTH: usize = 50;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct XlsxOptions {
     /// Whether the first row names the columns, in bold.
     pub header: bool,
@@ -49,7 +51,8 @@ impl Default for XlsxOptions {
 
 /// A name Excel takes for a sheet: 1 to 31 characters, none of `[ ] : * ? / \`, and not
 /// starting or ending with an apostrophe.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct SheetName(String);
 
 impl SheetName {
@@ -76,6 +79,12 @@ impl SheetName {
 impl Default for SheetName {
     fn default() -> Self {
         Self("Rows".to_owned())
+    }
+}
+
+impl From<SheetName> for String {
+    fn from(name: SheetName) -> Self {
+        name.0
     }
 }
 

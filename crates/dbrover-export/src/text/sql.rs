@@ -4,8 +4,9 @@
 
 use std::io::{self, Write};
 
-use dbrover_core::{Cell, TableName, ValueKind};
-use dbrover_sql::{ColumnValue, Dialect, RowSql, TypedColumn};
+use dbrover_core::{Cell, ValueKind};
+use dbrover_sql::{ColumnValue, Dialect, RowSql, Table, TypedColumn};
+use serde::{Deserialize, Serialize};
 
 use super::TextFormat;
 use crate::ExportColumn;
@@ -32,10 +33,28 @@ impl RowSource {
     }
 }
 
-/// The table rows were selected from, and how the result's columns map onto it.
+/// A table's name, with its schema when known; without one, the database finds the table by
+/// its search path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SqlTable {
+    pub schema: Option<String>,
+    pub name: String,
+}
+
+impl SqlTable {
+    fn as_table(&self) -> Table<'_> {
+        Table {
+            schema: self.schema.as_deref(),
+            name: &self.name,
+        }
+    }
+}
+
+/// The table rows were selected from, or that the user named, and how the result's columns
+/// map onto it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceTable {
-    pub name: TableName,
+    pub name: SqlTable,
     /// The positions of the result's columns that are the table's, in result order. The
     /// others, such as computed values, are left out of the statements.
     pub columns: Vec<usize>,
@@ -45,7 +64,8 @@ pub struct SourceTable {
 }
 
 /// How many rows one `INSERT` writes: from 1 to [`MAX_ROWS_PER_INSERT`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(from = "u16", into = "u16")]
 pub struct RowsPerInsert(u16);
 
 impl RowsPerInsert {
@@ -61,6 +81,18 @@ impl RowsPerInsert {
     }
 }
 
+impl From<u16> for RowsPerInsert {
+    fn from(rows: u16) -> Self {
+        Self::clamped(rows)
+    }
+}
+
+impl From<RowsPerInsert> for u16 {
+    fn from(rows: RowsPerInsert) -> Self {
+        rows.0
+    }
+}
+
 impl Default for RowsPerInsert {
     fn default() -> Self {
         Self::ONE
@@ -68,7 +100,8 @@ impl Default for RowsPerInsert {
 }
 
 /// What the user chooses about `INSERT`s; the table comes from the rows.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct InsertOptions {
     pub rows_per_statement: RowsPerInsert,
 }
@@ -85,7 +118,7 @@ pub struct InsertSpec {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateSpec {
     pub dialect: Dialect,
-    pub table: TableName,
+    pub table: SqlTable,
     /// The result's columns that are set, by position.
     pub set: Vec<usize>,
     /// The result's columns holding the primary key, by position, in key order.
@@ -171,7 +204,7 @@ impl Insert {
             .iter()
             .map(|(name, kind)| TypedColumn { name, kind: *kind })
             .collect();
-        let sql = RowSql::new(self.spec.dialect, &self.spec.table.name);
+        let sql = RowSql::new(self.spec.dialect, self.spec.table.name.as_table());
         writeln!(out, "{};", sql.insert_typed(&columns, &self.batch))?;
         self.batch.clear();
         Ok(())
@@ -239,7 +272,7 @@ impl TextFormat for Update {
     fn row(&mut self, out: &mut dyn Write, row: &[Cell]) -> io::Result<()> {
         let set = self.values(row, &self.spec.set);
         let key = self.values(row, &self.spec.key);
-        let sql = RowSql::new(self.spec.dialect, &self.spec.table);
+        let sql = RowSql::new(self.spec.dialect, self.spec.table.as_table());
         writeln!(out, "{};", sql.update(&set, &key))
     }
 

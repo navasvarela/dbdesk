@@ -340,6 +340,11 @@ impl Consoles {
             .collect()
     }
 
+    /// What the export dialog shows of the console's rows, if it is open and has some.
+    pub fn export_preview(&self, key: &ConsoleKey) -> Option<crate::export_dialog::ExportPreview> {
+        self.open.get(key)?.export_preview()
+    }
+
     /// Writes the rows the console's grid shows to `path`.
     pub fn export(
         &mut self,
@@ -448,7 +453,7 @@ impl Consoles {
             // The app opens a window, a file dialog or a console, or updates the catalog, for
             // these.
             ConsoleAction::ShowHistory
-            | ConsoleAction::Export(..)
+            | ConsoleAction::OpenExportDialog
             | ConsoleAction::LoadCatalog(_)
             | ConsoleAction::Format(_)
             | ConsoleAction::OpenRows(_)

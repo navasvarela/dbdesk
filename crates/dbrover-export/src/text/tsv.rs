@@ -3,11 +3,13 @@
 use std::io::{self, Write};
 
 use dbrover_core::Cell;
+use serde::{Deserialize, Serialize};
 
 use super::{TextFormat, or_null};
 use crate::ExportColumn;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TsvOptions {
     /// Whether the first line names the columns.
     pub header: bool,
