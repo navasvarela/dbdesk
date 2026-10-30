@@ -6,8 +6,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use dbrover_core::{
-    CatalogNode, CatalogPath, Connection, DataSource, DriverError, Identifier, NodeKind,
-    RelationName, describe_error,
+    CATALOG_PAGE_SIZE, CatalogNode, CatalogPath, ChildrenQuery, Connection, DataSource,
+    DriverError, Identifier, NodeKind, PageToken, RelationName, describe_error,
 };
 use dbrover_engine::read_only::{self as guard, Refusal};
 use dbrover_export::{ExportColumn, ExportFormat, ExportSpec, RowSource, render};
@@ -62,6 +62,15 @@ struct ListObjectsArgs {
     /// Also list system schemas and tables such as pg_catalog or information_schema.
     #[serde(default)]
     include_system: bool,
+    /// Only the objects whose name contains this, ignoring case. On a large level, such as a
+    /// Redis database's keys, the database does the search.
+    #[serde(default)]
+    filter: Option<String>,
+    /// Where to go on in a level too large to list at once (a schema of thousands of tables,
+    /// a Redis database's keys): the `next` of the previous answer, with the same path and
+    /// filter. Leave it out for the first page.
+    #[serde(default)]
+    after: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -90,7 +99,8 @@ struct DefinitionArgs {
 struct StatementArgs {
     /// The data source's name, as list_data_sources gives it (or its id).
     data_source: String,
-    /// One statement that only reads, such as a SELECT, in the data source's dialect.
+    /// One statement that only reads, in the data source's language: a SELECT in SQL, or a
+    /// Redis command such as GET or HGETALL.
     sql: String,
 }
 
@@ -99,7 +109,8 @@ struct StatementArgs {
 struct QueryArgs {
     /// The data source's name, as list_data_sources gives it (or its id).
     data_source: String,
-    /// One statement that only reads, such as a SELECT, in the data source's dialect.
+    /// One statement that only reads, in the data source's language: a SELECT in SQL, or a
+    /// Redis command such as GET or HGETALL.
     sql: String,
     /// How the rows come back: json (the default), as columns and rows of text; or csv,
     /// markdown or jsonl, as that text in `text`, a header line first for csv and markdown.
@@ -274,7 +285,9 @@ impl DbRoverMcp {
 
     /// Lists one level of a data source's catalog, as DbRover's explorer shows it: databases,
     /// schemas, folders of tables and views, then tables, then their columns, indexes and
-    /// constraints. Pass a node's `path` to list its children.
+    /// constraints; on Redis, databases, then keys grouped by their prefixes. Pass a node's
+    /// `path` to list its children. A large level comes 1,000 objects at a time: when the
+    /// answer has `next`, pass it as `after` for the rest.
     #[tool(annotations(read_only_hint = true, open_world_hint = false))]
     async fn list_objects(&self, Parameters(args): Parameters<ListObjectsArgs>) -> ToolResult {
         reply(self.list_objects_json(args).await)
@@ -295,7 +308,7 @@ impl DbRoverMcp {
     }
 
     /// Runs one statement that only reads, such as a SELECT, in a read-only transaction that
-    /// is then rolled back. Returns at most the project's row limit, with `truncated` set
+    /// is then rolled back; or one Redis command that only reads, such as HGETALL. Returns at most the project's row limit, with `truncated` set
     /// when there were more rows; cells are text, or null. With `format` csv, markdown or
     /// jsonl, the rows come back as that text instead, ready to save or paste.
     #[tool(annotations(read_only_hint = true, open_world_hint = false))]
@@ -389,11 +402,17 @@ impl DbRoverMcp {
         let path =
             catalog::path(&args.path).map_err(|error| ToolError::invalid(error.to_string()))?;
         self.check_path(tool, data_source, &path)?;
-        let nodes = self
+        let query = ChildrenQuery {
+            filter: args.filter.filter(|filter| !filter.is_empty()),
+            after: args.after.map(PageToken::new),
+            limit: Some(CATALOG_PAGE_SIZE),
+        };
+        let page = self
             .on_connection(tool, data_source, move |connection| {
-                Box::pin(async move { connection.children(&path).await })
+                Box::pin(async move { connection.children_page(&path, &query).await })
             })
             .await?;
+        let nodes = page.nodes;
         let scope = self.scope(data_source);
         let objects: Vec<NodeJson> = nodes
             .iter()
@@ -404,7 +423,10 @@ impl DbRoverMcp {
             })
             .map(NodeJson::from)
             .collect();
-        Ok(json!({ "objects": objects }))
+        Ok(match page.next {
+            Some(next) => json!({ "objects": objects, "next": next.as_str() }),
+            None => json!({ "objects": objects }),
+        })
     }
 
     async fn describe_table_json(&self, args: DescribeTableArgs) -> Result<Value, ToolError> {

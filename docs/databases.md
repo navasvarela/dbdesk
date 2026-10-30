@@ -52,7 +52,8 @@ Planned separately:
   because their data doesn't fit a SQL console with a grid of results. They now have a track of
   their own, [NoSQL databases](nosql.md), which starts with the groundwork that makes them fit:
   query languages beside SQL, nested documents in the grid, and safety checks for each language.
-  Redis, Valkey and Dragonfly (N1) are being built: the driver and its console come first.
+  Redis, Valkey and Dragonfly (N1) are built: the explorer, a viewer per key type, the
+  console and MCP through a read-only ACL user.
 
 Left out on purpose:
 

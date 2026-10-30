@@ -1,9 +1,9 @@
 # NoSQL databases
 
-Status: **N0a and N0b built** (2026-10-30), in the layers listed under
-[N0a](#n0a--groundwork-languages-safety-and-the-explorer) and
-[N0b](#n0b--groundwork-documents); **N1 being built** (from 2026-10-30), in the layers listed
-under [N1](#n1--redis-valkey-and-dragonfly). W7 (exports) has landed.
+Status: **N0a, N0b and N1 built** (2026-10-30), in the layers listed under
+[N0a](#n0a--groundwork-languages-safety-and-the-explorer),
+[N0b](#n0b--groundwork-documents) and [N1](#n1--redis-valkey-and-dragonfly); N2 is next. W7
+(exports) has landed.
 
 DbRover speaks seven SQL engines. Many of the teams that use them keep a Redis beside their
 PostgreSQL, documents in MongoDB, or logs in Elasticsearch, and today they open another tool for
@@ -488,11 +488,26 @@ were. From N1·3 on, each runs against `redis:8-alpine` and `valkey/valkey:9-alp
     JSON document's paths (the whole document is set with `JSON.SET key $`), and the size of
     a value of another type, which shows its `TYPE` only. A list item is deleted with
     `LREM key 1 value`, the first item equal to it, since Redis removes list items by value.
-- **N1·6 — Safety and MCP:** the read-only level's dialog suggests an ACL user with only
+- **N1·6 — Safety and MCP** (built): the read-only level's dialog suggests an ACL user with only
   `+@read`; the MCP server serves a Redis data source only through its MCP login, its `query`
   tool takes a command, and `list_objects` pages keys, with a token for the next page. Tests:
   on the Redis test server, an ACL user that may only read serves as the MCP login, reads a
-  key, and is refused a `SET` by the server as well as by the check.
+  key, and is refused a `SET` by the server as well as by the check. How it came out:
+  - an ACL user with only `+@read` may not run `PING`, `SELECT` or `INFO`: the driver takes
+    any answer to `PING` as proof the connection works, names the server without its version
+    and lists only the data source's own database (counted with `DBSIZE`) when `INFO` is
+    refused, and the manual says to add `+select` for a database other than 0, and `+info`
+    to see every database;
+  - `list_objects` pages every engine's large levels now, not only Redis's keys, with a
+    `filter` and an `after` token, 1,000 objects at a time; a key's path step is `key`, a
+    group's `key_prefix`;
+  - the `query` tool keeps its `sql` argument, which now takes a Redis command too, so
+    clients' calls don't change.
+
+N1 is built. What the exit needs by hand: Dragonfly (`docker.dragonflydb.io/dragonflydb/
+dragonfly`), not in CI, tried before release; a database of a million keys, browsed grouped by
+`:` (the tests use 2,500); and TLS against a managed server with a publicly signed certificate
+(the tests use the compose server's own authority).
 
 The manual changes in the layer that changes what a user sees: N1·3 (the data source and the
 console), N1·4 (keys in the explorer), N1·5 (the viewers) and N1·6 (read-only data sources and

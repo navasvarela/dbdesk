@@ -666,17 +666,15 @@ fn safety_rows(ui: &mut Ui, form: &mut DataSourceForm) {
         });
         ui.end_row();
     }
+    let unchecked = "has no read-only mode DbRover can use: statements are checked, but a write \
+                     inside a procedure or function isn't stopped.";
     let partly = match read_only::guard(form.driver()) {
         Guard::Session(_) => None,
-        Guard::Login => Some(
-            "has no read-only mode DbRover can use: statements are checked, but a write inside \
-             a procedure or function isn't stopped. Sign in as a user with read-only grants to \
-             have the database refuse it.",
-        ),
-        Guard::CheckOnly => Some(
-            "has no read-only mode DbRover can use: statements are checked, but a write inside \
-             a procedure or function isn't stopped.",
-        ),
+        Guard::Login => Some(format!(
+            "{unchecked} Sign in as {} to have the database refuse it.",
+            read_only::read_only_login(form.driver())
+        )),
+        Guard::CheckOnly => Some(unchecked.to_owned()),
     };
     if let Some(partly) = partly.filter(|_| form.safety == SafetyLevel::ReadOnly) {
         ui.label("");

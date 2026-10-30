@@ -422,7 +422,7 @@ impl RedisConnection {
 
     /// Makes `database` the session's own, as `SELECT` does, for the explorer's connection to
     /// list another database's keys.
-    async fn select(&mut self, database: i64) -> Result<(), DriverError> {
+    pub(crate) async fn select(&mut self, database: i64) -> Result<(), DriverError> {
         if database != self.database {
             let mut command = Cmd::new();
             command.arg("SELECT").arg(database);
