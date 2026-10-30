@@ -441,6 +441,11 @@ were. From N1·3 on, each runs against `redis:8-alpine` and `valkey/valkey:9-alp
   filter box as `SCAN`'s `MATCH`; each key with its type's icon and its TTL. Tests: the
   conformance check that pages add up to the whole level on both servers, and the grouping.
   How it came out:
+  - the pages are checked to hold every key once, in three pages of at most 1,000, with the
+    filter matching the explorer's, but not with `conformance::check_children_pages`, which
+    also compares their order with a second listing's: `SCAN` doesn't promise the same order
+    twice, and a server still rehashing a freshly filled table answers two passes in
+    different orders;
   - a level is listed in `SCAN`'s order, not sorted, since no page of a level that big can be
     sorted against the rest. A page holds exactly 1,000 nodes: one that stops partway through a
     `SCAN` batch keeps the batch's unread keys for the next page, which then goes on from the

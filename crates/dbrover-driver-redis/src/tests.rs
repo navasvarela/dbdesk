@@ -481,21 +481,6 @@ async fn fill_database(connection: &mut RedisConnection, database: u8, keys: &[S
         let pairs: Vec<String> = chunk.iter().map(|key| format!("{key} x")).collect();
         run(connection, &format!("MSET {}", pairs.join(" "))).await;
     }
-    // A table the server is still growing into is read in two halves, in an order that can
-    // change from one `SCAN` to the next; the check compares the order of two listings, so it
-    // waits for the server to finish (`DEBUG HTSTATS` names a "rehashing target" until then).
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        let stats = texts(connection, &format!("DEBUG HTSTATS {database}")).await;
-        if !stats.concat().concat().contains("rehashing") {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "database {database} never finished rehashing"
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
 }
 
 /// The level at `path`, whole, as label, kind and detail, sorted by label.
@@ -518,9 +503,13 @@ fn database(number: u8) -> CatalogPath {
     CatalogPath::root().child(NodeKind::Database, number.to_string())
 }
 
-/// 2,500 keys come in three pages of at most 1,000, which add up to the whole level, and the
-/// filter, as `SCAN`'s `MATCH`, finds the same keys the explorer's own filter would. The keys
-/// have no separator, so grouping leaves them as they are. Database 9 is this test's alone.
+/// 2,500 keys come in three pages of at most 1,000, which hold every key once, and the filter,
+/// as `SCAN`'s `MATCH`, finds the same keys the explorer's own filter would. The keys have no
+/// separator, so grouping leaves them as they are. Database 9 is this test's alone.
+///
+/// Not `conformance::check_children_pages`, which compares the pages' order with a second
+/// listing's: `SCAN` promises every key, not the same order twice, and a server still
+/// rehashing a freshly filled table answers two passes in different orders.
 #[tokio::test]
 async fn pages_keys_with_scan_and_filters_with_match() {
     let _server = SERVER.read().await;
@@ -528,12 +517,41 @@ async fn pages_keys_with_scan_and_filters_with_match() {
         let mut connection = server.connect().await;
         let keys: Vec<String> = (1..=2_500).map(|index| format!("page{index:04}")).collect();
         fill_database(&mut connection, 9, &keys).await;
-        let labels =
-            conformance::check_children_pages(&mut connection, &database(9), 1_000, 3, "PAGE24")
-                .await;
-        let mut sorted = labels.clone();
-        sorted.sort();
-        assert_eq!(sorted, keys, "{}", server.variable);
+        let mut query = ChildrenQuery::first_page(None);
+        let mut labels = Vec::new();
+        let mut pages = 0;
+        loop {
+            let page = connection
+                .children_page(&database(9), &query)
+                .await
+                .expect("a page of keys");
+            pages += 1;
+            assert!(page.nodes.len() <= 1_000, "page {pages} is over the limit");
+            labels.extend(page.nodes.into_iter().map(|node| node.label));
+            match page.next {
+                Some(next) => query = query.after(next),
+                None => break,
+            }
+        }
+        assert_eq!(pages, 3, "{}", server.variable);
+        labels.sort();
+        assert_eq!(labels, keys, "every key once, on {}", server.variable);
+
+        let filtered = connection
+            .children_page(
+                &database(9),
+                &ChildrenQuery::first_page(Some("PAGE24".to_owned())),
+            )
+            .await
+            .expect("the filtered level");
+        let mut found: Vec<String> = filtered.nodes.into_iter().map(|node| node.label).collect();
+        found.sort();
+        let expected: Vec<String> = keys
+            .iter()
+            .filter(|key| key.contains("page24"))
+            .cloned()
+            .collect();
+        assert_eq!(found, expected, "{}", server.variable);
         run(&mut connection, "SELECT 9").await;
         run(&mut connection, "FLUSHDB").await;
     }
