@@ -116,6 +116,18 @@ opened from the Finder doesn't get the `PATH` your shell sets, so programs insta
 Homebrew aren't on it. Write the program's full path in `actions.toml` (`which jq` in a terminal
 prints it) and click **Reload**. See [Commands](customising.md#on-a-mac-and-on-windows).
 
+## An exported CSV looks wrong in Excel
+
+- **Accents and other letters are garbled** (`JosÃ©` for `José`): Excel reads a UTF-8 CSV file
+  as UTF-8 only if it starts with a byte order mark. Export as **CSV for Excel**, which adds it.
+- **Each line is in one column**: Excel expects your language's list separator, a semicolon in
+  much of Europe. Choose **CSV for Excel**, then **Semicolon** as the separator, or import the
+  file with Excel's **Data › From Text/CSV**, which asks.
+- **Ids turned into numbers like `1.23457E+15`, or zip codes lost their leading zeros**: Excel
+  guesses each CSV value's type when it opens the file. Export as **Excel** instead: DbRover
+  writes ids, codes and long numbers as text, and only plain numbers and dates as numbers and
+  dates. See [Typed cells in Excel and Parquet](exporting.md#typed-cells-in-excel-and-parquet).
+
 ## The panels are in a mess
 
 **View → Reset layout** puts every panel back where it started. If you closed the Welcome tab,

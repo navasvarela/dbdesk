@@ -1,8 +1,8 @@
 # A well-rounded app
 
-Status: **W1 to W6 built** (see the [roadmap](roadmap.md#well-rounded-track); W5's
-design is in [Power in the grid](grid-power.md)); W7 and W8 planned, designed in
-[Exports and your own formats](exports.md).
+Status: **W1 to W7 built** (see the [roadmap](roadmap.md#well-rounded-track); W5's
+design is in [Power in the grid](grid-power.md), W7's in
+[Exports and your own formats](exports.md)); W8 planned, designed there too.
 Proposed on 2026-10-24.
 
 DbRover browses, queries and edits PostgreSQL, SQLite, MySQL and MariaDB, and ships as a
@@ -26,7 +26,7 @@ The work is in eight milestones, W1 to W8. Each is useful on its own.
 5. **W5 — Power in the grid.** Inserting and deleting rows, following foreign keys, sorting and
    filtering in the database, CSV import, and exporting every row.
 6. **W6 — Files and parameters.** Opening `.sql` files from disk, and `:name` parameters.
-7. **W7 — Exports.** Added on 2026-10-29, and the next to build: getting rows out in the formats
+7. **W7 — Exports.** Added on 2026-10-29 and built on 2026-10-30: getting rows out in the formats
    people use, from everywhere rows are. It comes before ER diagrams.
 8. **W8 — Your own export formats.** Formats of the user's own in `exports.toml`, once W7's
    formats have settled.

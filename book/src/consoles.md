@@ -261,7 +261,7 @@ doesn't, yet).
   **View value**. **Copy as ›** copies the selected columns of the selected rows as CSV, TSV,
   Markdown (for a pull request or a chat), SQL `INSERT` or `UPDATE` statements, JSON, JSON
   Lines or an HTML table, with the options last chosen in the
-  [export dialog](table-data.md#exporting-rows); HTML is copied as markup, as text. The SQL
+  [export dialog](exporting.md#the-export-dialog); HTML is copied as markup, as text. The SQL
   formats need rows the grid can edit, and `UPDATE` the table's whole key among the selected
   columns. Each format has a keymap id, `grid.copy-as.csv` and so on, with no key until you give
   it one. On macOS they are in the Edit menu too. **Copy row** quotes values with tabs or line
@@ -275,7 +275,7 @@ doesn't, yet).
   [Sorting and filtering in the database](table-data.md#sorting-and-filtering-in-the-database).
 - **Exporting.** **Export…** saves the rows as shown, sorted and filtered, or every row the
   query returns, as CSV, Excel, TSV, Markdown, SQL, JSON, JSON Lines, Parquet or HTML; see
-  [Exporting rows](table-data.md#exporting-rows).
+  [Exporting and copying rows](exporting.md).
 
 ### Large results
 

@@ -12,6 +12,7 @@
 - [Query consoles](consoles.md)
 - [Files, parameters and find](files-parameters.md)
 - [Working with table data](table-data.md)
+- [Exporting and copying rows](exporting.md)
 - [The query history](history.md)
 - [Keyboard shortcuts](shortcuts.md)
 - [Actions, snippets and themes](customising.md)
