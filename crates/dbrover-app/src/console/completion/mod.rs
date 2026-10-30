@@ -10,6 +10,7 @@ mod ranking;
 use std::ops::Range;
 
 use dbrover_core::Quoting;
+use dbrover_language::QueryLanguage;
 use dbrover_sql::{Dialect, Token, TokenKind, is_keyword, keywords, tokenize};
 
 use context::Context;
@@ -152,9 +153,13 @@ pub struct TableRef {
 
 /// The completion point for a cursor at byte `cursor` of `text`, or `None` where nothing
 /// should be suggested: inside a string, comment or quoted identifier, or after a number.
-pub fn completion_point(text: &str, cursor: usize, dialect: Dialect) -> Option<CompletionPoint> {
+pub fn completion_point(
+    text: &str,
+    cursor: usize,
+    language: QueryLanguage,
+) -> Option<CompletionPoint> {
     let before = text.get(..cursor)?;
-    let tokens = tokenize(before, dialect);
+    let tokens = language.tokens(before);
     let last = tokens.last();
     let (replace, prefix_tokens) = match last {
         Some(token) if token.kind == TokenKind::Word => (token.range.clone(), tokens.len() - 1),
@@ -495,14 +500,24 @@ fn typed_in_upper_case(prefix: &str) -> bool {
     prefix.chars().any(|c| c.is_ascii_uppercase())
 }
 
+/// The candidates for a language without a SQL dialect: its own words, best first.
+pub fn word_candidates(prefix: &str, words: &[&str], recent: &RecentCompletions) -> Vec<Candidate> {
+    ranking::rank(language_words(prefix, words), prefix, recent)
+}
+
 /// Keywords, in the case being typed. None for an empty prefix: every keyword matches it,
 /// which would bury the names.
 fn keyword_candidates(prefix: &str) -> Vec<Candidate> {
+    language_words(prefix, keywords())
+}
+
+/// `words`, in the case being typed. None for an empty prefix, as for keywords.
+fn language_words(prefix: &str, words: &[&str]) -> Vec<Candidate> {
     if prefix.is_empty() {
         return Vec::new();
     }
     let upper = typed_in_upper_case(prefix);
-    keywords()
+    words
         .iter()
         .map(|keyword| {
             let insert = if upper {
@@ -700,12 +715,12 @@ mod tests {
     }
 
     fn point_at_end(text: &str) -> Option<CompletionPoint> {
-        completion_point(text, text.len(), Dialect::Postgres)
+        completion_point(text, text.len(), QueryLanguage::Sql(Dialect::Postgres))
     }
 
     /// The candidates for a cursor at `cursor` in `text`, which is one statement.
     fn suggest_at(text: &str, cursor: usize) -> Vec<Candidate> {
-        let point = completion_point(text, cursor, Dialect::Postgres).unwrap();
+        let point = completion_point(text, cursor, QueryLanguage::Sql(Dialect::Postgres)).unwrap();
         candidates(&CompletionInput {
             point: &point,
             statement: text,

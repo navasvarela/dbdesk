@@ -19,6 +19,7 @@ use dbrover_core::{
     CatalogPath, DataSource, DataSourceId, NodeKind, RoleDescription, SafetyLevel, SourceColor,
 };
 use dbrover_engine::{Event, SessionState};
+use dbrover_language::QueryLanguage;
 use dbrover_sql::{
     DdlError, DdlOperation, Dialect, ExistingTable, ObjectName, ViewKind, ddl_statements,
 };
@@ -52,14 +53,16 @@ pub struct Target {
 }
 
 impl Target {
-    pub fn new(data_source: &DataSource) -> Self {
-        Self {
+    /// The data source the helpers change, or `None` when it doesn't speak SQL, which is the
+    /// only language they write.
+    pub fn new(data_source: &DataSource) -> Option<Self> {
+        Some(Self {
             data_source: data_source.id,
             name: data_source.name.clone(),
-            dialect: Dialect::from(data_source.config.driver()),
+            dialect: QueryLanguage::from(data_source.config.driver()).dialect()?,
             safety: data_source.safety,
             red: data_source.color == Some(SourceColor::Red),
-        }
+        })
     }
 }
 

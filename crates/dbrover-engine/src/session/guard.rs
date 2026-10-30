@@ -7,7 +7,7 @@
 //! never sees it, so the console shows no open transaction and nothing asks to roll one back.
 
 use dbrover_core::{DriverError, describe_error};
-use dbrover_sql::Dialect;
+use dbrover_language::QueryLanguage;
 
 use super::{Disconnected, Worker};
 use crate::read_only::{self, ReadOnlyMode, Refusal};
@@ -21,8 +21,12 @@ pub(super) struct ReadOnly {
 
 impl ReadOnly {
     /// Refuses `sql` unless it only reads, saying why in terms of `data_source`.
-    pub(super) fn check(sql: &str, dialect: Dialect, data_source: &str) -> Result<(), String> {
-        read_only::check(sql, dialect).map_err(|refusal| refused(&refusal, data_source))
+    pub(super) fn check(
+        sql: &str,
+        language: QueryLanguage,
+        data_source: &str,
+    ) -> Result<(), String> {
+        read_only::check(sql, language).map_err(|refusal| refused(&refusal, data_source))
     }
 }
 

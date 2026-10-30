@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use common::{
-    TestEngine, clickhouse_test_server, mysql_test_servers, postgres_test_server,
+    TestEngine, clickhouse_test_server, mysql_test_servers, postgres_test_server, sql_dialect,
     sqlite_data_source, sqlite_database, sqlserver_test_server,
 };
 use dbrover_core::{
@@ -277,7 +277,7 @@ fn round_trip_tables(dialect: Dialect, suffix: &str) -> (TableSpec, TableSpec) {
 /// then drops both.
 fn check_round_trip(engine: &mut TestEngine, data_source: &DataSource, password: Option<Password>) {
     save(engine, data_source, password);
-    let dialect = Dialect::from(data_source.config.driver());
+    let dialect = sql_dialect(data_source.config.driver());
     let suffix = data_source.id.to_string().replace('-', "");
     let suffix = &suffix[..8];
     let (parent, child) = round_trip_tables(dialect, suffix);
@@ -402,7 +402,7 @@ fn copies_a_sqlite_tables_ddl_from_the_catalog() {
 /// copied after dropping the table must make the same table again.
 fn check_rebuilt_ddl(engine: &mut TestEngine, data_source: &DataSource, password: Password) {
     save(engine, data_source, Some(password));
-    let dialect = Dialect::from(data_source.config.driver());
+    let dialect = sql_dialect(data_source.config.driver());
     let schema = unique("dbrover_copy", data_source);
     let suffix = &schema["dbrover_copy_".len()..];
     let (mut parent, mut child) = round_trip_tables(dialect, suffix);
@@ -674,14 +674,14 @@ fn apply_operation(
     data_source: &DataSource,
     operation: DdlOperation,
 ) -> Result<(), DdlFailure> {
-    let dialect = Dialect::from(data_source.config.driver());
+    let dialect = sql_dialect(data_source.config.driver());
     let statements = operation.statements(dialect).expect("the operation's SQL");
     apply(engine, data_source.id, statements)
 }
 
 /// The query the catalog shows for the view at `path`, as Edit view starts from it.
 fn shown_query(engine: &mut TestEngine, data_source: &DataSource, path: CatalogPath) -> String {
-    let dialect = Dialect::from(data_source.config.driver());
+    let dialect = sql_dialect(data_source.config.driver());
     let definition = load_definition(engine, data_source.id, path);
     view_query(&definition, dialect)
         .unwrap_or_else(|| panic!("{dialect:?}: no query in {definition:?}"))
@@ -695,7 +695,7 @@ fn check_view_round_trip(
     password: Option<Password>,
 ) {
     save(engine, data_source, password);
-    let dialect = Dialect::from(data_source.config.driver());
+    let dialect = sql_dialect(data_source.config.driver());
     let name = unique("dbrover_view", data_source);
     let view = ViewSpec {
         name: ObjectName::new(None, &name),
@@ -858,7 +858,7 @@ fn check_schema_round_trip(
     password: Option<Password>,
 ) {
     save(engine, data_source, password);
-    let dialect = Dialect::from(data_source.config.driver());
+    let dialect = sql_dialect(data_source.config.driver());
     let capabilities = dialect.capabilities();
     let schema = unique("dbrover_schema", data_source);
     let table = TableSpec {
@@ -1287,7 +1287,7 @@ fn check_modify_table(
     password: Option<Password>,
 ) {
     save(engine, data_source, password);
-    let dialect = Dialect::from(data_source.config.driver());
+    let dialect = sql_dialect(data_source.config.driver());
     let capabilities = dialect.capabilities();
     let suffix = unique("m", data_source);
     let suffix = &suffix[2..];

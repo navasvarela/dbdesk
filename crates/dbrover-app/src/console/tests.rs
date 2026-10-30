@@ -5,6 +5,10 @@ fn console(text: &str) -> QueryConsole {
 }
 
 fn console_with(text: &str, dialect: Dialect) -> QueryConsole {
+    console_in(text, QueryLanguage::Sql(dialect))
+}
+
+fn console_in(text: &str, language: QueryLanguage) -> QueryConsole {
     QueryConsole::new(
         ConsoleId(1),
         ConsoleKey {
@@ -12,7 +16,7 @@ fn console_with(text: &str, dialect: Dialect) -> QueryConsole {
             name: dbrover_store::ConsoleName::numbered(1),
         },
         "test".to_owned(),
-        dialect,
+        language,
         text.to_owned(),
     )
 }
@@ -440,4 +444,55 @@ fn replaces_every_match_with_regular_expression_groups() {
     assert_eq!(console.replace_all(Instant::now()), 0);
     console.close_find();
     assert_eq!(console.found(), Found::default());
+}
+
+/// A console in the test language, which has no SQL dialect: what a Redis or MongoDB console
+/// will go through.
+mod test_language {
+    use super::*;
+
+    #[test]
+    fn runs_one_command_per_line() {
+        let text = "get a\n# a note\nset b \"x y\"\n\nkeys *";
+        let mut console = console_in(text, QueryLanguage::Test);
+        assert_eq!(
+            sqls(&console.statements_to_run(RunScope::All)),
+            ["get a", "set b \"x y\"", "keys *"]
+        );
+        let second = text.find("set").unwrap();
+        console.selection = second + 2..second + 2;
+        assert_eq!(
+            sqls(&console.statements_to_run(RunScope::Current)),
+            ["set b \"x y\""]
+        );
+        assert_eq!(
+            console.current_statement(),
+            Some(second..second + "set b \"x y\"".len())
+        );
+    }
+
+    #[test]
+    fn completes_the_languages_own_words() {
+        let mut console = console_in("ge", QueryLanguage::Test);
+        console.selection = 2..2;
+        let recent = RecentCompletions::default();
+        console.open_completion(false);
+        let _ = console.refresh_completion(None, &recent, &[]);
+        console.accept_completion(Instant::now());
+        assert_eq!(console.text, "get");
+    }
+
+    #[test]
+    fn leaves_out_what_only_sql_has() {
+        let mut console = console_in("get a", QueryLanguage::Test);
+        assert_eq!(console.dialect(), None);
+        assert!(console.statements_to_run(RunScope::Explain).is_empty());
+
+        console.format(FormatScope::All, &FormatOptions::default(), Instant::now());
+        assert_eq!(console.text, "get a");
+        assert!(console.format_error.is_some());
+
+        let outcome = console.check_problems(None, &LintOptions::default(), Instant::now());
+        assert_eq!(outcome, problems::CheckOutcome::default());
+    }
 }

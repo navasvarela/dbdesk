@@ -6,7 +6,7 @@ use dbrover_engine::{
     Command, EngineConfig, EngineError, EngineHandle, Event, PasswordKept, Repaint, RunOrigin,
 };
 use dbrover_export::{ExportFormat, ExportSpec};
-use dbrover_sql::Dialect;
+use dbrover_language::QueryLanguage;
 use dbrover_store::{
     ActionBody, ActionId, ConsoleKey, CustomFileKind, KeymapBindings, McpPermissions,
     SqlFileContents,
@@ -1008,7 +1008,9 @@ impl DbRoverApp {
             }
             ExplorerAction::Helper(id, helper) => {
                 if let Some(entry) = self.state.data_source(id) {
-                    let target = Target::new(&entry.data_source);
+                    let Some(target) = Target::new(&entry.data_source) else {
+                        return;
+                    };
                     let Some(form) = object_dialog::form(helper, target.dialect) else {
                         return;
                     };
@@ -1393,7 +1395,7 @@ impl DbRoverApp {
         let Some(entry) = self.state.data_source(data_source) else {
             return;
         };
-        let quoting = Dialect::from(entry.data_source.config.driver()).quoting();
+        let quoting = QueryLanguage::from(entry.data_source.config.driver()).quoting();
         if let ActionBody::Command(command) = &action.body {
             self.action_problem = None;
             let values = custom_actions::command_values(&entry.data_source, subject, quoting);

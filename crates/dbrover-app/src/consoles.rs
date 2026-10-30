@@ -10,7 +10,8 @@ use dbrover_engine::{
     Command, ConsoleId, Event, RunId, RunOrigin, RunPurpose, TransactionMode, WatchedFile,
 };
 use dbrover_export::ExportSpec;
-use dbrover_sql::{Dialect, FormatOptions, ParameterValues};
+use dbrover_language::QueryLanguage;
+use dbrover_sql::{FormatOptions, ParameterValues};
 use dbrover_store::{ConsoleKey, ConsoleName, SqlFileContents};
 
 use crate::console::{
@@ -224,8 +225,8 @@ impl Consoles {
     ) -> QueryConsole {
         self.next_console += 1;
         let title = title(&data_source.name, &key.name);
-        let dialect = Dialect::from(data_source.config.driver());
-        QueryConsole::new(ConsoleId(self.next_console), key, title, dialect, text).on(data_source)
+        let language = QueryLanguage::from(data_source.config.driver());
+        QueryConsole::new(ConsoleId(self.next_console), key, title, language, text).on(data_source)
     }
 
     /// Opens a console that selects everything from the table or view at `path`, and runs it.
@@ -234,8 +235,8 @@ impl Consoles {
         data_source: &DataSource,
         path: &CatalogPath,
     ) -> Option<(ConsoleKey, Command)> {
-        let quoting = Dialect::from(data_source.config.driver()).quoting();
-        let name = path.qualified_name(quoting)?;
+        let dialect = QueryLanguage::from(data_source.config.driver()).dialect()?;
+        let name = path.qualified_name(dialect.quoting())?;
         self.open_query(data_source, format!("SELECT * FROM {name};\n"))
     }
 
@@ -245,7 +246,7 @@ impl Consoles {
         data_source: &DataSource,
         rows: &RowsToOpen,
     ) -> Option<(ConsoleKey, Command)> {
-        let dialect = Dialect::from(data_source.config.driver());
+        let dialect = QueryLanguage::from(data_source.config.driver()).dialect()?;
         self.open_query(data_source, format!("{};\n", rows.sql(dialect)))
     }
 
@@ -476,9 +477,10 @@ impl Consoles {
         }
     }
 
-    /// The SQL dialect of the console's data source, if the console is open.
+    /// The SQL dialect of the console's data source, if the console is open and its
+    /// language has one.
     pub fn dialect(&self, key: &ConsoleKey) -> Option<dbrover_sql::Dialect> {
-        Some(self.open.get(key)?.dialect())
+        self.open.get(key)?.dialect()
     }
 
     /// A new run's id, for a run the app starts itself: a table's export.
@@ -503,7 +505,10 @@ impl Consoles {
     /// doesn't carry them all.
     fn submit(&mut self, key: &ConsoleKey, run: SubmittedRun) -> Option<Command> {
         let console = self.open.get(key)?;
-        let names = run.parameter_names(console.dialect());
+        let names = console
+            .dialect()
+            .map(|dialect| run.parameter_names(dialect))
+            .unwrap_or_default();
         if names.iter().all(|name| run.parameters.contains(name)) {
             return self.review(key, run);
         }
@@ -522,7 +527,7 @@ impl Consoles {
     fn review(&mut self, key: &ConsoleKey, run: SubmittedRun) -> Option<Command> {
         let console = self.open.get(key)?;
         let context = ReviewContext {
-            dialect: console.dialect(),
+            language: console.language(),
             relies_on_rollback: console.transaction_mode() == TransactionMode::Manual
                 || console.has_open_transaction(),
             careful: (console.safety() == SafetyLevel::Careful).then(|| console.data_source_name()),

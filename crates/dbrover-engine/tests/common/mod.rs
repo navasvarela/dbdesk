@@ -13,15 +13,17 @@ use std::time::Duration;
 use std::str::FromStr;
 
 use dbrover_core::{
-    ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, MysqlConfig, Password,
-    PostgresConfig, SafetyLevel, ServerConfig, SqlServerConfig, SqliteConfig, SshConfig, SshLogin,
-    TlsMode,
+    ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DriverKind, MysqlConfig,
+    Password, PostgresConfig, SafetyLevel, ServerConfig, SqlServerConfig, SqliteConfig, SshConfig,
+    SshLogin, TlsMode,
 };
 use dbrover_engine::{
     Command, EngineConfig, EngineHandle, Event, InstallError, InstallSupport, InstalledUpdate,
     ProcessRunner, Release, ReleaseError, ReleaseFeed, Repaint, Restart, SessionState,
     UpdateInstaller,
 };
+use dbrover_language::QueryLanguage;
+use dbrover_sql::Dialect;
 use dbrover_store::{
     ConsoleFiles, CustomFile, CustomFileKind, CustomFiles, DataSourceFile, HistoryFile,
     KeymapBindings, KeymapFile, ProjectFile, Projects, Secret, SecretError, SecretStore, Settings,
@@ -554,4 +556,11 @@ pub fn closing_server() -> u16 {
         }
     });
     port
+}
+
+/// The SQL dialect of a driver, which every driver with a test server has.
+pub fn sql_dialect(driver: DriverKind) -> Dialect {
+    QueryLanguage::from(driver)
+        .dialect()
+        .expect("every driver with a test server speaks SQL")
 }

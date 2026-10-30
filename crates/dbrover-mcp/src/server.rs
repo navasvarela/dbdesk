@@ -11,7 +11,8 @@ use dbrover_core::{
 };
 use dbrover_engine::read_only::{self as guard, Refusal};
 use dbrover_export::{ExportColumn, ExportFormat, ExportSpec, RowSource, render};
-use dbrover_sql::{Dialect, NamedSchemas, StatementKind, analyze};
+use dbrover_language::{NamedSchemas, QueryLanguage, StatementKind};
+use dbrover_sql::Dialect;
 use dbrover_store::{HistoryOutcome, SchemaScope};
 use jiff::Timestamp;
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -466,10 +467,10 @@ impl DbRoverMcp {
         explain: bool,
     ) -> Result<QueryResult, ToolError> {
         let data_source = self.data_source(tool, &args.data_source)?;
-        let dialect = Dialect::from(data_source.config.driver());
+        let language = QueryLanguage::from(data_source.config.driver());
         let sql = args.sql.trim().trim_end_matches(';').trim_end();
         // The same check as the consoles of read-only data sources make.
-        let refusal = guard::check(sql, dialect).err();
+        let refusal = guard::check(sql, language).err();
         let kind = match &refusal {
             None => Some(StatementKind::Read),
             Some(Refusal::Changes(kind)) => Some(*kind),
@@ -494,18 +495,28 @@ impl DbRoverMcp {
         // The statement parsed above, so only a parser bug could fail here; it is refused
         // like any statement whose names can't be read.
         if let Some(scope) = self.scope(data_source) {
-            let schemas =
-                analyze(sql, dialect).map_or(NamedSchemas::Unknown, |analysis| analysis.schemas);
+            let schemas = language
+                .analyze(sql)
+                .map_or(NamedSchemas::Unknown, |analysis| analysis.schemas);
             if let Err(reason) = scope.check(&schemas) {
                 return Err(self.refuse(tool, data_source, reason));
             }
         }
 
-        let prefix = if explain {
-            let server = self.inner.connections.server_info(data_source.id);
-            dialect.explain_prefix(server.as_ref())
-        } else {
-            ""
+        let dialect = language.dialect();
+        let prefix = match (explain, dialect) {
+            (false, _) => "",
+            (true, Some(dialect)) => {
+                let server = self.inner.connections.server_info(data_source.id);
+                dialect.explain_prefix(server.as_ref())
+            }
+            (true, None) => {
+                let reason = format!(
+                    "{tool} explains SQL statements, and this data source speaks {}",
+                    language.display_name()
+                );
+                return Err(self.refuse(tool, data_source, reason));
+            }
         };
         let statement = format!("{prefix}{sql}");
         let max_rows = self.inner.project.limits.max_rows;
@@ -638,7 +649,8 @@ impl DbRoverMcp {
 struct QueryResult {
     rows: Rows,
     elapsed: std::time::Duration,
-    dialect: Dialect,
+    /// The data source's SQL dialect, which types the columns; `None` for another language.
+    dialect: Option<Dialect>,
 }
 
 impl QueryResult {
@@ -652,7 +664,7 @@ impl QueryResult {
             .rows
             .columns
             .iter()
-            .map(|column| ExportColumn::new(column, self.dialect))
+            .map(|column| ExportColumn::typed_by(column, self.dialect))
             .collect();
         json!({
             "format": spec.format().id(),

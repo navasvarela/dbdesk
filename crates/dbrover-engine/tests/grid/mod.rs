@@ -67,7 +67,7 @@ pub fn test_sources(engine: &mut TestEngine, dir: &std::path::Path) -> Vec<TestS
     configs
         .into_iter()
         .map(|(name, config, password)| {
-            let dialect = Dialect::from(config.driver());
+            let dialect = common::sql_dialect(config.driver());
             let data_source = DataSource {
                 id: DataSourceId::generate(),
                 name: name.to_owned(),

@@ -1,7 +1,6 @@
 use std::time::Instant;
 
 use dbrover_core::{CatalogPath, Connection, RelationName, describe_error};
-use dbrover_sql::Dialect;
 
 use super::SessionContext;
 use crate::Event;
@@ -64,7 +63,7 @@ pub(super) async fn describe_table(
         tracing::warn!(
             data_source = %context.name(),
             "could not describe {}: {}",
-            table.to_sql(Dialect::from(context.data_source.config.driver()).quoting()),
+            table.to_sql(context.language().quoting()),
             describe_error(error)
         );
     }

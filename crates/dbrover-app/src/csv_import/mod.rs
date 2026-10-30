@@ -11,6 +11,7 @@ use dbrover_core::{
     TableDescription,
 };
 use dbrover_engine::{Command, Event, ImportFailure, RowsImport};
+use dbrover_language::QueryLanguage;
 use dbrover_sql::Dialect;
 use dbrover_store::Separator;
 use egui::{Align, Button, ComboBox, Grid, Id, Layout, Modal, RichText, ScrollArea, Ui};
@@ -96,7 +97,7 @@ impl CsvImportDialog {
             schema: schema.map(quoted),
             name: quoted(&table.name),
         };
-        let dialect = Dialect::from(data_source.config.driver());
+        let dialect = QueryLanguage::from(data_source.config.driver()).dialect()?;
         let target = Target {
             data_source: data_source.id,
             data_source_name: data_source.name.clone(),

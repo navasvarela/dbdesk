@@ -64,7 +64,10 @@ pub(super) async fn run_script(
     script: &Script,
 ) -> Result<Option<Parked>, Disconnected> {
     let setting = match script.purpose {
-        RunPurpose::Explain => worker.context.dialect().explain_setting(),
+        RunPurpose::Explain => worker
+            .context
+            .dialect()
+            .and_then(|dialect| dialect.explain_setting()),
         RunPurpose::Run => None,
     };
     match setting {
@@ -157,7 +160,8 @@ async fn run_statements(
             origin: script.origin.clone(),
         };
         if let Some(read_only) = worker.context.read_only {
-            if let Err(refusal) = ReadOnly::check(&checked, dialect, worker.context.name()) {
+            let language = worker.context.language();
+            if let Err(refusal) = ReadOnly::check(&checked, language, worker.context.name()) {
                 report_refusal(worker.context, &statement, refusal);
                 outcome = RunOutcome::Failed;
                 break;
@@ -184,7 +188,7 @@ async fn run_statements(
         // A parked statement still holds the connection, so it can't be asked. Only the last
         // statement parks, and one that returns rows hardly ever controls transactions.
         let failed = matches!(end, StatementEnd::Failed);
-        let controls = controls_transactions(&checked, dialect);
+        let controls = dialect.is_some_and(|dialect| controls_transactions(&checked, dialect));
         if (failed || controls) && !matches!(end, StatementEnd::Parked(_)) {
             transaction::refresh(worker).await?;
         }

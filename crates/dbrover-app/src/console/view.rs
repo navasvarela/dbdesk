@@ -22,7 +22,7 @@ use dbrover_core::{SafetyLevel, TransactionStatus};
 use dbrover_engine::{
     RunId, RunOrigin, RunOutcome, RunPurpose, SessionState, TransactionEnd, TransactionMode,
 };
-use dbrover_sql::{ProblemSource, Severity};
+use dbrover_sql::{Dialect, ProblemSource, Severity};
 use dbrover_store::{ActionId, CustomAction, Snippet};
 
 use crate::custom_actions::GridCells;
@@ -117,7 +117,7 @@ pub fn show(
     shortcuts(ui, console, keymap, editor_id, actions);
     toolbar(ui, console, keymap, actions);
     file_bar(ui, console);
-    if console.dialect.has_transactions() {
+    if console.dialect().is_some_and(Dialect::has_transactions) {
         transaction_bar(ui, console, keymap, actions);
     }
     let found = find_bar::show(ui, console, keymap);
@@ -292,7 +292,16 @@ fn perform(console: &QueryConsole, action: Action, actions: &mut Vec<ConsoleActi
     }
 }
 
+/// Actions with no meaning outside SQL: hidden and disabled in a console whose language has no
+/// SQL dialect.
+fn needs_sql(action: Action) -> bool {
+    matches!(action, Action::Explain | Action::Format | Action::FormatAll)
+}
+
 fn is_enabled(console: &QueryConsole, action: Action) -> bool {
+    if needs_sql(action) && console.dialect().is_none() {
+        return false;
+    }
     match action {
         Action::RunCurrent | Action::RunAll | Action::Explain | Action::RunToFile => {
             !console.is_running()
@@ -396,6 +405,9 @@ fn toolbar(
             ("History", Action::ShowHistory),
             ("Format", Action::Format),
         ] {
+            if needs_sql(button.1) && console.dialect().is_none() {
+                continue;
+            }
             action_button(ui, console, keymap, button, actions);
         }
         ui.add_space(6.0);
@@ -718,7 +730,7 @@ fn editor(
         current_match: found.current.map(|index| found.matches[index].clone()),
         matches: found.matches.clone(),
     };
-    let mut layouter = highlight::layouter(console.dialect, &marks);
+    let mut layouter = highlight::layouter(console.language(), &marks);
     let gutter_width = gutter_width(ui, &console.text);
     ScrollArea::vertical()
         .id_salt(("console_editor_scroll", console.id.0))
@@ -917,6 +929,30 @@ fn byte_range(text: &str, cursor: &CCursorRange) -> std::ops::Range<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn disables_what_only_sql_has_in_a_console_of_another_language() {
+        let console_in = |language| {
+            let key = dbrover_store::ConsoleKey {
+                data_source: dbrover_core::DataSourceId::generate(),
+                name: dbrover_store::ConsoleName::numbered(1),
+            };
+            QueryConsole::new(
+                dbrover_engine::ConsoleId(1),
+                key,
+                "test".to_owned(),
+                language,
+                String::new(),
+            )
+        };
+        let sql = console_in(dbrover_language::QueryLanguage::Sql(Dialect::Postgres));
+        let test = console_in(dbrover_language::QueryLanguage::Test);
+        for action in [Action::Explain, Action::Format, Action::FormatAll] {
+            assert!(is_enabled(&sql, action), "{action:?}");
+            assert!(!is_enabled(&test, action), "{action:?}");
+        }
+        assert!(is_enabled(&test, Action::RunCurrent));
+    }
 
     #[test]
     fn numbers_only_the_first_row_of_a_wrapped_line() {

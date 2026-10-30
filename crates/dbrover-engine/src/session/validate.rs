@@ -23,7 +23,8 @@ pub(super) async fn validate(
     let busy = worker.parked.is_some() || worker.transaction != TransactionStatus::Idle;
     let mut results = Vec::with_capacity(statements.len());
     for sql in statements {
-        let check = if busy || !is_checkable(&sql, dialect) {
+        let checkable = dialect.is_some_and(|dialect| is_checkable(&sql, dialect));
+        let check = if busy || !checkable {
             StatementCheck::Skipped
         } else {
             let work = worker.connection.validate(&sql);

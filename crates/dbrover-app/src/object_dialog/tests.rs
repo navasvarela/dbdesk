@@ -93,7 +93,7 @@ struct Open {
 /// draw icons). Every action it returns is kept, in order.
 fn harness(data_source: &DataSource, form: impl ObjectForm + 'static) -> Harness<'static, Open> {
     let open = Open {
-        dialog: ObjectDialog::new(Target::new(data_source), Box::new(form)),
+        dialog: ObjectDialog::new(Target::new(data_source).unwrap(), Box::new(form)),
         actions: Vec::new(),
     };
     let mut fonts_installed = false;

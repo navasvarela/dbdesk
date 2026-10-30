@@ -7,9 +7,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use dbrover_core::DataSource;
-use dbrover_sql::{
-    Analysis, Dialect, NamedSchemas, StatementKind, analyze, commits_implicitly, split_statements,
-};
+use dbrover_language::{Analysis, NamedSchemas, QueryLanguage, StatementKind};
+use dbrover_sql::commits_implicitly;
 use dbrover_store::HistoryOutcome;
 use jiff::Timestamp;
 use rmcp::schemars;
@@ -78,8 +77,8 @@ impl DbRoverMcp {
     pub(crate) async fn execute_json(&self, args: ExecuteArgs) -> Result<Value, ToolError> {
         let tool = "execute";
         let data_source = self.data_source(tool, &args.data_source)?;
-        let dialect = Dialect::from(data_source.config.driver());
-        let planned = plan(&args.sql, dialect);
+        let language = QueryLanguage::from(data_source.config.driver());
+        let planned = plan(&args.sql, language);
         if planned.is_empty() {
             return Err(ToolError::invalid("there is no statement to run"));
         }
@@ -98,7 +97,11 @@ impl DbRoverMcp {
             .iter()
             .map(|statement| statement.text.to_owned())
             .collect();
-        let atomic = !texts.iter().any(|text| commits_implicitly(text, dialect));
+        let atomic = !texts.iter().any(|text| {
+            language
+                .dialect()
+                .is_some_and(|dialect| commits_implicitly(text, dialect))
+        });
         let max_rows = self.inner.project.limits.max_rows;
         let done = Arc::new(AtomicUsize::new(0));
         let counter = Arc::clone(&done);
@@ -242,15 +245,16 @@ impl DbRoverMcp {
 }
 
 /// Splits and classifies the statements, in order.
-fn plan(sql: &str, dialect: Dialect) -> Vec<Planned<'_>> {
-    split_statements(sql, dialect)
+fn plan(sql: &str, language: QueryLanguage) -> Vec<Planned<'_>> {
+    language
+        .split(sql)
         .into_iter()
         .map(|range| {
             let text = &sql[range.clone()];
             Planned {
                 text,
                 range,
-                analysis: analyze(text, dialect).map_err(|error| error.to_string()),
+                analysis: language.analyze(text).map_err(|error| error.to_string()),
             }
         })
         .collect()
@@ -299,13 +303,15 @@ fn results_json(
 
 #[cfg(test)]
 mod tests {
+    use dbrover_sql::Dialect;
+
     use super::*;
 
     #[test]
     fn plans_each_statement_with_its_place_in_the_text() {
         let sql = "INSERT INTO t VALUES (1);\n  CREATE TABLE u (id int);  SELEC 1";
 
-        let planned = plan(sql, Dialect::Postgres);
+        let planned = plan(sql, QueryLanguage::Sql(Dialect::Postgres));
 
         let texts: Vec<&str> = planned.iter().map(|statement| statement.text).collect();
         assert_eq!(
@@ -330,10 +336,13 @@ mod tests {
     #[test]
     fn never_runs_transaction_control() {
         for sql in ["BEGIN", "COMMIT", "ROLLBACK", "SAVEPOINT a"] {
-            let planned = plan(sql, Dialect::Postgres);
+            let planned = plan(sql, QueryLanguage::Sql(Dialect::Postgres));
             assert!(planned[0].needs().is_err(), "{sql}");
         }
-        assert_eq!(plan("SELECT 1", Dialect::Mysql)[0].needs(), Ok(None));
-        assert!(plan("  ;  -- nothing\n", Dialect::Sqlite).is_empty());
+        assert_eq!(
+            plan("SELECT 1", QueryLanguage::Sql(Dialect::Mysql))[0].needs(),
+            Ok(None)
+        );
+        assert!(plan("  ;  -- nothing\n", QueryLanguage::Sql(Dialect::Sqlite)).is_empty());
     }
 }

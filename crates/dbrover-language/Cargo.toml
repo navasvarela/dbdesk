@@ -1,0 +1,21 @@
+[package]
+name = "dbrover-language"
+description = "The query languages DbRover's consoles speak: SQL in each dialect, and the others beside it."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+# `QueryLanguage::Test`, a language built only for tests (docs/nosql.md, N0a). Other crates turn it
+# on in their dev-dependencies; nothing that ships has it.
+test-language = []
+
+[dependencies]
+dbrover-core.workspace = true
+dbrover-sql.workspace = true
+
+[lints]
+workspace = true

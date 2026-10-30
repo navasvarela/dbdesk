@@ -9,8 +9,8 @@ use dbrover_core::{
     RelationName, Row, TableDescription, describe_error,
 };
 use dbrover_sql::{
-    ColumnSpec, DdlOperation, ExistingTable, ForeignKeySwitch, ObjectName, RoleSpec, TableSpec,
-    rebuild_refusal,
+    ColumnSpec, DdlOperation, Dialect, ExistingTable, ForeignKeySwitch, ObjectName, RoleSpec,
+    TableSpec, rebuild_refusal,
 };
 use dbrover_store::{HistoryEntry, HistoryOutcome, HistorySource, redact_secrets};
 use jiff::Timestamp;
@@ -36,13 +36,19 @@ pub(super) async fn apply(
             ),
             applied: 0,
         })
-    } else if context.dialect().capabilities().transactional_ddl {
-        match context.dialect().capabilities().foreign_key_switch {
-            Some(switch) => with_foreign_keys_off(worker, statements, switch).await?,
-            None => in_transaction(worker, statements, None).await?,
+    } else if let Some(dialect) = context.dialect() {
+        let capabilities = dialect.capabilities();
+        match capabilities.foreign_key_switch {
+            _ if !capabilities.transactional_ddl => run_each(worker, statements).await?,
+            Some(switch) => with_foreign_keys_off(worker, dialect, statements, switch).await?,
+            None => in_transaction(worker, dialect, statements, None).await?,
         }
     } else {
-        run_each(worker, statements).await?
+        Err(DdlFailure {
+            statement: None,
+            message: context.needs_sql("its objects can't be created or changed here"),
+            applied: 0,
+        })
     };
     match &result {
         Ok(()) => tracing::info!(
@@ -71,6 +77,7 @@ pub(super) async fn apply(
 /// committing, and switched on again afterwards, whatever happened.
 async fn with_foreign_keys_off(
     worker: &mut Worker<'_>,
+    dialect: Dialect,
     statements: &[String],
     switch: ForeignKeySwitch,
 ) -> Result<Result<(), DdlFailure>, Disconnected> {
@@ -84,12 +91,12 @@ async fn with_foreign_keys_off(
         Err(error) => return Ok(Err(unwrapped(&error))),
     };
     if !enforced {
-        return in_transaction(worker, statements, None).await;
+        return in_transaction(worker, dialect, statements, None).await;
     }
     if let Err(error) = transaction::run_counting(worker, switch.off, None).await? {
         return Ok(Err(unwrapped(&error)));
     }
-    let result = in_transaction(worker, statements, Some(switch.check)).await?;
+    let result = in_transaction(worker, dialect, statements, Some(switch.check)).await?;
     if let Err(error) = transaction::run_counting(worker, switch.on, None).await? {
         tracing::warn!(
             data_source = %worker.context.name(),
@@ -124,6 +131,7 @@ const BROKEN_KEYS_SHOWN: usize = 100;
 /// points at nothing, the transaction is rolled back too if it answers any.
 async fn in_transaction(
     worker: &mut Worker<'_>,
+    dialect: Dialect,
     statements: &[String],
     check: Option<&str>,
 ) -> Result<Result<(), DdlFailure>, Disconnected> {
@@ -132,7 +140,7 @@ async fn in_transaction(
         message: describe_error(error),
         applied: 0,
     };
-    let begin = worker.context.dialect().begin_transaction();
+    let begin = dialect.begin_transaction();
     if let Err(error) = transaction::run_counting(worker, begin, None).await? {
         return Ok(Err(unwrapped(&error)));
     }
@@ -243,17 +251,16 @@ pub(super) async fn load(
     path: CatalogPath,
 ) {
     let kind = path.last().map(|segment| segment.kind);
-    let result =
-        if kind == Some(NodeKind::Table) && context.dialect().capabilities().rebuilds_table_ddl {
-            rebuild(context, connection, &path).await
-        } else if kind == Some(NodeKind::Role) {
-            rebuild_role(context, connection, &path).await
-        } else {
-            connection
-                .definition(&path)
-                .await
-                .map_err(|error| describe_error(&error))
-        };
+    let result = if kind == Some(NodeKind::Table) && rebuilds_table_ddl(context) {
+        rebuild(context, connection, &path).await
+    } else if kind == Some(NodeKind::Role) {
+        rebuild_role(context, connection, &path).await
+    } else {
+        connection
+            .definition(&path)
+            .await
+            .map_err(|error| describe_error(&error))
+    };
     if let Err(error) = &result {
         tracing::warn!(data_source = %context.name(), "could not load the DDL of {path}: {error}");
     }
@@ -262,6 +269,19 @@ pub(super) async fn load(
         path,
         result,
     });
+}
+
+fn rebuilds_table_ddl(context: &SessionContext) -> bool {
+    context
+        .dialect()
+        .is_some_and(|dialect| dialect.capabilities().rebuilds_table_ddl)
+}
+
+/// The dialect to write a statement in, or why there is none.
+fn sql_dialect(context: &SessionContext) -> Result<Dialect, String> {
+    context
+        .dialect()
+        .ok_or_else(|| context.needs_sql("DbRover can't write its DDL"))
 }
 
 /// `CREATE TABLE` from the table's description, through the same builder as New table,
@@ -273,6 +293,7 @@ async fn rebuild(
     connection: &mut dyn Connection,
     path: &CatalogPath,
 ) -> Result<String, String> {
+    let dialect = sql_dialect(context)?;
     let description = describe_at(connection, path).await?;
     let spec = TableSpec {
         name: ObjectName::new(Some(&description.schema), &description.name),
@@ -287,7 +308,7 @@ async fn rebuild(
         checks: Vec::new(),
     };
     let mut statements = DdlOperation::CreateTable(spec)
-        .statements(context.dialect())
+        .statements(dialect)
         .map_err(|error| error.to_string())?;
     let constraints = connection
         .children(&path.child(
@@ -356,12 +377,12 @@ async fn existing_table(
     connection: &mut dyn Connection,
     path: &CatalogPath,
 ) -> Result<ExistingTable, String> {
+    let dialect = sql_dialect(context)?;
     let description = describe_at(connection, path).await?;
     let constraints = connection
         .describe_constraints(&description.table_name())
         .await
         .map_err(|error| describe_error(&error))?;
-    let dialect = context.dialect();
     let mut table = ExistingTable::from_catalog(description, constraints, dialect);
     if dialect.capabilities().rebuilds_tables {
         let definition = connection
@@ -405,6 +426,7 @@ async fn rebuild_role(
     connection: &mut dyn Connection,
     path: &CatalogPath,
 ) -> Result<String, String> {
+    let dialect = sql_dialect(context)?;
     let role = connection
         .describe_role(path)
         .await
@@ -414,7 +436,7 @@ async fn rebuild_role(
         spec: RoleSpec::from(&role),
         password: None,
     }
-    .statements(context.dialect())
+    .statements(dialect)
     .map_err(|error| error.to_string())?;
     Ok(statements
         .iter()

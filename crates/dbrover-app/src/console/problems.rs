@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use dbrover_core::RejectionKind;
 use dbrover_engine::StatementCheck;
+use dbrover_language::QueryLanguage;
 use dbrover_sql::{
     Dialect, LintRule, Problem, ProblemSource, Severity, TokenKind, check_statement, is_checkable,
     split_statements, tokenize,
@@ -220,7 +221,7 @@ impl Problems {
                     .position
                     .or_else(|| named_in(&rejection.message, sql, input.dialect))
                     .unwrap_or(0);
-                let range = error_marker(sql, input.dialect, position);
+                let range = error_marker(sql, QueryLanguage::Sql(input.dialect), position);
                 found.push(Problem {
                     range,
                     severity: match rejection.kind {

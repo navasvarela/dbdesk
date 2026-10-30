@@ -3,6 +3,7 @@
 
 use dbrover_core::SafetyLevel;
 use dbrover_engine::DdlFailure;
+use dbrover_language::QueryLanguage;
 use dbrover_sql::DdlError;
 use dbrover_store::redact_secrets;
 use egui::{Align, Id, Layout, Modal, ScrollArea, TextEdit, Ui};
@@ -258,7 +259,7 @@ fn execute_disabled_reason(target: &Target, confirmed: bool, running: bool) -> S
 /// The SQL, highlighted as the console highlights it, selectable but not editable.
 fn sql(ui: &mut Ui, target: &Target, text: &str) {
     let marks = Marks::default();
-    let mut layouter = highlight::layouter(target.dialect, &marks);
+    let mut layouter = highlight::layouter(QueryLanguage::Sql(target.dialect), &marks);
     ScrollArea::vertical()
         .id_salt("object_dialog_sql")
         .max_height(SQL_HEIGHT)

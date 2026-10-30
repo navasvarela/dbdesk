@@ -7,6 +7,7 @@ use dbrover_core::{
     CatalogNode, CatalogPath, DataSourceId, DriverKind, FolderKind, NodeKind, ProjectId, Quoting,
 };
 use dbrover_engine::SessionState;
+use dbrover_language::QueryLanguage;
 use dbrover_sql::{Capabilities, Dialect, SchemaCreation, TableChange, UserModel};
 use dbrover_store::{ActionId, ActionTarget, ConsoleKey, CustomAction, Project};
 use egui::{
@@ -521,12 +522,12 @@ fn data_source_tree(
     }
     response.context_menu(|ui| data_source_menu(ui, entry, tree, actions));
     if expanded {
-        let dialect = Dialect::from(entry.data_source.config.driver());
+        let language = QueryLanguage::from(entry.data_source.config.driver());
         let tree = TreeView {
             id,
             catalog: &entry.catalog,
-            quoting: dialect.quoting(),
-            capabilities: dialect.capabilities(),
+            quoting: language.quoting(),
+            capabilities: language.dialect().map(Dialect::capabilities),
             own_database: entry.data_source.config.database(),
             driver: entry.data_source.config.driver(),
             actions: tree.actions,
@@ -566,17 +567,21 @@ fn data_source_menu(
         actions.push(ExplorerAction::NewConsole(id));
     }
     saved_consoles_menu(ui, id, tree.saved_consoles, actions);
-    let capabilities = Dialect::from(entry.data_source.config.driver()).capabilities();
     let root = CatalogPath::root();
     let mut new = Vec::new();
-    if capabilities.schema_creation == SchemaCreation::CreateDatabase {
-        new.push((
-            icons::TREE_STRUCTURE,
-            "Schema…",
-            Helper::NewSchema(root.clone()),
-        ));
+    if let Some(capabilities) = QueryLanguage::from(entry.data_source.config.driver())
+        .dialect()
+        .map(Dialect::capabilities)
+    {
+        if capabilities.schema_creation == SchemaCreation::CreateDatabase {
+            new.push((
+                icons::TREE_STRUCTURE,
+                "Schema…",
+                Helper::NewSchema(root.clone()),
+            ));
+        }
+        new.extend(new_roles(&root, capabilities));
     }
-    new.extend(new_roles(&root, capabilities));
     if !new.is_empty() {
         ui.separator();
         let label = widgets::icon_text(ui, icons::PLUS, Color32::PLACEHOLDER, "New");
@@ -676,8 +681,9 @@ struct TreeView<'a> {
     catalog: &'a CatalogTree,
     /// For the names the context menu copies.
     quoting: Quoting,
-    /// Which object helpers the context menu offers.
-    capabilities: &'static Capabilities,
+    /// Which object helpers the context menu offers; `None` when the data source doesn't
+    /// speak SQL, which is all the helpers and **Open data** write.
+    capabilities: Option<&'static Capabilities>,
     /// The database the data source connects to, where its tree lists several. The helpers'
     /// statements run on that connection, so they are offered only inside it.
     own_database: Option<&'a str>,
@@ -864,10 +870,11 @@ fn node_menu(
     actions: &mut Vec<ExplorerAction>,
 ) {
     let id = tree.id;
-    let holds_rows = matches!(
-        node.kind(),
-        Some(NodeKind::Table | NodeKind::View | NodeKind::MaterializedView)
-    );
+    let holds_rows = tree.capabilities.is_some()
+        && matches!(
+            node.kind(),
+            Some(NodeKind::Table | NodeKind::View | NodeKind::MaterializedView)
+        );
     if holds_rows && widgets::menu_item(ui, icons::TABLE, "Open data").clicked() {
         actions.push(ExplorerAction::OpenData(id, node.path.clone()));
     }
@@ -875,6 +882,7 @@ fn node_menu(
         actions.push(ExplorerAction::ExportData(id, node.path.clone()));
     }
     if node.kind() == Some(NodeKind::Table)
+        && tree.capabilities.is_some()
         && tree.can_change(&node.path)
         && widgets::menu_item(ui, icons::FILE_CSV, "Import CSV…").clicked()
     {
@@ -918,7 +926,9 @@ fn helpers_menu(
     actions: &mut Vec<ExplorerAction>,
 ) {
     let path = &node.path;
-    let capabilities = tree.capabilities;
+    let Some(capabilities) = tree.capabilities else {
+        return;
+    };
     let mut new: Vec<(&str, &str, Helper)> = Vec::new();
     let mut object: Vec<(&str, &str, Helper)> = Vec::new();
     match node.kind() {

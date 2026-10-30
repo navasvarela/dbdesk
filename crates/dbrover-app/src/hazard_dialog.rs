@@ -1,4 +1,5 @@
-use dbrover_sql::{Dialect, Hazard, StatementKind, classify, commits_implicitly, hazard};
+use dbrover_language::{QueryLanguage, StatementKind};
+use dbrover_sql::{Hazard, commits_implicitly, hazard};
 use dbrover_store::ConsoleKey;
 use egui::{Align, Id, Layout, Modal};
 
@@ -40,7 +41,7 @@ pub enum Review {
 /// What the console the statements run in adds to the review.
 #[derive(Debug, Clone, Copy)]
 pub struct ReviewContext<'a> {
-    pub dialect: Dialect,
+    pub language: QueryLanguage,
     /// The console commits by hand, or a transaction is open: a statement that commits by
     /// itself would undo what the user expects Rollback to do.
     pub relies_on_rollback: bool,
@@ -121,10 +122,13 @@ impl HazardConfirmation {
 fn statement_warnings(sql: &str, context: ReviewContext<'_>) -> Vec<String> {
     let careful = context
         .careful
-        .and_then(|data_source| careful_warning(sql, context.dialect, data_source));
-    let rows = hazard(sql, context.dialect).map(Hazard::description);
-    let commit = (context.relies_on_rollback && commits_implicitly(sql, context.dialect))
-        .then_some(COMMITS_AT_ONCE);
+        .and_then(|data_source| careful_warning(sql, context.language, data_source));
+    let dialect = context.language.dialect();
+    let rows = dialect
+        .and_then(|dialect| hazard(sql, dialect))
+        .map(Hazard::description);
+    let commits = dialect.is_some_and(|dialect| commits_implicitly(sql, dialect));
+    let commit = (context.relies_on_rollback && commits).then_some(COMMITS_AT_ONCE);
     careful
         .into_iter()
         .chain(rows.into_iter().chain(commit).map(str::to_owned))
@@ -134,8 +138,8 @@ fn statement_warnings(sql: &str, context: ReviewContext<'_>) -> Vec<String> {
 
 /// On a careful data source, what a statement that may change something does. Reading and
 /// ending a transaction ask nothing: whatever the transaction changed asked already.
-fn careful_warning(sql: &str, dialect: Dialect, data_source: &str) -> Option<String> {
-    let what = match classify(sql, dialect) {
+fn careful_warning(sql: &str, language: QueryLanguage, data_source: &str) -> Option<String> {
+    let what = match language.classify(sql) {
         Ok(StatementKind::Read | StatementKind::Transaction) => return None,
         Ok(kind) => format!("this statement {}", kind.description()),
         Err(_) => "what this statement does can't be told".to_owned(),
@@ -152,12 +156,14 @@ fn warning(description: &str, sql: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use dbrover_sql::Dialect;
+
     use super::*;
 
     #[test]
     fn warns_of_an_implicit_commit_only_where_rollback_was_counted_on() {
         let context = |dialect, relies_on_rollback| ReviewContext {
-            dialect,
+            language: QueryLanguage::Sql(dialect),
             relies_on_rollback,
             careful: None,
         };
@@ -189,7 +195,7 @@ mod tests {
     #[test]
     fn a_careful_data_source_asks_before_every_change_naming_itself() {
         let context = ReviewContext {
-            dialect: Dialect::Postgres,
+            language: QueryLanguage::Sql(Dialect::Postgres),
             relies_on_rollback: false,
             careful: Some("production"),
         };
