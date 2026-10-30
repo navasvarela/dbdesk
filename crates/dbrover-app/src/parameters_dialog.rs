@@ -154,6 +154,7 @@ mod tests {
             purpose: RunPurpose::Run,
             parameters: ParameterValues::default(),
             origin: RunOrigin::Console,
+            destination: crate::console::RunDestination::Grid,
         };
         let names = ["since", "note", "new"].map(str::to_owned).to_vec();
 

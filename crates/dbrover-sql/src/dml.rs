@@ -167,6 +167,11 @@ impl<'a> RowSql<'a> {
         )
     }
 
+    /// `SELECT *` of the whole table, in the table's column order.
+    pub fn select_all(&self) -> String {
+        format!("SELECT * FROM {}", self.table_name())
+    }
+
     /// `SELECT * … WHERE <each column equals its value>`: the rows a foreign key's values name,
     /// or the rows whose key names a given row.
     pub fn select(&self, filter: &[ColumnValue<'_>]) -> String {

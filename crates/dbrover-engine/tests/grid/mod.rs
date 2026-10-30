@@ -529,7 +529,38 @@ fn exports_every_row_on_every_engine() {
             source.name
         );
 
-        run_ok(&mut engine, &source, 5, &[&format!("DROP TABLE {digits}")]);
+        // The same rows as a table, exported on the explorer's connection. ClickHouse's tables
+        // aren't described, so it has no grid edits and no table to name this way here.
+        if source.dialect != Dialect::ClickHouse {
+            let numbers = scratch_table("numbers");
+            run_ok(
+                &mut engine,
+                &source,
+                5,
+                &[
+                    &format!("CREATE TABLE {numbers} (n int)"),
+                    &format!(
+                        "INSERT INTO {numbers} (n) SELECT {n} FROM {digits} a, {digits} b, \
+                         {digits} c, {digits} e WHERE {n} < 1200"
+                    ),
+                ],
+            );
+            let described = describe(&mut engine, &source, &numbers);
+            let table = dbrover_export::SqlTable {
+                schema: Some(described.schema),
+                name: described.name,
+            };
+            let csv = dir.path().join(format!("{}-table.csv", source.name));
+            let (progress, result) = export_table(&mut engine, source.id, table, &csv);
+            assert_eq!(result, Ok(1200), "{}", source.name);
+            assert_eq!(progress, [500, 1000, 1200], "{}", source.name);
+            let text = std::fs::read_to_string(&csv).unwrap();
+            assert_eq!(text.lines().count(), 1201, "{}", source.name);
+            assert!(text.starts_with("n\r\n"), "{}", source.name);
+            run_ok(&mut engine, &source, 6, &[&format!("DROP TABLE {numbers}")]);
+        }
+
+        run_ok(&mut engine, &source, 7, &[&format!("DROP TABLE {digits}")]);
     }
     engine.shut_down();
 }
@@ -551,6 +582,98 @@ fn read_parquet(path: &std::path::Path, sql: &str) -> Vec<Vec<Option<String>>> {
         cursor.finish().await.unwrap();
         rows
     })
+}
+
+/// Exports every row of a table on the explorer's connection, as Export data… asks, and
+/// returns the progress reported and the outcome.
+fn export_table(
+    engine: &mut TestEngine,
+    data_source: DataSourceId,
+    table: dbrover_export::SqlTable,
+    path: &std::path::Path,
+) -> (Vec<usize>, Result<usize, String>) {
+    engine.send(Command::ExportTable {
+        data_source,
+        export: dbrover_engine::TableExport {
+            run: RunId(900),
+            table,
+            path: path.to_owned(),
+            spec: dbrover_export::ExportSpec::Csv(Default::default()),
+        },
+    });
+    let mut progress = Vec::new();
+    loop {
+        match engine.next_event() {
+            Event::ExportProgress { rows, .. } => progress.push(rows),
+            Event::ExportFinished { result, .. } => return (progress, result),
+            _ => {}
+        }
+    }
+}
+
+/// A table export stops when cancelled, leaving no file, and runs on a read-only data source,
+/// since it only reads.
+#[test]
+fn cancels_a_table_export_and_runs_one_on_a_read_only_data_source() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    engine.expect_started(vec![]);
+    let file = sqlite_database(dir.path());
+    let data_source = DataSource {
+        safety: dbrover_core::SafetyLevel::ReadOnly,
+        ..sqlite_data_source(file.clone())
+    };
+    let id = data_source.id;
+    let database = rusqlite::Connection::open(&file).unwrap();
+    database
+        .execute_batch(
+            "CREATE TABLE big (n INTEGER);
+             WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 100000)
+             INSERT INTO big SELECT n FROM r;",
+        )
+        .unwrap();
+    drop(database);
+    engine.send(Command::SaveDataSource {
+        data_source,
+        password: PasswordUpdate::Keep,
+        ssh_secret: PasswordUpdate::Keep,
+    });
+    assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
+    let table = dbrover_export::SqlTable {
+        schema: None,
+        name: "big".to_owned(),
+    };
+    let path = dir.path().join("big.csv");
+
+    engine.send(Command::ExportTable {
+        data_source: id,
+        export: dbrover_engine::TableExport {
+            run: RunId(1),
+            table: table.clone(),
+            path: path.clone(),
+            spec: dbrover_export::ExportSpec::Csv(Default::default()),
+        },
+    });
+    loop {
+        if let Event::ExportProgress { .. } = engine.next_event() {
+            break;
+        }
+    }
+    engine.send(Command::CancelTableExport {
+        data_source: id,
+        run: RunId(1),
+    });
+    loop {
+        if let Event::ExportFinished { result, .. } = engine.next_event() {
+            assert_eq!(result, Err("Export cancelled".to_owned()));
+            break;
+        }
+    }
+    assert!(!path.exists());
+
+    let (_, written) = export_table(&mut engine, id, table, &path);
+    assert_eq!(written, Ok(100_000));
+    engine.shut_down();
 }
 
 /// Cancelling stops the statement and removes the partial file; a failing statement leaves no

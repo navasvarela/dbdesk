@@ -1,21 +1,25 @@
 //! The export dialog: which rows, the format, its options and a preview, then where to save
-//! the file. It starts from the format and options used last, which the app saves. Also the
-//! platform's save dialog, for exported rows and the query history.
+//! the file, for a console's rows, a statement run straight to a file, or a table's every row.
+//! It starts from the format and options used last, which the app saves. Also the platform's
+//! save dialog, for exported rows and the query history.
 
 mod options;
+mod subject;
 
 use std::path::PathBuf;
 
 use dbrover_core::{Row, ValueKind};
+use dbrover_engine::{Event, Exporter, RunId};
 use dbrover_export::{
     CSV_FOR_EXCEL, CsvOptions, ExportColumn, ExportFormat, ExportOptions, ExportSpec, RowSource,
     SourceTable, SqlTable, export_choices, render,
 };
-use dbrover_store::ConsoleKey;
 use egui::{Align, Button, Id, Layout, Modal, RichText, ScrollArea, TextStyle, Ui};
 use serde::{Deserialize, Serialize};
 
 use self::options::{OptionTexts, options_ui};
+use self::subject::TableProgress;
+pub use self::subject::{ExportSubject, TableTarget};
 use crate::console::ExportedRows;
 use crate::theme::Palette;
 
@@ -51,21 +55,22 @@ pub struct ExportPreview {
 
 pub enum ExportDialogAction {
     /// Ask where to save, then export.
-    Export {
-        rows: ExportedRows,
-        spec: ExportSpec,
-    },
+    Export(ExportSpec),
+    /// Stop the table's export.
+    Cancel(RunId),
     Close,
 }
 
 pub struct ExportDialog {
-    console: ConsoleKey,
+    subject: ExportSubject,
+    /// Which of a console's rows; the other subjects export every row.
     rows: ExportedRows,
     choices: ExportChoices,
     preview: ExportPreview,
     /// The table an `INSERT` goes to when the rows' own isn't known.
     table: TableInput,
     texts: OptionTexts,
+    progress: TableProgress,
 }
 
 /// A table name typed in, with its schema if one is given.
@@ -76,19 +81,60 @@ struct TableInput {
 }
 
 impl ExportDialog {
-    pub fn new(console: ConsoleKey, preview: ExportPreview, remembered: &ExportChoices) -> Self {
+    pub fn new(subject: ExportSubject, preview: ExportPreview, remembered: &ExportChoices) -> Self {
         Self {
-            console,
+            subject,
             rows: ExportedRows::Loaded,
             texts: OptionTexts::new(&remembered.options),
             choices: remembered.clone(),
             preview,
             table: TableInput::default(),
+            progress: TableProgress::Choosing,
         }
     }
 
-    pub fn console(&self) -> &ConsoleKey {
-        &self.console
+    pub fn subject(&self) -> &ExportSubject {
+        &self.subject
+    }
+
+    /// Which of a console's rows to export.
+    pub fn rows(&self) -> ExportedRows {
+        self.rows
+    }
+
+    /// A table's export has started: the dialog shows how it goes until it ends.
+    pub fn table_export_started(&mut self, run: RunId, path: PathBuf) {
+        self.progress = TableProgress::Exporting { run, path, rows: 0 };
+    }
+
+    /// Takes in a table's description and its export's progress.
+    pub fn apply(&mut self, event: &Event) {
+        let ExportSubject::Table(target) = &self.subject else {
+            return;
+        };
+        let ours = |exporter: &Exporter| *exporter == Exporter::DataSource(target.data_source);
+        match event {
+            Event::TableDescribed {
+                data_source,
+                table,
+                result: Ok(Some(description)),
+            } if *data_source == target.data_source && *table == target.relation => {
+                self.preview = target.described(description);
+            }
+            Event::ExportProgress { exporter, rows } if ours(exporter) => {
+                if let TableProgress::Exporting { rows: written, .. } = &mut self.progress {
+                    *written = *rows;
+                }
+            }
+            Event::ExportFinished {
+                exporter,
+                path,
+                result,
+            } if ours(exporter) && matches!(self.progress, TableProgress::Exporting { .. }) => {
+                self.progress = TableProgress::finished(path, result);
+            }
+            _ => {}
+        }
     }
 
     /// The choices to remember once the rows are exported.
@@ -107,7 +153,7 @@ impl ExportDialog {
     fn contents(&mut self, ui: &mut Ui) -> Option<ExportDialogAction> {
         ui.set_width(DIALOG_WIDTH);
         let palette = Palette::for_visuals(ui.visuals());
-        ui.heading("Export rows");
+        ui.heading(self.subject.heading());
         egui::Grid::new("export_rows_form")
             .num_columns(2)
             .spacing([12.0, 8.0])
@@ -116,7 +162,9 @@ impl ExportDialog {
                 self.rows_choice(ui);
                 ui.end_row();
                 ui.label("Format");
-                self.format_choice(ui);
+                ui.add_enabled_ui(self.progress == TableProgress::Choosing, |ui| {
+                    self.format_choice(ui);
+                });
                 ui.end_row();
             });
         ui.add_space(ui.spacing().item_spacing.y);
@@ -135,6 +183,9 @@ impl ExportDialog {
         // of height the modal allows, and push the dialog off the screen.
         let row = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
         ui.allocate_ui_with_layout(row, Layout::right_to_left(Align::Center), |ui| {
+            if self.progress != TableProgress::Choosing {
+                return self.progress_row(ui, &palette);
+            }
             let export = Button::new(RichText::new("Export…").color(palette.on_primary))
                 .fill(palette.primary);
             let clicked = ui
@@ -146,10 +197,7 @@ impl ExportDialog {
                 ui.colored_label(palette.error, problem.as_str());
             }
             match (clicked, closed, spec) {
-                (true, _, Ok(spec)) => Some(ExportDialogAction::Export {
-                    rows: self.rows,
-                    spec,
-                }),
+                (true, _, Ok(spec)) => Some(ExportDialogAction::Export(spec)),
                 (_, true, _) => Some(ExportDialogAction::Close),
                 _ => None,
             }
@@ -157,7 +205,41 @@ impl ExportDialog {
         .inner
     }
 
+    /// A table's export under way, with Cancel, or how it ended, with Close.
+    fn progress_row(&self, ui: &mut Ui, palette: &Palette) -> Option<ExportDialogAction> {
+        match &self.progress {
+            TableProgress::Exporting { run, rows, .. } => {
+                let cancel = ui.button("Cancel export").clicked();
+                ui.spinner();
+                ui.label(format!("Exporting… {rows} rows"));
+                cancel.then_some(ExportDialogAction::Cancel(*run))
+            }
+            TableProgress::Done(result) => {
+                let close = ui.button("Close").clicked();
+                match result {
+                    Ok(done) => ui.label(done.as_str()),
+                    Err(error) => ui.colored_label(palette.error, error.as_str()),
+                };
+                close.then_some(ExportDialogAction::Close)
+            }
+            TableProgress::Choosing => None,
+        }
+    }
+
+    /// Loaded or all rows for a console's result; what the other subjects export, said.
     fn rows_choice(&mut self, ui: &mut Ui) {
+        let note = match &self.subject {
+            ExportSubject::Grid(_) => None,
+            ExportSubject::Statement { .. } => Some(
+                "Every row the statement at the cursor returns, written as they arrive, \
+                 without loading the grid",
+            ),
+            ExportSubject::Table(_) => Some("Every row, read a page at a time"),
+        };
+        if let Some(note) = note {
+            ui.label(note);
+            return;
+        }
         ui.vertical(|ui| {
             let loaded = format!(
                 "Loaded rows: {}, as sorted and filtered here",
@@ -251,7 +333,7 @@ impl ExportDialog {
                     schema: (!schema.is_empty()).then(|| schema.to_owned()),
                     name: name.to_owned(),
                 },
-                columns: (0..self.preview.columns.len()).collect(),
+                columns: None,
                 key: None,
             });
         }
@@ -279,6 +361,13 @@ impl ExportDialog {
             return;
         };
         let columns = &self.preview.columns;
+        if columns.is_empty() {
+            ui.weak(match self.subject {
+                ExportSubject::Table(_) => "The columns show once the table is described",
+                _ => "The file's columns are the statement's, known once it runs",
+            });
+            return;
+        }
         match render(spec, columns, &self.preview.sample) {
             Some(text) => text_preview(ui, &text),
             None => column_preview(ui, spec.format(), columns),

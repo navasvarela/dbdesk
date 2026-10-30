@@ -45,9 +45,10 @@ pub use programs::{
     ProgramRunner,
 };
 pub use protocol::{
-    Command, ConsoleId, DatabaseFile, DdlFailure, EditFailure, Event, ImportFailure, PasswordKept,
-    PasswordUpdate, RowEdit, RowsImport, RunId, RunOrigin, RunOutcome, RunPurpose, SessionState,
-    StatementCheck, StatementFailure, StatementSummary, TransactionEnd, TransactionMode,
+    Command, ConsoleId, DatabaseFile, DdlFailure, EditFailure, Event, Exporter, ImportFailure,
+    PasswordKept, PasswordUpdate, RowEdit, RowsImport, RunId, RunOrigin, RunOutcome, RunPurpose,
+    SessionState, StatementCheck, StatementFailure, StatementSummary, TableExport, TransactionEnd,
+    TransactionMode,
 };
 pub use releases::{GithubReleases, Release, ReleaseError, ReleaseFeed};
 pub use repaint::Repaint;

@@ -35,6 +35,8 @@ pub enum Action {
     FindNext,
     FindPrevious,
     Settings,
+    /// Run the statement at the cursor straight into a file.
+    RunToFile,
     /// Copy the selected cells as TSV with a header line.
     CopyWithHeaders,
     /// Copy the selected cells in a format, as **Copy as ›** does.
@@ -42,7 +44,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Self; 31] = [
+    pub const ALL: [Self; 32] = [
         Self::Complete,
         Self::RunCurrent,
         Self::RunAll,
@@ -65,6 +67,7 @@ impl Action {
         Self::FindNext,
         Self::FindPrevious,
         Self::Settings,
+        Self::RunToFile,
         Self::CopyWithHeaders,
         Self::CopyAs(ClipboardFormat::Csv),
         Self::CopyAs(ClipboardFormat::Tsv),
@@ -100,6 +103,7 @@ impl Action {
             Self::FindNext => "editor.find-next",
             Self::FindPrevious => "editor.find-previous",
             Self::Settings => "app.settings",
+            Self::RunToFile => "console.run-to-file",
             Self::CopyWithHeaders => "grid.copy-with-headers",
             Self::CopyAs(format) => format.keymap_id(),
         }
@@ -129,6 +133,7 @@ impl Action {
             Self::FindNext => "Go to the next match",
             Self::FindPrevious => "Go to the previous match",
             Self::Settings => "Open the settings",
+            Self::RunToFile => "Run the statement at the cursor straight into a file",
             Self::CopyWithHeaders => "Copy the selected cells with their column names",
             Self::CopyAs(format) => format.description(),
         }
@@ -180,6 +185,9 @@ impl Action {
             ],
             // The settings key of macOS apps, and of VS Code and JetBrains IDEs elsewhere.
             Self::Settings => shortcut(Modifiers::COMMAND, Key::Comma),
+            // ⌘↵ with ⌥, as ⇧ runs everything: DataGrip's Execute to File has no key of its
+            // own, and this one is free.
+            Self::RunToFile => shortcut(Modifiers::COMMAND | Modifiers::ALT, Key::Enter),
             // ⌘C with ⇧, which no other action here takes.
             Self::CopyWithHeaders => shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::C),
             Self::ShowHistory | Self::Commit | Self::Rollback | Self::CopyAs(_) => Vec::new(),

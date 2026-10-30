@@ -64,6 +64,8 @@ pub enum ExplorerAction {
     CopyDdl(DataSourceId, CatalogPath),
     /// Asks for a CSV file, then opens the dialog that imports it into the table at the path.
     ImportCsv(DataSourceId, CatalogPath),
+    /// Export data…: every row of a table or view, to a file.
+    ExportData(DataSourceId, CatalogPath),
     /// Makes the node at the path, or the data source for the root, the one that keys and the
     /// Actions menu act on.
     Select(DataSourceId, CatalogPath),
@@ -868,6 +870,9 @@ fn node_menu(
     );
     if holds_rows && widgets::menu_item(ui, icons::TABLE, "Open data").clicked() {
         actions.push(ExplorerAction::OpenData(id, node.path.clone()));
+    }
+    if holds_rows && widgets::menu_item(ui, icons::EXPORT, "Export data…").clicked() {
+        actions.push(ExplorerAction::ExportData(id, node.path.clone()));
     }
     if node.kind() == Some(NodeKind::Table)
         && tree.can_change(&node.path)

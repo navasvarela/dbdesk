@@ -31,8 +31,8 @@ use crate::transfer;
 use crate::tunnels::Tunnels;
 use crate::updater::{self, UpdateInstaller};
 use crate::{
-    Command, ConsoleId, EditFailure, EngineConfig, Event, HostKey, PasswordKept, PasswordUpdate,
-    ProcessEnvironment, RunOutcome, StatementCheck,
+    Command, ConsoleId, EditFailure, EngineConfig, Event, ExportAll, Exporter, HostKey,
+    PasswordKept, PasswordUpdate, ProcessEnvironment, RunOutcome, StatementCheck,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -382,10 +382,24 @@ impl Engine {
             Command::ExportRows { console, export } => {
                 tokio::spawn(export::run(console, export, self.events.clone()));
             }
+            Command::ExportTable {
+                data_source,
+                export,
+            } => self.request(data_source, SessionRequest::ExportTable(export)),
+            Command::RunToFile {
+                console,
+                data_source,
+                export,
+            } => self.run_to_file(console, data_source, export),
+            Command::CancelTableExport { data_source, run } => {
+                if let Some(session) = self.sessions.get(&data_source) {
+                    session.cancel(run);
+                }
+            }
             Command::ExportAllRows { console, export } => match self.consoles.get(&console) {
                 Some(session) => session.session.request(SessionRequest::ExportAll(export)),
                 None => self.events.send(Event::ExportFinished {
-                    console,
+                    exporter: Exporter::Console(console),
                     path: export.path,
                     result: Err("the console isn't connected; run its query again".to_owned()),
                 }),
@@ -790,6 +804,34 @@ impl Engine {
     /// Queues a run on the console's session, (re)connecting it if it isn't connected to
     /// `data_source`.
     fn execute(&mut self, console: ConsoleId, data_source: DataSourceId, script: Script) {
+        match self.console_session(console, data_source) {
+            Some(session) => session.request(SessionRequest::Execute(script)),
+            None => self.events.send(Event::RunFinished {
+                run: script.run,
+                outcome: RunOutcome::Failed,
+                elapsed: std::time::Duration::ZERO,
+            }),
+        }
+    }
+
+    fn run_to_file(&mut self, console: ConsoleId, data_source: DataSourceId, export: ExportAll) {
+        match self.console_session(console, data_source) {
+            Some(session) => session.request(SessionRequest::ExportAll(export)),
+            None => self.events.send(Event::ExportFinished {
+                exporter: Exporter::Console(console),
+                path: export.path,
+                result: Err("the data source is gone".to_owned()),
+            }),
+        }
+    }
+
+    /// The console's session on `data_source`, started if it has none or has one on another
+    /// data source. `None` for a data source that isn't saved.
+    fn console_session(
+        &mut self,
+        console: ConsoleId,
+        data_source: DataSourceId,
+    ) -> Option<&Session> {
         let reusable = self.consoles.get(&console).is_some_and(|existing| {
             existing.data_source == data_source && !existing.session.is_finished()
         });
@@ -797,12 +839,7 @@ impl Engine {
             self.close_console(console);
             let Some(config) = self.registry.get(data_source) else {
                 tracing::warn!(%data_source, "run requested for an unknown data source");
-                self.events.send(Event::RunFinished {
-                    run: script.run,
-                    outcome: RunOutcome::Failed,
-                    elapsed: std::time::Duration::ZERO,
-                });
-                return;
+                return None;
             };
             let session = Session::start(
                 config.clone(),
@@ -817,9 +854,7 @@ impl Engine {
                 },
             );
         }
-        if let Some(console) = self.consoles.get(&console) {
-            console.session.request(SessionRequest::Execute(script));
-        }
+        self.consoles.get(&console).map(|console| &console.session)
     }
 
     fn run_program(&mut self, request: ProgramRequest) {

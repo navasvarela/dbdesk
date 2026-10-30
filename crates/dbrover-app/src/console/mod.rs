@@ -30,9 +30,9 @@ use dbrover_core::{
     TransactionStatus,
 };
 use dbrover_engine::{
-    Command, ConsoleId, EditFailure, Event, Export, ExportAll, RunId, RunOrigin, RunOutcome,
-    RunPurpose, SessionState, StatementFailure, StatementSummary, TransactionEnd, TransactionMode,
-    WatchedFile,
+    Command, ConsoleId, EditFailure, Event, Export, ExportAll, Exporter, RunId, RunOrigin,
+    RunOutcome, RunPurpose, SessionState, StatementFailure, StatementSummary, TransactionEnd,
+    TransactionMode, WatchedFile,
 };
 use dbrover_export::{ExportColumn, ExportOptions, ExportSpec, RowSource};
 
@@ -92,6 +92,18 @@ pub struct SubmittedRun {
     pub parameters: ParameterValues,
     /// What the history records the statements as coming from.
     pub origin: RunOrigin,
+    pub destination: RunDestination,
+}
+
+/// Where a run's rows go.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunDestination {
+    Grid,
+    /// Run to file: every row of the run's one statement, written to the file as it arrives.
+    File {
+        path: PathBuf,
+        spec: ExportSpec,
+    },
 }
 
 impl SubmittedRun {
@@ -189,6 +201,9 @@ pub struct QueryConsole {
     exporting: Option<(RunId, usize)>,
     /// The format of the export last sent, for what its status says.
     last_export: Option<ExportSpec>,
+    /// The file the last run went to, run to file rather than into the grid; the results
+    /// panel shows how that went in place of rows.
+    to_file: Option<PathBuf>,
     storage: Storage,
     /// The values the console's parameters last ran with, which the parameters dialog starts
     /// from, and which running a shown statement again reuses.
@@ -416,6 +431,7 @@ impl QueryConsole {
             export_status: None,
             exporting: None,
             last_export: None,
+            to_file: None,
             storage: Storage::Config(ConfigFile::default()),
             parameters: ParameterValues::default(),
             data_source_name: String::new(),
@@ -646,6 +662,7 @@ impl QueryConsole {
             purpose: RunPurpose::Run,
             parameters: self.parameters.clone(),
             origin: RunOrigin::Console,
+            destination: RunDestination::Grid,
         })
     }
 
@@ -663,6 +680,7 @@ impl QueryConsole {
             purpose: RunPurpose::Run,
             parameters: self.parameters.clone(),
             origin: RunOrigin::Console,
+            destination: RunDestination::Grid,
         })
     }
 
@@ -680,6 +698,51 @@ impl QueryConsole {
                 None
             }
         }
+    }
+
+    /// The one statement at the cursor, or selected, as Run to file runs it; `None` if there
+    /// is no statement there or the selection holds several.
+    pub fn statement_to_file(&self) -> Option<SubmittedRun> {
+        let statements = self.statements_to_run(RunScope::Current);
+        if statements.len() != 1 {
+            return None;
+        }
+        Some(SubmittedRun {
+            statements,
+            purpose: RunPurpose::Run,
+            parameters: dbrover_sql::ParameterValues::default(),
+            origin: RunOrigin::Console,
+            destination: RunDestination::Grid,
+        })
+    }
+
+    /// Runs `sql` straight into the file at `path`, every row it returns written as they come,
+    /// without loading the grid; the results panel shows how it goes.
+    pub fn run_to_file(
+        &mut self,
+        run: RunId,
+        sql: String,
+        parameters: dbrover_sql::ParameterValues,
+        path: PathBuf,
+        spec: ExportSpec,
+    ) -> Option<Command> {
+        self.run = None;
+        self.to_file = Some(path.clone());
+        self.exporting = Some((run, 0));
+        self.export_status = None;
+        self.last_export = Some(spec.clone());
+        self.remember_parameters(&parameters);
+        Some(Command::RunToFile {
+            console: self.id,
+            data_source: self.data_source(),
+            export: ExportAll {
+                run,
+                sql,
+                parameters,
+                path,
+                spec,
+            },
+        })
     }
 
     /// What the export dialog shows of the selected statement's rows. `None` if it returns
@@ -1393,6 +1456,7 @@ impl QueryConsole {
     }
 
     pub fn begin_run(&mut self, run: RunId, statements: &[SubmittedStatement]) {
+        self.to_file = None;
         self.error_marker = None;
         self.transaction_ended = None;
         self.run = Some(RunView {
@@ -1463,13 +1527,16 @@ impl QueryConsole {
             Event::TransactionEnded { console, result } if *console == self.id => {
                 self.transaction_ended = Some(result.clone());
             }
-            Event::ExportProgress { console, rows } if *console == self.id => {
+            Event::ExportProgress {
+                exporter: Exporter::Console(console),
+                rows,
+            } if *console == self.id => {
                 if let Some((_, written)) = &mut self.exporting {
                     *written = *rows;
                 }
             }
             Event::ExportFinished {
-                console,
+                exporter: Exporter::Console(console),
                 path,
                 result,
             } if *console == self.id => {

@@ -12,7 +12,8 @@ use dbrover_core::{
 
 use super::{SessionContext, SessionOwner, SessionRequest};
 use crate::{
-    DdlFailure, EditFailure, Event, ImportFailure, RunOutcome, StatementCheck, StatementFailure,
+    DdlFailure, EditFailure, Event, ExportAll, ImportFailure, RunOutcome, StatementCheck,
+    StatementFailure, TableExport,
 };
 
 /// Why the connection was lost, once a call has reported [`DriverError::Lost`]. Shared with
@@ -190,9 +191,10 @@ pub(super) fn refuse(context: &SessionContext, request: SessionRequest, reason: 
                 message,
             }),
         },
-        (SessionRequest::ExportAll(export), Some(console)) => Event::ExportFinished {
-            console,
-            path: export.path,
+        (SessionRequest::ExportAll(ExportAll { path, .. }), _)
+        | (SessionRequest::ExportTable(TableExport { path, .. }), _) => Event::ExportFinished {
+            exporter: context.owner.exporter(),
+            path,
             result: Err(message),
         },
         (SessionRequest::Validate(statements), Some(console)) => Event::StatementsValidated {
@@ -253,8 +255,7 @@ pub(super) fn refuse(context: &SessionContext, request: SessionRequest, reason: 
             SessionRequest::FetchMore(_)
             | SessionRequest::EndTransaction(_)
             | SessionRequest::ApplyEdits(_)
-            | SessionRequest::Validate(_)
-            | SessionRequest::ExportAll(_),
+            | SessionRequest::Validate(_),
             _,
         ) => return,
     };

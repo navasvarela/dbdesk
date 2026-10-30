@@ -173,7 +173,12 @@ against a real server, such as a cancel arriving after the last row.
   (each cell's type and value, the header, frozen panes and filter from the sheet's XML, and
   sheets past a full one, with a small sheet). The DuckDB driver's `parquet` tests read each
   column's type and value back through DuckDB, and the engine's `exports_every_row_on_every_engine`
-  writes Parquet on every engine with a test server and reads its count and type back. The table-driven typing rules are unit tests of
+  writes Parquet on every engine with a test server and reads its count and type back. It also
+  exports a 1,200-row table with `ExportTable` on the explorer's connection (all but ClickHouse,
+  whose tables aren't described); `cancels_a_table_export_and_runs_one_on_a_read_only_data_source`
+  covers cancelling and a read-only data source on SQLite.
+- The app's export tests are in `app/tests/grid.rs`: the export dialog's formats, options and
+  memory, Copy as, Export data… on a table, and Run to file with a parameter. The table-driven typing rules are unit tests of
   `xlsx::typing`.
 - `fills_a_whole_sheet_and_starts_another` writes a real sheet's worth of rows plus one; it
   takes a few seconds, so it is ignored by default:

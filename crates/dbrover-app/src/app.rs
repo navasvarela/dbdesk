@@ -5,7 +5,7 @@ use dbrover_core::{CatalogPath, DataSource, DataSourceId};
 use dbrover_engine::{
     Command, EngineConfig, EngineError, EngineHandle, Event, PasswordKept, Repaint, RunOrigin,
 };
-use dbrover_export::ExportFormat;
+use dbrover_export::{ExportFormat, ExportSpec};
 use dbrover_sql::Dialect;
 use dbrover_store::{
     ActionBody, ActionId, ConsoleKey, CustomFileKind, KeymapBindings, McpPermissions,
@@ -18,7 +18,7 @@ use crate::about_dialog;
 use crate::actions_window::{self, ActionsWindowAction};
 use crate::command_runs::{CommandRuns, Finished};
 use crate::commands::{self, AppCommand, CommandState};
-use crate::console::{ConsoleAction, FormatScope, RowsToOpen};
+use crate::console::{ConsoleAction, ExportedRows, FormatScope, RowsToOpen, RunDestination};
 use crate::consoles::Consoles;
 use crate::csv_import::{CsvImportAction, CsvImportDialog};
 use crate::custom_actions::{self, Subject, SubjectKind, SubjectOn};
@@ -28,7 +28,10 @@ use crate::data_source_form::McpPasswordChange;
 use crate::definition_window::DefinitionWindow;
 use crate::delete_dialog::{DeleteChoice, DeleteConfirmation};
 use crate::explorer::{ExplorerAction, ExplorerOptions};
-use crate::export_dialog::{self, ExportChoices, ExportDialog, ExportDialogAction};
+use crate::export_dialog::{
+    self, ExportChoices, ExportDialog, ExportDialogAction, ExportPreview, ExportSubject,
+    TableTarget,
+};
 use crate::export_sources_dialog::{ExportAction, ExportSourcesDialog};
 use crate::file_picker;
 use crate::history_window::{HistoryAction, HistoryWindow};
@@ -384,6 +387,9 @@ impl DbRoverApp {
             dialog.apply(event);
         }
         if let Some(dialog) = &mut self.csv_import {
+            dialog.apply(event);
+        }
+        if let Some(dialog) = &mut self.export_dialog {
             dialog.apply(event);
         }
         let command = self.consoles.apply(event);
@@ -954,6 +960,7 @@ impl DbRoverApp {
                 }
             }
             ExplorerAction::ImportCsv(id, path) => self.open_csv_import(id, &path),
+            ExplorerAction::ExportData(id, path) => self.open_table_export(id, &path),
             ExplorerAction::Select(id, path) => self.explorer_options.selected = Some((id, path)),
             ExplorerAction::RunAction {
                 data_source,
@@ -1588,6 +1595,11 @@ impl DbRoverApp {
                 tracing::info!("layout reset");
             }
             AppCommand::Format => self.format_focused_console(FormatScope::Current),
+            AppCommand::RunToFile => {
+                if let Some(console) = self.focused_console() {
+                    self.open_run_to_file(console);
+                }
+            }
             AppCommand::Copy(copy) => {
                 if let Some(console) = self.focused_console()
                     && let Some(text) =
@@ -1632,7 +1644,40 @@ impl DbRoverApp {
 
     fn open_export_dialog(&mut self, console: ConsoleKey) {
         if let Some(preview) = self.consoles.export_preview(&console) {
-            self.export_dialog = Some(ExportDialog::new(console, preview, &self.export_choices));
+            let subject = ExportSubject::Grid(console);
+            self.export_dialog = Some(ExportDialog::new(subject, preview, &self.export_choices));
+        }
+    }
+
+    /// Run to file: the export dialog for the statement at the console's cursor.
+    fn open_run_to_file(&mut self, console: ConsoleKey) {
+        let Some(run) = self.consoles.statement_to_file(&console) else {
+            return;
+        };
+        let Some(dialect) = self.consoles.dialect(&console) else {
+            return;
+        };
+        let preview = ExportPreview {
+            columns: Vec::new(),
+            sample: Vec::new(),
+            loaded: 0,
+            source: dbrover_export::RowSource::untabled(dialect),
+        };
+        let subject = ExportSubject::Statement { console, run };
+        self.export_dialog = Some(ExportDialog::new(subject, preview, &self.export_choices));
+    }
+
+    /// Export data… on a table or view: the export dialog, while the table is described.
+    fn open_table_export(&mut self, id: DataSourceId, path: &CatalogPath) {
+        let opened = self
+            .state
+            .data_source(id)
+            .and_then(|entry| TableTarget::open(&entry.data_source, path));
+        if let Some((target, describe)) = opened {
+            let preview = target.preview();
+            let subject = ExportSubject::Table(target);
+            self.export_dialog = Some(ExportDialog::new(subject, preview, &self.export_choices));
+            self.send(describe);
         }
     }
 
@@ -1642,18 +1687,60 @@ impl DbRoverApp {
             return;
         };
         match dialog.show(ctx) {
-            Some(ExportDialogAction::Export { rows, spec }) => {
+            Some(ExportDialogAction::Export(spec)) => {
                 self.export_choices = dialog.choices().clone();
-                let console = dialog.console().clone();
-                if let Some(path) = (self.pick_export_path)(spec.format(), "rows") {
-                    self.export_dialog = None;
-                    let command = self.consoles.export(&console, rows, spec, path);
-                    self.send_if(command);
+                let subject = dialog.subject().clone();
+                let rows = dialog.rows();
+                self.export_to_file(subject, rows, spec);
+            }
+            Some(ExportDialogAction::Cancel(run)) => {
+                if let ExportSubject::Table(target) = dialog.subject() {
+                    let data_source = target.data_source;
+                    self.send(Command::CancelTableExport { data_source, run });
                 }
             }
             Some(ExportDialogAction::Close) => self.export_dialog = None,
             None => {}
         }
+    }
+
+    /// Asks where to save, then exports `subject` there: a console's rows and a statement in
+    /// the console, which shows how it goes, and a table in the dialog, which stays open.
+    fn export_to_file(&mut self, subject: ExportSubject, rows: ExportedRows, spec: ExportSpec) {
+        let what = match &subject {
+            ExportSubject::Table(target) => target.table.name.clone(),
+            ExportSubject::Grid(_) | ExportSubject::Statement { .. } => "rows".to_owned(),
+        };
+        let Some(path) = (self.pick_export_path)(spec.format(), &what) else {
+            return;
+        };
+        let command = match subject {
+            ExportSubject::Grid(console) => {
+                self.export_dialog = None;
+                self.consoles.export(&console, rows, spec, path)
+            }
+            ExportSubject::Statement { console, mut run } => {
+                self.export_dialog = None;
+                run.destination = RunDestination::File { path, spec };
+                self.consoles.run_to_file(&console, run)
+            }
+            ExportSubject::Table(target) => {
+                let run = self.consoles.new_run_id();
+                if let Some(dialog) = &mut self.export_dialog {
+                    dialog.table_export_started(run, path.clone());
+                }
+                Some(Command::ExportTable {
+                    data_source: target.data_source,
+                    export: dbrover_engine::TableExport {
+                        run,
+                        table: target.table,
+                        path,
+                        spec,
+                    },
+                })
+            }
+        };
+        self.send_if(command);
     }
 
     fn show_export_sources_dialog(&mut self, ctx: &egui::Context) {
@@ -1972,6 +2059,7 @@ impl eframe::App for DbRoverApp {
             match action {
                 ConsoleAction::ShowHistory => self.open_history(console),
                 ConsoleAction::OpenExportDialog => self.open_export_dialog(console),
+                ConsoleAction::RunToFile => self.open_run_to_file(console),
                 ConsoleAction::Copy(copy) => {
                     let options = &self.export_choices.options;
                     if let Some(text) = self.consoles.copy(&console, copy, options) {
