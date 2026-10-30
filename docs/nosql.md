@@ -436,10 +436,24 @@ were. From N1·3 on, each runs against `redis:8-alpine` and `valkey/valkey:9-alp
   core command as the table had it, and the 229 commands of the modules `redis:8-alpine`
   ships (search, JSON, time series, probabilistic structures, vector sets), which joined the
   table from that server's answers: 706 commands and subcommands in all.
-- **N1·4 — Keys in the explorer:** under each database, keys grouped by a separator (`:` by
-  default, set per data source), read with `SCAN … COUNT 1000` and never `KEYS`; the filter
-  box as `SCAN`'s `MATCH`; each key with its type's icon and its TTL. Tests: the conformance
-  check that pages add up to the whole level on both servers, and the grouping.
+- **N1·4 — Keys in the explorer** (built): under each database, keys grouped by a separator
+  (`:` by default, set per data source), read with `SCAN … COUNT 1000` and never `KEYS`; the
+  filter box as `SCAN`'s `MATCH`; each key with its type's icon and its TTL. Tests: the
+  conformance check that pages add up to the whole level on both servers, and the grouping.
+  How it came out:
+  - a level is listed in `SCAN`'s order, not sorted, since no page of a level that big can be
+    sorted against the rest. A page holds exactly 1,000 nodes: its token is the `SCAN` cursor
+    of the batch it stopped in and how many of that batch's keys it read, and the driver
+    remembers the groups each level has listed so far, since a group turns up in many batches.
+    A page also stops after 100 `SCAN` calls (about 100,000 keys), for a level whose keys fall
+    into a few groups;
+  - the filter, as `MATCH`, lists every key under a partial level whose name contains the
+    text, ignoring case, by its whole name and without grouping, so a key three levels down
+    shows at once; the explorer's own filter then matches those names. A level of fewer than
+    1,000 nodes is loaded whole and filtered by the explorer alone, as N0a does for every
+    engine;
+  - `TYPE` and `PTTL` for a page's keys go in one pipelined round trip; `SCAN`'s `TYPE` option,
+    a filter by type, has no place in the explorer's filter box yet, and isn't offered.
 - **N1·5 — Key viewers and edits:** **Open data** on a key opens a console with its type's
   read command (`GET`, `HSCAN`, `LRANGE`, `SSCAN`, `ZRANGE … WITHSCORES`, `XREVRANGE`,
   `JSON.GET`), run at once, and the driver pages through a large value. Above its result, a

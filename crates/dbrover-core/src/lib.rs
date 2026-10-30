@@ -21,7 +21,7 @@ mod table;
 #[cfg(feature = "conformance")]
 pub mod conformance;
 
-pub use catalog::{CatalogNode, CatalogPath, FolderKind, NodeKind, PathSegment};
+pub use catalog::{CatalogNode, CatalogPath, FolderKind, KeyType, NodeKind, PathSegment};
 pub use catalog_page::{CATALOG_PAGE_SIZE, ChildrenPage, ChildrenQuery, PageToken, like_contains};
 pub use command_template::{CommandTemplate, DataSourceFields};
 pub use connection::{Connection, Rejection, RejectionKind, ServerInfo};

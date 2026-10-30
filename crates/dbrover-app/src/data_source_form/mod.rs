@@ -170,6 +170,8 @@ pub struct ClickHouseFields {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RedisFields {
     pub server: ServerFields,
+    /// What the explorer groups keys by, as typed: spaces count, since a separator may be one.
+    pub separator: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -219,6 +221,7 @@ impl DriverFields {
             }),
             DriverKind::Redis => Self::Redis(RedisFields {
                 server: ServerFields::new(REDIS_DEFAULTS),
+                separator: RedisConfig::DEFAULT_SEPARATOR.to_owned(),
             }),
         }
     }
@@ -255,6 +258,7 @@ impl DriverFields {
             }),
             ConnectionConfig::Redis(config) => Self::Redis(RedisFields {
                 server: ServerFields::from_config(&config.server, REDIS_DEFAULTS),
+                separator: config.separator.clone(),
             }),
         }
     }
@@ -301,6 +305,7 @@ impl DriverFields {
             }),
             Self::Redis(fields) => ConnectionConfig::Redis(RedisConfig {
                 server: fields.server.to_config()?,
+                separator: fields.separator.clone(),
             }),
         })
     }

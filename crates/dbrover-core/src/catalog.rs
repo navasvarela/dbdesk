@@ -42,6 +42,57 @@ pub enum NodeKind {
     Trigger,
     /// A user or group of the whole server (PostgreSQL's roles), listed beside its databases.
     Role,
+    /// A Redis key, with the type of its value. Its path segment's name is the key written as
+    /// `dbrover_language::redis::quote` writes an argument, so a key that isn't text survives.
+    Key(KeyType),
+    /// Redis keys that share a prefix up to a separator (`user:` for `user:42` and `user:43`),
+    /// grouped as a folder is. Its path segment's name is the whole prefix, separator included.
+    KeyPrefix,
+}
+
+/// The type of a Redis key's value, as `TYPE` answers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KeyType {
+    String,
+    Hash,
+    List,
+    Set,
+    SortedSet,
+    Stream,
+    /// A JSON document of the JSON module (`ReJSON-RL`).
+    Json,
+    /// Any other module's type, such as a vector set or a time series.
+    Other,
+}
+
+impl KeyType {
+    /// The type `TYPE` names; `None` for `none`, a key that no longer exists.
+    pub fn from_type_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "none" => return None,
+            "string" => Self::String,
+            "hash" => Self::Hash,
+            "list" => Self::List,
+            "set" => Self::Set,
+            "zset" => Self::SortedSet,
+            "stream" => Self::Stream,
+            "ReJSON-RL" => Self::Json,
+            _ => Self::Other,
+        })
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::String => "string",
+            Self::Hash => "hash",
+            Self::List => "list",
+            Self::Set => "set",
+            Self::SortedSet => "sorted set",
+            Self::Stream => "stream",
+            Self::Json => "JSON",
+            Self::Other => "other",
+        }
+    }
 }
 
 /// Groups children by kind ("tables", "views", and so on), as most database tools' trees do.
@@ -194,7 +245,11 @@ impl CatalogPath {
             NodeKind::Column | NodeKind::Constraint | NodeKind::Trigger | NodeKind::Role => {
                 Some(quote(&object.name))
             }
-            NodeKind::Database | NodeKind::Schema | NodeKind::Folder(_) => None,
+            // A key's name as a command takes it: it belongs to no schema.
+            NodeKind::Key(_) => Some(object.name.clone()),
+            NodeKind::Database | NodeKind::Schema | NodeKind::Folder(_) | NodeKind::KeyPrefix => {
+                None
+            }
         }
     }
 

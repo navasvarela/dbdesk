@@ -1,4 +1,4 @@
-//! The explorer's tree: the databases that hold keys.
+//! The explorer's top level: the databases that hold keys. Their keys are in `keys`.
 
 use dbrover_core::{CatalogNode, CatalogPath, NodeKind};
 
@@ -37,7 +37,7 @@ pub(crate) fn databases(info: &str, own: i64) -> Vec<CatalogNode> {
                 1 => "1 key".to_owned(),
                 keys => format!("{keys} keys"),
             }),
-            has_children: false,
+            has_children: true,
             has_definition: false,
             system: false,
         })

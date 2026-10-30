@@ -123,15 +123,34 @@ A ClickHouse table's primary key is its sort order rather than an index, so it s
 table's definition, not under **indexes**. Functions aren't listed: a ClickHouse function belongs
 to the whole server, not to one database.
 
-**Redis / Valkey**, where the server's numbered databases hold keys:
+**Redis / Valkey**, where the server's numbered databases hold keys, grouped by the data
+source's **Key separator** (`:` unless you set another):
 
 ```text
 data source
 └─ db0                      each database that holds keys, with how many
+   ├─ user                  the keys that start with user:
+   │  └─ 42                 the keys that start with user:42:
+   │     ├─ cart            user:42:cart, a hash
+   │     └─ name            user:42:name, a string, with its time to live
+   └─ plain                 a key with no separator in its name
 ```
 
-The data source's own database is listed even when it is empty. Keys aren't listed in the tree
-yet; run `SCAN 0 MATCH pattern` in a console to find them.
+The data source's own database is listed even when it is empty. Each key shows its type's
+icon (string, hash, list, set, sorted set, stream, JSON) and, beside its name, its type and
+time to live when it has one (`string · TTL 2 h`). **Copy name** copies a key's whole name.
+
+Keys are read with `SCAN`, 1,000 at a time, never with `KEYS`, so listing even a database of
+millions of keys never stalls the server. They come in the order the server stores them, not
+sorted: **Load more…** at the end of a level reads the next 1,000. A level whose keys fall into
+only a few groups may need to read many keys to find its next groups; a page stops after about
+100,000 keys and offers **Load more…** rather than keeping you waiting.
+
+In a level with more than 1,000 nodes, typing in the filter box searches every key under it for
+that text, ignoring case, on the server, as `SCAN`'s `MATCH`: the level then lists the matching
+keys themselves, by their whole names, however deep they are. Clearing the filter brings the
+groups back. A smaller level was loaded whole, and is filtered by what is loaded, as the other
+engines' levels are.
 
 **DuckDB**, where the database opened (named after its file, or `memory`) is listed with any
 attached with `ATTACH`:

@@ -301,6 +301,7 @@ impl ConnectionConfig {
             }),
             Self::Redis(config) => Self::Redis(RedisConfig {
                 server: config.server.resolve(variables)?,
+                separator: config.separator.clone(),
             }),
             Self::Sqlite(config) => Self::Sqlite(SqliteConfig {
                 path: expand_path(&config.path, variables)
@@ -696,12 +697,29 @@ impl ClickHouseConfig {
 pub struct RedisConfig {
     #[serde(flatten)]
     pub server: ServerConfig,
+    /// What the explorer groups keys by: `user:42:cart` sits under `user` › `42` with `:`.
+    /// Empty lists keys ungrouped. Written only when it isn't `:`.
+    #[serde(
+        default = "RedisConfig::default_separator",
+        skip_serializing_if = "RedisConfig::is_default_separator"
+    )]
+    pub separator: String,
 }
 
 impl RedisConfig {
     pub const DEFAULT_PORT: u16 = 6379;
     /// The database a new data source selects.
     pub const DEFAULT_DATABASE: &str = "0";
+    /// The separator most applications' keys use.
+    pub const DEFAULT_SEPARATOR: &str = ":";
+
+    fn default_separator() -> String {
+        Self::DEFAULT_SEPARATOR.to_owned()
+    }
+
+    fn is_default_separator(separator: &str) -> bool {
+        separator == Self::DEFAULT_SEPARATOR
+    }
 }
 
 /// A DuckDB database: a file, or one in memory that starts empty each time, for querying CSV,
@@ -857,15 +875,27 @@ mod tests {
                         ssh: None,
                         password_command: None,
                     },
+                    separator: RedisConfig::DEFAULT_SEPARATOR.to_owned(),
                 }),
             }],
         };
         let text = toml::to_string(&file).unwrap();
         assert!(text.contains("driver = \"redis\""), "{text}");
+        assert!(!text.contains("separator"), "{text}");
         assert_eq!(toml::from_str::<File>(&text).unwrap(), file);
         assert_eq!(file.data_source[0].config.default_name(), "db2@localhost");
         assert_eq!(file.data_source[0].config.driver(), DriverKind::Redis);
         assert!(DriverKind::Redis.uses_password());
+
+        let grouped_by_dots = text.replace(
+            "driver = \"redis\"",
+            "driver = \"redis\"\nseparator = \".\"",
+        );
+        let read = toml::from_str::<File>(&grouped_by_dots).unwrap();
+        let ConnectionConfig::Redis(config) = &read.data_source[0].config else {
+            panic!("expected a Redis data source");
+        };
+        assert_eq!(config.separator, ".");
     }
 
     #[test]

@@ -3,7 +3,7 @@
 //! Icons are Phosphor glyphs (see `fonts`), so they scale with the text and take any colour.
 //! Colours are palette roles, never fixed values, so every icon is readable in both themes.
 
-use dbrover_core::{DriverKind, NodeKind, SourceColor};
+use dbrover_core::{DriverKind, KeyType, NodeKind, SourceColor};
 use egui::{Color32, Image, RichText, Vec2};
 use egui_phosphor::regular as glyph;
 
@@ -116,6 +116,22 @@ pub fn node(kind: NodeKind) -> Icon {
         NodeKind::Constraint => Icon::new(glyph::KEY, Role::Warning),
         NodeKind::Trigger => Icon::new(glyph::LIGHTNING, Role::Error),
         NodeKind::Role => Icon::new(glyph::USER, Role::Secondary),
+        NodeKind::KeyPrefix => Icon::new(glyph::FOLDER_SIMPLE, Role::Warning),
+        NodeKind::Key(key_type) => key(key_type),
+    }
+}
+
+/// A Redis key's icon, by the type of its value.
+fn key(key_type: KeyType) -> Icon {
+    match key_type {
+        KeyType::String => Icon::new(glyph::TEXT_T, Role::Primary),
+        KeyType::Hash => Icon::new(glyph::HASH, Role::Primary),
+        KeyType::List => Icon::new(glyph::LIST_BULLETS, Role::Primary),
+        KeyType::Set => Icon::new(glyph::CIRCLES_THREE, Role::Primary),
+        KeyType::SortedSet => Icon::new(glyph::RANKING, Role::Primary),
+        KeyType::Stream => Icon::new(glyph::WAVE_SINE, Role::Primary),
+        KeyType::Json => Icon::new(glyph::BRACKETS_CURLY, Role::Primary),
+        KeyType::Other => Icon::new(glyph::KEY, Role::Weak),
     }
 }
 

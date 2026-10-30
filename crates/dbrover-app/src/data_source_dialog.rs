@@ -190,6 +190,9 @@ impl DataSourceDialog {
                     DriverFields::DuckDb(fields) => return duckdb_rows(ui, fields),
                 };
                 server_rows(ui, server, password_hint);
+                if let DriverFields::Redis(fields) = &mut self.form.fields {
+                    text_row(ui, "Key separator", &mut fields.separator, "none");
+                }
                 // Only where `dbrover mcp` can serve the engine; elsewhere it would never be used.
                 match read_only::guard(self.form.driver()) {
                     Guard::Session(_) => mcp_login_rows(ui, &mut self.form.mcp_login, false),
