@@ -1230,6 +1230,7 @@ three to five, **L** a track of its own).
     needs its own process or the file not open elsewhere; settle this first.
   - SQL Server has no read-only transaction. Its data sources are served to MCP clients only
     through an MCP login, whose grants are what keeps them read-only, and the dialog says so.
+    *Done in N0a* (2026-10-30), for SQL Server and ClickHouse, for reading only.
 
   **Exit:** a read-only ClickHouse and a read-only DuckDB data source refuse an `INSERT` hidden
   in a function the statement check can't see, with the database's own error; an MCP client

@@ -100,6 +100,19 @@ impl QueryLanguage {
         }
     }
 
+    /// Why `command` may touch everything, which is rarely what was meant, for the warning
+    /// before it runs: an `UPDATE` or `DELETE` without `WHERE` in SQL. `None` for any other
+    /// command. Each language lists its own.
+    pub fn hazard(self, command: &str) -> Option<&'static str> {
+        match self {
+            Self::Sql(dialect) => {
+                dbrover_sql::hazard(command, dialect).map(dbrover_sql::Hazard::description)
+            }
+            #[cfg(any(test, feature = "test-language"))]
+            Self::Test => test_language::hazard(command),
+        }
+    }
+
     /// What `command`, which must hold exactly one command, may change.
     ///
     /// # Errors
@@ -188,6 +201,16 @@ mod tests {
             .collect();
         assert_eq!(kinds, [Ok(StatementKind::Read), Ok(StatementKind::Write)]);
         assert_eq!(command_at(&commands, script.len()), Some(1));
+    }
+
+    #[test]
+    fn sql_warns_of_what_dbrover_sql_does() {
+        let language = QueryLanguage::Sql(Dialect::Mysql);
+        assert_eq!(
+            language.hazard("DELETE FROM orders"),
+            Some(dbrover_sql::Hazard::DeleteWithoutWhere.description())
+        );
+        assert_eq!(language.hazard("DELETE FROM orders WHERE id = 1"), None);
     }
 
     #[test]

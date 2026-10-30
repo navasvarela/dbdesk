@@ -188,6 +188,7 @@ impl ToolError {
                 Self::invalid(describe_error(&error))
             }
             error @ RunError::TimedOut(_) => Self::plain("timeout", describe_error(&error)),
+            error @ RunError::NoTransaction(_) => Self::refused(error.to_string()),
         }
     }
 
@@ -598,10 +599,11 @@ impl DbRoverMcp {
         work: impl for<'c> FnOnce(&'c mut dyn Connection, Watchdog) -> Work<'c, T>,
     ) -> Result<T, RunError> {
         let writable = self.inner.project.changes.any();
-        let Some(mode) = transaction::mode(data_source.config.driver(), access, writable) else {
-            // `ServedProject` leaves out data sources without a read-only mode, and every
-            // engine with one has a read-write mode too, so no call can name one.
-            unreachable!("a served data source without a transaction for this call");
+        let driver = data_source.config.driver();
+        // `ServedProject` leaves out data sources that can't be read safely, so only changes
+        // on an engine without a read-write mode, which `execute` refuses first, end here.
+        let Some(mode) = transaction::mode(driver, access, writable) else {
+            return Err(RunError::NoTransaction(driver.display_name()));
         };
         let timeout = self.inner.project.limits.statement_timeout;
         let scope = self.scope(data_source);

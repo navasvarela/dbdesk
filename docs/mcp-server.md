@@ -118,7 +118,9 @@ goes through up to three layers, and the strongest layer the engine offers decid
    - **SQLite:** the connection is opened read-only, as the existing `read_only` option already
      does.
    - **SQL Server and later engines:** each engine's plan states its equivalent before its MCP
-     support is switched on.
+     support is switched on. For an engine without a read-only mode, the equivalent is the MCP
+     login itself (N0a, [nosql.md](nosql.md)): SQL Server and ClickHouse data sources are served
+     for reading only, and only through an MCP login whose grants allow nothing but reading.
 3. **The database's own grants: the recommended setup for anything beyond reading.**
    - A data source can carry a **separate MCP login**: another user name and password, used only
      by the MCP server. Point it at a database role that has exactly the grants the project
@@ -252,7 +254,8 @@ permissions with their fallback to the defaults. Also the separate MCP login per
   rather than falling back when its password is missing. When a project allows changes, the
   server warns at start-up for each data source without one.
 - SQL Server stays unserved: a read-only login, now possible, is its likely equivalent, but
-  isn't switched on yet.
+  isn't switched on yet. *N0a update:* it is now, for SQL Server and ClickHouse, for reading only
+  (see [nosql.md](nosql.md)).
 
 ### MCP3 — In the app
 

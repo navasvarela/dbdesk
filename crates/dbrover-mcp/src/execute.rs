@@ -92,6 +92,15 @@ impl DbRoverMcp {
                 .max(),
         );
         self.check_allowed(tool, data_source, &planned)?;
+        let driver = data_source.config.driver();
+        if transaction::mode(driver, Access::Write, true).is_none() {
+            let reason = format!(
+                "DbRover can't run changes on {} for MCP clients yet: this data source is \
+                 served for reading only",
+                driver.display_name()
+            );
+            return Err(self.refuse(tool, data_source, reason));
+        }
 
         let texts: Vec<String> = planned
             .iter()
@@ -344,5 +353,28 @@ mod tests {
             Ok(None)
         );
         assert!(plan("  ;  -- nothing\n", QueryLanguage::Sql(Dialect::Sqlite)).is_empty());
+    }
+
+    /// What an MCP client's commands in a Redis or MongoDB data source will go through.
+    #[test]
+    fn plans_each_language_by_its_own_classification() {
+        let script = "get a\nset b 1\n# a note\nflush\nshutdown now";
+        let needs: Vec<_> = plan(script, QueryLanguage::Test)
+            .iter()
+            .map(|planned| (planned.text, planned.needs()))
+            .collect();
+        assert_eq!(
+            needs,
+            [
+                ("get a", Ok(None)),
+                ("set b 1", Ok(Some(Permission::Write))),
+                ("flush", Ok(Some(Permission::Admin))),
+                ("shutdown now", Ok(Some(Permission::Admin))),
+            ]
+        );
+        assert!(
+            plan("begin", QueryLanguage::Test)[0].needs().is_err(),
+            "transaction control is refused"
+        );
     }
 }

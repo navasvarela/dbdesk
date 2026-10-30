@@ -32,6 +32,7 @@ tracing.workspace = true
 ureq.workspace = true
 
 [dev-dependencies]
+dbrover-language = { workspace = true, features = ["test-language"] }
 rusqlite.workspace = true
 tempfile.workspace = true
 

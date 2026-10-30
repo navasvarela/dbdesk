@@ -1,5 +1,5 @@
 use dbrover_language::{QueryLanguage, StatementKind};
-use dbrover_sql::{Hazard, commits_implicitly, hazard};
+use dbrover_sql::commits_implicitly;
 use dbrover_store::ConsoleKey;
 use egui::{Align, Id, Layout, Modal};
 
@@ -15,9 +15,9 @@ pub enum HazardChoice {
 const COMMITS_AT_ONCE: &str = "This commits at once, together with anything the open \
      transaction holds, so Rollback can't undo it.";
 
-/// Asks before running statements that change every row of a table, or that commit by
-/// themselves while the user may be counting on Rollback; and, on a careful data source,
-/// before any change at all.
+/// Asks before running commands that may touch everything (an `UPDATE` without `WHERE`, each
+/// language lists its own), or that commit by themselves while the user may be counting on
+/// Rollback; and, on a careful data source, before any change at all.
 pub struct HazardConfirmation {
     pub console: ConsoleKey,
     pub pending: Pending,
@@ -49,8 +49,8 @@ pub struct ReviewContext<'a> {
     pub careful: Option<&'a str>,
 }
 
-/// Checks each statement for an `UPDATE` or `DELETE` that would change every row, and, when
-/// the user relies on Rollback, for one that commits by itself.
+/// Checks each command for one its language says may touch everything, such as an `UPDATE`
+/// without `WHERE`, and, when the user relies on Rollback, for one that commits by itself.
 pub fn review(console: ConsoleKey, run: SubmittedRun, context: ReviewContext<'_>) -> Review {
     let warnings: Vec<String> = run
         .statements
@@ -123,15 +123,15 @@ fn statement_warnings(sql: &str, context: ReviewContext<'_>) -> Vec<String> {
     let careful = context
         .careful
         .and_then(|data_source| careful_warning(sql, context.language, data_source));
-    let dialect = context.language.dialect();
-    let rows = dialect
-        .and_then(|dialect| hazard(sql, dialect))
-        .map(Hazard::description);
-    let commits = dialect.is_some_and(|dialect| commits_implicitly(sql, dialect));
+    let everything = context.language.hazard(sql);
+    let commits = context
+        .language
+        .dialect()
+        .is_some_and(|dialect| commits_implicitly(sql, dialect));
     let commit = (context.relies_on_rollback && commits).then_some(COMMITS_AT_ONCE);
     careful
         .into_iter()
-        .chain(rows.into_iter().chain(commit).map(str::to_owned))
+        .chain(everything.into_iter().chain(commit).map(str::to_owned))
         .map(|description| warning(&description, sql))
         .collect()
 }
@@ -224,5 +224,29 @@ mod tests {
             );
         }
         assert_eq!(statement_warnings("DELETE FROM orders", context).len(), 2);
+    }
+
+    #[test]
+    fn warns_of_what_each_language_lists_as_touching_everything() {
+        let context = ReviewContext {
+            language: QueryLanguage::Test,
+            relies_on_rollback: true,
+            careful: None,
+        };
+        let warned: Vec<usize> = ["get a", "keys *", "flush"]
+            .into_iter()
+            .map(|command| statement_warnings(command, context).len())
+            .collect();
+        assert_eq!(warned, [0, 1, 1]);
+
+        let careful = ReviewContext {
+            careful: Some("cache"),
+            ..context
+        };
+        assert!(statement_warnings("get a", careful).is_empty());
+        assert_eq!(
+            statement_warnings("set a 1", careful),
+            ["\u{201c}cache\u{201d} is careful, and this statement changes data.\n    set a 1"]
+        );
     }
 }

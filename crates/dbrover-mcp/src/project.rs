@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 use dbrover_core::DataSource;
+use dbrover_engine::read_only::McpServing;
 use dbrover_store::{
     DataSourceFile, McpPermissions, Project, ProjectFile, ProjectStoreError, SchemaScope,
     StoreError,
@@ -152,7 +153,7 @@ impl ServedProject {
             .map_err(StartError::DataSources)?
             .into_iter()
             .filter(|data_source| data_source.project == Some(project.id))
-            .filter(|data_source| has_read_only_mode(slug, data_source))
+            .filter(|data_source| is_served(slug, data_source))
             .map(|data_source| {
                 // Opening SQLite files read-only is stronger than the `query_only` each read
                 // sets on a file opened to run changes too.
@@ -192,27 +193,21 @@ impl ServedProject {
     }
 }
 
-/// Engines without a read-only mode of their own aren't served: the parser alone can't see
-/// inside a function that writes.
-fn has_read_only_mode(slug: &str, data_source: &DataSource) -> bool {
-    let driver = data_source.config.driver();
-    let supported = dbrover_engine::read_only::mode(driver).is_some();
-    if !supported {
-        tracing::warn!(
-            project = slug,
-            data_source = %data_source.name,
-            "not served: DbRover can't make {} read-only yet",
-            driver.display_name()
-        );
+/// A data source is served only where the database refuses what the check can't see, such as
+/// a function that writes: in the engine's read-only mode, or through an MCP login.
+fn is_served(slug: &str, data_source: &DataSource) -> bool {
+    let serving = McpServing::of(data_source);
+    if let Some(reason) = serving.reason(data_source.config.driver()) {
+        tracing::warn!(project = slug, data_source = %data_source.name, "not served: {reason}");
     }
-    supported
+    serving == McpServing::Served
 }
 
 #[cfg(test)]
 mod tests {
     use dbrover_core::{
-        ConnectionConfig, DataSourceId, ProjectId, ServerConfig, SqlServerConfig, SqliteConfig,
-        TlsMode,
+        ConnectionConfig, DataSourceId, McpLogin, ProjectId, ServerConfig, SqlServerConfig,
+        SqliteConfig, TlsMode,
     };
     use dbrover_store::{ProjectSlug, Projects};
 
@@ -267,6 +262,23 @@ mod tests {
         }
     }
 
+    fn sql_server(name: &str, project: Option<ProjectId>) -> DataSource {
+        DataSource {
+            name: name.to_owned(),
+            config: ConnectionConfig::SqlServer(SqlServerConfig {
+                server: ServerConfig {
+                    host: "erp.internal".to_owned(),
+                    port: SqlServerConfig::DEFAULT_PORT.into(),
+                    database: "erp".to_owned(),
+                    user: "reader".to_owned(),
+                    tls: TlsMode::default(),
+                    ssh: None,
+                },
+            }),
+            ..sqlite(name, project)
+        }
+    }
+
     #[test]
     fn serves_only_the_projects_own_data_sources_with_a_read_only_mode() {
         let shop = project("Shop", true);
@@ -277,20 +289,7 @@ mod tests {
                 sqlite("orders", Some(shop.id)),
                 sqlite("elsewhere", Some(other.id)),
                 sqlite("loose", None),
-                DataSource {
-                    name: "erp".to_owned(),
-                    config: ConnectionConfig::SqlServer(SqlServerConfig {
-                        server: ServerConfig {
-                            host: "erp.internal".to_owned(),
-                            port: SqlServerConfig::DEFAULT_PORT.into(),
-                            database: "erp".to_owned(),
-                            user: "reader".to_owned(),
-                            tls: TlsMode::default(),
-                            ssh: None,
-                        },
-                    }),
-                    ..sqlite("erp", Some(shop.id))
-                },
+                sql_server("erp", Some(shop.id)),
             ],
         );
 
@@ -309,10 +308,30 @@ mod tests {
         assert!(served.data_source("elsewhere").is_none());
         assert!(
             served.data_source("erp").is_none(),
-            "SQL Server has no read-only mode yet"
+            "SQL Server has no read-only mode, and erp has no MCP login"
         );
         assert_eq!(served.limits.max_rows, 500);
         assert_eq!(served.limits.statement_timeout, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn serves_an_engine_without_a_read_only_mode_only_through_an_mcp_login() {
+        let shop = project("Shop", true);
+        let guarded = DataSource {
+            mcp_login: Some(McpLogin {
+                user: "assistant".to_owned(),
+            }),
+            ..sql_server("guarded", Some(shop.id))
+        };
+        let files = files(
+            vec![shop],
+            &[guarded.clone(), sql_server("unguarded", guarded.project)],
+        );
+
+        let served = ServedProject::load(&files.projects, &files.data_sources, "shop").unwrap();
+
+        assert_eq!(served.data_source("guarded"), Some(&guarded));
+        assert!(served.data_source("unguarded").is_none());
     }
 
     #[test]

@@ -118,6 +118,32 @@ pub(crate) fn split(script: &str) -> Vec<Range<usize>> {
     commands
 }
 
+/// The verbs that touch every key, as Redis's `FLUSHDB` and `KEYS` do, with why.
+const HAZARDS: [(&str, &str); 2] = [
+    ("flush", "FLUSH removes every key."),
+    (
+        "keys",
+        "KEYS reads every key, and the server does nothing else until it has.",
+    ),
+];
+
+pub(crate) fn hazard(command: &str) -> Option<&'static str> {
+    let verb = verb(command)?;
+    HAZARDS
+        .iter()
+        .find(|(hazardous, _)| verb.eq_ignore_ascii_case(hazardous))
+        .map(|(_, description)| *description)
+}
+
+/// The command's first word, when it starts with one.
+fn verb(command: &str) -> Option<&str> {
+    tokenize(command)
+        .into_iter()
+        .find(|token| !token.kind.is_trivia())
+        .filter(|token| token.kind == TokenKind::Word)
+        .map(|token| &command[token.range])
+}
+
 /// Classifies one command by its verb. An unknown verb, or a command that doesn't start with
 /// one, is unclassified.
 pub(crate) fn classify(command: &str) -> Result<StatementKind, Unclassified> {
@@ -126,16 +152,10 @@ pub(crate) fn classify(command: &str) -> Result<StatementKind, Unclassified> {
         [range] => range.clone(),
         several => return Err(Unclassified::Several(several.len())),
     };
-    let command = &command[range];
-    let first = tokenize(command)
-        .into_iter()
-        .next()
-        .filter(|token| token.kind == TokenKind::Word);
-    let Some(first) = first else {
+    let Some(verb) = verb(&command[range]) else {
         return Err(Unclassified::Unparseable(
             "a command starts with its verb".to_owned(),
         ));
     };
-    let verb = &command[first.range];
     verb_kind(verb).ok_or_else(|| Unclassified::Unparseable(format!("unknown command `{verb}`")))
 }

@@ -56,6 +56,14 @@ fn keywords_are_the_verbs_sorted_and_ignore_case() {
 }
 
 #[test]
+fn warns_of_the_commands_that_touch_every_key() {
+    assert_eq!(hazard("FLUSH"), Some("FLUSH removes every key."));
+    assert!(hazard("  keys user:*  # every user").is_some());
+    assert_eq!(hazard("get keys"), None);
+    assert_eq!(hazard("# flush"), None);
+}
+
+#[test]
 fn refuses_to_guess_what_text_without_exactly_one_command_does() {
     assert_eq!(classify("  # nothing\n"), Err(Unclassified::Empty));
     assert_eq!(classify("get a\nget b"), Err(Unclassified::Several(2)));

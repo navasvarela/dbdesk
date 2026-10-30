@@ -2,7 +2,7 @@
 
 use dbrover_core::{DataSource, ProjectId};
 use dbrover_engine::Event;
-use dbrover_engine::read_only;
+use dbrover_engine::read_only::McpServing;
 use dbrover_store::{McpOverrides, McpPermissions, Project, ProjectSlug};
 use egui::{Align, Button, Id, Label, Layout, Modal, RichText, Ui};
 
@@ -150,8 +150,7 @@ impl ProjectSettingsDialog {
 fn warnings(ui: &mut Ui, permissions: &McpPermissions, members: &[&DataSource]) {
     let palette = &Palette::for_visuals(ui.visuals());
     let changes = permissions.write || permissions.schema || permissions.admin;
-    let served =
-        |data_source: &&&DataSource| read_only::mode(data_source.config.driver()).is_some();
+    let served = |data_source: &&&DataSource| McpServing::of(data_source) == McpServing::Served;
     let without_login: Vec<&str> = members
         .iter()
         .filter(served)
@@ -180,15 +179,26 @@ fn warnings(ui: &mut Ui, permissions: &McpPermissions, members: &[&DataSource]) 
     if changes && without_logins {
         ui.weak("SQLite files have no logins: for them, DbRover's own checks are all there is.");
     }
-    let unserved: Vec<&str> = members
-        .iter()
-        .filter(|data_source| !served(data_source))
-        .map(|data_source| data_source.name.as_str())
-        .collect();
-    if !unserved.is_empty() {
+    let unserved = |serving: McpServing| -> Vec<&str> {
+        members
+            .iter()
+            .filter(|data_source| McpServing::of(data_source) == serving)
+            .map(|data_source| data_source.name.as_str())
+            .collect()
+    };
+    let without_mcp_login = unserved(McpServing::NeedsMcpLogin);
+    if !without_mcp_login.is_empty() {
+        ui.weak(format!(
+            "Not served to MCP clients until they have an MCP login, since their engine has no \
+             read-only mode: {}.",
+            without_mcp_login.join(", ")
+        ));
+    }
+    let not_served = unserved(McpServing::NotServed);
+    if !not_served.is_empty() {
         ui.weak(format!(
             "Not served to MCP clients yet, since DbRover can't make their engine read-only: {}.",
-            unserved.join(", ")
+            not_served.join(", ")
         ));
     }
 }
