@@ -1588,6 +1588,15 @@ impl DbRoverApp {
                 tracing::info!("layout reset");
             }
             AppCommand::Format => self.format_focused_console(FormatScope::Current),
+            AppCommand::Copy(copy) => {
+                if let Some(console) = self.focused_console()
+                    && let Some(text) =
+                        self.consoles
+                            .copy(&console, copy, &self.export_choices.options)
+                {
+                    ctx.copy_text(text);
+                }
+            }
             AppCommand::FormatAll => self.format_focused_console(FormatScope::All),
             AppCommand::CheckForUpdates => {
                 let check = self.updates.check_now();
@@ -1963,6 +1972,12 @@ impl eframe::App for DbRoverApp {
             match action {
                 ConsoleAction::ShowHistory => self.open_history(console),
                 ConsoleAction::OpenExportDialog => self.open_export_dialog(console),
+                ConsoleAction::Copy(copy) => {
+                    let options = &self.export_choices.options;
+                    if let Some(text) = self.consoles.copy(&console, copy, options) {
+                        ctx.copy_text(text);
+                    }
+                }
                 ConsoleAction::OpenRows(rows) => self.open_rows(&console, &rows),
                 ConsoleAction::RunAction(action, cells) => {
                     self.run_action(&action, console.data_source, &Subject::Cells(cells));

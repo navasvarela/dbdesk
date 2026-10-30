@@ -391,6 +391,72 @@ fn remembers_the_format_and_options_used_last() {
     assert!(!harness.state().export_choices.options.csv.header);
 }
 
+/// Copy as ›, Copy with headers (⇧⌘C) and Copy row, from the cell menu and the keys; the
+/// selected columns of the selected rows, as ⌘C copies them.
+#[test]
+fn copies_the_selected_cells_in_other_formats() {
+    let dir = tempfile::tempdir().unwrap();
+    save_shop(
+        dir.path(),
+        "CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT);
+         INSERT INTO orders VALUES (1, 'Zoë | Ltd'), (2, 'tab' || char(9) || 'quote\"');",
+    );
+    let (_layer, feed) = log_console::pipeline();
+    let mut harness = start_app(dir.path(), feed);
+    open_orders(&mut harness, "2 rows");
+    step_until_visible(&mut harness, "Add row");
+
+    let copy_as = |harness: &mut Harness<'_, DbRoverApp>, cell: &str, format: &str| {
+        harness.get_by_label(cell).click_secondary();
+        harness.run();
+        harness.get_by_label("Copy as ⏵").click();
+        harness.run();
+        harness.get_by_label(format).click();
+        harness.step();
+        copied(harness)
+    };
+    assert_eq!(
+        copy_as(&mut harness, "Zoë | Ltd", "Markdown").as_deref(),
+        Some("| customer |\n| --- |\n| Zoë \\| Ltd |\n")
+    );
+    harness.run();
+
+    // The row number comes first, then the id cell.
+    harness.get_all_by_label("1").last().unwrap().click();
+    harness.run();
+    harness
+        .get_by_label("Zoë | Ltd")
+        .click_modifiers(egui::Modifiers::SHIFT);
+    harness.run();
+    assert_eq!(
+        copy_as(&mut harness, "Zoë | Ltd", "SQL INSERT").as_deref(),
+        Some("INSERT INTO \"main\".\"orders\" (\"id\", \"customer\") VALUES (1, 'Zoë | Ltd');\n")
+    );
+    harness.run();
+
+    // The press alone, in a frame of its own: a frame for its release would replace the
+    // output the copy is in.
+    harness.event(egui::Event::Key {
+        key: egui::Key::C,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+    });
+    harness.step();
+    assert_eq!(
+        copied(&harness).as_deref(),
+        Some("id\tcustomer\n1\tZoë | Ltd\n")
+    );
+    harness.run();
+
+    harness.get_by_label("tab\tquote\"").click_secondary();
+    harness.run();
+    harness.get_by_label("Copy row").click();
+    harness.step();
+    assert_eq!(copied(&harness).as_deref(), Some("2\t\"tab\tquote\"\"\""));
+}
+
 /// Saves `shop` with an orders table at `safety`, starts the app, and opens Import CSV… on
 /// the table with `csv` as the file.
 fn import_csv_into_orders(

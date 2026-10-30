@@ -266,3 +266,35 @@ fn read(database: &rusqlite::Connection, sql: &str) -> (Vec<ExportColumn>, Vec<V
         .unwrap();
     (columns, rows)
 }
+
+/// Copying some of the columns keeps the table's among them, and the key only when all of it
+/// is selected.
+#[test]
+fn narrows_the_source_to_the_selected_columns() {
+    let source = source(Dialect::Postgres);
+    let narrowed = source.select_columns(&[3, 0]);
+    let table = narrowed.table.as_ref().unwrap();
+    assert_eq!(table.columns, [1, 0]);
+    assert_eq!(table.key.as_deref(), Some(&[1][..]));
+    assert_eq!(
+        insert_of(&narrowed, &[3, 0]),
+        "INSERT INTO \"shop\".\"order items\" (\"id\", \"price\") VALUES (1, 9.50);\n\
+         INSERT INTO \"shop\".\"order items\" (\"id\", \"price\") VALUES (2, 'NaN');\n"
+    );
+
+    let without_key = source.select_columns(&[1, 3]);
+    assert_eq!(without_key.table.as_ref().unwrap().key, None);
+    assert!(UpdateSpec::for_rows(&without_key).is_err());
+}
+
+/// `rows()` as `INSERT`s of only the columns at `selected`.
+fn insert_of(source: &RowSource, selected: &[usize]) -> String {
+    let all = columns(source.dialect);
+    let columns: Vec<ExportColumn> = selected.iter().map(|&index| all[index].clone()).collect();
+    let rows: Vec<Vec<Cell>> = rows()
+        .into_iter()
+        .map(|row| selected.iter().map(|&index| row[index].clone()).collect())
+        .collect();
+    let spec = InsertSpec::for_rows(source, InsertOptions::default()).unwrap();
+    render(&ExportSpec::SqlInsert(Box::new(spec)), &columns, &rows).unwrap()
+}

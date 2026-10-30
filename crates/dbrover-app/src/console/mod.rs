@@ -6,6 +6,7 @@
 mod catalog_lint;
 mod catalog_source;
 pub(crate) mod cell_viewer;
+mod clipboard;
 mod completion;
 mod completion_popup;
 mod edit;
@@ -33,7 +34,7 @@ use dbrover_engine::{
     RunPurpose, SessionState, StatementFailure, StatementSummary, TransactionEnd, TransactionMode,
     WatchedFile,
 };
-use dbrover_export::{ExportColumn, ExportSpec, RowSource};
+use dbrover_export::{ExportColumn, ExportOptions, ExportSpec, RowSource};
 
 use crate::export_dialog::{ExportPreview, PREVIEW_ROWS};
 use dbrover_sql::{
@@ -47,6 +48,7 @@ use edit::{EditTarget, Editability};
 use crate::custom_actions::{GridCells, GridTable};
 use file::{ConfigFile, Reload, SqlFile, Storage};
 
+pub use clipboard::{ClipboardCopy, ClipboardFormat};
 pub use edit::ChangeCount;
 pub use file::Disk;
 pub use find::Found;
@@ -274,6 +276,33 @@ impl StatementView {
 
     fn selected_cells(&self) -> Option<GridCells> {
         selected_cells(&self.columns, &self.rows, &self.grid, &self.edits)
+    }
+
+    /// The selected columns of the selected rows, as the grid shows them, for copying.
+    fn selection(&self, dialect: Dialect) -> Option<clipboard::Selection> {
+        let cells = self.selected_cells()?;
+        let columns = cells
+            .selected
+            .iter()
+            .filter_map(|&index| self.columns.get(index))
+            .map(|column| ExportColumn::new(column, dialect))
+            .collect();
+        let rows = cells
+            .rows
+            .iter()
+            .map(|row| {
+                cells
+                    .selected
+                    .iter()
+                    .map(|&index| row.get(index).cloned().flatten())
+                    .collect()
+            })
+            .collect();
+        Some(clipboard::Selection {
+            columns,
+            rows,
+            source: self.row_source(dialect).select_columns(&cells.selected),
+        })
     }
 
     /// The statement to run to show this result again, sorted and filtered as the grid now
@@ -635,6 +664,22 @@ impl QueryConsole {
             parameters: self.parameters.clone(),
             origin: RunOrigin::Console,
         })
+    }
+
+    /// The selected cells as `copy` turns them into text, with the export dialog's `options`.
+    /// `None` without a selection; an error says why they can't be copied that way, and is
+    /// shown where an export's would be.
+    pub fn copy(&mut self, copy: ClipboardCopy, options: &ExportOptions) -> Option<String> {
+        let run = self.run.as_ref()?;
+        let statement = run.statements.get(run.selected)?;
+        let selection = statement.selection(self.dialect)?;
+        match copy.text(&selection, options) {
+            Ok(text) => Some(text),
+            Err(reason) => {
+                self.export_status = Some(Err(reason.to_owned()));
+                None
+            }
+        }
     }
 
     /// What the export dialog shows of the selected statement's rows. `None` if it returns

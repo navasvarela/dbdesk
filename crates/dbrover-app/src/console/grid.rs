@@ -311,7 +311,7 @@ impl<'a> SortValue<'a> {
 
 /// A cell for TSV: values with tabs, line breaks or quotes are quoted the way spreadsheets
 /// read them back, with quotes doubled.
-fn tsv_field(cell: &Cell) -> String {
+pub(super) fn tsv_field(cell: &Cell) -> String {
     let Some(value) = cell else {
         return NULL_TEXT.to_owned();
     };

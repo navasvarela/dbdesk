@@ -340,6 +340,17 @@ impl Consoles {
             .collect()
     }
 
+    /// The console's selected cells as `copy` turns them into text, if it is open and they can
+    /// be copied that way.
+    pub fn copy(
+        &mut self,
+        key: &ConsoleKey,
+        copy: crate::console::ClipboardCopy,
+        options: &dbrover_export::ExportOptions,
+    ) -> Option<String> {
+        self.open.get_mut(key)?.copy(copy, options)
+    }
+
     /// What the export dialog shows of the console's rows, if it is open and has some.
     pub fn export_preview(&self, key: &ConsoleKey) -> Option<crate::export_dialog::ExportPreview> {
         self.open.get(key)?.export_preview()
@@ -454,6 +465,7 @@ impl Consoles {
             // these.
             ConsoleAction::ShowHistory
             | ConsoleAction::OpenExportDialog
+            | ConsoleAction::Copy(_)
             | ConsoleAction::LoadCatalog(_)
             | ConsoleAction::Format(_)
             | ConsoleAction::OpenRows(_)

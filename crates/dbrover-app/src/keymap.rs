@@ -7,6 +7,8 @@ use std::fmt::Write as _;
 use dbrover_store::{ActionId, KeymapBindings};
 use egui::{InputState, Key, KeyboardShortcut, Modifiers};
 
+use crate::console::ClipboardFormat;
+
 /// Something a key can do. The ids are what `keymap.toml` names, so they never change once
 /// released; descriptions can.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -33,10 +35,14 @@ pub enum Action {
     FindNext,
     FindPrevious,
     Settings,
+    /// Copy the selected cells as TSV with a header line.
+    CopyWithHeaders,
+    /// Copy the selected cells in a format, as **Copy as ›** does.
+    CopyAs(ClipboardFormat),
 }
 
 impl Action {
-    pub const ALL: [Self; 22] = [
+    pub const ALL: [Self; 31] = [
         Self::Complete,
         Self::RunCurrent,
         Self::RunAll,
@@ -59,6 +65,15 @@ impl Action {
         Self::FindNext,
         Self::FindPrevious,
         Self::Settings,
+        Self::CopyWithHeaders,
+        Self::CopyAs(ClipboardFormat::Csv),
+        Self::CopyAs(ClipboardFormat::Tsv),
+        Self::CopyAs(ClipboardFormat::Markdown),
+        Self::CopyAs(ClipboardFormat::SqlInsert),
+        Self::CopyAs(ClipboardFormat::Json),
+        Self::CopyAs(ClipboardFormat::JsonLines),
+        Self::CopyAs(ClipboardFormat::Html),
+        Self::CopyAs(ClipboardFormat::SqlUpdate),
     ];
 
     pub fn id(self) -> &'static str {
@@ -85,6 +100,8 @@ impl Action {
             Self::FindNext => "editor.find-next",
             Self::FindPrevious => "editor.find-previous",
             Self::Settings => "app.settings",
+            Self::CopyWithHeaders => "grid.copy-with-headers",
+            Self::CopyAs(format) => format.keymap_id(),
         }
     }
 
@@ -112,6 +129,8 @@ impl Action {
             Self::FindNext => "Go to the next match",
             Self::FindPrevious => "Go to the previous match",
             Self::Settings => "Open the settings",
+            Self::CopyWithHeaders => "Copy the selected cells with their column names",
+            Self::CopyAs(format) => format.description(),
         }
     }
 
@@ -161,7 +180,9 @@ impl Action {
             ],
             // The settings key of macOS apps, and of VS Code and JetBrains IDEs elsewhere.
             Self::Settings => shortcut(Modifiers::COMMAND, Key::Comma),
-            Self::ShowHistory | Self::Commit | Self::Rollback => Vec::new(),
+            // ⌘C with ⇧, which no other action here takes.
+            Self::CopyWithHeaders => shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::C),
+            Self::ShowHistory | Self::Commit | Self::Rollback | Self::CopyAs(_) => Vec::new(),
         }
     }
 }
@@ -518,7 +539,7 @@ mod tests {
         let latest = ActionId::new("latest").unwrap();
         let keymap = Keymap::from_file(
             &bindings(&[
-                ("custom.row-count", &["cmd+shift+c"]),
+                ("custom.row-count", &["cmd+shift+y"]),
                 ("custom.latest", &["cmd+enter", "f6"]),
                 ("custom.gone", &["f7"]),
             ]),
@@ -529,7 +550,7 @@ mod tests {
             keymap.custom_bindings(&row_count),
             [KeyboardShortcut::new(
                 Modifiers::COMMAND | Modifiers::SHIFT,
-                Key::C
+                Key::Y
             )]
         );
         assert_eq!(

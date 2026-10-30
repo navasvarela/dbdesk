@@ -1143,7 +1143,7 @@ The gaps that keep DbRover from being an everyday tool. The full plan is in
     narrowest type all its values fit.
   - **W7f — The export dialog** (built): loaded or all rows, the format, its options and a preview, the
     last choices remembered in `app.ron`.
-  - **W7g — Copy as:** every text format from the cell menu and the Edit menu, **Copy with
+  - **W7g — Copy as** (built): every text format from the cell menu and the Edit menu, **Copy with
     headers** (⇧⌘C), and **Copy row** quoting as **Copy selection** does.
   - **W7h — The explorer and Run to file:** **Export data…** on tables and views, streamed on the
     explorer's connection; **Run to file…** (⌥⌘↵) writes a statement's rows without loading the

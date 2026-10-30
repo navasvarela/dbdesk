@@ -1,6 +1,6 @@
 # Exports and your own formats
 
-Status: **in progress** (2026-10-29); W7b to W7f are built. This is the design of W7 and W8 in
+Status: **in progress** (2026-10-29); W7b to W7g are built. This is the design of W7 and W8 in
 [A well-rounded app](well-rounded.md#w7--exports); the [roadmap](roadmap.md#well-rounded-track)
 tracks them.
 
@@ -332,7 +332,7 @@ Each layer is one pull request in a stack, and is useful and tested on its own.
   back through DuckDB and check its schema and values.
 - **W7f — The export dialog** (built): format, options, preview, loaded or all rows, the options
   remembered; kittest tests on SQLite.
-- **W7g — Copy as:** the submenu in the cell menu and the Edit menu, **Copy with headers**, **Copy
+- **W7g — Copy as** (built): the submenu in the cell menu and the Edit menu, **Copy with headers**, **Copy
   row** quoting as **Copy selection** does, the keymap ids; kittest tests reading the clipboard.
 - **W7h — The explorer and Run to file:** **Export data…** on tables and views, `ExportTable`,
   **Run to file…**; engine tests on every engine with a test server (more rows than a page, a

@@ -26,6 +26,7 @@ On Linux and Windows, read Ctrl wherever this page says ⌘.
 | Space | Show the selected cell's whole value | no text field has focus |
 | F2, Enter | Edit the selected cell | no text field has focus |
 | ⌘C | Copy the selected cells | no text field has focus |
+| ⇧⌘C | Copy the selected cells with their column names | no text field has focus |
 
 Console shortcuts are taken before the editor sees them, so ⌘↵ runs a statement instead of
 inserting a new line. **History**, **Commit** and **Rollback** have no shortcut by default.

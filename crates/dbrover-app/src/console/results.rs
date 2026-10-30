@@ -9,9 +9,12 @@ use egui::{Align, Label, Layout, RichText, Sense, TextEdit, Ui};
 use egui_extras::{Column, TableBuilder};
 
 use super::edit::{CellEditor, EditSession, Editability, PendingEdits, RowRef};
-use super::grid::{CellPos, GridView, SortKey};
+use super::grid::{CellPos, GridView, SortKey, tsv_field};
 use super::keys::{KeyLinks, RowsToOpen};
-use super::{ConsoleAction, QueryConsole, RunState, StatementView, ViewedCell, selected_cells};
+use super::{
+    ClipboardCopy, ClipboardFormat, ConsoleAction, QueryConsole, RunState, StatementView,
+    ViewedCell, selected_cells,
+};
 use crate::custom_actions::GridCells;
 use crate::keymap::{Action, Keymap};
 use crate::theme::{GRID_HEADER_TINT, Palette};
@@ -77,6 +80,7 @@ pub fn show(
             .action
             .map(|(action, cells)| ConsoleAction::RunAction(action, cells)),
     );
+    actions.extend(grid_output.copy.map(ConsoleAction::Copy));
     if grid_output.rearrange {
         match console.rearrange() {
             Ok(run) => actions.push(ConsoleAction::Run(run)),
@@ -400,6 +404,8 @@ struct GridOutput {
     rearrange: bool,
     /// A custom action chosen on the selected cells.
     action: Option<(ActionId, GridCells)>,
+    /// The selected cells to copy, in a format.
+    copy: Option<ClipboardCopy>,
 }
 
 /// What the user did to a cell this frame, applied once the table is drawn.
@@ -425,6 +431,8 @@ enum CellInput {
     Open(RowsToOpen),
     /// A custom action chosen on this cell, which joins the selection if it isn't in it.
     Action(CellPos, ActionId),
+    /// Copying from this cell's menu, which selects it if it isn't selected.
+    Copy(CellPos, ClipboardCopy),
 }
 
 fn grid(
@@ -566,6 +574,12 @@ fn grid(
                 output.action =
                     selected_cells(columns, rows, grid, edits).map(|cells| (action, cells));
             }
+            CellInput::Copy(cell, copy) => {
+                if !grid.is_selected(cell) {
+                    grid.select(cell);
+                }
+                output.copy = Some(copy);
+            }
         }
     }
     if let Some(cell) = grid.selected_cell()
@@ -581,6 +595,9 @@ fn grid(
         start_editing(edits, rows, row, cell.column);
     }
     copy_selection_on_request(ui, grid, rows);
+    if output.copy.is_none() && grid.selected_rows().is_some() && no_text_field_focused(ui) {
+        output.copy = copy_on_key(ui, keymap);
+    }
     if let Some(cell) = grid.selected_cell()
         && no_text_field_focused(ui)
         && !ui
@@ -590,6 +607,19 @@ fn grid(
         output.viewed = viewed_cell(columns, rows, grid, cell);
     }
     output
+}
+
+/// Copy with headers or Copy as, if one of their keys was pressed.
+fn copy_on_key(ui: &Ui, keymap: &Keymap) -> Option<ClipboardCopy> {
+    let actions: Vec<Action> = std::iter::once(Action::CopyWithHeaders)
+        .chain(ClipboardFormat::ALL.into_iter().map(Action::CopyAs))
+        .collect();
+    let pressed = ui.input_mut(|input| keymap.consume(input, &actions));
+    pressed.into_iter().find_map(|action| match action {
+        Action::CopyWithHeaders => Some(ClipboardCopy::WithHeaders),
+        Action::CopyAs(format) => Some(ClipboardCopy::As(format)),
+        _ => None,
+    })
 }
 
 /// Whether keys and ⌘C are free for the grid, rather than typing or copying in a text field.
@@ -772,6 +802,7 @@ struct MenuChoice {
     restore: bool,
     open: Option<RowsToOpen>,
     action: Option<ActionId>,
+    copy: Option<ClipboardCopy>,
 }
 
 /// Draws a cell, highlighted if selected, and its pending value if it was edited: click
@@ -841,6 +872,8 @@ fn cell(ui: &mut Ui, pos: CellPos, context: &CellContext<'_>) -> Option<CellInpu
         Some(CellInput::Open(rows))
     } else if let Some(action) = choice.action {
         Some(CellInput::Action(pos, action))
+    } else if let Some(copy) = choice.copy {
+        Some(CellInput::Copy(pos, copy))
     } else if choice.edit || (editable && response.double_clicked()) {
         Some(CellInput::Edit { row, column })
     } else if choice.set_null {
@@ -892,6 +925,10 @@ fn cell_menu(
         {
             ui.ctx().copy_text(tsv);
         }
+        if ui.button("Copy with headers").clicked() {
+            choice.copy = Some(ClipboardCopy::WithHeaders);
+        }
+        ui.menu_button("Copy as", |ui| copy_as_menu(ui, context, &mut choice));
         if ui.button("Copy value").clicked() {
             ui.ctx()
                 .copy_text(value.cloned().flatten().unwrap_or_default());
@@ -929,6 +966,27 @@ fn cell_menu(
         }
     });
     choice
+}
+
+/// A format a row's cells can be copied in. The SQL formats need the table, which the grid
+/// knows for rows it can edit.
+fn copy_as_menu(ui: &mut Ui, context: &CellContext<'_>, choice: &mut MenuChoice) {
+    for format in ClipboardFormat::ALL {
+        let needs_table = matches!(
+            format,
+            ClipboardFormat::SqlInsert | ClipboardFormat::SqlUpdate
+        );
+        let available = !needs_table || context.edits.target().is_some();
+        let item = ui
+            .add_enabled(available, egui::Button::new(format.format().name()))
+            .on_hover_text(format.description())
+            .on_disabled_hover_text(
+                "Only for rows the grid can edit: from one table, with its key",
+            );
+        if item.clicked() {
+            choice.copy = Some(ClipboardCopy::As(format));
+        }
+    }
 }
 
 /// Opening the row a cell's value refers to, and the rows of other tables that refer to this
@@ -1062,12 +1120,14 @@ fn viewed_cell(
 }
 
 /// ⌘C copies the selected cells, unless a text field has focus and copies its own text.
+/// Not with ⇧, which egui reports as a copy too: ⇧⌘C is Copy with headers.
 fn copy_selection_on_request(ui: &Ui, grid: &GridView, rows: &[Row]) {
     let requested = ui.input(|input| {
-        input
-            .events
-            .iter()
-            .any(|event| matches!(event, egui::Event::Copy))
+        !input.modifiers.shift
+            && input
+                .events
+                .iter()
+                .any(|event| matches!(event, egui::Event::Copy))
     });
     if requested
         && no_text_field_focused(ui)
@@ -1091,9 +1151,8 @@ fn looks_numeric(text: &str) -> bool {
     !text.is_empty() && text.parse::<f64>().is_ok()
 }
 
+/// A row as ⌘C copies a selection: tab-separated, `NULL` written out, and values with tabs,
+/// line breaks or quotes quoted, so it pastes into the right cells.
 fn row_as_tsv(row: &Row) -> String {
-    row.iter()
-        .map(|cell| cell.as_deref().unwrap_or("NULL"))
-        .collect::<Vec<_>>()
-        .join("\t")
+    row.iter().map(tsv_field).collect::<Vec<_>>().join("\t")
 }

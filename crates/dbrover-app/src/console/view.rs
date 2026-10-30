@@ -9,9 +9,9 @@ use egui::{Id, Margin, ScrollArea, TextEdit, Ui, vec2};
 
 use super::highlight::Marks;
 use super::{
-    Candidate, Disk, FormatScope, Found, LintOptions, QueryConsole, RecentCompletions, RowsToOpen,
-    RunScope, RunState, SubmittedRun, TreeCatalog, cell_viewer, completion_popup, find_bar,
-    highlight, results,
+    Candidate, ClipboardCopy, Disk, FormatScope, Found, LintOptions, QueryConsole,
+    RecentCompletions, RowsToOpen, RunScope, RunState, SubmittedRun, TreeCatalog, cell_viewer,
+    completion_popup, find_bar, highlight, results,
 };
 use crate::icons::{self, Role};
 use crate::keymap::{Action, Keymap};
@@ -64,6 +64,8 @@ pub enum ConsoleAction {
     /// Saves the rows the grid has loaded, or every row; the app asks where.
     /// Opens the export dialog for the selected statement's rows.
     OpenExportDialog,
+    /// Puts the selected cells on the clipboard; the app has the export options.
+    Copy(ClipboardCopy),
     /// Opens the data source's query history, to insert a past statement here.
     ShowHistory,
     /// Loads these catalog levels into the explorer's cache, for completion.
@@ -253,6 +255,8 @@ fn perform(console: &QueryConsole, action: Action, actions: &mut Vec<ConsoleActi
         // The grid and the editor handle these themselves, and the app the files.
         Action::ViewCell
         | Action::EditCell
+        | Action::CopyWithHeaders
+        | Action::CopyAs(_)
         | Action::Complete
         | Action::NextProblem
         | Action::PreviousProblem
@@ -288,6 +292,8 @@ fn is_enabled(console: &QueryConsole, action: Action) -> bool {
         Action::ShowHistory
         | Action::ViewCell
         | Action::EditCell
+        | Action::CopyWithHeaders
+        | Action::CopyAs(_)
         | Action::Complete
         | Action::Format
         | Action::FormatAll
@@ -349,6 +355,8 @@ fn toolbar_icon(action: Action) -> Option<(&'static str, Role)> {
         | Action::PreviousProblem
         | Action::ViewCell
         | Action::EditCell
+        | Action::CopyWithHeaders
+        | Action::CopyAs(_)
         | Action::Complete
         | Action::OpenFile
         | Action::Settings

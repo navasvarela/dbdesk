@@ -17,7 +17,9 @@ use crate::xlsx::{XlsxFile, XlsxOptions, xlsx_sheets};
 
 /// A format DbRover writes. What each one is, where it can go and what its file is called are
 /// methods here, so adding a format is one compiler-checked change.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ExportFormat {
     #[default]
@@ -62,6 +64,29 @@ impl ExportFormat {
             Self::Html => "HTML",
             Self::SqlUpdate => "SQL UPDATE",
         }
+    }
+
+    /// A stable name for the format, for key bindings (`grid.copy-as.<id>`) and MCP; never
+    /// changed once released.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Csv => "csv",
+            Self::Xlsx => "xlsx",
+            Self::Tsv => "tsv",
+            Self::Markdown => "markdown",
+            Self::SqlInsert => "sql-insert",
+            Self::Json => "json",
+            Self::JsonLines => "jsonl",
+            Self::Parquet => "parquet",
+            Self::Html => "html",
+            Self::SqlUpdate => "sql-update",
+        }
+    }
+
+    /// Whether the format writes text, which can go on the clipboard or into an MCP answer,
+    /// rather than only files.
+    pub fn writes_text(self) -> bool {
+        !matches!(self, Self::Xlsx | Self::Parquet)
     }
 
     /// The file name extension, without its dot.
