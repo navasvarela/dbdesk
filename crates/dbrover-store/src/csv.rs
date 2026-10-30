@@ -248,7 +248,7 @@ mod tests {
             vec![Some("1".to_owned()), Some("it's, \"x\"\r\ny".to_owned())],
             vec![Some("2".to_owned()), None],
         ];
-        let spec = dbrover_export::ExportFormat::Csv.default_spec();
+        let spec = dbrover_export::ExportSpec::Csv(dbrover_export::CsvOptions::default());
         dbrover_export::export_rows(&path, &spec, &columns, &rows).unwrap();
 
         let mut reader = CsvReader::open(&path, Separator::Comma).unwrap();

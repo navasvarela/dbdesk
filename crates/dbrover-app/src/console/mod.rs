@@ -33,14 +33,14 @@ use dbrover_engine::{
     RunPurpose, SessionState, StatementFailure, StatementSummary, TransactionEnd, TransactionMode,
     WatchedFile,
 };
-use dbrover_export::{ExportColumn, ExportSpec};
+use dbrover_export::{ExportColumn, ExportSpec, RowSource};
 use dbrover_sql::{
     Dialect, FormatOptions, ParameterValues, format_ranges, split_statements, statement_at,
     tokenize,
 };
 use dbrover_store::{ConsoleKey, Snippet, SnippetBody, SqlFileContents};
 
-use edit::Editability;
+use edit::{EditTarget, Editability};
 
 use crate::custom_actions::{GridCells, GridTable};
 use file::{ConfigFile, Reload, SqlFile, Storage};
@@ -259,6 +259,15 @@ fn selected_cells(
 }
 
 impl StatementView {
+    /// Where the rows come from, for the export formats that write SQL: the table, when the
+    /// grid can edit it.
+    pub fn row_source(&self, dialect: Dialect) -> RowSource {
+        RowSource {
+            dialect,
+            table: self.edits.target().map(EditTarget::source_table),
+        }
+    }
+
     fn selected_cells(&self) -> Option<GridCells> {
         selected_cells(&self.columns, &self.rows, &self.grid, &self.edits)
     }

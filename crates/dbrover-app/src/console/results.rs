@@ -3,7 +3,7 @@
 
 use dbrover_core::{Cell, ColumnInfo, Row};
 use dbrover_engine::{RunId, StatementSummary};
-use dbrover_export::export_choices;
+use dbrover_export::{RowSource, export_choices};
 use dbrover_sql::first_word;
 use dbrover_store::{ActionId, CustomAction};
 use egui::{Align, Label, Layout, RichText, Sense, TextEdit, Ui};
@@ -213,7 +213,7 @@ fn grid_toolbar(
         rearrange |= database_switch(ui, statement, toolbar.dialect);
         statement.grid.refresh(&statement.rows);
         arrangement_note(ui, statement);
-        export_menu(ui, toolbar, actions);
+        export_menu(ui, toolbar, &statement.row_source(toolbar.dialect), actions);
         ui.separator();
         edit_status(ui, statement, actions);
         rearrange
@@ -273,7 +273,12 @@ fn arrangement_note(ui: &mut Ui, statement: &StatementView) {
 
 /// The Export menu and how the last export went, or, while every row is being exported, its
 /// progress and Cancel.
-fn export_menu(ui: &mut Ui, toolbar: &Toolbar<'_>, actions: &mut Vec<ConsoleAction>) {
+fn export_menu(
+    ui: &mut Ui,
+    toolbar: &Toolbar<'_>,
+    source: &RowSource,
+    actions: &mut Vec<ConsoleAction>,
+) {
     if let Some((run, rows)) = toolbar.exporting {
         ui.weak(format!("Exporting… {rows} rows"));
         if ui.button("Cancel export").clicked() {
@@ -295,16 +300,9 @@ fn export_menu(ui: &mut Ui, toolbar: &Toolbar<'_>, actions: &mut Vec<ConsoleActi
             ),
         ];
         for (label, rows, hover) in submenus {
-            ui.menu_button(label, |ui| {
-                for choice in export_choices() {
-                    let label = format!("{}\u{2026}", choice.name);
-                    if ui.button(label).on_hover_text(choice.description).clicked() {
-                        actions.push(ConsoleAction::Export(rows, choice.spec));
-                    }
-                }
-            })
-            .response
-            .on_hover_text(hover);
+            ui.menu_button(label, |ui| export_choice_buttons(ui, rows, source, actions))
+                .response
+                .on_hover_text(hover);
         }
     });
     match toolbar.export_status {
@@ -315,6 +313,29 @@ fn export_menu(ui: &mut Ui, toolbar: &Toolbar<'_>, actions: &mut Vec<ConsoleActi
             ui.colored_label(ui.visuals().error_fg_color, error);
         }
         None => {}
+    }
+}
+
+/// A button for each format, greyed out with the reason where the rows can't be written in it.
+fn export_choice_buttons(
+    ui: &mut Ui,
+    rows: ExportedRows,
+    source: &RowSource,
+    actions: &mut Vec<ConsoleAction>,
+) {
+    for choice in export_choices(source) {
+        let label = format!("{}\u{2026}", choice.name);
+        match choice.spec {
+            Ok(spec) => {
+                if ui.button(label).on_hover_text(choice.description).clicked() {
+                    actions.push(ConsoleAction::Export(rows, spec));
+                }
+            }
+            Err(reason) => {
+                ui.add_enabled(false, egui::Button::new(label))
+                    .on_disabled_hover_text(reason);
+            }
+        }
     }
 }
 

@@ -20,7 +20,7 @@ use dbrover_engine::{
     Command, ConsoleId, DatabaseFile, Event, Export, InstalledUpdate, PasswordUpdate, Release,
     Restart, SessionState, WatchedFile,
 };
-use dbrover_export::ExportFormat;
+use dbrover_export::ExportSpec;
 use dbrover_store::{
     ConsoleKey, ConsoleName, CustomFile, DataSourceFile, FormatSettings, KeymapBindings,
     KeywordCase, Projects, SavedConsole, Secret, SecretStore, Settings,
@@ -268,7 +268,7 @@ fn exports_rows_to_a_file_and_reports_failures() {
     engine.expect_started(vec![]);
     let export = |path: std::path::PathBuf| Export {
         path,
-        spec: ExportFormat::Csv.default_spec(),
+        spec: ExportSpec::Csv(Default::default()),
         columns: vec![dbrover_export::ExportColumn::text("n")],
         rows: vec![vec![Some("1".to_owned())], vec![None]],
     };

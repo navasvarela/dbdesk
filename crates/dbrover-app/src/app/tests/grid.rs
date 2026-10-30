@@ -1,5 +1,7 @@
 //! Power in the grid (W5), driven through the whole app against SQLite.
 
+use egui_kittest::kittest::NodeT;
+
 use super::*;
 
 /// The orders as the database has them, by id.
@@ -220,8 +222,9 @@ fn exports_every_row_not_only_those_loaded() {
     );
 }
 
-/// Export › Loaded rows offers every format: CSV for Excel starts with a byte order mark and
-/// Markdown writes a table, each with the save dialog asked for its own extension.
+/// Export › Loaded rows offers every format, each saved under its own extension: CSV for
+/// Excel starts with a byte order mark, Markdown writes a table, and the SQL formats write to
+/// the table the grid edits.
 #[test]
 fn exports_the_loaded_rows_in_other_formats() {
     let dir = tempfile::tempdir().unwrap();
@@ -232,35 +235,90 @@ fn exports_the_loaded_rows_in_other_formats() {
     );
     let (_layer, feed) = log_console::pipeline();
     let mut harness = start_app(dir.path(), feed);
-    let asked = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    let (folder, extensions) = (dir.path().to_owned(), asked.clone());
+    let picked = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (folder, paths) = (dir.path().to_owned(), picked.clone());
     harness.state_mut().pick_export_path = Box::new(move |format, _| {
-        extensions.lock().unwrap().push(format.extension());
-        Some(folder.join(format!("orders.{}", format.extension())))
+        let mut paths = paths.lock().unwrap();
+        let path = folder.join(format!("orders{}.{}", paths.len(), format.extension()));
+        paths.push(path.clone());
+        Some(path)
     });
     open_orders(&mut harness, "2 rows");
+    step_until_visible(&mut harness, "Add row");
 
-    for (choice, done) in [
-        ("CSV for Excel…", "Exported 2 rows"),
-        ("Markdown…", "orders.md"),
-    ] {
+    let expected = [
+        (
+            "CSV for Excel…",
+            "\u{feff}id,customer\r\n1,Zoë | Ltd\r\n2,\r\n",
+        ),
+        (
+            "Markdown…",
+            "| id | customer |\n| --- | --- |\n| 1 | Zoë \\| Ltd |\n| 2 | NULL |\n",
+        ),
+        (
+            "SQL INSERT…",
+            "INSERT INTO \"main\".\"orders\" (\"id\", \"customer\") VALUES (1, 'Zoë | Ltd');\n\
+             INSERT INTO \"main\".\"orders\" (\"id\", \"customer\") VALUES (2, NULL);\n",
+        ),
+        (
+            "SQL UPDATE…",
+            "UPDATE \"main\".\"orders\" SET \"customer\" = 'Zoë | Ltd' WHERE \"id\" = '1';\n\
+             UPDATE \"main\".\"orders\" SET \"customer\" = NULL WHERE \"id\" = '2';\n",
+        ),
+    ];
+    for (index, (choice, contents)) in expected.into_iter().enumerate() {
         harness.get_by_label("Export").click();
         harness.run();
         harness.get_by_label("Loaded rows ⏵").click();
         harness.run();
         harness.get_by_label(choice).click();
-        step_until_visible(&mut harness, done);
+        step_until_visible(&mut harness, &format!("orders{index}."));
+        let path = picked.lock().unwrap()[index].clone();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            contents,
+            "{choice}"
+        );
     }
+    let extensions: Vec<String> = picked
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|path| Some(path.extension()?.to_str()?.to_owned()))
+        .collect();
+    assert_eq!(extensions, ["csv", "md", "sql", "sql"]);
+}
 
-    assert_eq!(*asked.lock().unwrap(), ["csv", "md"]);
-    assert_eq!(
-        std::fs::read_to_string(dir.path().join("orders.csv")).unwrap(),
-        "\u{feff}id,customer\r\n1,Zoë | Ltd\r\n2,\r\n"
+/// The SQL formats need to know the table: for rows from a join they are greyed out.
+#[test]
+fn greys_out_the_sql_formats_for_rows_of_no_one_table() {
+    let dir = tempfile::tempdir().unwrap();
+    save_shop(
+        dir.path(),
+        "CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT);
+         INSERT INTO orders VALUES (1, 'a');",
     );
-    assert_eq!(
-        std::fs::read_to_string(dir.path().join("orders.md")).unwrap(),
-        "| id | customer |\n| --- | --- |\n| 1 | Zoë \\| Ltd |\n| 2 | NULL |\n"
-    );
+    let (_layer, feed) = log_console::pipeline();
+    let mut harness = start_app(dir.path(), feed);
+    open_console(&mut harness);
+    harness
+        .get_by_role(Role::MultilineTextInput)
+        .type_text("SELECT a.id, b.customer FROM orders a JOIN orders b USING (id)");
+    harness.run();
+    harness.get_by_label("Run").click();
+    step_until_visible(&mut harness, "Read-only");
+
+    harness.get_by_label("Export").click();
+    harness.run();
+    harness.get_by_label("Loaded rows ⏵").click();
+    harness.run();
+    for format in ["SQL INSERT…", "SQL UPDATE…"] {
+        assert!(
+            harness.get_by_label(format).accesskit_node().is_disabled(),
+            "{format}"
+        );
+    }
+    assert!(!harness.get_by_label("CSV…").accesskit_node().is_disabled());
 }
 
 /// Saves `shop` with an orders table at `safety`, starts the app, and opens Import CSV… on

@@ -1,8 +1,8 @@
 //! The formats, and a format with its options: what an export is asked to write.
 
 use crate::text::{
-    Csv, CsvOptions, Html, HtmlOptions, Json, JsonLines, Markdown, MarkdownOptions, TextFormat,
-    Tsv, TsvOptions,
+    Csv, CsvOptions, Html, HtmlOptions, Insert, InsertOptions, InsertSpec, Json, JsonLines,
+    Markdown, MarkdownOptions, RowSource, TextFormat, Tsv, TsvOptions, Update, UpdateSpec,
 };
 
 /// A format DbRover writes. What each one is, where it can go and what its file is called are
@@ -12,20 +12,24 @@ pub enum ExportFormat {
     Csv,
     Tsv,
     Markdown,
+    SqlInsert,
     Json,
     JsonLines,
     Html,
+    SqlUpdate,
 }
 
 impl ExportFormat {
     /// In the order menus list them: the most asked for first.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 8] = [
         Self::Csv,
         Self::Tsv,
         Self::Markdown,
+        Self::SqlInsert,
         Self::Json,
         Self::JsonLines,
         Self::Html,
+        Self::SqlUpdate,
     ];
 
     /// The format's name, as menus and the save dialog show it.
@@ -34,9 +38,11 @@ impl ExportFormat {
             Self::Csv => "CSV",
             Self::Tsv => "TSV",
             Self::Markdown => "Markdown",
+            Self::SqlInsert => "SQL INSERT",
             Self::Json => "JSON",
             Self::JsonLines => "JSON Lines",
             Self::Html => "HTML",
+            Self::SqlUpdate => "SQL UPDATE",
         }
     }
 
@@ -46,36 +52,63 @@ impl ExportFormat {
             Self::Csv => "csv",
             Self::Tsv => "tsv",
             Self::Markdown => "md",
+            Self::SqlInsert | Self::SqlUpdate => "sql",
             Self::Json => "json",
             Self::JsonLines => "jsonl",
             Self::Html => "html",
         }
     }
 
-    /// The format with every option at its default.
-    pub fn default_spec(self) -> ExportSpec {
+    /// What the format writes, for a tooltip.
+    pub fn description(self) -> &'static str {
         match self {
+            Self::Csv => "Comma-separated values, as RFC 4180 describes them",
+            Self::Tsv => "Tab-separated values, as Copy puts them on the clipboard",
+            Self::Markdown => "A table for a pull request, an issue or a chat",
+            Self::SqlInsert => "INSERT statements that put the rows into their table",
+            Self::Json => "An array of objects, one a row, every value a string",
+            Self::JsonLines => "One JSON object a line, as data pipelines and jq -c read",
+            Self::Html => "A web page with the rows as a table",
+            Self::SqlUpdate => "UPDATE statements that set each row's values, by its primary key",
+        }
+    }
+
+    /// The format with every option at its default, for rows from `source`.
+    ///
+    /// # Errors
+    ///
+    /// Why the format can't write these rows: the SQL formats need to know their table.
+    pub fn default_spec(self, source: &RowSource) -> Result<ExportSpec, &'static str> {
+        Ok(match self {
             Self::Csv => ExportSpec::Csv(CsvOptions::default()),
             Self::Tsv => ExportSpec::Tsv(TsvOptions::default()),
             Self::Markdown => ExportSpec::Markdown(MarkdownOptions::default()),
+            Self::SqlInsert => {
+                let spec = InsertSpec::for_rows(source, InsertOptions::default())?;
+                ExportSpec::SqlInsert(Box::new(spec))
+            }
             Self::Json => ExportSpec::Json,
             Self::JsonLines => ExportSpec::JsonLines,
             Self::Html => ExportSpec::Html(HtmlOptions::default()),
-        }
+            Self::SqlUpdate => ExportSpec::SqlUpdate(Box::new(UpdateSpec::for_rows(source)?)),
+        })
     }
 }
 
 /// A format with its options. Each format has its own options type, so no option can be
-/// given to a format it doesn't apply to.
+/// given to a format it doesn't apply to. The SQL formats, which carry their table, are boxed
+/// to keep the commands that carry a spec small.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExportSpec {
     Csv(CsvOptions),
     Tsv(TsvOptions),
     Markdown(MarkdownOptions),
+    SqlInsert(Box<InsertSpec>),
     /// An array of objects, values as strings: what DbRover has always written.
     Json,
     JsonLines,
     Html(HtmlOptions),
+    SqlUpdate(Box<UpdateSpec>),
 }
 
 impl ExportSpec {
@@ -84,9 +117,11 @@ impl ExportSpec {
             Self::Csv(_) => ExportFormat::Csv,
             Self::Tsv(_) => ExportFormat::Tsv,
             Self::Markdown(_) => ExportFormat::Markdown,
+            Self::SqlInsert(_) => ExportFormat::SqlInsert,
             Self::Json => ExportFormat::Json,
             Self::JsonLines => ExportFormat::JsonLines,
             Self::Html(_) => ExportFormat::Html,
+            Self::SqlUpdate(_) => ExportFormat::SqlUpdate,
         }
     }
 
@@ -96,9 +131,11 @@ impl ExportSpec {
             Self::Csv(options) => Box::new(Csv::new(options.clone())),
             Self::Tsv(options) => Box::new(Tsv::new(options.clone())),
             Self::Markdown(options) => Box::new(Markdown::new(options.clone())),
+            Self::SqlInsert(spec) => Box::new(Insert::new(spec.as_ref().clone())),
             Self::Json => Box::<Json>::default(),
             Self::JsonLines => Box::<JsonLines>::default(),
             Self::Html(options) => Box::new(Html::new(options.clone())),
+            Self::SqlUpdate(spec) => Box::new(Update::new(spec.as_ref().clone())),
         }
     }
 }
@@ -109,18 +146,19 @@ pub struct ExportChoice {
     pub name: &'static str,
     /// What the entry writes, for a tooltip.
     pub description: &'static str,
-    pub spec: ExportSpec,
+    /// The format to write, or why it can't write these rows.
+    pub spec: Result<ExportSpec, &'static str>,
 }
 
-/// Every format at its defaults, in [`ExportFormat::ALL`]'s order, with **CSV for Excel** after
-/// CSV.
-pub fn export_choices() -> Vec<ExportChoice> {
+/// Every format at its defaults for rows from `source`, in [`ExportFormat::ALL`]'s order, with
+/// **CSV for Excel** after CSV.
+pub fn export_choices(source: &RowSource) -> Vec<ExportChoice> {
     let mut choices: Vec<ExportChoice> = ExportFormat::ALL
         .into_iter()
         .map(|format| ExportChoice {
             name: format.name(),
-            description: description(format),
-            spec: format.default_spec(),
+            description: format.description(),
+            spec: format.default_spec(source),
         })
         .collect();
     choices.insert(
@@ -130,19 +168,8 @@ pub fn export_choices() -> Vec<ExportChoice> {
             description: "CSV with a byte order mark, so Excel reads accents and other \
                           non-English letters. Excel set to a language that separates lists \
                           with semicolons may still put each line in one column.",
-            spec: ExportSpec::Csv(CsvOptions::for_excel()),
+            spec: Ok(ExportSpec::Csv(CsvOptions::for_excel())),
         },
     );
     choices
-}
-
-fn description(format: ExportFormat) -> &'static str {
-    match format {
-        ExportFormat::Csv => "Comma-separated values, as RFC 4180 describes them",
-        ExportFormat::Tsv => "Tab-separated values, as Copy puts them on the clipboard",
-        ExportFormat::Markdown => "A table for a pull request, an issue or a chat",
-        ExportFormat::Json => "An array of objects, one a row, every value a string",
-        ExportFormat::JsonLines => "One JSON object a line, as data pipelines and jq -c read",
-        ExportFormat::Html => "A web page with the rows as a table",
-    }
 }

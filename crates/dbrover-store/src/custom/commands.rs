@@ -6,7 +6,7 @@ use std::time::Duration;
 use dbrover_core::{CommandTemplate, Row, SelectedCells};
 use serde::{Deserialize, Serialize};
 
-use dbrover_export::{ExportColumn, ExportFormat, ExportSpec, TsvOptions, render};
+use dbrover_export::{CsvOptions, ExportColumn, ExportSpec, TsvOptions, render};
 
 /// Long enough for a program that reads a few thousand rows, short enough that one stuck on a
 /// prompt nobody sees doesn't sit there all day.
@@ -52,7 +52,7 @@ impl StdinFormat {
     pub fn encode(self, cells: &SelectedCells) -> String {
         let spec = match self {
             Self::Json => ExportSpec::Json,
-            Self::Csv => ExportFormat::Csv.default_spec(),
+            Self::Csv => ExportSpec::Csv(CsvOptions::default()),
             // `NULL` as an empty field, as in CSV, rather than as the grid shows it.
             Self::Tsv => ExportSpec::Tsv(TsvOptions {
                 header: true,

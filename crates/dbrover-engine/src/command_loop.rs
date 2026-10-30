@@ -394,12 +394,12 @@ impl Engine {
             Command::ExportHistory {
                 query,
                 path,
-                format,
+                spec,
                 names,
             } => self.history.export(HistoryExport {
                 query,
                 path,
-                format,
+                spec,
                 names,
             }),
             Command::CheckForUpdates => {

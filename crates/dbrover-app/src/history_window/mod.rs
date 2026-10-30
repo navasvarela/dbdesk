@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use dbrover_core::DataSourceId;
 use dbrover_engine::{Command, Event};
-use dbrover_export::ExportFormat;
+use dbrover_export::{CsvOptions, ExportSpec};
 use dbrover_store::{
     ConsoleKey, HistoryEntry, HistoryOutcome, HistoryQuery, HistorySource, HistorySourceKind,
 };
@@ -70,7 +70,7 @@ pub enum HistoryAction {
         sql: String,
     },
     /// Export the current search, every match of it, in this format, to a file to ask for.
-    Export(ExportFormat),
+    Export(ExportSpec),
     Close,
 }
 
@@ -129,12 +129,12 @@ impl HistoryWindow {
     }
 
     /// Exports what the window lists, without its limit, to `path`.
-    pub fn export(&mut self, path: PathBuf, format: ExportFormat) -> Command {
+    pub fn export(&mut self, path: PathBuf, spec: ExportSpec) -> Command {
         self.export = ExportStatus::Writing(path.clone());
         Command::ExportHistory {
             query: self.sent.clone(),
             path,
-            format,
+            spec,
             names: self.names.clone(),
         }
     }
@@ -319,15 +319,15 @@ impl HistoryWindow {
 }
 
 /// **Export history** with its two formats. Returns the one chosen.
-fn export_menu(ui: &mut Ui) -> Option<ExportFormat> {
+fn export_menu(ui: &mut Ui) -> Option<ExportSpec> {
     let mut chosen = None;
     ui.menu_button("Export history", |ui| {
-        for (format, label) in [
-            (ExportFormat::Csv, "As CSV\u{2026}"),
-            (ExportFormat::Json, "As JSON\u{2026}"),
+        for (spec, label) in [
+            (ExportSpec::Csv(CsvOptions::default()), "As CSV\u{2026}"),
+            (ExportSpec::Json, "As JSON\u{2026}"),
         ] {
             if ui.button(label).clicked() {
-                chosen = Some(format);
+                chosen = Some(spec);
             }
         }
     })

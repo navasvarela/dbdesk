@@ -3,7 +3,7 @@
 
 use dbrover_core::TableName;
 use dbrover_engine::RowsImport;
-use dbrover_export::ExportFormat;
+use dbrover_export::ExportSpec;
 use dbrover_store::{HistoryEntry, HistorySource, NamedCell, RowChange, RowChangeKind, Separator};
 
 use super::*;
@@ -73,7 +73,7 @@ fn records_where_each_statement_came_from() {
         &mut engine,
         2,
         "SELECT id, name FROM people",
-        (&exported, ExportFormat::Csv),
+        (&exported, ExportSpec::Csv(Default::default())),
     );
     assert_eq!(written, Ok(1));
     let imported = dir.path().join("more.csv");
@@ -254,7 +254,7 @@ fn exports_a_search_to_a_file() {
             ..HistoryQuery::all(id)
         },
         path: path.clone(),
-        format: ExportFormat::Csv,
+        spec: ExportSpec::Csv(Default::default()),
         names: std::collections::HashMap::from([(id, "shop".to_owned())]),
     });
     loop {

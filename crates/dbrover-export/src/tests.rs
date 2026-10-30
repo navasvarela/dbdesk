@@ -21,6 +21,16 @@ fn sample() -> (Vec<ExportColumn>, Vec<Vec<Cell>>) {
     (columns, rows)
 }
 
+/// Rows of no known table, from SQLite.
+fn source() -> RowSource {
+    RowSource::untabled(dbrover_sql::Dialect::Sqlite)
+}
+
+/// `format` with its defaults, for rows from [`source`].
+fn spec(format: ExportFormat) -> ExportSpec {
+    format.default_spec(&source()).unwrap()
+}
+
 fn rendered(spec: &ExportSpec) -> String {
     let (columns, rows) = sample();
     render(spec, &columns, &rows)
@@ -29,7 +39,7 @@ fn rendered(spec: &ExportSpec) -> String {
 #[test]
 fn writes_rfc_4180_csv_by_default() {
     assert_eq!(
-        rendered(&ExportFormat::Csv.default_spec()),
+        rendered(&spec(ExportFormat::Csv)),
         "id,note,id\r\n\
          1,plain,7\r\n\
          2,\"a, \"\"quoted\"\"\nline\",\r\n\
@@ -73,17 +83,17 @@ fn quotes_csv_null_text_only_where_it_needs_it() {
 
 #[test]
 fn csv_for_excel_starts_with_a_byte_order_mark() {
-    let excel = export_choices()
+    let excel = export_choices(&source())
         .into_iter()
         .find(|choice| choice.name == "CSV for Excel")
-        .map(|choice| choice.spec);
-    let Some(spec @ ExportSpec::Csv(_)) = excel else {
-        panic!("no CSV for Excel among {:?}", export_choices());
+        .and_then(|choice| choice.spec.ok());
+    let Some(excel @ ExportSpec::Csv(_)) = excel else {
+        panic!("no CSV for Excel among {:?}", export_choices(&source()));
     };
-    let csv = rendered(&spec);
+    let csv = rendered(&excel);
     assert_eq!(
         csv.strip_prefix('\u{feff}'),
-        Some(rendered(&ExportFormat::Csv.default_spec()).as_str())
+        Some(rendered(&spec(ExportFormat::Csv)).as_str())
     );
 }
 
@@ -98,7 +108,7 @@ fn refuses_a_quote_or_a_line_break_as_a_separator() {
 #[test]
 fn writes_tsv_as_the_clipboard_takes_it() {
     assert_eq!(
-        rendered(&ExportFormat::Tsv.default_spec()),
+        rendered(&spec(ExportFormat::Tsv)),
         "id\tnote\tid\n\
          1\tplain\t7\n\
          2\t\"a, \"\"quoted\"\"\nline\"\tNULL\n\
@@ -110,7 +120,7 @@ fn writes_tsv_as_the_clipboard_takes_it() {
 #[test]
 fn writes_a_markdown_table() {
     assert_eq!(
-        rendered(&ExportFormat::Markdown.default_spec()),
+        rendered(&spec(ExportFormat::Markdown)),
         "| id | note | id |\n\
          | --- | --- | --- |\n\
          | 1 | plain | 7 |\n\
@@ -118,10 +128,7 @@ fn writes_a_markdown_table() {
          | 3 | x \\| <b>&</b>\ttab; |  |\n\
          | 4 | 🦀<br>crab | NULL |\n"
     );
-    assert_eq!(
-        render(&ExportFormat::Markdown.default_spec(), &[], &[vec![]]),
-        ""
-    );
+    assert_eq!(render(&spec(ExportFormat::Markdown), &[], &[vec![]]), "");
 }
 
 #[test]
@@ -176,7 +183,7 @@ fn writes_an_html_fragment_with_every_value_escaped() {
 
 #[test]
 fn writes_an_html_page_around_the_table() {
-    let page = rendered(&ExportFormat::Html.default_spec());
+    let page = rendered(&spec(ExportFormat::Html));
     assert!(page.starts_with("<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n"));
     assert!(page.contains("<body>\n<table>\n"), "{page}");
     assert!(page.ends_with("</table>\n</body>\n</html>\n"), "{page}");
@@ -199,8 +206,10 @@ fn types_columns_from_the_dialect() {
 fn writes_the_same_file_a_page_at_a_time_in_every_format() {
     let dir = tempfile::tempdir().unwrap();
     let (columns, rows) = sample();
-    for choice in export_choices() {
-        let spec = &choice.spec;
+    for choice in export_choices(&source()) {
+        let Ok(spec) = &choice.spec else {
+            continue;
+        };
         let extension = spec.format().extension();
         let paged_path = dir.path().join(format!("paged.{extension}"));
         let mut writer = ExportWriter::create(&paged_path, spec, &columns).unwrap();
@@ -228,7 +237,7 @@ fn reports_the_path_it_could_not_write() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("missing/rows.csv");
 
-    let error = export_rows(&path, &ExportFormat::Csv.default_spec(), &[], &[]).unwrap_err();
+    let error = export_rows(&path, &spec(ExportFormat::Csv), &[], &[]).unwrap_err();
 
     assert!(error.to_string().contains("missing/rows.csv"), "{error}");
 }
@@ -240,7 +249,7 @@ fn leaves_the_chosen_file_alone_until_finished_and_when_abandoned() {
     std::fs::write(&path, "before").unwrap();
     let (columns, rows) = sample();
 
-    let spec = ExportFormat::Csv.default_spec();
+    let spec = spec(ExportFormat::Csv);
     let mut writer = ExportWriter::create(&path, &spec, &columns).unwrap();
     writer.write(&rows).unwrap();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "before");

@@ -1488,11 +1488,11 @@ impl DbRoverApp {
             HistoryAction::Insert { console, sql } => {
                 self.consoles.insert_statement(&console, &sql);
             }
-            HistoryAction::Export(format) => {
-                if let Some(path) = (self.pick_export_path)(format, "history")
+            HistoryAction::Export(spec) => {
+                if let Some(path) = (self.pick_export_path)(spec.format(), "history")
                     && let Some(window) = &mut self.history_window
                 {
-                    let command = window.export(path, format);
+                    let command = window.export(path, spec);
                     self.send(command);
                 }
             }
