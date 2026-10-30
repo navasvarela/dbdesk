@@ -11,13 +11,16 @@ publish.workspace = true
 [dependencies]
 dbrover-core.workspace = true
 dbrover-sql.workspace = true
+rust_xlsxwriter.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+calamine.workspace = true
 rusqlite.workspace = true
 tempfile.workspace = true
+zip.workspace = true
 
 [lints]
 workspace = true

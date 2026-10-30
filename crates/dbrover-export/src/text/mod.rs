@@ -56,13 +56,14 @@ pub trait TextFormat: Send {
 }
 
 /// `rows` under a header of `columns`, as text: what goes on the clipboard, on a program's
-/// stdin or into an MCP answer.
-pub fn render(spec: &ExportSpec, columns: &[ExportColumn], rows: &[Vec<Cell>]) -> String {
+/// stdin or into an MCP answer. `None` for a format that only writes files.
+pub fn render(spec: &ExportSpec, columns: &[ExportColumn], rows: &[Vec<Cell>]) -> Option<String> {
+    let mut format = spec.text_format()?;
     let mut out = Vec::new();
     // Writing into a `Vec` can't fail, and nor can serializing strings and nulls as JSON, the
     // only other thing a format does that returns an error.
-    let _ = write_all(spec.text_format().as_mut(), &mut out, columns, rows);
-    String::from_utf8_lossy(&out).into_owned()
+    let _ = write_all(format.as_mut(), &mut out, columns, rows);
+    Some(String::from_utf8_lossy(&out).into_owned())
 }
 
 fn write_all(

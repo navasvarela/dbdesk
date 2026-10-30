@@ -349,7 +349,7 @@ impl Consoles {
         path: PathBuf,
     ) -> Option<Command> {
         match rows {
-            ExportedRows::Loaded => self.open.get(key)?.export(spec, path),
+            ExportedRows::Loaded => self.open.get_mut(key)?.export(spec, path),
             ExportedRows::All => {
                 let console = self.open.get_mut(key)?;
                 self.next_run += 1;

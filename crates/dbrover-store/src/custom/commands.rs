@@ -76,7 +76,8 @@ impl StdinFormat {
                     .collect()
             })
             .collect();
-        render(&spec, &columns, &rows)
+        // Each of them is a text format, which `render` always writes.
+        render(&spec, &columns, &rows).unwrap_or_default()
     }
 }
 

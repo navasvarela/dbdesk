@@ -105,6 +105,16 @@ rfd = "0.17.2"
 # tests add the client to drive it.
 rmcp = { version = "3.7.0", default-features = false, features = ["macros", "server", "transport-io"] }
 rusqlite = { version = "0.40.2", features = ["bundled", "column_decltype"] }
+# Writes `.xlsx` exports (dbrover-export), a row at a time in constant memory, which keeps
+# each sheet's rows in a temporary file rather than in memory. 0.100.0 rather than the newer
+# 0.101 and 0.102, released in the two weeks before W7d, to let a release settle; it is the
+# first built on zip 9, already in the dependency tree.
+rust_xlsxwriter = { version = "0.100.0", default-features = false, features = ["constant_memory"] }
+# Reads `.xlsx` files back in dbrover-export's tests, to check each cell's type and value.
+calamine = { version = "0.37.0", default-features = false }
+# Reads a sheet's XML out of an `.xlsx` in dbrover-export's tests; the version rust_xlsxwriter
+# writes with.
+zip = { version = "9.1.0", default-features = false, features = ["deflate"] }
 # SSH tunnels, in pure Rust. No default features, which pick aws-lc-rs (CMake and NASM on
 # Windows) and zlib compression: ring is the crypto the workspace already builds for rustls,
 # and `rsa` keeps RSA keys and host keys working. 0.64.1 rather than the 0.65.0 released the
