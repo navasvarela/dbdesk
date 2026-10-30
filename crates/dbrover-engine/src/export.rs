@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 use dbrover_core::{Row, describe_error};
-use dbrover_export::{ExportColumn, ExportSpec, export_rows};
+use dbrover_export::{ExportColumn, ExportError, ExportSpec};
 use dbrover_sql::ParameterValues;
 
 use crate::events::EventSink;
@@ -31,6 +31,17 @@ pub struct ExportAll {
     pub spec: ExportSpec,
 }
 
+fn write_rows(
+    path: &std::path::Path,
+    spec: &ExportSpec,
+    columns: &[ExportColumn],
+    rows: &[Row],
+) -> Result<(), ExportError> {
+    let mut writer = crate::export_file::create_writer(path, spec, columns)?;
+    writer.write(rows)?;
+    writer.finish()
+}
+
 /// Writes the export and reports [`Event::ExportFinished`].
 pub(crate) async fn run(console: ConsoleId, export: Export, events: EventSink) {
     let Export {
@@ -42,7 +53,7 @@ pub(crate) async fn run(console: ConsoleId, export: Export, events: EventSink) {
     let count = rows.len();
     let task_path = path.clone();
     let written =
-        tokio::task::spawn_blocking(move || export_rows(&task_path, &spec, &columns, &rows)).await;
+        tokio::task::spawn_blocking(move || write_rows(&task_path, &spec, &columns, &rows)).await;
     let result = match written {
         Ok(Ok(())) => {
             tracing::info!("exported {count} rows to {}", path.display());

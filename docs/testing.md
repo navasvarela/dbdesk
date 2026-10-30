@@ -171,7 +171,9 @@ against a real server, such as a cancel arriving after the last row.
 - `dbrover-export` has golden tests of every text format on awkward values, the SQL formats in
   every dialect, a SQLite round trip of `INSERT`s, and `.xlsx` files read back with `calamine`
   (each cell's type and value, the header, frozen panes and filter from the sheet's XML, and
-  sheets past a full one, with a small sheet). The table-driven typing rules are unit tests of
+  sheets past a full one, with a small sheet). The DuckDB driver's `parquet` tests read each
+  column's type and value back through DuckDB, and the engine's `exports_every_row_on_every_engine`
+  writes Parquet on every engine with a test server and reads its count and type back. The table-driven typing rules are unit tests of
   `xlsx::typing`.
 - `fills_a_whole_sheet_and_starts_another` writes a real sheet's worth of rows plus one; it
   takes a few seconds, so it is ignored by default:

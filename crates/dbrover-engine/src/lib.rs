@@ -11,6 +11,7 @@ mod console_files;
 mod environment;
 mod events;
 mod export;
+mod export_file;
 mod handle;
 mod history;
 mod keymap;
