@@ -442,9 +442,11 @@ were. From N1·3 on, each runs against `redis:8-alpine` and `valkey/valkey:9-alp
   conformance check that pages add up to the whole level on both servers, and the grouping.
   How it came out:
   - a level is listed in `SCAN`'s order, not sorted, since no page of a level that big can be
-    sorted against the rest. A page holds exactly 1,000 nodes: its token is the `SCAN` cursor
-    of the batch it stopped in and how many of that batch's keys it read, and the driver
-    remembers the groups each level has listed so far, since a group turns up in many batches.
+    sorted against the rest. A page holds exactly 1,000 nodes: one that stops partway through a
+    `SCAN` batch keeps the batch's unread keys for the next page, which then goes on from the
+    cursor after the batch (sending the batch's cursor again could answer with other keys
+    while the server rehashes), and the driver remembers the groups each level has listed so
+    far, since a group turns up in many batches.
     A page also stops after 100 `SCAN` calls (about 100,000 keys), for a level whose keys fall
     into a few groups;
   - the filter, as `MATCH`, lists every key under a partial level whose name contains the

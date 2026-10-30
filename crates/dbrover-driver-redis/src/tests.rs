@@ -481,6 +481,21 @@ async fn fill_database(connection: &mut RedisConnection, database: u8, keys: &[S
         let pairs: Vec<String> = chunk.iter().map(|key| format!("{key} x")).collect();
         run(connection, &format!("MSET {}", pairs.join(" "))).await;
     }
+    // A table the server is still growing into is read in two halves, in an order that can
+    // change from one `SCAN` to the next; the check compares the order of two listings, so it
+    // waits for the server to finish (`DEBUG HTSTATS` names a "rehashing target" until then).
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let stats = texts(connection, &format!("DEBUG HTSTATS {database}")).await;
+        if !stats.concat().concat().contains("rehashing") {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "database {database} never finished rehashing"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 }
 
 /// The level at `path`, whole, as label, kind and detail, sorted by label.

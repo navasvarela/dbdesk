@@ -6,10 +6,12 @@
 //! next separator, and the keys with no separator left. Keys come in `SCAN`'s order, the order
 //! of the server's hash table, so a group can turn up in any batch; the groups already listed
 //! are remembered per level, and listed once. A page holds exactly as many nodes as asked
-//! (fewer only at the end, or when its time budget runs out), and its token says where to go on:
-//! the `SCAN` cursor of the batch it stopped in, and how many of that batch's keys it had read.
-//! The server answers a cursor with the same batch while the keys don't change, which is what
-//! `SCAN` promises anyway: a key may be listed twice, or missed, if keys change meanwhile.
+//! (fewer only at the end, or when its time budget runs out). One that stops partway through a
+//! batch keeps the batch's unread keys for the next page, which starts with them and goes on
+//! from the cursor the server gave after the batch: sending the batch's cursor again could
+//! answer with other keys while the server is rehashing, and miss some. A page asked for with a
+//! token whose keys the connection no longer holds (a new connection, say) reads that batch
+//! again and skips what the token says was read.
 //!
 //! With a filter, a level lists every key under it whose name contains the filter, ignoring
 //! case, without grouping: the filter becomes `SCAN`'s `MATCH`, so the server does the search,
@@ -142,11 +144,18 @@ fn escape(pattern: &mut Vec<u8>, byte: u8) {
     pattern.push(byte);
 }
 
-/// Where a page goes on: a batch's cursor, and how many of its keys were read.
+/// Where a page goes on.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Position {
-    cursor: String,
-    read: usize,
+enum Position {
+    /// With a `SCAN` at this cursor.
+    At(String),
+    /// With the keys of the batch the server answered `batch` with, from `read` on, then a
+    /// `SCAN` at `next`, the cursor it gave after that batch.
+    Within {
+        batch: String,
+        read: usize,
+        next: String,
+    },
 }
 
 impl Position {
@@ -154,27 +163,42 @@ impl Position {
 
     fn from_token(token: Option<&PageToken>) -> Option<Self> {
         let Some(token) = token else {
-            return Some(Self {
-                cursor: Self::START.to_owned(),
-                read: 0,
-            });
+            return Some(Self::At(Self::START.to_owned()));
         };
-        let (cursor, read) = token.as_str().split_once(' ')?;
-        Some(Self {
-            cursor: cursor.to_owned(),
-            read: read.parse().ok()?,
-        })
+        let mut words = token.as_str().split(' ');
+        let position = match words.next()? {
+            "at" => Self::At(words.next()?.to_owned()),
+            "in" => Self::Within {
+                batch: words.next()?.to_owned(),
+                read: words.next()?.parse().ok()?,
+                next: words.next()?.to_owned(),
+            },
+            _ => return None,
+        };
+        words.next().is_none().then_some(position)
     }
 
     fn token(&self) -> PageToken {
-        PageToken::new(format!("{} {}", self.cursor, self.read))
+        PageToken::new(match self {
+            Self::At(cursor) => format!("at {cursor}"),
+            Self::Within { batch, read, next } => format!("in {batch} {read} {next}"),
+        })
     }
 }
 
-/// The groups already listed at each level, for each filter, so each is listed once however
-/// many batches it turns up in. Forgotten when the level's first page is asked for again.
+/// What the driver remembers of a level listed a page at a time.
 #[derive(Default)]
-pub(crate) struct Listings(HashMap<(CatalogPath, Option<String>), HashSet<Vec<u8>>>);
+struct Listing {
+    /// The groups already listed, so each is listed once however many batches it turns up in.
+    groups: HashSet<Vec<u8>>,
+    /// The unread keys of the batch the last page stopped in, and that page's token.
+    unread: Option<(PageToken, Vec<Vec<u8>>)>,
+}
+
+/// Each level being listed a page at a time, for each filter. Forgotten when the level's first
+/// page is asked for again, and once its last page is listed.
+#[derive(Default)]
+pub(crate) struct Listings(HashMap<(CatalogPath, Option<String>), Listing>);
 
 impl RedisConnection {
     /// A page of the keys at `path`, as `query` asks.
@@ -192,10 +216,10 @@ impl RedisConnection {
             Some(_) => Vec::new(),
             None => self.shared.login().separator.as_bytes().to_vec(),
         };
-        let listing = (path.clone(), filter.map(str::to_owned));
-        let mut seen = match query.after {
-            None => HashSet::new(),
-            Some(_) => self.listings.0.remove(&listing).unwrap_or_default(),
+        let id = (path.clone(), filter.map(str::to_owned));
+        let mut listing = match query.after {
+            None => Listing::default(),
+            Some(_) => self.listings.0.remove(&id).unwrap_or_default(),
         };
         let pattern = match_pattern(&level.prefix, filter);
         let read = self
@@ -205,12 +229,12 @@ impl RedisConnection {
                 &separator,
                 query.limit,
                 position,
-                &mut seen,
+                &mut listing,
             )
             .await;
         // Kept for the next page, and for asking this one again if it failed.
         if !matches!(read, Ok((_, None))) {
-            self.listings.0.insert(listing, seen);
+            self.listings.0.insert(id, listing);
         }
         let (entries, next) = read?;
         let nodes = self
@@ -233,37 +257,76 @@ impl RedisConnection {
         pattern: &[u8],
         separator: &[u8],
         limit: Option<usize>,
-        mut position: Position,
-        seen: &mut HashSet<Vec<u8>>,
+        position: Position,
+        listing: &mut Listing,
     ) -> Result<(Vec<Entry>, Option<Position>), DriverError> {
         self.select(level.database).await?;
-        let mut entries = Vec::new();
         let mut scans = 0;
+        // The batch being read: the cursor that asked for it, how many of its keys came before
+        // `keys`, the keys left to read, and the cursor after it.
+        let (mut batch, mut read, mut keys, mut next) = match position {
+            Position::At(cursor) => {
+                let (next, keys) = self.scan(&cursor, pattern).await?;
+                scans += 1;
+                (cursor, 0, keys, next)
+            }
+            Position::Within { batch, read, next } => {
+                let token = Position::Within {
+                    batch: batch.clone(),
+                    read,
+                    next: next.clone(),
+                }
+                .token();
+                let kept = listing
+                    .unread
+                    .take()
+                    .filter(|(kept, _)| *kept == token)
+                    .map(|(_, keys)| keys);
+                let keys = match kept {
+                    Some(keys) => keys,
+                    None => {
+                        let (_, keys) = self.scan(&batch, pattern).await?;
+                        scans += 1;
+                        keys.into_iter().skip(read).collect()
+                    }
+                };
+                (batch, read, keys, next)
+            }
+        };
+        let mut entries = Vec::new();
         loop {
-            let (cursor, keys) = self.scan(&position.cursor, pattern).await?;
-            scans += 1;
-            for (index, key) in keys.iter().enumerate().skip(position.read) {
+            for (index, key) in keys.iter().enumerate() {
                 let entry = entry(key, &level.prefix, separator);
                 if let Entry::Group(group) = &entry
-                    && !seen.insert(group.clone())
+                    && !listing.groups.insert(group.clone())
                 {
                     continue;
                 }
                 entries.push(entry);
-                if limit.is_some_and(|limit| entries.len() >= limit) && index + 1 < keys.len() {
-                    position.read = index + 1;
-                    return Ok((entries, Some(position)));
+                let full = limit.is_some_and(|limit| entries.len() >= limit);
+                if full && index + 1 < keys.len() {
+                    let stopped = Position::Within {
+                        batch,
+                        read: read + index + 1,
+                        next,
+                    };
+                    listing.unread = Some((stopped.token(), keys[index + 1..].to_vec()));
+                    return Ok((entries, Some(stopped)));
                 }
             }
-            if cursor == Position::START {
+            if next == Position::START {
                 return Ok((entries, None));
             }
-            position = Position { cursor, read: 0 };
             let full = limit.is_some_and(|limit| entries.len() >= limit);
             let out_of_time = limit.is_some() && scans >= SCANS_PER_PAGE;
             if full || out_of_time {
-                return Ok((entries, Some(position)));
+                return Ok((entries, Some(Position::At(next))));
             }
+            let (after, batch_keys) = self.scan(&next, pattern).await?;
+            scans += 1;
+            batch = std::mem::replace(&mut next, after);
+            read = 0;
+            keys = batch_keys;
         }
     }
 
@@ -520,22 +583,25 @@ mod tests {
 
     #[test]
     fn tokens_say_where_to_go_on() {
-        let position = Position {
-            cursor: "1234".to_owned(),
+        let within = Position::Within {
+            batch: "1234".to_owned(),
             read: 17,
+            next: "5678".to_owned(),
         };
+        assert_eq!(Position::from_token(Some(&within.token())), Some(within));
+        let at = Position::At("42".to_owned());
+        assert_eq!(Position::from_token(Some(&at.token())), Some(at));
         assert_eq!(
-            Position::from_token(Some(&position.token())),
-            Some(position)
+            Position::from_token(None),
+            Some(Position::At("0".to_owned()))
         );
-        assert_eq!(
-            Position::from_token(None).map(|position| position.cursor),
-            Some("0".to_owned())
-        );
-        assert_eq!(
-            Position::from_token(Some(&PageToken::new("nonsense"))),
-            None
-        );
+        for nonsense in ["nonsense", "at", "in 1 x 2", "at 1 2"] {
+            assert_eq!(
+                Position::from_token(Some(&PageToken::new(nonsense))),
+                None,
+                "{nonsense}"
+            );
+        }
     }
 
     #[test]
