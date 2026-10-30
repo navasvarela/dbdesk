@@ -307,27 +307,47 @@ impl StatementView {
         }
     }
 
-    /// Where the rows come from, for the export formats that write SQL: the table, when the
-    /// grid can edit it.
-    pub fn row_source(&self, dialect: Dialect) -> RowSource {
+    /// Where the rows come from, for the export formats: the dialect and, when the grid can
+    /// edit it, the table, which the SQL formats need; whether they are documents, which JSON
+    /// and JSON Lines write whole.
+    pub fn row_source(&self, dialect: Option<Dialect>) -> RowSource {
         RowSource {
             dialect,
             table: self.edits.target().map(EditTarget::source_table),
+            shape: match self.documents {
+                Some(_) => ResultShape::Documents,
+                None => ResultShape::Rows,
+            },
         }
+    }
+
+    /// The documents at `indices` among those loaded, one a row, for the formats that write
+    /// them whole; none for a result of rows.
+    fn document_rows(&self, indices: &[usize]) -> Vec<Row> {
+        self.documents
+            .as_ref()
+            .map(|documents| documents.document_rows(indices))
+            .unwrap_or_default()
     }
 
     fn selected_cells(&self) -> Option<GridCells> {
         selected_cells(&self.columns, &self.rows, &self.grid, &self.edits)
     }
 
-    /// The selected columns of the selected rows, as the grid shows them, for copying.
-    fn selection(&self, dialect: Dialect) -> Option<clipboard::Selection> {
+    /// The selected columns of the selected rows, as the grid shows them, for copying, and
+    /// those rows' documents when they are documents.
+    fn selection(&self, dialect: Option<Dialect>) -> Option<clipboard::Selection> {
         let cells = self.selected_cells()?;
         let columns = cells
             .selected
             .iter()
             .filter_map(|&index| self.columns.get(index))
-            .map(|column| ExportColumn::new(column, dialect))
+            .map(|column| ExportColumn::typed_by(column, dialect))
+            .collect();
+        let selected_rows: Vec<usize> = self
+            .grid
+            .selected_rows()?
+            .filter_map(|position| self.grid.order().get(position).copied())
             .collect();
         let rows = cells
             .rows
@@ -343,6 +363,7 @@ impl StatementView {
         Some(clipboard::Selection {
             columns,
             rows,
+            documents: self.document_rows(&selected_rows),
             source: self.row_source(dialect).select_columns(&cells.selected),
         })
     }
@@ -420,6 +441,9 @@ struct Completion {
     /// The bodies of the snippets offered, by trigger.
     snippets: Vec<(String, SnippetBody)>,
 }
+
+/// The one column of an export that writes documents whole, which no format writes out.
+const DOCUMENT_COLUMN: &str = "document";
 
 /// A copy of one cell, so the viewer stays open while new rows arrive or a new run starts.
 pub struct ViewedCell {
@@ -755,7 +779,7 @@ impl QueryConsole {
     pub fn copy(&mut self, copy: ClipboardCopy, options: &ExportOptions) -> Option<String> {
         let run = self.run.as_ref()?;
         let statement = run.statements.get(run.selected)?;
-        let selection = statement.selection(self.dialect()?)?;
+        let selection = statement.selection(self.dialect())?;
         match copy.text(&selection, options) {
             Ok(text) => Some(text),
             Err(reason) => {
@@ -813,23 +837,26 @@ impl QueryConsole {
     /// What the export dialog shows of the selected statement's rows. `None` if it returns
     /// none.
     pub fn export_preview(&self) -> Option<ExportPreview> {
-        // TODO(N0b): export the rows of a language without a SQL dialect, once results can be
-        // documents; the SQL formats need a dialect, the others don't.
-        let dialect = self.dialect()?;
+        let dialect = self.dialect();
         let run = self.run.as_ref()?;
         let statement = run.statements.get(run.selected)?;
-        if statement.columns.is_empty() {
+        if !statement.returns_rows() {
             return None;
         }
-        let shown = statement.grid.shown_rows(&statement.rows);
+        let shown = statement.grid.shown_indices(&statement.rows);
+        let sample: Vec<usize> = shown.iter().copied().take(PREVIEW_ROWS).collect();
         Some(ExportPreview {
             columns: statement
                 .columns
                 .iter()
-                .map(|column| ExportColumn::new(column, dialect))
+                .map(|column| ExportColumn::typed_by(column, dialect))
                 .collect(),
             loaded: shown.len(),
-            sample: shown.into_iter().take(PREVIEW_ROWS).collect(),
+            sample: sample
+                .iter()
+                .filter_map(|&index| statement.rows.get(index).cloned())
+                .collect(),
+            document_sample: statement.document_rows(&sample),
             source: statement.row_source(dialect),
         })
     }
@@ -839,21 +866,31 @@ impl QueryConsole {
     pub fn export(&mut self, spec: ExportSpec, path: PathBuf) -> Option<Command> {
         let run = self.run.as_ref()?;
         let statement = run.statements.get(run.selected)?;
-        if statement.columns.is_empty() {
+        if !statement.returns_rows() {
             return None;
         }
+        let (columns, rows) = if spec.writes_documents() {
+            let shown = statement.grid.shown_indices(&statement.rows);
+            (
+                vec![ExportColumn::text(DOCUMENT_COLUMN)],
+                statement.document_rows(&shown),
+            )
+        } else {
+            let columns = statement
+                .columns
+                .iter()
+                .map(|column| ExportColumn::typed_by(column, self.dialect()))
+                .collect();
+            (columns, statement.grid.shown_rows(&statement.rows))
+        };
         self.last_export = Some(spec.clone());
         Some(Command::ExportRows {
             console: self.id,
             export: Export {
                 path,
                 spec,
-                columns: statement
-                    .columns
-                    .iter()
-                    .map(|column| ExportColumn::typed_by(column, self.dialect()))
-                    .collect(),
-                rows: statement.grid.shown_rows(&statement.rows),
+                columns,
+                rows,
             },
         })
     }
@@ -882,7 +919,9 @@ impl QueryConsole {
     pub fn export_all(&mut self, run: RunId, spec: ExportSpec, path: PathBuf) -> Option<Command> {
         let shown = self.run.as_ref()?;
         let statement = shown.statements.get(shown.selected)?;
-        if statement.columns.is_empty() {
+        // Documents are exported as loaded: the engine would write a cursor's documents as rows
+        // of one cell, before any of their columns is known (docs/nosql.md, N0b's decisions).
+        if statement.columns.is_empty() || statement.documents.is_some() {
             return None;
         }
         let sql = statement.resubmission(self.dialect()).ok()?.sql;

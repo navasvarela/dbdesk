@@ -156,6 +156,87 @@ fn writes_json_objects_with_keys_in_column_order() {
     assert_eq!(render(&ExportSpec::Json, &sample().0, &[]).unwrap(), "[]\n");
 }
 
+/// Documents (ADR 0006), one a row of one cell, written whole by the JSON formats.
+fn documents() -> Vec<Vec<Cell>> {
+    vec![
+        vec![text(
+            r#"{"_id": {"$oid": "5f1d7f0e2b5c3a0001a1b2c3"}, "price": 1.10, "tags": ["a"]}"#,
+        )],
+        vec![text(r#"{"_id": 2,"nested":{"deep":[{}]}}"#)],
+        vec![text("not json")],
+    ]
+}
+
+fn documents_source() -> RowSource {
+    RowSource::without_dialect(dbrover_core::ResultShape::Documents)
+}
+
+#[test]
+fn writes_documents_whole_as_they_came() {
+    let columns = [ExportColumn::text("document")];
+    let lines = render(
+        &spec_for(ExportFormat::JsonLines, &documents_source()),
+        &columns,
+        &documents(),
+    )
+    .unwrap();
+    assert_eq!(
+        lines,
+        "{\"_id\":{\"$oid\":\"5f1d7f0e2b5c3a0001a1b2c3\"},\"price\":1.10,\"tags\":[\"a\"]}\n\
+         {\"_id\":2,\"nested\":{\"deep\":[{}]}}\n\
+         \"not json\"\n"
+    );
+    let array = render(
+        &spec_for(ExportFormat::Json, &documents_source()),
+        &columns,
+        &documents()[1..2],
+    )
+    .unwrap();
+    assert_eq!(
+        array,
+        "[\n  {\n    \"_id\": 2,\n    \"nested\": {\n      \"deep\": [\n        {}\n      ]\n    }\n  }\n]\n"
+    );
+    assert_eq!(
+        render(&ExportSpec::JsonDocuments, &columns, &[]).unwrap(),
+        "[]\n"
+    );
+}
+
+/// The formats a source offers: every one but the SQL ones without a dialect or for
+/// documents, and JSON and JSON Lines writing documents whole only for documents.
+#[test]
+fn offers_the_sql_formats_only_for_sql_rows() {
+    let rows = RowSource::without_dialect(dbrover_core::ResultShape::Rows);
+    let sources = [
+        (rows, "Only for rows from a SQL database"),
+        (documents_source(), "Not for documents, which have no table"),
+    ];
+    for (source, reason) in sources {
+        for choice in export_choices(&source) {
+            match choice.format {
+                ExportFormat::SqlInsert | ExportFormat::SqlUpdate => {
+                    assert_eq!(choice.spec, Err(reason), "{}", choice.name);
+                }
+                _ => assert!(choice.spec.is_ok(), "{}", choice.name),
+            }
+        }
+    }
+    let writes_documents = |source: &RowSource| {
+        [ExportFormat::Json, ExportFormat::JsonLines]
+            .map(|format| spec_for(format, source).writes_documents())
+    };
+    assert_eq!(writes_documents(&documents_source()), [true, true]);
+    assert_eq!(writes_documents(&source()), [false, false]);
+    assert_eq!(
+        spec_for(ExportFormat::JsonLines, &documents_source()).format(),
+        ExportFormat::JsonLines
+    );
+}
+
+fn spec_for(format: ExportFormat, source: &RowSource) -> ExportSpec {
+    format.default_spec(source).unwrap()
+}
+
 #[test]
 fn writes_json_lines() {
     assert_eq!(

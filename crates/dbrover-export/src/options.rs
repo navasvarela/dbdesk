@@ -1,5 +1,6 @@
 //! Every format's options at once, as an export dialog edits and remembers them.
 
+use dbrover_core::ResultShape;
 use serde::{Deserialize, Serialize};
 
 use crate::parquet::ParquetOptions;
@@ -43,8 +44,14 @@ impl ExportOptions {
             ExportFormat::SqlInsert => {
                 ExportSpec::SqlInsert(Box::new(InsertSpec::for_rows(source, self.insert)?))
             }
-            ExportFormat::Json => ExportSpec::Json,
-            ExportFormat::JsonLines => ExportSpec::JsonLines,
+            ExportFormat::Json => match source.shape {
+                ResultShape::Rows => ExportSpec::Json,
+                ResultShape::Documents => ExportSpec::JsonDocuments,
+            },
+            ExportFormat::JsonLines => match source.shape {
+                ResultShape::Rows => ExportSpec::JsonLines,
+                ResultShape::Documents => ExportSpec::JsonLinesDocuments,
+            },
             ExportFormat::Parquet => ExportSpec::Parquet(self.parquet),
             ExportFormat::Html => ExportSpec::Html(self.html.clone()),
             ExportFormat::SqlUpdate => {

@@ -61,6 +61,20 @@ impl DocumentResult {
         ColumnsMoved::No
     }
 
+    /// The documents at `indices` among those loaded, each a row of one cell as a cursor
+    /// gives them: what JSON and JSON Lines write whole.
+    pub fn document_rows(&self, indices: &[usize]) -> Vec<Row> {
+        let documents = self.flattened.documents();
+        indices
+            .iter()
+            .filter_map(|&index| documents.get(index))
+            .map(|document| match document {
+                Document::Read(value) => vec![Some(value.to_json())],
+                Document::Unreadable { text, .. } => vec![Some(text.clone())],
+            })
+            .collect()
+    }
+
     /// Expands or collapses a column, and lays out the grid's `columns` and `rows` again.
     pub fn fold(&mut self, fold: &ColumnFold, columns: &mut Vec<ColumnInfo>, rows: &mut Vec<Row>) {
         match fold {

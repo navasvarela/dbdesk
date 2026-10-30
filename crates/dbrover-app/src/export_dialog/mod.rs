@@ -8,7 +8,7 @@ mod subject;
 
 use std::path::PathBuf;
 
-use dbrover_core::{Row, ValueKind};
+use dbrover_core::{ResultShape, Row, ValueKind};
 use dbrover_engine::{Event, Exporter, RunId};
 use dbrover_export::{
     CSV_FOR_EXCEL, CsvOptions, ExportColumn, ExportFormat, ExportOptions, ExportSpec, RowSource,
@@ -49,6 +49,9 @@ pub struct ExportPreview {
     pub columns: Vec<ExportColumn>,
     /// The first [`PREVIEW_ROWS`] rows, in the grid's order.
     pub sample: Vec<Row>,
+    /// The same rows' documents whole, one a row, for a result of documents: what JSON and JSON
+    /// Lines write.
+    pub document_sample: Vec<Row>,
     pub loaded: usize,
     pub source: RowSource,
 }
@@ -171,7 +174,10 @@ impl ExportDialog {
         ui.strong("Options");
         let format = self.choices.format;
         options_ui(ui, format, &mut self.choices.options, &mut self.texts);
-        if format == ExportFormat::SqlInsert && self.preview.source.table.is_none() {
+        if format == ExportFormat::SqlInsert
+            && self.preview.source.table.is_none()
+            && self.can_name_table()
+        {
             self.table_input(ui);
         }
         let spec = self.spec();
@@ -240,6 +246,15 @@ impl ExportDialog {
             ui.label(note);
             return;
         }
+        if self.preview.source.shape == ResultShape::Documents {
+            // Every document would come from the cursor as rows of one cell; N2 writes them.
+            self.rows = ExportedRows::Loaded;
+            ui.label(format!(
+                "Loaded documents: {}, as sorted and filtered here",
+                self.preview.loaded
+            ));
+            return;
+        }
         ui.vertical(|ui| {
             let loaded = format!(
                 "Loaded rows: {}, as sorted and filtered here",
@@ -253,8 +268,16 @@ impl ExportDialog {
         });
     }
 
+    /// Whether a table can be named for `INSERT`s of rows from no known table: only rows from a
+    /// SQL database.
+    fn can_name_table(&self) -> bool {
+        let source = &self.preview.source;
+        source.dialect.is_some() && source.shape == ResultShape::Rows
+    }
+
     /// The formats, with CSV for Excel after CSV. A format that can't write these rows is
-    /// greyed out, saying why; `INSERT` stays available, since a table can be named below.
+    /// greyed out, saying why; `INSERT` stays available for SQL rows, since a table can be
+    /// named below.
     fn format_choice(&mut self, ui: &mut Ui) {
         let current = self.format_label();
         egui::ComboBox::from_id_salt("export_format")
@@ -264,7 +287,8 @@ impl ExportDialog {
             .height(FORMAT_LIST_HEIGHT)
             .show_ui(ui, |ui| {
                 for choice in export_choices(&self.preview.source) {
-                    let available = choice.spec.is_ok() || choice.format == ExportFormat::SqlInsert;
+                    let available = choice.spec.is_ok()
+                        || (choice.format == ExportFormat::SqlInsert && self.can_name_table());
                     let mut item = ui
                         .add_enabled(
                             available,
@@ -348,7 +372,9 @@ impl ExportDialog {
             .options
             .spec(self.choices.format, &source)
             .map_err(|reason| match self.choices.format {
-                ExportFormat::SqlInsert => "Name the table to insert into".to_owned(),
+                ExportFormat::SqlInsert if self.can_name_table() => {
+                    "Name the table to insert into".to_owned()
+                }
                 _ => reason.to_owned(),
             })
     }
@@ -368,7 +394,12 @@ impl ExportDialog {
             });
             return;
         }
-        match render(spec, columns, &self.preview.sample) {
+        let sample = if spec.writes_documents() {
+            &self.preview.document_sample
+        } else {
+            &self.preview.sample
+        };
+        match render(spec, columns, sample) {
             Some(text) => text_preview(ui, &text),
             None => column_preview(ui, spec.format(), columns),
         }
