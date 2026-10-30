@@ -1,8 +1,9 @@
 # NoSQL databases
 
 Status: **N0a built** (2026-10-30), in the layers listed under
-[N0a](#n0a--groundwork-languages-safety-and-the-explorer); N0b and N1 are next. W7 (exports)
-has landed.
+[N0a](#n0a--groundwork-languages-safety-and-the-explorer); **N0b being built** (since
+2026-10-30), in the layers listed under [N0b](#n0b--groundwork-documents); N1 is next. W7
+(exports) has landed.
 
 DbRover speaks seven SQL engines. Many of the teams that use them keep a Redis beside their
 PostgreSQL, documents in MongoDB, or logs in Elasticsearch, and today they open another tool for
@@ -222,7 +223,8 @@ MCP logins on SQL Server and ClickHouse) and N0a·4 (**Load more…** and the fi
 Results that are documents rather than rows, for MongoDB, Elasticsearch and OpenSearch, Redis's
 JSON values, and the JSON columns SQL engines already return. Can be built alongside N1.
 
-- **ADR 0006, documents as JSON text,** extending ADR 0004 rather than replacing it:
+- **[ADR 0006](adr/0006-documents-as-extended-json-text.md), documents as JSON text,**
+  extending ADR 0004 rather than replacing it:
   - A result is either **rows** (today) or **documents**. A document travels as text, one
     Extended JSON string per document (MongoDB's JSON form for every BSON type), so, as with
     ADR 0004, every type shows correctly with no decoding code for each.
@@ -252,6 +254,46 @@ JSON values, and the JSON columns SQL engines already return. Can be built along
 result of documents from a test cursor shows in the grid with a column added by a later page,
 an expanded column, missing fields told apart from `null`, and a JSON Lines export that reads
 back to the same documents.
+
+#### Layers
+
+Each layer is one pull request in a stack, useful and tested on its own, as N0a's were. None
+adds a driver: the SQL engines' JSON columns and results of documents made up in the tests
+exercise each.
+
+- **N0b·1 — Plan:** this list, [ADR 0006](adr/0006-documents-as-extended-json-text.md), the
+  decisions N0b takes (in [Decisions](#decisions)), and the roadmap's status.
+- **N0b·2 — A tree for JSON values:** a new crate, `dbrover-document`, with no engine in it,
+  reads JSON text: its own reader, which keeps an object's fields in the order written and each
+  number as written. It knows Extended JSON's types and shows each as the shell does
+  (`ObjectId("…")`, `ISODate("…")`, `NumberLong(7)`), names each value's type, and writes a
+  value's path (`items[2].sku`). The cell viewer shows a JSON object or array as a tree, beside
+  the text it shows today: fields folded and unfolded, each value with its type, and **Copy
+  value**, **Copy path** and **Copy all** on each. That is the tree for PostgreSQL `json` and
+  `jsonb`, MySQL `JSON`, SQLite JSON text, and DuckDB and ClickHouse `JSON`, and the one Redis's
+  JSON strings and nested replies will use in N1. Tests: the reader (order, numbers, escapes,
+  depth, errors), each Extended JSON type and plain JSON beside it, paths, and a kittest on
+  SQLite that opens a JSON value from a query as a tree and copies a path.
+- **N0b·3 — Documents in the grid:** a result's shape, rows or documents, from the cursor
+  (`ResultCursor::shape`) to the console (`Event::StatementStarted`), with each document a row
+  of one cell, as ADR 0006 says. The console flattens the documents into columns as the
+  milestone describes: `_id` first, a column added at the right by a later page, a missing
+  field greyed and told apart from `null`, objects and arrays shown compactly, **Expand
+  column** on an object's column, and at most 200 columns, with a note of how many more the
+  tree holds. A **Grid**, **Tree** and **JSON** switch above a result of documents shows the
+  selected row's document whole. Tests: the flattening (order, later pages, missing and `null`,
+  expanding, the cap) in `dbrover-document`, and a console fed a result of documents in two
+  pages, as the engine sends a cursor's, in the test language.
+- **N0b·4 — Copying and exporting documents and other languages:** what N0a left hidden for a
+  language without a SQL dialect: **Copy as** and **Export…** of its rows, in every format but
+  the SQL ones. For documents, JSON and JSON Lines write the documents themselves, as they came;
+  CSV, TSV, Excel, Markdown, HTML and Parquet write the flattened columns. Tests: a JSON Lines
+  export of documents that reads back to the same documents, a CSV of the flattened columns,
+  and the test language's rows copied and exported without the SQL formats.
+
+The manual changes in N0b·2, the one layer whose change a user sees with today's engines: the
+cell viewer's tree. N0b·3 and N0b·4 change what a user sees only once an engine without SQL
+arrives, and its milestone's manual chapter describes them.
 
 ### N1 — Redis, Valkey and Dragonfly
 
@@ -519,6 +561,9 @@ milestone starts.
 | Cassandra's language | **A `Dialect` of `dbrover-sql`**, since CQL lexes and splits like SQL, with its own small classifier, as `sqlparser` has no CQL dialect. | The SQL tooling (splitting, highlighting, completion) works for CQL with a new set of rules, not a new language. |
 | Where languages live (N0a) | **A crate of their own, `dbrover-language`,** on top of `dbrover-sql`. It owns `QueryLanguage`; Redis's and MongoDB's languages become modules of it. `StatementKind` and `Unclassified` stay in `dbrover-sql` and are re-exported, and highlighting keeps `dbrover-sql`'s token kinds. | `dbrover-sql` stays about SQL. Code outside the crate asks a language through its methods and never matches on its variants, so a variant added for a new engine, or the test language, changes no other crate. |
 | The test language (N0a) | **A variant behind a `test-language` feature,** turned on only in dev-dependencies. | It is compiled into tests only, yet it runs through the same console, check and warnings as a real language. |
+| How a document travels (N0b) | **As canonical Extended JSON text, one row of one cell per document,** with the result's shape (rows or documents) from the cursor. See [ADR 0006](adr/0006-documents-as-extended-json-text.md). | Paging, cancelling, the history and the engine's events stay as they are. The console flattens documents, so no driver repeats it. |
+| Where documents are read (N0b) | **A crate of their own, `dbrover-document`,** with DbRover's own JSON reader, which keeps fields in order and numbers as written, rather than `serde_json::Value`. | One tree for documents, SQL JSON columns and Redis's JSON. Turning on `serde_json`'s `preserve_order` would have changed every crate's JSON. |
+| Run to file and table exports of documents (N0b) | **Left to N2:** they write rows as the cursor gives them, before any column of a document is known. | N0b exports documents from the grid: what is loaded. N2 adds writing every document to JSON and JSON Lines straight from the cursor. |
 | Engines without a read-only session (N0a) | **The login is the guard:** SQL Server and ClickHouse data sources are served to MCP clients, for reading, only with an MCP login. Changes through `execute` wait for a transaction DbRover can open on them. | W11's plan for SQL Server, here for every such engine with logins. W11 still gives ClickHouse its `readonly` setting and DuckDB its read-only file, which are stronger. |
 
 ## Risks

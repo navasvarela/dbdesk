@@ -467,8 +467,8 @@ shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.
 
 Redis, MongoDB and the other most used non-SQL stores, in the same explorer, console and grid,
 each in its own query language. Planned on 2026-10-29; N0a was built on 2026-10-30, after W7
-landed. The full plan, with the order, the groundwork, N0a's layers and the decisions,
-is in [NoSQL databases](nosql.md).
+landed, and N0b is being built since. The full plan, with the order, the groundwork, N0a's and
+N0b's layers and the decisions, is in [NoSQL databases](nosql.md).
 
 - **N0a — Groundwork: languages, safety and the explorer** (built, in four layers):
   - query languages beside SQL, each splitting, highlighting, completing and classifying its
@@ -476,9 +476,11 @@ is in [NoSQL databases](nosql.md).
   - safety levels, warnings and MCP permissions for every language, with a read-only login as
     the database's guard where there is no read-only session;
   - an explorer that pages through large levels, with the filter applied by the server.
-- **N0b — Groundwork: documents:** ADR 0006, documents as Extended JSON text; the grid flattens
-  them into columns, and a tree view shows the whole document, for SQL engines' JSON columns
-  too.
+- **N0b — Groundwork: documents** (being built, in four layers):
+  - [ADR 0006](adr/0006-documents-as-extended-json-text.md), documents as Extended JSON text;
+  - a tree for any JSON value in the cell viewer, SQL engines' JSON columns first;
+  - documents flattened into the grid's columns, with the whole document as a tree or JSON;
+  - copying and exporting results of a language without SQL, documents included.
 - **N1 — Redis, Valkey and Dragonfly:** keys by pattern with `SCAN`, grouped by `:`; a viewer
   per type with TTL; a command console classified by the server's own command flags.
 - **N2 — MongoDB:** databases and collections, `find` and `aggregate` in a subset of the shell's
