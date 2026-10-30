@@ -33,11 +33,12 @@ use dbrover_engine::{
     RunPurpose, SessionState, StatementFailure, StatementSummary, TransactionEnd, TransactionMode,
     WatchedFile,
 };
+use dbrover_export::{ExportColumn, ExportSpec};
 use dbrover_sql::{
     Dialect, FormatOptions, ParameterValues, format_ranges, split_statements, statement_at,
     tokenize,
 };
-use dbrover_store::{ConsoleKey, ExportFormat, Snippet, SnippetBody, SqlFileContents};
+use dbrover_store::{ConsoleKey, Snippet, SnippetBody, SqlFileContents};
 
 use edit::Editability;
 
@@ -624,7 +625,7 @@ impl QueryConsole {
 
     /// The export of the rows the grid shows for the selected statement, in the order and
     /// with the filter it shows them. `None` if there are no rows to export.
-    pub fn export(&self, format: ExportFormat, path: PathBuf) -> Option<Command> {
+    pub fn export(&self, spec: ExportSpec, path: PathBuf) -> Option<Command> {
         let run = self.run.as_ref()?;
         let statement = run.statements.get(run.selected)?;
         if statement.columns.is_empty() {
@@ -634,11 +635,11 @@ impl QueryConsole {
             console: self.id,
             export: Export {
                 path,
-                format,
+                spec,
                 columns: statement
                     .columns
                     .iter()
-                    .map(|column| column.name.clone())
+                    .map(|column| ExportColumn::new(column, self.dialect))
                     .collect(),
                 rows: statement.grid.shown_rows(&statement.rows),
             },
@@ -648,12 +649,7 @@ impl QueryConsole {
     /// The export of every row of the selected statement: it runs again, as the grid shows it
     /// (wrapped, if the database sorts and filters it), and the engine writes its rows as they
     /// come. `None` if the statement returns no rows.
-    pub fn export_all(
-        &mut self,
-        run: RunId,
-        format: ExportFormat,
-        path: PathBuf,
-    ) -> Option<Command> {
+    pub fn export_all(&mut self, run: RunId, spec: ExportSpec, path: PathBuf) -> Option<Command> {
         let shown = self.run.as_ref()?;
         let statement = shown.statements.get(shown.selected)?;
         if statement.columns.is_empty() {
@@ -669,7 +665,7 @@ impl QueryConsole {
                 sql,
                 parameters: self.parameters.clone(),
                 path,
-                format,
+                spec,
             },
         })
     }

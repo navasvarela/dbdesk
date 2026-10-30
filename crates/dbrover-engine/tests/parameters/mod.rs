@@ -206,7 +206,7 @@ fn records_the_values_refuses_a_missing_one_and_exports_with_them() {
             sql: "SELECT id FROM t WHERE id <= :last ORDER BY id".to_owned(),
             parameters: values(&[("last", Some("2"))]),
             path: path.clone(),
-            format: dbrover_store::ExportFormat::Csv,
+            spec: dbrover_export::ExportFormat::Csv.default_spec(),
         },
     });
     loop {

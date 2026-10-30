@@ -3,8 +3,9 @@
 
 use dbrover_core::{Cell, ColumnInfo, Row};
 use dbrover_engine::{RunId, StatementSummary};
+use dbrover_export::export_choices;
 use dbrover_sql::first_word;
-use dbrover_store::{ActionId, CustomAction, ExportFormat};
+use dbrover_store::{ActionId, CustomAction};
 use egui::{Align, Label, Layout, RichText, Sense, TextEdit, Ui};
 use egui_extras::{Column, TableBuilder};
 
@@ -281,30 +282,29 @@ fn export_menu(ui: &mut Ui, toolbar: &Toolbar<'_>, actions: &mut Vec<ConsoleActi
         return;
     }
     ui.menu_button("Export", |ui| {
-        let choices = [
+        let submenus = [
             (
-                "Loaded rows as CSV…",
+                "Loaded rows",
                 ExportedRows::Loaded,
-                ExportFormat::Csv,
+                "The rows loaded so far, as sorted and filtered here",
             ),
             (
-                "Loaded rows as JSON…",
-                ExportedRows::Loaded,
-                ExportFormat::Json,
+                "All rows",
+                ExportedRows::All,
+                "Runs the statement again and writes every row it returns, a page at a time",
             ),
-            ("All rows as CSV…", ExportedRows::All, ExportFormat::Csv),
-            ("All rows as JSON…", ExportedRows::All, ExportFormat::Json),
         ];
-        for (label, rows, format) in choices {
-            let hover = match rows {
-                ExportedRows::Loaded => "The rows loaded so far, as sorted and filtered here",
-                ExportedRows::All => {
-                    "Runs the statement again and writes every row it returns, a page at a time"
+        for (label, rows, hover) in submenus {
+            ui.menu_button(label, |ui| {
+                for choice in export_choices() {
+                    let label = format!("{}\u{2026}", choice.name);
+                    if ui.button(label).on_hover_text(choice.description).clicked() {
+                        actions.push(ConsoleAction::Export(rows, choice.spec));
+                    }
                 }
-            };
-            if ui.button(label).on_hover_text(hover).clicked() {
-                actions.push(ConsoleAction::Export(rows, format));
-            }
+            })
+            .response
+            .on_hover_text(hover);
         }
     });
     match toolbar.export_status {

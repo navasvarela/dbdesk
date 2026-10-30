@@ -8,9 +8,9 @@ use std::path::PathBuf;
 
 use dbrover_core::DataSourceId;
 use dbrover_engine::{Command, Event};
+use dbrover_export::ExportFormat;
 use dbrover_store::{
-    ConsoleKey, ExportFormat, HistoryEntry, HistoryOutcome, HistoryQuery, HistorySource,
-    HistorySourceKind,
+    ConsoleKey, HistoryEntry, HistoryOutcome, HistoryQuery, HistorySource, HistorySourceKind,
 };
 use egui::{Label, RichText, ScrollArea, TextEdit, Ui, Window};
 use jiff::Timestamp;

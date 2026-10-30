@@ -5,9 +5,10 @@ use dbrover_core::{CatalogPath, DataSource, DataSourceId};
 use dbrover_engine::{
     Command, EngineConfig, EngineError, EngineHandle, Event, PasswordKept, Repaint, RunOrigin,
 };
+use dbrover_export::{ExportFormat, ExportSpec};
 use dbrover_sql::Dialect;
 use dbrover_store::{
-    ActionBody, ActionId, ConsoleKey, CustomFileKind, ExportFormat, KeymapBindings, McpPermissions,
+    ActionBody, ActionId, ConsoleKey, CustomFileKind, KeymapBindings, McpPermissions,
     SqlFileContents,
 };
 use egui::{Frame, Margin, RichText};
@@ -1361,9 +1362,9 @@ impl DbRoverApp {
         }
     }
 
-    fn export(&mut self, console: &ConsoleKey, rows: ExportedRows, format: ExportFormat) {
-        if let Some(path) = (self.pick_export_path)(format, "rows") {
-            let command = self.consoles.export(console, rows, format, path);
+    fn export(&mut self, console: &ConsoleKey, rows: ExportedRows, spec: ExportSpec) {
+        if let Some(path) = (self.pick_export_path)(spec.format(), "rows") {
+            let command = self.consoles.export(console, rows, spec, path);
             self.send_if(command);
         }
     }
@@ -1933,7 +1934,7 @@ impl eframe::App for DbRoverApp {
         for (console, action) in console_actions {
             match action {
                 ConsoleAction::ShowHistory => self.open_history(console),
-                ConsoleAction::Export(rows, format) => self.export(&console, rows, format),
+                ConsoleAction::Export(rows, spec) => self.export(&console, rows, spec),
                 ConsoleAction::OpenRows(rows) => self.open_rows(&console, &rows),
                 ConsoleAction::RunAction(action, cells) => {
                     self.run_action(&action, console.data_source, &Subject::Cells(cells));
@@ -3786,7 +3787,9 @@ mod tests {
 
         harness.get_by_label("Export").click();
         harness.run();
-        harness.get_by_label("Loaded rows as CSV…").click();
+        harness.get_by_label("Loaded rows ⏵").click();
+        harness.run();
+        harness.get_by_label("CSV…").click();
         step_until_visible(&mut harness, "Exported 3 rows");
         assert_eq!(
             std::fs::read_to_string(&export_path).unwrap(),

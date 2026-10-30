@@ -19,6 +19,7 @@ dbrover-driver-postgres = { path = "crates/dbrover-driver-postgres" }
 dbrover-driver-sqlite = { path = "crates/dbrover-driver-sqlite" }
 dbrover-driver-sqlserver = { path = "crates/dbrover-driver-sqlserver" }
 dbrover-engine = { path = "crates/dbrover-engine" }
+dbrover-export = { path = "crates/dbrover-export" }
 dbrover-mcp = { path = "crates/dbrover-mcp" }
 dbrover-sql = { path = "crates/dbrover-sql" }
 dbrover-ssh = { path = "crates/dbrover-ssh" }

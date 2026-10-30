@@ -206,7 +206,9 @@ fn exports_every_row_not_only_those_loaded() {
 
     harness.get_by_label("Export").click();
     harness.run();
-    harness.get_by_label("All rows as CSV…").click();
+    harness.get_by_label("All rows ⏵").click();
+    harness.run();
+    harness.get_by_label("CSV…").click();
     step_until_visible(&mut harness, "Exported 600 rows");
 
     let text = std::fs::read_to_string(&export_path).unwrap();
@@ -215,6 +217,49 @@ fn exports_every_row_not_only_those_loaded() {
     assert_eq!(
         (lines[0], lines[1], lines[600]),
         ("id,customer", "600,customer 600", "1,customer 1")
+    );
+}
+
+/// Export › Loaded rows offers every format: CSV for Excel starts with a byte order mark and
+/// Markdown writes a table, each with the save dialog asked for its own extension.
+#[test]
+fn exports_the_loaded_rows_in_other_formats() {
+    let dir = tempfile::tempdir().unwrap();
+    save_shop(
+        dir.path(),
+        "CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT);
+         INSERT INTO orders VALUES (1, 'Zoë | Ltd'), (2, NULL);",
+    );
+    let (_layer, feed) = log_console::pipeline();
+    let mut harness = start_app(dir.path(), feed);
+    let asked = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (folder, extensions) = (dir.path().to_owned(), asked.clone());
+    harness.state_mut().pick_export_path = Box::new(move |format, _| {
+        extensions.lock().unwrap().push(format.extension());
+        Some(folder.join(format!("orders.{}", format.extension())))
+    });
+    open_orders(&mut harness, "2 rows");
+
+    for (choice, done) in [
+        ("CSV for Excel…", "Exported 2 rows"),
+        ("Markdown…", "orders.md"),
+    ] {
+        harness.get_by_label("Export").click();
+        harness.run();
+        harness.get_by_label("Loaded rows ⏵").click();
+        harness.run();
+        harness.get_by_label(choice).click();
+        step_until_visible(&mut harness, done);
+    }
+
+    assert_eq!(*asked.lock().unwrap(), ["csv", "md"]);
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("orders.csv")).unwrap(),
+        "\u{feff}id,customer\r\n1,Zoë | Ltd\r\n2,\r\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("orders.md")).unwrap(),
+        "| id | customer |\n| --- | --- |\n| 1 | Zoë \\| Ltd |\n| 2 | NULL |\n"
     );
 }
 

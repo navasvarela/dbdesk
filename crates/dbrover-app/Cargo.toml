@@ -16,6 +16,7 @@ path = "src/main.rs"
 anyhow.workspace = true
 dbrover-core.workspace = true
 dbrover-engine.workspace = true
+dbrover-export.workspace = true
 dbrover-mcp.workspace = true
 dbrover-sql.workspace = true
 dbrover-store.workspace = true

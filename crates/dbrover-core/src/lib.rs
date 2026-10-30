@@ -28,7 +28,9 @@ pub use data_source::{
     ServerConfig, SourceColor, SqlServerConfig, SqliteConfig, SshConfig, SshLogin, TlsMode,
 };
 pub use error::{BoxError, DriverError, describe_error};
-pub use execution::{CancelHandle, Cell, ColumnInfo, ResultCursor, Row, TransactionStatus};
+pub use execution::{
+    CancelHandle, Cell, ColumnInfo, ResultCursor, Row, TransactionStatus, ValueKind,
+};
 pub use password::Password;
 pub use placeholder::{
     ExpandError, PlaceholderError, Setting, Variables, expand, expand_path, has_placeholder,

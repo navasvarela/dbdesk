@@ -4,9 +4,9 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use dbrover_core::{DataSourceId, Row};
+use dbrover_export::{ExportColumn, ExportError, ExportFormat, ExportWriter};
 
 use super::{History, HistoryEntry, HistoryError, HistoryQuery, HistorySource, format_timestamp};
-use crate::{ExportError, ExportFormat, ExportWriter};
 
 /// Entries written to the file at a time: what the export holds in memory.
 const PAGE: usize = 500;
@@ -50,8 +50,8 @@ impl History {
         names: &HashMap<DataSourceId, String>,
     ) -> Result<usize, HistoryExportError> {
         let (path, format) = target;
-        let columns = COLUMNS.map(str::to_owned);
-        let mut writer = ExportWriter::create(path, format, &columns)?;
+        let columns = COLUMNS.map(ExportColumn::text);
+        let mut writer = ExportWriter::create(path, &format.default_spec(), &columns)?;
         let mut page = Vec::with_capacity(PAGE);
         let written = self.each_match(query, None, |entry| {
             page.push(row(&entry, names));

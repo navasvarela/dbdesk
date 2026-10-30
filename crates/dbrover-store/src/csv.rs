@@ -243,12 +243,13 @@ mod tests {
     fn reads_what_the_export_writes() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("rows.csv");
-        let columns = vec!["id".to_owned(), "note".to_owned()];
+        let columns = ["id", "note"].map(dbrover_export::ExportColumn::text);
         let rows = vec![
             vec![Some("1".to_owned()), Some("it's, \"x\"\r\ny".to_owned())],
             vec![Some("2".to_owned()), None],
         ];
-        crate::export_rows(&path, crate::ExportFormat::Csv, &columns, &rows).unwrap();
+        let spec = dbrover_export::ExportFormat::Csv.default_spec();
+        dbrover_export::export_rows(&path, &spec, &columns, &rows).unwrap();
 
         let mut reader = CsvReader::open(&path, Separator::Comma).unwrap();
         let read = reader.next_records(10).unwrap();

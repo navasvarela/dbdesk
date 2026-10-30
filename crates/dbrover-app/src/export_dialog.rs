@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use dbrover_store::ExportFormat;
+use dbrover_export::ExportFormat;
 
 /// Shows the save dialog for exporting `what` ("rows", "history") and returns the chosen file,
 /// or `None` if it was cancelled.
@@ -11,10 +11,7 @@ use dbrover_store::ExportFormat;
 /// ADR-0003): the dialog is modal anyway, and macOS requires it to run on the main thread.
 /// The file itself is written by the engine.
 pub fn pick_export_path(format: ExportFormat, what: &str) -> Option<PathBuf> {
-    let (name, extension) = match format {
-        ExportFormat::Csv => ("CSV", format.extension()),
-        ExportFormat::Json => ("JSON", format.extension()),
-    };
+    let (name, extension) = (format.name(), format.extension());
     rfd::FileDialog::new()
         .set_title(format!("Export {what} as {name}"))
         .add_filter(name, &[extension])

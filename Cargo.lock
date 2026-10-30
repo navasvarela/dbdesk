@@ -1589,6 +1589,7 @@ dependencies = [
  "async-trait",
  "dbrover-core",
  "dbrover-engine",
+ "dbrover-export",
  "dbrover-mcp",
  "dbrover-sql",
  "dbrover-store",
@@ -1734,6 +1735,7 @@ dependencies = [
  "dbrover-driver-postgres",
  "dbrover-driver-sqlite",
  "dbrover-driver-sqlserver",
+ "dbrover-export",
  "dbrover-sql",
  "dbrover-ssh",
  "dbrover-store",
@@ -1746,6 +1748,18 @@ dependencies = [
  "tokio",
  "tracing",
  "ureq",
+]
+
+[[package]]
+name = "dbrover-export"
+version = "0.13.0"
+dependencies = [
+ "dbrover-core",
+ "dbrover-sql",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -1802,6 +1816,7 @@ name = "dbrover-store"
 version = "0.14.0"
 dependencies = [
  "dbrover-core",
+ "dbrover-export",
  "directories",
  "jiff",
  "keyring",
