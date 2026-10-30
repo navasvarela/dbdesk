@@ -191,7 +191,11 @@ The client's log for the server shows what DbRover said when it stopped:
   Project settings, as in step 1.
 - **"the MCP login … has no saved password"**: set the **MCP password** in the data source's
   dialog.
+- **"the password command isn't trusted to run yet"**: the data source gets its password
+  [from a command](data-sources.md#password-from-a-command), which the server only runs once
+  you have trusted it in DbRover. Connect to the data source in DbRover once, choose
+  **Run and connect**, then restart the server.
 - **"unknown argument"**: the client's `args` have a typo; each one is checked.
 
-The server reads `projects.toml` and `data_sources.toml` when it starts. After changing
-either, restart the server.
+The server reads `projects.toml`, `data_sources.toml` and `trusted_commands.toml` when it
+starts. After changing any of them, restart the server.

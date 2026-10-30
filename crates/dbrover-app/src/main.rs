@@ -40,6 +40,7 @@ mod menu_bar;
 mod native_menu;
 mod object_dialog;
 mod parameters_dialog;
+mod password_command_prompt;
 mod password_prompt;
 mod previous_install;
 mod project_dialog;
