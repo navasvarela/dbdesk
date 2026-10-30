@@ -2,7 +2,7 @@
 //! arrays show as a tree, or as text pretty-printed, and XML (SQL Server's plans and `FOR XML`
 //! results) is indented.
 
-use dbrover_document::{Syntax, Value};
+use dbrover_document::Value;
 use egui::{Id, RichText, ScrollArea, TextEdit, Window};
 
 use super::{QueryConsole, ViewedCell};
@@ -79,7 +79,7 @@ fn tree_view(ui: &mut egui::Ui, viewed: &ViewedCell, console: u64) {
             id: Id::new(("cell_viewer_tree", console)),
             root: &viewed.column,
             value,
-            syntax: Syntax::Json,
+            syntax: viewed.syntax,
         }
         .show(ui);
     });

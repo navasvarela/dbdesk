@@ -8,11 +8,13 @@
 //! [`Syntax::ExtendedJson`].
 
 mod extended;
+mod flatten;
 mod path;
 mod read;
 mod write;
 
 pub use extended::ValueType;
+pub use flatten::{ColumnsChange, Document, FieldCell, Flattened, MAX_COLUMNS, UNREADABLE_COLUMN};
 pub use path::{Path, Step};
 pub use read::{MAX_DEPTH, ParseError};
 

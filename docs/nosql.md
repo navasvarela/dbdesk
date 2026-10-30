@@ -274,7 +274,7 @@ exercise each.
   JSON strings and nested replies will use in N1. Tests: the reader (order, numbers, escapes,
   depth, errors), each Extended JSON type and plain JSON beside it, paths, and a kittest on
   SQLite that opens a JSON value from a query as a tree and copies a path.
-- **N0b·3 — Documents in the grid:** a result's shape, rows or documents, from the cursor
+- **N0b·3 — Documents in the grid** (built): a result's shape, rows or documents, from the cursor
   (`ResultCursor::shape`) to the console (`Event::StatementStarted`), with each document a row
   of one cell, as ADR 0006 says. The console flattens the documents into columns as the
   milestone describes: `_id` first, a column added at the right by a later page, a missing

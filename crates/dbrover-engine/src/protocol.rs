@@ -4,8 +4,8 @@ use std::time::{Duration, SystemTime};
 
 use dbrover_core::{
     CatalogPath, ChildrenPage, ChildrenQuery, ColumnInfo, DataSource, DataSourceId, DriverKind,
-    Password, PasswordCommand, ProjectId, Rejection, RelationName, RoleDescription, Row,
-    ServerInfo, TableDescription, TableName, TransactionStatus,
+    Password, PasswordCommand, ProjectId, Rejection, RelationName, ResultShape, RoleDescription,
+    Row, ServerInfo, TableDescription, TableName, TransactionStatus,
 };
 use dbrover_export::{ExportSpec, SqlTable};
 use dbrover_sql::{ExistingTable, ParameterValues};
@@ -669,6 +669,8 @@ pub enum Event {
         run: RunId,
         statement: usize,
         columns: Vec<ColumnInfo>,
+        /// Whether its rows are rows or documents, one a row (ADR 0006).
+        shape: ResultShape,
     },
     RowsFetched {
         run: RunId,

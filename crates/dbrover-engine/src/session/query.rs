@@ -240,6 +240,7 @@ async fn run_statement(
         run,
         statement: statement.index,
         columns: cursor.columns().to_vec(),
+        shape: cursor.shape(),
     });
     let page = cursor.next_page(PAGE_SIZE);
     let rows = match worker

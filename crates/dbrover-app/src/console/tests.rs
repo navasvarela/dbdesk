@@ -71,6 +71,7 @@ fn follows_a_run_through_rows_failure_and_completion() {
             name: "n".to_owned(),
             type_name: None,
         }],
+        shape: ResultShape::Rows,
     });
     console.apply(&Event::RowsFetched {
         run,
@@ -304,6 +305,7 @@ fn keeps_clickhouse_results_read_only_without_describing_the_table() {
                 name: "n".to_owned(),
                 type_name: None,
             }],
+            shape: ResultShape::Rows,
         });
 
         let tables = console.tables_to_describe();
@@ -337,6 +339,7 @@ fn describes_a_read_only_data_sources_tables_for_their_keys() {
             name: "n".to_owned(),
             type_name: None,
         }],
+        shape: ResultShape::Rows,
     });
 
     let tables = console.tables_to_describe();
@@ -368,6 +371,7 @@ fn runs_a_statement_again_wrapped_and_keeps_it_as_typed() {
                 type_name: None,
             })
             .collect(),
+        shape: ResultShape::Rows,
     });
     let grid = &mut console.run.as_mut().unwrap().statements[0].grid;
     grid.set_in_database(true);
@@ -494,5 +498,190 @@ mod test_language {
 
         let outcome = console.check_problems(None, &LintOptions::default(), Instant::now());
         assert_eq!(outcome, problems::CheckOutcome::default());
+    }
+
+    /// A result of documents, as the engine sends a documents cursor's: one document a row,
+    /// a page at a time (ADR 0006).
+    mod document_results {
+        use egui_kittest::kittest::Queryable;
+
+        use super::*;
+        use crate::console::documents::{self, ColumnFold, ShownAs};
+        use crate::test_support::ui_harness;
+
+        const FIRST_PAGE: [&str; 2] = [
+            r#"{"_id": {"$oid": "5f1d7f0e2b5c3a0001a1b2c3"}, "name": "Ada", "address": {"city": "Leeds", "zip": "LS1"}, "note": null}"#,
+            r#"{"_id": {"$oid": "5f1d7f0e2b5c3a0001a1b2c4"}, "name": "Bo", "total": {"$numberLong": "7"}}"#,
+        ];
+        const SECOND_PAGE: [&str; 1] =
+            [r#"{"_id": {"$oid": "5f1d7f0e2b5c3a0001a1b2c5"}, "tags": ["a", "b"]}"#];
+
+        fn page(documents: &[&str]) -> Vec<Row> {
+            documents
+                .iter()
+                .map(|document| vec![Some((*document).to_owned())])
+                .collect()
+        }
+
+        /// A test-language console with a result of documents: the first page loaded, and the
+        /// second too when `both`.
+        fn console_with_documents(both: bool) -> QueryConsole {
+            let mut console = console_in("find", QueryLanguage::Test);
+            let statements = console.statements_to_run(RunScope::All);
+            let run = RunId(1);
+            console.begin_run(run, &statements);
+            console.apply(&Event::StatementStarted {
+                run,
+                statement: 0,
+                columns: vec![ColumnInfo {
+                    name: "document".to_owned(),
+                    type_name: None,
+                }],
+                shape: ResultShape::Documents,
+            });
+            console.apply(&Event::RowsFetched {
+                run,
+                statement: 0,
+                rows: page(&FIRST_PAGE),
+                more: true,
+            });
+            if both {
+                console.apply(&Event::RowsFetched {
+                    run,
+                    statement: 0,
+                    rows: page(&SECOND_PAGE),
+                    more: false,
+                });
+            }
+            console
+        }
+
+        fn statement(console: &QueryConsole) -> &StatementView {
+            &console.run.as_ref().unwrap().statements[0]
+        }
+
+        fn names(statement: &StatementView) -> Vec<&str> {
+            statement
+                .columns
+                .iter()
+                .map(|column| column.name.as_str())
+                .collect()
+        }
+
+        #[test]
+        fn flattens_documents_into_columns_a_page_at_a_time() {
+            let mut console = console_with_documents(false);
+            assert_eq!(
+                names(statement(&console)),
+                ["_id", "name", "address", "note", "total"]
+            );
+
+            let run = RunId(1);
+            console.apply(&Event::RowsFetched {
+                run,
+                statement: 0,
+                rows: page(&SECOND_PAGE),
+                more: false,
+            });
+            let statement = statement(&console);
+            assert_eq!(
+                names(statement),
+                ["_id", "name", "address", "note", "total", "tags"],
+                "a field first seen on a later page adds a column at the right"
+            );
+            let cell = |row: usize, column: usize| statement.rows[row][column].as_deref();
+            assert_eq!(cell(0, 0), Some(r#"ObjectId("5f1d7f0e2b5c3a0001a1b2c3")"#));
+            assert_eq!(cell(0, 5), None, "rows loaded earlier get the new column");
+            assert_eq!(cell(1, 4), Some("NumberLong(7)"));
+            assert_eq!(cell(2, 5), Some(r#"["a","b"]"#));
+
+            let flattened = &statement.documents.as_ref().unwrap();
+            assert!(matches!(
+                documents::cell_look(flattened, 0, 3),
+                documents::CellLook::Text
+            ));
+            assert!(matches!(
+                documents::cell_look(flattened, 1, 3),
+                documents::CellLook::Missing
+            ));
+            assert!(matches!(
+                documents::cell_look(flattened, 0, 2),
+                documents::CellLook::Container(ref size) if size == "{2 fields}"
+            ));
+        }
+
+        #[test]
+        fn expands_a_column_in_place_and_starts_the_grid_over() {
+            let mut console = console_with_documents(true);
+            let run = console.run.as_mut().unwrap();
+            let statement = &mut run.statements[0];
+            statement.grid.toggle_sort(4);
+            statement.fold_column(&ColumnFold::Expand(2));
+            assert_eq!(
+                names(statement),
+                [
+                    "_id",
+                    "name",
+                    "address.city",
+                    "address.zip",
+                    "note",
+                    "total",
+                    "tags"
+                ]
+            );
+            assert_eq!(statement.rows[0][2].as_deref(), Some("Leeds"));
+            assert_eq!(statement.grid.sort(), None, "the sorted column moved");
+        }
+
+        #[test]
+        fn is_read_only_and_not_arranged_in_the_database() {
+            let mut console = console_with_documents(true);
+            assert!(console.tables_to_describe().is_empty());
+            let statement = statement(&console);
+            assert!(matches!(
+                statement.edits.editability,
+                Editability::ReadOnly(_)
+            ));
+            assert!(statement.can_arrange(Dialect::Postgres).is_err());
+        }
+
+        #[test]
+        fn shows_the_grid_then_the_selected_document_as_a_tree() {
+            let mut console = console_with_documents(true);
+            let keymap = crate::keymap::Keymap::default();
+            let mut harness = ui_harness(|ui| {
+                let mut actions = Vec::new();
+                results::show(ui, &mut console, &keymap, &[], &mut actions);
+            });
+            harness.get_by_label("3 documents");
+            harness.get_by_label("{2 fields}");
+            harness.get_by_label("Ada");
+
+            harness.get_by_label("address").click_secondary();
+            harness.run();
+            harness.get_by_label("Expand column").click();
+            harness.run();
+            harness.get_by_label("address.zip");
+            harness.get_by_label("Leeds");
+
+            harness.get_by_label("Bo").click();
+            harness.run();
+            harness.get_by_label("Tree").click();
+            harness.run();
+            harness.get_by_label_contains("Document 2 of 3 loaded");
+            harness.get_by_label("NumberLong(7)");
+            harness.get_by_label("Long");
+            harness.get_by_label("JSON").click();
+            harness.run();
+            harness.get_by_value(
+                "{\n  \"_id\": {\n    \"$oid\": \"5f1d7f0e2b5c3a0001a1b2c4\"\n  },\n  \"name\": \"Bo\",\n  \
+                 \"total\": {\n    \"$numberLong\": \"7\"\n  }\n}",
+            );
+            drop(harness);
+            assert_eq!(
+                statement(&console).documents.as_ref().unwrap().shown_as,
+                ShownAs::Json
+            );
+        }
     }
 }
