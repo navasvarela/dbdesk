@@ -14,6 +14,11 @@ const TEST_URL_VARS: [&str; 2] = ["DBROVER_TEST_REDIS_URL", "DBROVER_TEST_VALKEY
 /// The Redis server's TLS port, e.g. `redis://dbrover:dbrover@localhost:56443/0`.
 const TLS_TEST_URL_VAR: &str = "DBROVER_TEST_REDIS_TLS_URL";
 
+/// Tests that keep the whole server busy take this for writing, and every other server test for
+/// reading. While a script runs, the server refuses every other client's command with `BUSY`
+/// (and `DEBUG SLEEP` makes them wait), which would fail the tests running beside them.
+static SERVER: tokio::sync::RwLock<()> = tokio::sync::RwLock::const_new(());
+
 struct TestServer {
     variable: &'static str,
     config: RedisConfig,
@@ -119,6 +124,7 @@ async fn delete_keys(connection: &mut RedisConnection, prefix: &str) {
 
 #[tokio::test]
 async fn conforms_to_the_connection_lifecycle() {
+    let _server = SERVER.read().await;
     for server in test_servers() {
         let connection = server.connect().await;
         let product = connection.server_info().product.clone();
@@ -134,6 +140,7 @@ async fn conforms_to_the_connection_lifecycle() {
 
 #[tokio::test]
 async fn wrong_password_is_a_connect_error() {
+    let _server = SERVER.read().await;
     for server in test_servers() {
         let wrong = Password::new("not the password");
         conformance::check_connect_failure(
@@ -144,6 +151,7 @@ async fn wrong_password_is_a_connect_error() {
 
 #[tokio::test]
 async fn unreachable_server_is_a_connect_error() {
+    let _server = SERVER.read().await;
     let mut config = RedisConfig {
         server: ServerConfig {
             host: "127.0.0.1".to_owned(),
@@ -163,6 +171,7 @@ async fn unreachable_server_is_a_connect_error() {
 
 #[tokio::test]
 async fn encrypts_as_the_tls_mode_says() {
+    let _server = SERVER.read().await;
     let Some(server) = server_from(TLS_TEST_URL_VAR) else {
         eprintln!("skipping: {TLS_TEST_URL_VAR} is not set");
         return;
@@ -191,6 +200,7 @@ async fn encrypts_as_the_tls_mode_says() {
 
 #[tokio::test]
 async fn connects_through_a_tunnel_checking_tls_against_the_servers_name() {
+    let _server = SERVER.read().await;
     let Some(server) = server_from(TLS_TEST_URL_VAR) else {
         eprintln!("skipping: {TLS_TEST_URL_VAR} is not set");
         return;
@@ -212,6 +222,7 @@ async fn connects_through_a_tunnel_checking_tls_against_the_servers_name() {
 
 #[tokio::test]
 async fn shows_each_reply_by_its_shape() {
+    let _server = SERVER.read().await;
     for server in test_servers() {
         let mut connection = server.connect().await;
         let keys = prefix("shapes");
@@ -322,6 +333,7 @@ async fn shows_each_reply_by_its_shape() {
 /// A `SCAN` is followed to its end in pages, whatever `COUNT` the command asks of each call.
 #[tokio::test]
 async fn follows_a_scan_to_its_end() {
+    let _server = SERVER.read().await;
     for server in test_servers() {
         let mut connection = server.connect().await;
         let keys = prefix("scan");
@@ -361,6 +373,7 @@ async fn follows_a_scan_to_its_end() {
 /// `CLIENT UNBLOCK` ends a blocking command, and the session goes on.
 #[tokio::test]
 async fn cancels_a_blocking_command() {
+    let _server = SERVER.read().await;
     for server in test_servers() {
         let mut connection = server.connect().await;
         conformance::check_cancel(&mut connection, "BLPOP dbrover:test:never 30").await;
@@ -371,6 +384,7 @@ async fn cancels_a_blocking_command() {
 /// after a script has run 100 ms (`busy-reply-threshold`), rather than the default 5 s.
 #[tokio::test]
 async fn cancels_a_script() {
+    let _server = SERVER.write().await;
     for server in test_servers() {
         let mut connection = server.connect().await;
         conformance::check_cancel(&mut connection, "EVAL \"while true do end\" 0").await;
@@ -380,6 +394,7 @@ async fn cancels_a_script() {
 /// A command nothing can stop is left to finish while a new session takes over.
 #[tokio::test]
 async fn stops_waiting_for_a_command_nothing_stops() {
+    let _server = SERVER.write().await;
     for server in test_servers() {
         let mut connection = server.connect().await;
         run(&mut connection, "SELECT 2").await;
@@ -417,6 +432,7 @@ async fn stops_waiting_for_a_command_nothing_stops() {
 
 #[tokio::test]
 async fn reports_a_killed_session_as_lost() {
+    let _server = SERVER.read().await;
     for server in test_servers() {
         let connection = server.connect().await;
         let id = connection
@@ -431,6 +447,7 @@ async fn reports_a_killed_session_as_lost() {
 
 #[tokio::test]
 async fn lists_the_databases_with_their_key_counts() {
+    let _server = SERVER.read().await;
     for server in test_servers() {
         let mut connection = server.connect().await;
         run(&mut connection, "SELECT 5").await;
@@ -459,6 +476,7 @@ async fn lists_the_databases_with_their_key_counts() {
 /// the lines to put in `dbrover-language/src/redis/commands.rs`.
 #[tokio::test]
 async fn the_command_table_classifies_as_the_server_does() {
+    let _server = SERVER.read().await;
     for server in test_servers() {
         let mut connection = server.connect().await;
         let info = connection
