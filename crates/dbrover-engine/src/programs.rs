@@ -211,8 +211,8 @@ fn start_failure(program: &str, error: &io::Error) -> ProgramFailure {
     if error.kind() == io::ErrorKind::NotFound && is_a_name {
         let path = std::env::var("PATH").unwrap_or_default();
         return ProgramFailure::CouldNotStart(format!(
-            "{program} was not found in DbRover's PATH ({path}); write its full path in \
-             actions.toml"
+            "{program} was not found in DbRover's PATH ({path}); write its full path in the \
+             command"
         ));
     }
     ProgramFailure::CouldNotStart(format!(

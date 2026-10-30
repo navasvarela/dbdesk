@@ -2708,6 +2708,7 @@ mod tests {
                     user: "owner".to_owned(),
                     tls: dbrover_core::TlsMode::Prefer,
                     ssh: None,
+                    password_command: None,
                 },
             }),
             ..shop.clone()
@@ -2983,6 +2984,7 @@ mod tests {
                         user: "dbrover".to_owned(),
                         login: dbrover_core::SshLogin::KeyFile { key_file },
                     }),
+                    password_command: None,
                 },
             }),
         };
@@ -3067,6 +3069,7 @@ mod tests {
                     user: "juan".to_owned(),
                     tls: dbrover_core::TlsMode::Disable,
                     ssh: None,
+                    password_command: None,
                 },
             }),
         };
@@ -4067,6 +4070,7 @@ mod tests {
                         user: self.user.clone(),
                         tls: dbrover_core::TlsMode::Disable,
                         ssh: None,
+                        password_command: None,
                     },
                 }),
             }
@@ -4093,8 +4097,14 @@ mod tests {
             let admin = self.data_source(database, "admin");
             let secrets: Arc<dyn SecretStore> = Arc::new(self.secrets(&admin));
             let tunnels = dbrover_engine::Tunnels::new("known_hosts".into());
+            let commands = dbrover_engine::PasswordCommands::new(
+                dbrover_store::TrustedCommands::default(),
+                Arc::new(dbrover_engine::ProcessRunner),
+            );
             runtime
-                .block_on(dbrover_engine::open_data_source(&admin, &secrets, &tunnels))
+                .block_on(dbrover_engine::open_data_source(
+                    &admin, &secrets, &tunnels, &commands,
+                ))
                 .unwrap()
         }
     }

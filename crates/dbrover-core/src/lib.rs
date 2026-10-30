@@ -10,6 +10,7 @@ mod data_source;
 mod error;
 mod execution;
 mod password;
+mod password_command;
 mod placeholder;
 mod quoting;
 mod role;
@@ -32,6 +33,7 @@ pub use execution::{
     CancelHandle, Cell, ColumnInfo, ResultCursor, Row, TransactionStatus, ValueKind,
 };
 pub use password::Password;
+pub use password_command::PasswordCommand;
 pub use placeholder::{
     ExpandError, PlaceholderError, Setting, Variables, expand, expand_path, has_placeholder,
 };

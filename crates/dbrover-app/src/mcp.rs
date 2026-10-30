@@ -34,6 +34,7 @@ pub fn run(project: &str) -> anyhow::Result<()> {
         history: HistoryFile::new(paths.history_file()),
         secrets: os_keychain(),
         known_hosts: paths.ssh_known_hosts_file(),
+        trusted_commands: paths.trusted_commands_file(),
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .thread_name("dbrover-mcp")
