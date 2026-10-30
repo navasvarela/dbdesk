@@ -699,6 +699,7 @@ fn postgres_data_source(url: &str) -> (DataSource, Password) {
                 user: user.to_owned(),
                 tls: TlsMode::default(),
                 ssh: None,
+                password_command: None,
             },
         }),
     };
@@ -958,6 +959,7 @@ fn import_preview(harness: &mut Harness<'static, DbRoverApp>, fixture: &Fixture)
                 user: "reporting".to_owned(),
                 tls: TlsMode::Require,
                 ssh: None,
+                password_command: None,
             },
         }),
     };

@@ -55,6 +55,7 @@ fn parse_url(url: &str) -> TestServer {
                 user: user.to_owned(),
                 tls: TlsMode::Disable,
                 ssh: None,
+                password_command: None,
             },
         },
         password: Some(Password::new(password)),
@@ -131,6 +132,7 @@ async fn unreachable_server_is_a_connect_error() {
             user: "default".to_owned(),
             tls: TlsMode::Disable,
             ssh: None,
+            password_command: None,
         },
     };
 

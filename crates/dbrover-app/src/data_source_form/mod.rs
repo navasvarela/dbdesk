@@ -447,6 +447,7 @@ mod tests {
                         ca_file: Some("/etc/ca.pem".into()),
                     },
                     ssh: None,
+                    password_command: None,
                 },
             }),
             ConnectionConfig::Mysql(MysqlConfig {
@@ -464,6 +465,7 @@ mod tests {
                             key_file: "/home/juan/.ssh/id_ed25519".into(),
                         },
                     }),
+                    password_command: None,
                 },
             }),
         ];

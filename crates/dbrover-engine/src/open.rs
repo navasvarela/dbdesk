@@ -1,11 +1,12 @@
 //! Opening connections: resolving the secrets, opening the SSH tunnel if there is one, then
-//! dispatching to the right driver.
+//! dispatching to the right driver. The database password is typed, run for (W9's password
+//! command) or looked up.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use dbrover_core::{
-    Connection, ConnectionConfig, DataSource, DataSourceId, DriverError, Password,
+    Connection, ConnectionConfig, DataSource, DataSourceId, DriverError, Password, PasswordCommand,
     PlaceholderError, Route, ServerConfig, ServerInfo, SshConfig, SshLogin, describe_error,
 };
 use dbrover_ssh::{HostKey, SshError, Tunnel, TunnelRequest};
@@ -15,6 +16,7 @@ use tokio::time::timeout;
 
 use crate::environment::ProcessEnvironment;
 use crate::events::EventSink;
+use crate::password_commands::{PasswordCommandError, PasswordCommands};
 use crate::passwords::{self, PasswordNeeded, Prompting};
 use crate::tunnels::{Tunnelled, Tunnels};
 use crate::{DatabaseFile, Event, PasswordUpdate};
@@ -33,6 +35,8 @@ pub enum OpenError {
         secret: Secret,
         reason: PasswordNeeded,
     },
+    #[error(transparent)]
+    PasswordCommand(#[from] PasswordCommandError),
     #[error(transparent)]
     Placeholder(#[from] PlaceholderError),
     #[error(
@@ -66,6 +70,14 @@ impl OpenError {
             _ => None,
         }
     }
+
+    /// The password command, if connecting stopped because nobody has trusted it yet.
+    pub(crate) fn untrusted_password_command(&self) -> Option<&PasswordCommand> {
+        match self {
+            Self::PasswordCommand(PasswordCommandError::NotTrusted(command)) => Some(command),
+            _ => None,
+        }
+    }
 }
 
 /// Secrets typed in the data source dialog, which the connection test uses instead of the
@@ -81,6 +93,7 @@ pub(crate) struct TypedSecrets {
 pub(crate) struct Connector<'a> {
     pub(crate) secrets: &'a Arc<dyn SecretStore>,
     pub(crate) tunnels: &'a Tunnels,
+    pub(crate) commands: &'a PasswordCommands,
     pub(crate) prompting: Prompting<'a>,
 }
 
@@ -109,16 +122,7 @@ pub(crate) async fn open(
         None => None,
     };
     let password = match data_source.config.driver().uses_password() {
-        true => {
-            passwords::resolve(
-                data_source.id,
-                Secret::Database,
-                connector.secrets,
-                &typed.password,
-                connector.prompting,
-            )
-            .await?
-        }
+        true => database_password(data_source.id, &config, typed, connector).await?,
         false => None,
     };
     let route = tunnel
@@ -135,6 +139,37 @@ pub(crate) async fn open(
         None => OpenError::Driver(error),
     })?;
     Ok(Box::new(Tunnelled { connection, tunnel }))
+}
+
+/// The password typed in the dialog, or else the one the data source's password command
+/// prints, or else the one the session or the keychain holds.
+///
+/// A typed password wins over the command so the MCP login, whose own password is passed in
+/// as typed, signs in with that rather than with a token made for the data source's user.
+async fn database_password(
+    id: DataSourceId,
+    config: &ConnectionConfig,
+    typed: &TypedSecrets,
+    connector: Connector<'_>,
+) -> Result<Option<Password>, OpenError> {
+    let command = config
+        .server()
+        .and_then(|server| server.password_command.as_ref());
+    match (command, &typed.password) {
+        (Some(command), PasswordUpdate::Keep) => Ok(Some(
+            connector.commands.password(id, command, config).await?,
+        )),
+        (_, typed_password) => {
+            passwords::resolve(
+                id,
+                Secret::Database,
+                connector.secrets,
+                typed_password,
+                connector.prompting,
+            )
+            .await
+        }
+    }
 }
 
 /// The data source's tunnel to `server`, signing in with the secret its SSH login needs.
@@ -190,24 +225,26 @@ async fn open_tunnel(
     }
 }
 
-/// Opens a connection to a saved data source with its saved password, if it needs one, and
-/// through its SSH tunnel, if it has one.
+/// Opens a connection to a saved data source with its saved password, or the one its trusted
+/// password command prints, if it needs one, and through its SSH tunnel, if it has one.
 ///
 /// For other front ends than the app's UI, such as `dbrover mcp`, so every way in connects
-/// through the same drivers, keychain, tunnels and timeout.
+/// through the same drivers, keychain, password commands, tunnels and timeout.
 ///
 /// # Errors
 ///
-/// [`OpenError`] if a secret can't be read, the tunnel or the driver fails, or connecting
-/// takes longer than the connect timeout.
+/// [`OpenError`] if a secret can't be read, the password command isn't trusted or fails, the
+/// tunnel or the driver fails, or connecting takes longer than the connect timeout.
 pub async fn open_data_source(
     data_source: &DataSource,
     secrets: &Arc<dyn SecretStore>,
     tunnels: &Tunnels,
+    commands: &PasswordCommands,
 ) -> Result<Box<dyn Connection>, OpenError> {
     let connector = Connector {
         secrets,
         tunnels,
+        commands,
         prompting: Prompting::Never,
     };
     open(data_source, &TypedSecrets::default(), connector).await
@@ -226,12 +263,13 @@ pub async fn open_data_source_for_mcp(
     data_source: &DataSource,
     secrets: &Arc<dyn SecretStore>,
     tunnels: &Tunnels,
+    commands: &PasswordCommands,
 ) -> Result<Box<dyn Connection>, OpenError> {
     let Some(login) = &data_source.mcp_login else {
-        return open_data_source(data_source, secrets, tunnels).await;
+        return open_data_source(data_source, secrets, tunnels, commands).await;
     };
     let Some(config) = data_source.config.with_user(&login.user) else {
-        return open_data_source(data_source, secrets, tunnels).await;
+        return open_data_source(data_source, secrets, tunnels, commands).await;
     };
     let id = data_source.id;
     let store = Arc::clone(secrets);
@@ -253,6 +291,7 @@ pub async fn open_data_source_for_mcp(
     let connector = Connector {
         secrets,
         tunnels,
+        commands,
         prompting: Prompting::Never,
     };
     open(&as_mcp, &typed, connector).await
@@ -282,18 +321,32 @@ async fn connect(
     })
 }
 
+/// What testing a connection from the dialog needs besides the data source and its secrets.
+pub(crate) struct TestServices {
+    pub(crate) secrets: Arc<dyn SecretStore>,
+    pub(crate) tunnels: Tunnels,
+    /// Already [`PasswordCommands::shown`]: the dialog shows the command it tests.
+    pub(crate) commands: PasswordCommands,
+    pub(crate) events: EventSink,
+}
+
 /// Connects, pings and disconnects, then reports the outcome as [`Event::ConnectionTested`].
 pub(crate) async fn test_connection(
     data_source: DataSource,
     typed: TypedSecrets,
-    secrets: Arc<dyn SecretStore>,
-    tunnels: Tunnels,
-    events: EventSink,
+    services: TestServices,
 ) {
+    let TestServices {
+        secrets,
+        tunnels,
+        commands,
+        events,
+    } = services;
     tracing::info!(data_source = %data_source.name, "testing connection to {}", data_source.config);
     let connector = Connector {
         secrets: &secrets,
         tunnels: &tunnels,
+        commands: &commands,
         prompting: Prompting::Never,
     };
     let result = open_ping_close(&data_source, &typed, connector).await;

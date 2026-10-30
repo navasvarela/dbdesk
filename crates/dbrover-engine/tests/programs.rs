@@ -119,6 +119,7 @@ fn shop() -> DataSource {
                 user: "ada".to_owned(),
                 tls: TlsMode::Disable,
                 ssh: None,
+                password_command: None,
             },
         }),
     }

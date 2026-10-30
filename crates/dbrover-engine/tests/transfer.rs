@@ -24,6 +24,7 @@ fn server(host: &str, port: Port, tls: TlsMode) -> ServerConfig {
         user: "juan".to_owned(),
         tls,
         ssh: None,
+        password_command: None,
     }
 }
 

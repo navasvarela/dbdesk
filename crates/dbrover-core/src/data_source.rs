@@ -6,8 +6,8 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::DriverError;
 use crate::placeholder::{PlaceholderError, Setting, Variables, expand, expand_path};
+use crate::{DriverError, PasswordCommand};
 
 /// Stable identity of a data source. Written once when the data source is created, so renaming
 /// it never breaks the keychain entry, consoles or history that refer to it.
@@ -384,6 +384,10 @@ pub struct ServerConfig {
     /// reach. Written only when set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ssh: Option<SshConfig>,
+    /// A program to run for the password on every connection, in place of the keychain's,
+    /// for tokens that expire. Written only when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password_command: Option<PasswordCommand>,
 }
 
 impl ServerConfig {
@@ -430,6 +434,10 @@ impl ServerConfig {
                 .as_ref()
                 .map(|ssh| ssh.resolve(variables))
                 .transpose()?,
+            // Its arguments are filled in from the settings resolved here, as it runs. `${NAME}`
+            // in an argument stays as written: the program gets DbRover's environment and can
+            // read the variable itself.
+            password_command: self.password_command.clone(),
         })
     }
 }
@@ -770,6 +778,7 @@ mod tests {
                                 ca_file: Some("/etc/ssl/internal-ca.pem".into()),
                             },
                             ssh: None,
+                            password_command: None,
                         },
                     }),
                 },
@@ -803,6 +812,7 @@ mod tests {
             user: "juan".to_owned(),
             tls: TlsMode::Prefer,
             ssh: None,
+            password_command: None,
         };
         let mut data_source = DataSource {
             id: DataSourceId::generate(),
@@ -839,6 +849,7 @@ mod tests {
             user: "owner".to_owned(),
             tls: TlsMode::Prefer,
             ssh: None,
+            password_command: None,
         };
         let mysql = ConnectionConfig::Mysql(MysqlConfig { server });
 
@@ -908,6 +919,7 @@ mod tests {
                             user: "juan".to_owned(),
                             tls,
                             ssh: None,
+                            password_command: None,
                         },
                     }),
                 }],
@@ -1117,6 +1129,7 @@ mod tests {
                 user: "juan".to_owned(),
                 tls: TlsMode::Require,
                 ssh: None,
+                password_command: None,
             },
         });
         let sqlite = ConnectionConfig::Sqlite(SqliteConfig {
@@ -1283,6 +1296,7 @@ mod tests {
                     user: "juan".to_owned(),
                     login: SshLogin::Password,
                 }),
+                password_command: None,
             },
         });
 
@@ -1305,6 +1319,7 @@ mod tests {
                     user: "root".to_owned(),
                     tls: TlsMode::Prefer,
                     ssh: None,
+                    password_command: None,
                 },
             })
         };

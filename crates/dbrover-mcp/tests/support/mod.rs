@@ -17,10 +17,11 @@ use dbrover_core::{
     ConnectionConfig, DataSource, DataSourceId, MysqlConfig, Password, PostgresConfig, ProjectId,
     ServerConfig, SqliteConfig, TlsMode,
 };
-use dbrover_engine::{Tunnels, open_data_source};
+use dbrover_engine::{PasswordCommands, ProcessRunner, Tunnels, open_data_source};
 use dbrover_mcp::{McpConfig, serve_stdio};
 use dbrover_store::{
     DataSourceFile, HistoryFile, ProjectFile, Projects, Secret, SecretError, SecretStore,
+    TrustedCommands, TrustedCommandsFile,
 };
 use rmcp::ServiceExt as _;
 use rmcp::model::CallToolRequestParams;
@@ -96,6 +97,7 @@ fn serve_as_child(dir: &Path) {
         history: HistoryFile::new(dir.join("history.sqlite")),
         secrets: Arc::new(secrets),
         known_hosts: dir.join("known_hosts"),
+        trusted_commands: TrustedCommandsFile::new(dir.join("trusted_commands.toml")),
     };
     tokio::runtime::Runtime::new()
         .unwrap()
@@ -194,6 +196,7 @@ pub fn server_from_env(variable: &str) -> Option<(ServerConfig, Password)> {
             user: user.to_owned(),
             tls: TlsMode::default(),
             ssh: None,
+            password_command: None,
         },
         Password::new(password),
     ))
@@ -214,7 +217,8 @@ pub async fn run_directly(engine: &Engine, statements: &[String]) -> Vec<Vec<Opt
     }
     // The fixtures' data sources have no SSH server, so no `known_hosts` is ever read.
     let tunnels = Tunnels::new(std::path::PathBuf::from("known_hosts"));
-    let mut connection = open_data_source(&writable, &secrets, &tunnels)
+    let commands = PasswordCommands::new(TrustedCommands::default(), Arc::new(ProcessRunner));
+    let mut connection = open_data_source(&writable, &secrets, &tunnels, &commands)
         .await
         .unwrap();
     let mut last = Vec::new();

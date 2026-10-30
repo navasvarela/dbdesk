@@ -24,8 +24,8 @@ mod transaction;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use dbrover_engine::Tunnels;
-use dbrover_store::{DataSourceFile, HistoryFile, ProjectFile, SecretStore};
+use dbrover_engine::{PasswordCommands, ProcessRunner, Tunnels};
+use dbrover_store::{DataSourceFile, HistoryFile, ProjectFile, SecretStore, TrustedCommandsFile};
 use rmcp::ServiceExt as _;
 use rmcp::service::ServerInitializeError;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -44,6 +44,8 @@ pub struct McpConfig {
     pub secrets: Arc<dyn SecretStore>,
     /// OpenSSH's `known_hosts`, which SSH tunnels check host keys against.
     pub known_hosts: PathBuf,
+    /// The password commands the user trusted in the app, the only ones the server runs.
+    pub trusted_commands: TrustedCommandsFile,
 }
 
 /// [`StartError`] is boxed: it carries paths, I/O and TOML errors, which made this type large
@@ -111,9 +113,11 @@ where
         warn_about_shared_logins(&project);
     }
     let audit = Audit::open(project.slug(), &config.history);
+    let commands = PasswordCommands::load(&config.trusted_commands, Arc::new(ProcessRunner)).await;
     let connections = Connections::new(
         config.secrets,
         Tunnels::new(config.known_hosts),
+        commands,
         &project.data_sources,
     );
     connections.sweep_idle();

@@ -32,6 +32,7 @@ use tokio::task::JoinHandle;
 use crate::events::EventSink;
 use crate::history::HistoryLog;
 use crate::open::{Connector, OpenError, TypedSecrets, open};
+use crate::password_commands::PasswordCommands;
 use crate::passwords::{Prompting, SessionPasswords};
 use crate::read_only;
 use crate::tunnels::Tunnels;
@@ -98,6 +99,7 @@ pub(crate) struct Services {
     pub(crate) secrets: Arc<dyn SecretStore>,
     pub(crate) passwords: SessionPasswords,
     pub(crate) tunnels: Tunnels,
+    pub(crate) commands: PasswordCommands,
     pub(crate) events: EventSink,
     pub(crate) history: HistoryLog,
 }
@@ -123,6 +125,7 @@ impl Session {
             secrets,
             passwords,
             tunnels,
+            commands,
             events,
             history,
         } = services;
@@ -156,6 +159,7 @@ impl Session {
                 secrets,
                 passwords,
                 tunnels,
+                commands,
             },
             signals,
             request_receiver,
@@ -301,6 +305,7 @@ struct Credentials {
     secrets: Arc<dyn SecretStore>,
     passwords: SessionPasswords,
     tunnels: Tunnels,
+    commands: PasswordCommands,
 }
 
 async fn run(
@@ -425,6 +430,7 @@ async fn connect(
             Connector {
                 secrets: &credentials.secrets,
                 tunnels: &credentials.tunnels,
+                commands: &credentials.commands,
                 prompting: Prompting::Ask(&credentials.passwords),
             },
         ) => attempt,
@@ -455,6 +461,12 @@ async fn connect(
                 context.send(Event::HostKeyUnknown {
                     data_source,
                     key: key.clone(),
+                });
+            }
+            if let Some(command) = error.untrusted_password_command() {
+                context.send(Event::PasswordCommandUntrusted {
+                    data_source,
+                    command: command.clone(),
                 });
             }
             if let OpenError::PasswordNeeded { secret, reason } = error {
