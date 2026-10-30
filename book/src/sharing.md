@@ -4,7 +4,9 @@
 **File › Import data sources…** adds them on another machine, or updates the ones it already
 has. Use it to set up a new computer, or to share a team's databases. Passwords are never
 exported: each data source asks for its own the first time it connects (see
-[Passwords and the keychain](data-sources.md#passwords-and-the-keychain)).
+[Passwords and the keychain](data-sources.md#passwords-and-the-keychain)). A
+[password command](data-sources.md#password-from-a-command) is exported, since it holds no
+secret, but the trust to run it isn't: on the other machine it asks before it first runs.
 
 ## Exporting
 

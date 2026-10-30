@@ -44,6 +44,7 @@ use crate::mcp_settings::McpDefaultsEditor;
 use crate::menu_bar;
 use crate::native_menu::{Chosen, NativeMenu};
 use crate::object_dialog::{self, ObjectDialog, ObjectDialogAction, Target};
+use crate::password_command_prompt::{PasswordCommandAction, PasswordCommandPrompt};
 use crate::password_prompt::{PasswordPrompt, PromptAction};
 use crate::previous_install::AdoptionNotice;
 use crate::project_dialog::{
@@ -102,6 +103,7 @@ pub struct DbRoverApp {
     rollback_confirmation: Option<RollbackConfirmation>,
     password_prompt: Option<PasswordPrompt>,
     host_key_prompt: Option<HostKeyPrompt>,
+    password_command_prompt: Option<PasswordCommandPrompt>,
     export_sources_dialog: Option<ExportSourcesDialog>,
     export_dialog: Option<ExportDialog>,
     /// The export dialog's format and options, as last used.
@@ -210,6 +212,7 @@ impl DbRoverApp {
             rollback_confirmation: None,
             password_prompt: None,
             host_key_prompt: None,
+            password_command_prompt: None,
             export_sources_dialog: None,
             export_dialog: None,
             export_choices,
@@ -380,6 +383,7 @@ impl DbRoverApp {
         }
         self.apply_to_password_prompt(event);
         self.apply_to_host_key_prompt(event);
+        self.apply_to_password_command_prompt(event);
         if let Some(dialog) = &mut self.export_sources_dialog {
             dialog.apply(event);
         }
@@ -781,6 +785,49 @@ impl DbRoverApp {
         let data_source = prompt.data_source();
         self.host_key_prompt = None;
         self.send(Command::Connect(data_source));
+    }
+
+    /// Opens the prompt when a connection's password command hasn't been trusted yet, and
+    /// connects again once the user has trusted it.
+    fn apply_to_password_command_prompt(&mut self, event: &Event) {
+        if let Event::PasswordCommandUntrusted {
+            data_source,
+            command,
+        } = event
+            && self.password_command_prompt.is_none()
+            && let Some(entry) = self.state.data_source(*data_source)
+        {
+            self.password_command_prompt = Some(PasswordCommandPrompt::new(
+                &entry.data_source,
+                command.clone(),
+            ));
+        }
+        let Some(prompt) = &self.password_command_prompt else {
+            return;
+        };
+        if !prompt.apply(event) {
+            return;
+        }
+        let data_source = prompt.data_source();
+        self.password_command_prompt = None;
+        self.send(Command::Connect(data_source));
+    }
+
+    fn show_password_command_prompt(&mut self, ctx: &egui::Context) {
+        let Some(prompt) = &mut self.password_command_prompt else {
+            return;
+        };
+        let data_source = prompt.data_source();
+        match prompt.show(ctx) {
+            Some(PasswordCommandAction::Trust(command)) => {
+                self.send(Command::TrustPasswordCommand {
+                    data_source,
+                    command,
+                });
+            }
+            Some(PasswordCommandAction::Cancel) => self.password_command_prompt = None,
+            None => {}
+        }
     }
 
     fn show_host_key_prompt(&mut self, ctx: &egui::Context) {
@@ -2104,6 +2151,7 @@ impl eframe::App for DbRoverApp {
         self.show_object_dialog(&ctx);
         self.show_password_prompt(&ctx);
         self.show_host_key_prompt(&ctx);
+        self.show_password_command_prompt(&ctx);
         self.show_export_sources_dialog(&ctx);
         self.show_export_dialog(&ctx);
         self.show_import_dialog(&ctx);
@@ -2175,6 +2223,7 @@ mod tests {
     mod menus;
     mod modify_table;
     mod parameters;
+    mod password_commands;
     mod title_bar;
 
     use std::path::Path;

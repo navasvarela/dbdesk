@@ -1210,6 +1210,21 @@ three to five, **L** a track of its own).
   **Exit:** a data source whose password command is `["printf", "dbrover"]` connects to the
   PostgreSQL test server after one trust prompt and without it the second time; a command that
   fails shows its exit code and standard error instead of connecting.
+
+  **W9 demo note:** built in #252 and #253. New PostgreSQL data source, tick **Password from a
+  command**, and write `printf` and `dbrover` on two lines of **Password command**. Connecting
+  asks **Run this command for a password?** with the command in full; **Run and connect**
+  connects, and the next connection doesn't ask. `trusted_commands.toml` then has an entry with
+  the data source's id beside the command actions'; edit one argument and it asks again. A
+  command that fails stops with *could not get the password: … failed (exit status: 3): …*
+  and its stderr. Departures from the plan: the dialog's **Test connection** runs the command
+  it shows without asking (and records nothing), and `dbrover mcp` runs a password command only
+  once it is trusted in the app, since it can't ask; an MCP login keeps its own saved password.
+  The timeout is 60 s, as a command action's default, so `op` or a browser sign-in can wait for
+  the user. Covered by engine tests (the exit on the PostgreSQL test server, a fresh
+  password on every connection, through an SSH tunnel, a failing command, the dialog's test),
+  store tests of the trust file and the export, and a kittest test of the dialog and the
+  prompt.
 - **W10 — A visual explain plan (M):** the plan of the statement at the cursor as a tree of
   steps, each with its estimated cost and rows and, after **Explain analyse**, the actual rows
   and time, the costliest steps highlighted.
