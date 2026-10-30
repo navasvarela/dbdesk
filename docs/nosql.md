@@ -1,7 +1,7 @@
 # NoSQL databases
 
-Status: **planned** (2026-10-29), not scheduled. Building starts after W7 (exports), which is
-changing the grid and the results code now; see [When to start](#when-to-start).
+Status: **N0a being built** (from 2026-10-30), in the layers listed under
+[N0a](#n0a--groundwork-languages-safety-and-the-explorer). W7 (exports) has landed.
 
 DbRover speaks seven SQL engines. Many of the teams that use them keep a Redis beside their
 PostgreSQL, documents in MongoDB, or logs in Elasticsearch, and today they open another tool for
@@ -113,10 +113,9 @@ Dashboards) do those well. DbRover browses, queries and edits.
 
 ## When to start
 
-Nothing here is built until W7's changes to the grid and results land, because N0b changes the
-same code: what a result holds, how the grid draws it, and how exports read it. Starting before
-would mean two large changes to the grid at once. Planning, reading the clients and spiking a
-parser can start any time.
+Nothing here was to be built until W7's changes to the grid and results landed, because N0b
+changes the same code: what a result holds, how the grid draws it, and how exports read it. W7
+landed on 2026-10-30, and N0a started the same day.
 
 ## Milestones
 
@@ -169,6 +168,43 @@ be tested with no new driver:
 unchanged; a PostgreSQL schema of 20,000 tables loads in the explorer 1,000 at a time, with the
 filter applied by the server; and a test language, built only for the tests, has its commands
 split, highlighted, classified and refused on a read-only data source.
+
+#### Layers
+
+Each layer is one pull request in a stack, useful and tested on its own. None adds a driver; each
+is exercised by the SQL engines and by the test language.
+
+- **N0a·1 — Plan:** this list, the decisions N0a takes (in [Decisions](#decisions)), and the
+  roadmap's status.
+- **N0a·2 — Query languages:** a new crate, `dbrover-language`, holds `QueryLanguage`:
+  `Sql(Dialect)` for the seven engines, and `Test`, a language of one command per line built
+  only for the tests, behind the crate's `test-language` feature. Each language splits a script
+  into commands, finds the command at the cursor, yields tokens to highlight, lists completion
+  words and classifies a command into `StatementKind`, and says which `Dialect` it has, if any.
+  `QueryLanguage::from(DriverKind)` replaces `Dialect::from(DriverKind)` everywhere; the console
+  keeps a language rather than a dialect, and runs, highlights and completes through it, while
+  formatting, the linter, parameters, explain, grid edits and the SQL export formats ask for the
+  dialect and stay hidden without one. The test language has a classification corpus, as each
+  SQL dialect has, and a console test that splits and highlights its commands.
+- **N0a·3 — Safety for every language:** the read-only check, the MCP server's permissions and
+  the warnings classify through the language. The warning before a risky command becomes "this
+  command may touch everything", listed by each language (`UPDATE` and `DELETE` without `WHERE`
+  for SQL). An engine without a read-only session is guarded by its login: the console's
+  read-only level refuses writes with the check alone and the dialog says to use a login with
+  read-only grants, and the MCP server serves such a data source for reading when, and only when,
+  it has an MCP login. SQL Server and ClickHouse are the first to use it. Tests: the test
+  language refused on a read-only data source, its warnings, and MCP serving a SQL Server data
+  source only with an MCP login.
+- **N0a·4 — An explorer that pages:** `Connection::children_page` returns part of a level, with
+  a token for the next part, and takes a filter the server applies; its default returns the whole
+  level, as `children` does. PostgreSQL pages the objects of a schema 1,000 at a time, by name,
+  with the filter as a case-insensitive `ILIKE`. The tree shows **Load more…** at the end of a
+  partial level, and the explorer's filter box asks the server again for a partial level. Engine
+  tests on the PostgreSQL test server: a schema of 2,500 tables in three pages, a filter applied
+  by the server, and an ignored test with 20,000.
+
+The manual changes in the layer that changes what a user sees: N0a·3 (read-only data sources and
+MCP logins on SQL Server and ClickHouse) and N0a·4 (**Load more…** and the filter).
 
 ### N0b — Groundwork: documents
 
@@ -468,6 +504,9 @@ milestone starts.
 | Redis Cluster and Sentinel | **After N1**: a single server, with TLS, ACL users and SSH tunnels, first. | Most local and many managed servers are single; a cluster needs keys scanned on every node. |
 | One search driver or two | **One**, for Elasticsearch and OpenSearch, with their differences keyed off the server's answer to `GET /`. | One crate and data source type, "Elasticsearch / OpenSearch". |
 | Cassandra's language | **A `Dialect` of `dbrover-sql`**, since CQL lexes and splits like SQL, with its own small classifier, as `sqlparser` has no CQL dialect. | The SQL tooling (splitting, highlighting, completion) works for CQL with a new set of rules, not a new language. |
+| Where languages live (N0a) | **A crate of their own, `dbrover-language`,** on top of `dbrover-sql`. It owns `QueryLanguage`; Redis's and MongoDB's languages become modules of it. `StatementKind` and `Unclassified` stay in `dbrover-sql` and are re-exported, and highlighting keeps `dbrover-sql`'s token kinds. | `dbrover-sql` stays about SQL. Code outside the crate asks a language through its methods and never matches on its variants, so a variant added for a new engine, or the test language, changes no other crate. |
+| The test language (N0a) | **A variant behind a `test-language` feature,** turned on only in dev-dependencies. | It is compiled into tests only, yet it runs through the same console, check and warnings as a real language. |
+| Engines without a read-only session (N0a) | **The login is the guard:** SQL Server and ClickHouse data sources are served to MCP clients, for reading, only with an MCP login. Changes through `execute` wait for a transaction DbRover can open on them. | W11's plan for SQL Server, here for every such engine with logins. W11 still gives ClickHouse its `readonly` setting and DuckDB its read-only file, which are stronger. |
 
 ## Risks
 
