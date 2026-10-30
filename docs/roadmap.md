@@ -1211,7 +1211,7 @@ three to five, **L** a track of its own).
   PostgreSQL test server after one trust prompt and without it the second time; a command that
   fails shows its exit code and standard error instead of connecting.
 
-  **W9 demo note:** built in #PR1 and #PR2. New PostgreSQL data source, tick **Password from a
+  **W9 demo note:** built in #252 and #253. New PostgreSQL data source, tick **Password from a
   command**, and write `printf` and `dbrover` on two lines of **Password command**. Connecting
   asks **Run this command for a password?** with the command in full; **Run and connect**
   connects, and the next connection doesn't ask. `trusted_commands.toml` then has an entry with
