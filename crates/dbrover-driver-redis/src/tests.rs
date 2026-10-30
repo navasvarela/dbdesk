@@ -508,6 +508,7 @@ fn database(number: u8) -> CatalogPath {
 /// have no separator, so grouping leaves them as they are. Database 9 is this test's alone.
 #[tokio::test]
 async fn pages_keys_with_scan_and_filters_with_match() {
+    let _server = SERVER.read().await;
     for server in test_servers() {
         let mut connection = server.connect().await;
         let keys: Vec<String> = (1..=2_500).map(|index| format!("page{index:04}")).collect();
@@ -527,6 +528,7 @@ async fn pages_keys_with_scan_and_filters_with_match() {
 /// the matching keys themselves, however deep. Database 8 is this test's alone.
 #[tokio::test]
 async fn groups_keys_by_their_separator() {
+    let _server = SERVER.read().await;
     for server in test_servers() {
         let mut connection = server.connect().await;
         let keys = [
