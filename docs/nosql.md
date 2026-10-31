@@ -2,7 +2,8 @@
 
 Status: **N0a and N0b built** (2026-10-30), in the layers listed under
 [N0a](#n0a--groundwork-languages-safety-and-the-explorer) and
-[N0b](#n0b--groundwork-documents); N1 is next. W7 (exports) has landed.
+[N0b](#n0b--groundwork-documents); **N1 being built** (from 2026-10-30), in the layers listed
+under [N1](#n1--redis-valkey-and-dragonfly). W7 (exports) has landed.
 
 DbRover speaks seven SQL engines. Many of the teams that use them keep a Redis beside their
 PostgreSQL, documents in MongoDB, or logs in Elasticsearch, and today they open another tool for
@@ -375,6 +376,76 @@ grouped by `:` without the server stalling; open a hash, a list, a sorted set an
 a field and set a TTL; run `HGETALL` in the console; ⌘. a `BLPOP`; a read-only data source
 refuses `SET`; and an MCP client reads a key through an MCP login.
 
+#### Layers
+
+Each layer is one pull request in a stack, useful and tested on its own, as N0a's and N0b's
+were. From N1·3 on, each runs against `redis:8-alpine` and `valkey/valkey:9-alpine` in CI.
+
+- **N1·1 — Plan:** this list, the decisions N1 takes (in [Decisions](#decisions)), and the
+  roadmap's status.
+- **N1·2 — The Redis language:** a `redis` module of `dbrover-language`, with no driver yet:
+  - a script splits one command per line, and each command reads as `redis-cli` reads it:
+    words, `"…"` strings with backslash escapes (`\n`, `\"`, `\x41`), `'…'` strings, and a
+    line that starts with `#` as a comment;
+  - a table of every command and subcommand of Redis 8 and Valkey 9, with its arity, its
+    flags (`readonly`, `write`, `admin`, `blocking`) and its arguments' syntax, generated
+    from the servers' own command definitions (what `COMMAND INFO` and `COMMAND DOCS`
+    answer). The `dangerous` ACL category isn't kept: it marks `INFO` and `KEYS` as well as
+    `FLUSHALL`, so it says nothing the flags and the warnings don't;
+  - classification from those flags, with the plan's exceptions: `MULTI`, `EXEC`, `DISCARD`,
+    `WATCH` and `UNWATCH` are transaction control; scripts are writes unless read-only
+    (`EVAL_RO`, `FCALL_RO`); `SELECT`, `CONFIG`, `CLIENT`, `AUTH`, `HELLO`, `FLUSHALL`,
+    `FLUSHDB` and `SHUTDOWN` are administration; a command neither `readonly` nor `write`
+    reads only if it is one of a short list (`PING`, `ECHO`, `INFO`, `TIME`, `COMMAND`, …);
+  - warnings for `FLUSHALL`, `FLUSHDB` and `KEYS`;
+  - completion of command names, each with its arguments' syntax.
+
+  Tests: a classification corpus, as the SQL dialects and the test language have; the
+  splitter and tokens against `redis-cli`'s quoting; the warnings.
+- **N1·3 — The driver and the console:** a new crate, `dbrover-driver-redis`, on the `redis`
+  crate over a TCP or TLS stream DbRover opens itself, so TLS is `dbrover-tls`'s rustls
+  configuration on ring and an SSH tunnel works as for the others:
+  - the **Redis / Valkey** data source: the shared server form, port 6379, the user optional,
+    the database number in place of a database name, and TLS. Test connection reports Redis,
+    Valkey or Dragonfly and its version, from `INFO server`;
+  - the console shows a reply by its shape: an array as one column, a map as field and value,
+    a number or text as one cell, binary text as hex, and a nested value as JSON text, which
+    the cell viewer shows as a tree (N0b). `SCAN`, `HSCAN`, `SSCAN` and `ZSCAN` are followed to
+    their end a page at a time, as `redis-cli --scan` does, so the grid's paging reads a
+    large keyspace or value without one long command;
+  - ⌘. as the plan says: `CLIENT UNBLOCK` for a blocking command, `SCRIPT KILL` or
+    `FUNCTION KILL` for a script, otherwise a new connection;
+  - `validate` checks each command's argument count against the table; `transaction_status`
+    is always idle, and manual commit mode isn't offered;
+  - the explorer lists the databases that hold keys, with their key counts.
+
+  Tests: the shared conformance suite (lifecycle, connect failure, catalog walk, invalid
+  paths, execution, cancel), replies of each shape, and a check that each server's own
+  `COMMAND INFO` classifies every command as the table does.
+- **N1·4 — Keys in the explorer:** under each database, keys grouped by a separator (`:` by
+  default, set per data source), read with `SCAN … COUNT 1000` and never `KEYS`; the filter
+  box as `SCAN`'s `MATCH`; each key with its type's icon and its TTL. Tests: the conformance
+  check that pages add up to the whole level on both servers, and the grouping.
+- **N1·5 — Key viewers and edits:** **Open data** on a key opens a console with its type's
+  read command (`GET`, `HSCAN`, `LRANGE`, `SSCAN`, `ZRANGE … WITHSCORES`, `XREVRANGE`,
+  `JSON.GET`), run at once, and the driver pages through a large value. Above its result, a
+  key bar shows the key's type, TTL and memory, where the server answers, with **Set TTL…**,
+  **Persist**, **Rename…** and **Delete…** (which asks first). The grid's edits become one
+  command per change (`HSET` and `HDEL`, `LSET`, `RPUSH` and `LREM`, `SADD` and `SREM`, `ZADD`
+  and `ZREM`, `XADD` and `XDEL`, `SET … KEEPTTL`, `JSON.SET`), each run as a typed command is:
+  checked against the safety level, written to the log and recorded in the history. Tests:
+  each type opened and edited on both servers, and the console's key bar and edits fed
+  results in kittests.
+- **N1·6 — Safety and MCP:** the read-only level's dialog suggests an ACL user with only
+  `+@read`; the MCP server serves a Redis data source only through its MCP login, its `query`
+  tool takes a command, and `list_objects` pages keys, with a token for the next page. Tests:
+  on the Redis test server, an ACL user that may only read serves as the MCP login, reads a
+  key, and is refused a `SET` by the server as well as by the check.
+
+The manual changes in the layer that changes what a user sees: N1·3 (the data source and the
+console), N1·4 (keys in the explorer), N1·5 (the viewers) and N1·6 (read-only data sources and
+MCP logins on Redis).
+
 ### N2 — MongoDB
 
 - **Client: the official [`mongodb`](https://crates.io/crates/mongodb) driver** (3.9,
@@ -557,8 +628,11 @@ milestone starts.
 | MongoDB's console syntax | **A subset of the shell's, parsed by DbRover** with no JavaScript engine. Agreed. | Snippets from MongoDB's documentation run as they are, and every call can be classified. Scripts with variables, loops or functions don't run, and the error says so. |
 | Documents and ADR 0004 | **Extend it with ADR 0006**: documents as canonical Extended JSON text, flattened in the grid, with a tree view. Agreed. | No driver's results change; SQL engines' JSON columns get the tree. Typed sorting and filtering of documents stay text-based, as for rows. |
 | MCP from the first milestone | **Yes, through an MCP login only**: a Redis ACL user limited to reading, a MongoDB user with the `read` role. Agreed. | An assistant can read Redis and MongoDB data from N1 and N2, and the database enforces what the command check might miss. Without an MCP login, these data sources aren't served, and the log says why. |
-| Valkey and Dragonfly | **The Redis driver**, one data source type named "Redis / Valkey". The connection reports which server it reached. | No separate crates. Dragonfly is tried by hand, not in CI. |
-| Redis Cluster and Sentinel | **After N1**: a single server, with TLS, ACL users and SSH tunnels, first. | Most local and many managed servers are single; a cluster needs keys scanned on every node. |
+| Valkey and Dragonfly | **The Redis driver**, one data source type named "Redis / Valkey". The connection reports which server it reached. Confirmed when N1 started. | No separate crates. Dragonfly is tried by hand, not in CI. |
+| Redis Cluster and Sentinel | **After N1**: a single server, with TLS, ACL users and SSH tunnels, first. Confirmed when N1 started. | Most local and many managed servers are single; a cluster needs keys scanned on every node. |
+| Which `redis` release (N1) | **1.8.1**, the latest release; 2.0 was still in release candidates when N1 started. Without its TLS features: DbRover opens the TCP or TLS stream and hands it to the client. | TLS is `dbrover-tls`'s, as for PostgreSQL and ClickHouse, with ring and the same modes, and nothing else in the build picks a crypto provider. 2.0 is taken in a change of its own once released. |
+| Where classification comes from (N1) | **A table generated from Redis 8's and Valkey 9's command definitions,** shipped with DbRover, and checked in CI against each server's `COMMAND INFO`. | The check works before connecting, and the console completes from the same table. A module's command the table doesn't list is unclassified, so a read-only data source refuses it; the table is regenerated from a server with the module to add it. |
+| What a key viewer is (N1) | **A console with the key's read command,** opened and run by **Open data**, with a key bar above its result, and edits that become commands. | Paging, the cell viewer's tree, copying and exporting, the safety level, the log and the history work as for any command, with no second path to keep in step. |
 | One search driver or two | **One**, for Elasticsearch and OpenSearch, with their differences keyed off the server's answer to `GET /`. | One crate and data source type, "Elasticsearch / OpenSearch". |
 | Cassandra's language | **A `Dialect` of `dbrover-sql`**, since CQL lexes and splits like SQL, with its own small classifier, as `sqlparser` has no CQL dialect. | The SQL tooling (splitting, highlighting, completion) works for CQL with a new set of rules, not a new language. |
 | Where languages live (N0a) | **A crate of their own, `dbrover-language`,** on top of `dbrover-sql`. It owns `QueryLanguage`; Redis's and MongoDB's languages become modules of it. `StatementKind` and `Unclassified` stay in `dbrover-sql` and are re-exported, and highlighting keeps `dbrover-sql`'s token kinds. | `dbrover-sql` stays about SQL. Code outside the crate asks a language through its methods and never matches on its variants, so a variant added for a new engine, or the test language, changes no other crate. |
