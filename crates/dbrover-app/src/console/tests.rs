@@ -510,6 +510,26 @@ mod test_language {
     }
 
     #[test]
+    fn completes_mongodb_methods_as_written_whatever_the_case_typed() {
+        let mut console = console_in("db.orders.insertO", QueryLanguage::Mongo);
+        console.selection = 17..17;
+        let recent = RecentCompletions::default();
+        console.open_completion(false);
+        let _ = console.refresh_completion(None, &recent, &[]);
+        let insert_one = console
+            .completion
+            .as_ref()
+            .and_then(|completion| {
+                completion
+                    .candidates
+                    .iter()
+                    .find(|candidate| candidate.insert == "insertOne")
+            })
+            .map(|candidate| candidate.detail.clone());
+        assert_eq!(insert_one, Some(Some("document, options".to_owned())));
+    }
+
+    #[test]
     fn leaves_out_what_only_sql_has() {
         let mut console = console_in("get a", QueryLanguage::Test);
         assert_eq!(console.dialect(), None);

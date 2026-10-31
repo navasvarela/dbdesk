@@ -1,0 +1,158 @@
+// MongoDB shell commands and what classify must call them, each after a comment naming its
+// kind, as the other languages' corpora do. See tests.rs.
+
+// Reading.
+// expect: read
+db.orders.find({status: "open"}).sort({_id: -1}).limit(50)
+// expect: read
+db.orders.find()
+// expect: read
+db.orders.find({}, {name: 1, _id: 0}).skip(10).limit(10).hint({status: 1})
+// expect: read
+db.orders
+  .find({created: {$gte: ISODate("2026-01-01T00:00:00Z")}})
+  .sort({created: -1})
+// expect: read
+db.orders.findOne({_id: ObjectId("507f1f77bcf86cd799439011")})
+// expect: read
+db.orders.aggregate([{$match: {status: "A"}}, {$group: {_id: "$cust_id", total: {$sum: "$amount"}}}])
+// expect: read
+db.orders.aggregate([{$lookup: {from: "items", localField: "item", foreignField: "sku", as: "stock"}}])
+// expect: read
+db.orders.countDocuments({status: "open"})
+// expect: read
+db.orders.estimatedDocumentCount()
+// expect: read
+db.orders.distinct("status")
+// expect: read
+db.orders.getIndexes()
+// expect: read
+db.orders.find({qty: {$gt: 4}}).explain("executionStats")
+// expect: read
+db.getCollection("order-lines").find({})
+// expect: read
+db.system.views.find()
+// expect: read
+db.getSiblingDB("shop").orders.find()
+// expect: read
+db.getCollectionNames()
+// expect: read
+db.getCollectionInfos({type: "view"})
+// expect: read
+db.stats()
+// expect: read
+db.runCommand({ping: 1})
+// expect: read
+db.runCommand({buildInfo: 1})
+// expect: read
+db.runCommand({buildinfo: 1})
+// expect: read
+db.runCommand({listCollections: 1, filter: {type: "collection"}})
+// expect: read
+db.runCommand({collStats: "orders"})
+// expect: read
+db.runCommand({aggregate: "orders", pipeline: [{$match: {}}], cursor: {}})
+// expect: read
+db.adminCommand({listDatabases: 1})
+// expect: read
+db.aggregate([{$documents: [{x: 1}]}])
+// expect: read
+use shop
+// expect: read
+use my-shop
+// expect: read
+show dbs
+// expect: read
+show collections
+
+// Writing.
+// expect: write
+db.orders.insertOne({item: "card", qty: 15, tags: ['a', 'b',], price: NumberDecimal("9.99")})
+// expect: write
+db.orders.insertMany([{item: "a"}, {item: "b"}])
+// expect: write
+db.orders.updateOne({_id: 1}, {$set: {"address.city": "Madrid"}})
+// expect: write
+db.orders.updateMany({status: "open"}, {$set: {status: "closed"}})
+// expect: write
+db.orders.updateMany({}, {$inc: {views: 1}})
+// expect: write
+db.orders.replaceOne({_id: 1}, {item: "pen"})
+// expect: write
+db.orders.deleteOne({_id: 1})
+// expect: write
+db.orders.deleteMany({})
+// expect: write
+db.orders.deleteMany({status: "closed"})
+// expect: write
+db.orders.remove({status: "closed"})
+// expect: write
+db.orders.findOneAndUpdate({_id: 1}, {$inc: {qty: -1}}, {returnDocument: "after"})
+// expect: write
+db.orders.findOneAndDelete({_id: 1})
+// expect: write
+db.orders.bulkWrite([{insertOne: {document: {a: 1}}}, {deleteOne: {filter: {a: 2}}}])
+// expect: write
+db.orders.aggregate([{$match: {}}, {$out: "archive"}])
+// expect: write
+db.orders.aggregate([{$group: {_id: "$status"}}, {$merge: {into: "totals"}}])
+// expect: write
+db.runCommand({insert: "orders", documents: [{a: 1}]})
+// expect: write
+db.runCommand({aggregate: "orders", pipeline: [{$out: "copy"}], cursor: {}})
+
+// Changing collections and indexes.
+// expect: schema
+db.createCollection("logs", {capped: true, size: 1048576})
+// expect: schema
+db.createView("open_orders", "orders", [{$match: {status: "open"}}])
+// expect: schema
+db.orders.drop()
+// expect: schema
+db.orders.createIndex({status: 1, created: -1}, {name: "status_created"})
+// expect: schema
+db.orders.dropIndex("status_created")
+// expect: schema
+db.orders.renameCollection("orders_2025")
+// expect: schema
+db.runCommand({collMod: "orders", validator: {}})
+
+// Administration: scripts, users, unknown commands.
+// expect: admin
+db.orders.find({$where: "this.qty > 4"})
+// expect: admin
+db.orders.find({$expr: {$function: {body: "function() { return true }", args: [], lang: "js"}}})
+// expect: admin
+db.orders.aggregate([{$group: {_id: 1, all: {$accumulator: {}}}}])
+// expect: admin
+db.runCommand({createUser: "mcp", pwd: "secret", roles: ["read"]})
+// expect: admin
+db.runCommand({killOp: 1, op: 12345})
+// expect: admin
+db.adminCommand({shutdown: 1})
+// expect: admin
+db.dropDatabase()
+// expect: admin
+db.currentOp()
+// expect: admin
+db.killOp(12345)
+
+// What DbRover can't read.
+// expect: unparseable
+const x = db.orders.find()
+// expect: unparseable
+db.orders.find().forEach(printjson)
+// expect: unparseable
+db.orders.find({qty: {$gt: limit}})
+// expect: unparseable
+db.orders.mapReduce({})
+// expect: unparseable
+db.createUser({user: "x"})
+// expect: unparseable
+db.orders.find().sort({a: 1}).pretty().foo()
+// expect: unparseable
+db.orders.insertOne({_id: ObjectId("123")})
+// expect: unparseable
+printjson(db.orders.findOne())
+// expect: unparseable
+db.orders.find({a: 1}
