@@ -6,11 +6,13 @@
 //! transactions outside a replica set's sessions, so a connection is never inside one.
 
 mod answer;
+mod catalog;
 mod convert;
 mod cursor;
 mod errors;
 mod options;
 mod plan;
+mod shell;
 #[cfg(test)]
 mod tests;
 
@@ -19,19 +21,17 @@ use std::sync::{Arc, Mutex, PoisonError};
 use async_trait::async_trait;
 use bson::{Bson, Document, doc};
 use dbrover_core::{
-    CancelHandle, CatalogNode, CatalogPath, Connection, DriverError, MongoConfig, NodeKind,
-    Password, Rejection, RejectionKind, RelationName, ResultCursor, Route, ServerInfo,
+    CancelHandle, CatalogNode, CatalogPath, ChildrenPage, ChildrenQuery, Connection, DriverError,
+    MongoConfig, Password, Rejection, RejectionKind, RelationName, ResultCursor, Route, ServerInfo,
     TableConstraints, TableDescription, TableName, TransactionStatus, describe_error,
 };
 use dbrover_language::mongo::{self, Command};
 use mongodb::{Client, Database};
 
 use crate::answer::BulkResult;
+use crate::catalog::Level;
 use crate::cursor::{DocumentCursor, Table};
 use crate::plan::{Plan, Step};
-
-/// Databases the server keeps for itself, which the explorer hides unless asked.
-const SYSTEM_DATABASES: [&str; 3] = ["admin", "config", "local"];
 
 /// Connects to the server or cluster in `config`, through `route`.
 ///
@@ -146,36 +146,6 @@ impl MongoConnection {
             }
         }
     }
-
-    /// The databases the user may list, by name.
-    async fn databases(&self) -> Result<Vec<CatalogNode>, DriverError> {
-        let reply = self
-            .client
-            .database("admin")
-            .run_command(doc! { "listDatabases": 1, "nameOnly": true, "authorizedDatabases": true })
-            .await
-            .map_err(errors::catalog)?;
-        let mut names: Vec<String> = match reply.get("databases") {
-            Some(Bson::Array(databases)) => databases
-                .iter()
-                .filter_map(|database| database.as_document()?.get_str("name").ok())
-                .map(str::to_owned)
-                .collect(),
-            _ => Vec::new(),
-        };
-        names.sort();
-        Ok(names
-            .into_iter()
-            .map(|name| CatalogNode {
-                path: CatalogPath::root().child(NodeKind::Database, &name),
-                system: SYSTEM_DATABASES.contains(&name.as_str()),
-                label: name,
-                detail: None,
-                has_children: false,
-                has_definition: false,
-            })
-            .collect())
-    }
 }
 
 /// Asks for documents a grid page at a time, unless the command asks for another batch size.
@@ -241,14 +211,54 @@ impl Connection for MongoConnection {
     }
 
     async fn children(&mut self, path: &CatalogPath) -> Result<Vec<CatalogNode>, DriverError> {
-        if path.is_root() {
-            return self.databases().await;
-        }
-        Err(DriverError::InvalidPath(path.clone()))
+        let whole = ChildrenQuery {
+            filter: None,
+            after: None,
+            limit: None,
+        };
+        Ok(self.children_page(path, &whole).await?.nodes)
     }
 
+    /// The databases and a collection's indexes whole, and a database's collections a page
+    /// at a time, by name.
+    async fn children_page(
+        &mut self,
+        path: &CatalogPath,
+        query: &ChildrenQuery,
+    ) -> Result<ChildrenPage, DriverError> {
+        let level = Level::of(path).ok_or_else(|| DriverError::InvalidPath(path.clone()))?;
+        match level {
+            Level::Databases => Ok(ChildrenPage::whole(
+                catalog::databases(&self.client).await?,
+                query,
+            )),
+            Level::Collections { database } => {
+                catalog::collections(&self.client.database(database), path, query).await
+            }
+            Level::Indexes {
+                database,
+                collection,
+            } => {
+                let indexes =
+                    catalog::indexes(&self.client.database(database), collection, path).await?;
+                Ok(ChildrenPage::whole(indexes, query))
+            }
+        }
+    }
+
+    /// A collection's or a view's commands to make it again.
     async fn definition(&mut self, path: &CatalogPath) -> Result<String, DriverError> {
-        Err(DriverError::InvalidPath(path.clone()))
+        let invalid = || DriverError::InvalidPath(path.clone());
+        let Some(Level::Indexes {
+            database,
+            collection,
+        }) = Level::of(path)
+        else {
+            return Err(invalid());
+        };
+        catalog::definition(&self.client.database(database), collection)
+            .await?
+            .ok_or_else(invalid)
     }
 
     async fn execute(&mut self, text: &str) -> Result<Box<dyn ResultCursor>, DriverError> {

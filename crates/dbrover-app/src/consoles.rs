@@ -230,14 +230,17 @@ impl Consoles {
         QueryConsole::new(ConsoleId(self.next_console), key, title, language, text).on(data_source)
     }
 
-    /// Opens a console that selects everything from the table or view at `path`, or reads the
-    /// Redis key there whole, and runs it.
+    /// Opens a console that selects everything from the table or view at `path`, reads the
+    /// Redis key there whole, or finds every document of the MongoDB collection there, and
+    /// runs it.
     pub fn open_data(
         &mut self,
         data_source: &DataSource,
         path: &CatalogPath,
     ) -> Option<(ConsoleKey, Command)> {
-        if let Some(text) = key_viewer(data_source, path) {
+        if let Some(text) =
+            key_viewer(data_source, path).or_else(|| collection_viewer(data_source, path))
+        {
             return self.open_query(data_source, text);
         }
         let dialect = QueryLanguage::from(data_source.config.driver()).dialect()?;
@@ -649,6 +652,20 @@ fn key_viewer(data_source: &DataSource, path: &CatalogPath) -> Option<String> {
     })
 }
 
+/// The command that finds every document of the MongoDB collection at `path`, in its own
+/// database. `None` for a path that isn't a collection's.
+fn collection_viewer(data_source: &DataSource, path: &CatalogPath) -> Option<String> {
+    let collection = path
+        .last()
+        .filter(|last| last.kind == NodeKind::Collection)?;
+    let database = path.name_of(NodeKind::Database)?;
+    let own = data_source.config.default_schema();
+    Some(format!(
+        "{}\n",
+        dbrover_language::mongo::find_all(database, &collection.name, own)
+    ))
+}
+
 /// A console's tab title: the data source's name, numbered from the second console on, as
 /// `shop`, `shop (2)`; or with the file's name if the user named it.
 fn title(data_source: &str, name: &ConsoleName) -> String {
@@ -801,6 +818,49 @@ mod tests {
 
     /// Open data on a key reads its value whole with its type's command, after selecting its
     /// database when it isn't the data source's.
+    #[test]
+    fn opens_a_mongodb_collection_with_a_find_in_its_database() {
+        let mut consoles = Consoles::default();
+        let shop = DataSource {
+            config: ConnectionConfig::Mongo(dbrover_core::MongoConfig {
+                server: dbrover_core::ServerConfig {
+                    host: "localhost".to_owned(),
+                    port: 27017.into(),
+                    database: "shop".to_owned(),
+                    user: String::new(),
+                    tls: dbrover_core::TlsMode::Disable,
+                    ssh: None,
+                    password_command: None,
+                },
+                auth_database: String::new(),
+                connection_string: None,
+            }),
+            ..data_source("shop")
+        };
+        let collection = |database: &str, name: &str| {
+            CatalogPath::root()
+                .child(NodeKind::Database, database)
+                .child(NodeKind::Collection, name)
+        };
+        let cases = [
+            (
+                collection("shop", "orders"),
+                "db.getCollection(\"orders\").find({})",
+            ),
+            (
+                collection("logs", "web.v1"),
+                "db.getSiblingDB(\"logs\").getCollection(\"web.v1\").find({})",
+            ),
+        ];
+        for (path, expected) in cases {
+            let (_, command) = consoles.open_data(&shop, &path).unwrap();
+            let Command::Execute { statements, .. } = command else {
+                panic!("expected a run, got {command:?}");
+            };
+            assert_eq!(statements, [expected], "{path}");
+        }
+    }
+
     #[test]
     fn opens_a_redis_key_with_its_types_read_command() {
         let mut consoles = Consoles::default();
