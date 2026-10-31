@@ -11,9 +11,10 @@ find and replace), v0.11.0 (a native look on macOS: the menu bar, an integrated 
 the system font and accent colour), v0.12.0 (modifying tables, custom actions, snippets and
 themes in files, the Windows installer), v0.13.0 (the rename to DbRover, command actions,
 updates on Windows), v0.14.0 (Help › Report a problem… and Ask a question…), v0.15.0
-(exports in every common format, Copy as, Run to file) and v0.16.0 (passwords from a command,
+(exports in every common format, Copy as, Run to file), v0.16.0 (passwords from a command,
 SQL Server and ClickHouse over MCP through an MCP login, an explorer that pages through large
-schemas). R3's update notice is built, ahead of R2 (see [R3](#r3--updates)).
+schemas) and v0.17.0 (Redis, Valkey and Dragonfly, JSON documents as a tree and flattened into
+columns). R3's update notice is built, ahead of R2 (see [R3](#r3--updates)).
 Decisions settled on 2026-10-23 (see [Decisions](#decisions)).
 
 Today the only way to run DbRover is to install Rust and build it from source (see the manual's
