@@ -8,6 +8,9 @@
 #
 # Needs mdbook 0.5.4 and mdbook-linkcheck2 0.13.0 (see docs/testing.md). To preview:
 #   site/build.sh && python3 -m http.server -d target/site
+#
+# DBROVER_ANALYTICS_TOKEN, when set, adds Cloudflare Web Analytics' beacon to every page. Only the
+# Pages workflow's deployments set it, so pull requests and local previews aren't counted.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -48,5 +51,14 @@ cp "${root}/assets/icons/databases/"*.svg "${out}/assets/databases/"
 # The linkcheck2 backend fails the build on a broken link inside the manual.
 mdbook build "${root}/book"
 cp -R "${root}/book/book/html" "${out}/manual"
+
+# Web Analytics rather than its automatic setup, because dbrover.org's DNS record is DNS-only:
+# GitHub serves the pages, so Cloudflare never sees a request to add its beacon to. The beacon
+# sets no cookies and keeps no visitor identifier, so the site needs no consent banner.
+if [ -n "${DBROVER_ANALYTICS_TOKEN:-}" ]; then
+    beacon="<script type=\"module\" src=\"https://static.cloudflareinsights.com/beacon.min.js\" data-cf-beacon='{\"token\": \"${DBROVER_ANALYTICS_TOKEN}\"}'></script>"
+    find "${out}" -name '*.html' -print0 |
+        BEACON="${beacon}" xargs -0 perl -pi -e 's{</head>}{$ENV{BEACON}</head>}'
+fi
 
 echo "site written to ${out}"
