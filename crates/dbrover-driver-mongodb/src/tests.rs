@@ -633,3 +633,82 @@ async fn explains_and_validates_reads_on_the_server() {
         Some("10".to_owned())
     );
 }
+
+/// The grid's edits as the console writes them: each field set with the type it had, a field
+/// inside an object by its path, a document added and deleted, all read back as the server
+/// stored them (`docs/nosql.md`, N2·6).
+#[tokio::test]
+async fn edits_keep_each_fields_type() {
+    use dbrover_document::{Path, Step, Value as Document};
+    use dbrover_language::mongo::{CollectionView, document_id, typed_value, update_path};
+
+    let Some(server) = test_server() else {
+        return;
+    };
+    let mut connection = server.connect_to("dbrover_edits").await;
+    run(
+        &mut connection,
+        "db.orders.insertOne({_id: ObjectId('507f1f77bcf86cd799439011'), qty: NumberLong(7), \
+         n: 1, price: 1.5, dec: NumberDecimal('1.10'), at: ISODate('2026-01-01T00:00:00Z'), \
+         paid: false, note: 'x', address: {city: 'Paris', zip: '75001'}})",
+    )
+    .await;
+    let view = CollectionView::of("db.orders.find({})").expect("a find");
+    let read = |text: Option<String>| Document::parse(&text.expect("a document")).expect("JSON");
+    let document = read(value(&mut connection, "db.orders.findOne()").await);
+    let id = document_id(&document).expect("an _id");
+    let field = |document: &Document, name: &str| -> Document {
+        let Document::Object(fields) = document else {
+            panic!("not an object");
+        };
+        fields
+            .iter()
+            .find(|(field, _)| field == name)
+            .map(|(_, value)| value.clone())
+            .expect("the field")
+    };
+    for (name, typed) in [
+        ("qty", "8"),
+        ("n", "2"),
+        ("price", "3"),
+        ("dec", "2.20"),
+        ("at", "2026-10-31T09:30:00Z"),
+        ("paid", "true"),
+        ("note", "42"),
+    ] {
+        let old = field(&document, name);
+        let new = typed_value(Some(&old), Some(typed)).expect("a value of the field's type");
+        run(&mut connection, &view.update(&id, name, Some(&new))).await;
+    }
+    let city = update_path(&Path::from(vec![
+        Step::Field("address".to_owned()),
+        Step::Field("city".to_owned()),
+    ]))
+    .expect("a path");
+    run(
+        &mut connection,
+        &view.update(&id, &city, Some("\"Madrid\"")),
+    )
+    .await;
+    let stored = value(&mut connection, "db.orders.findOne({}, {_id: 0})")
+        .await
+        .expect("the document");
+    assert_eq!(
+        stored,
+        concat!(
+            r#"{"qty":{"$numberLong":"8"},"n":{"$numberInt":"2"},"price":{"$numberDouble":"3.0"},"#,
+            r#""dec":{"$numberDecimal":"2.20"},"at":{"$date":{"$numberLong":"1793439000000"}},"#,
+            r#""paid":true,"note":"42","address":{"city":"Madrid","zip":"75001"}}"#
+        )
+    );
+    run(
+        &mut connection,
+        &view.insert("{_id: 2, qty: NumberLong(1)}"),
+    )
+    .await;
+    run(&mut connection, &view.delete(&id)).await;
+    assert_eq!(
+        rows(&mut connection, "db.orders.find({}, {_id: 1})").await,
+        [[Some(r#"{"_id":{"$numberInt":"2"}}"#.to_owned())]]
+    );
+}

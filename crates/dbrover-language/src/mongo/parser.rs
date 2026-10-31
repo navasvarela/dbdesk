@@ -69,6 +69,27 @@ pub fn parse(command: &str) -> Result<Command, ParseError> {
     }
 }
 
+/// Reads `text` as one value of the shell's syntax, whole: what is typed over a document's
+/// field.
+///
+/// # Errors
+///
+/// [`ParseError`] for text that isn't one value.
+pub(crate) fn parse_value(text: &str) -> Result<Value, ParseError> {
+    let mut parser = Parser::new(text);
+    let value = parser.value()?;
+    match parser.peek() {
+        None => Ok(value),
+        Some(token) => Err(parser.error(
+            token.range.clone(),
+            format!(
+                "unexpected \u{201c}{}\u{201d} after the value",
+                parser.text(token)
+            ),
+        )),
+    }
+}
+
 struct Parser<'a> {
     source: &'a str,
     /// The command's tokens, comments and whitespace left out.

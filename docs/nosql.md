@@ -718,14 +718,29 @@ port.
     Documents read again from the database, by Run to file or **All documents**, aren't
     flattened, so they are written as JSON or JSON Lines only, and the dialog says why the
     other formats are greyed out.
-- **N2·6 — Editing:** a field changed in the grid becomes
+- **N2·6 — Editing** (built): a field changed in the grid becomes
   `updateOne({_id: …}, {$set: {"address.city": …}})`, its value written with the type the
   old value had, read from its canonical Extended JSON; a document without `_id` can't be
   edited. **Insert document…** and **Delete document** on a collection's data. Each edit runs
   as a typed command does, one at a time (`EditsRun::OneByOne`): checked against the safety
   level, written to the log and recorded in the history. Tests: a field of each type edited
   and read back with its type, an expanded field edited by its path, a document inserted and
-  deleted, and kittests of the console's edits fed results.
+  deleted, and kittests of the console's edits fed results. How it came out:
+  - `dbrover-language`'s `mongo` module writes the commands (`CollectionView`), so the console
+    sends what the parser reads and the safety check classifies; it reads documents with
+    `dbrover-document`, now one of its dependencies. A value is written back in the shell's
+    syntax with its type, from its canonical Extended JSON; text typed over it is read as the
+    old type (`typed_value`), or as written when it is already a value of the shell's syntax.
+    JavaScript code, symbols, `undefined` and DBPointers can't be written that way, so a
+    document holding one can't be deleted with an undo, and such a field can't be set;
+  - a `find` on one collection is editable, by `_id`; an `aggregate`'s documents aren't, since
+    they may not be any collection's;
+  - **Insert document…** is the grid's **Add row**, a document of the fields typed into it,
+    rather than a dialog of its own; a document is typed whole, in the shell's syntax, into a
+    console's `insertOne`. **Delete rows** is **Delete document**;
+  - documents are read again after every submit, so each field shows with the type the server
+    stored; an array's items aren't columns of the grid, so they are edited by setting the
+    whole array, or with `$set` in a console.
 - **N2·7 — Safety and MCP:** the read-only level's dialog suggests a user with the `read`
   role; the MCP server serves a MongoDB data source only through its MCP login, its `query`
   tool takes one shell command, and `list_objects` lists databases and collections, paged.

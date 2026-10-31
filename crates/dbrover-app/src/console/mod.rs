@@ -38,6 +38,7 @@ use dbrover_engine::{
 use dbrover_export::{ExportColumn, ExportOptions, ExportSpec, RowSource};
 
 use crate::export_dialog::{ExportPreview, PREVIEW_ROWS};
+use dbrover_language::mongo::CollectionView;
 use dbrover_language::redis::{KeyView, ViewShape};
 use dbrover_language::{EditsRun, QueryLanguage, command_at};
 use dbrover_sql::{Dialect, FormatOptions, ParameterValues, format_ranges};
@@ -300,9 +301,25 @@ fn key_editability(view: KeyView, columns: &[ColumnInfo], read_only: Option<&str
     }
 }
 
+/// Whether a result of documents can be edited in the grid: a `find`'s, on one collection.
+fn documents_editability(
+    view: Option<CollectionView>,
+    columns: &[ColumnInfo],
+    read_only: Option<&str>,
+) -> Editability {
+    match (view, read_only) {
+        (_, Some(reason)) => Editability::ReadOnly(reason.to_owned()),
+        (Some(view), None) => Editability::Documents(edit::DocumentsTarget::new(view, columns)),
+        (None, None) => Editability::ReadOnly(
+            "Only the documents a find returns from one collection can be edited".to_owned(),
+        ),
+    }
+}
+
 impl StatementView {
     /// The statements that submit the pending changes, each with its row: SQL for a table's
-    /// rows, a Redis command per change for a key's value.
+    /// rows, a Redis command per change for a key's value, a MongoDB command per change for a
+    /// collection's documents.
     fn edit_statements(
         &self,
         dialect: Option<Dialect>,
@@ -310,6 +327,9 @@ impl StatementView {
         let pending = &self.edits.pending;
         if let Some(view) = self.edits.key_view() {
             return pending.key_commands(view, &self.columns, &self.rows);
+        }
+        if let (Some(target), Some(documents)) = (self.edits.documents(), &self.documents) {
+            return pending.document_commands(target, documents, &self.columns);
         }
         match (self.edits.target(), dialect) {
             (Some(target), Some(dialect)) => {
@@ -646,8 +666,11 @@ impl QueryConsole {
                 continue;
             }
             if statement.documents.is_some() {
-                statement.edits.editability =
-                    Editability::ReadOnly("Documents can't be edited in the grid yet".to_owned());
+                statement.edits.editability = documents_editability(
+                    language.collection_view(&statement.sql),
+                    &statement.columns,
+                    read_only.as_deref(),
+                );
                 continue;
             }
             if let Some(view) = language.key_view(&statement.sql) {
@@ -758,10 +781,13 @@ impl QueryConsole {
         match result {
             Ok(()) => {
                 // A key's value is read again when rows came or went: a list item is removed by
-                // value, so the server may have removed another item equal to it.
+                // value, so the server may have removed another item equal to it. Documents are
+                // read again after any change, so the grid and the tree show each field with
+                // the type the server stored.
                 let rows_changed = edits.pending.count().deleted > 0;
-                edits.reload =
-                    edits.pending.new_rows() > 0 || (rows_changed && edits.key_view().is_some());
+                edits.reload = edits.pending.new_rows() > 0
+                    || (rows_changed && edits.key_view().is_some())
+                    || edits.documents().is_some();
                 edits.pending.apply_to(&mut statement.rows);
                 edits.error = None;
             }

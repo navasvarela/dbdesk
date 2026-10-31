@@ -174,3 +174,27 @@ fails, those before it stay made: the grid says how many, and reads the key agai
 what the server has. A hash field, a set member or a sorted set's member and score can't be typed
 over, since they name their row: delete the row and add another. A stream's entries aren't
 edited in the grid; add and delete them with `XADD` and `XDEL` in the console.
+
+## MongoDB documents
+
+On a MongoDB data source, **Open data** on a collection runs `find({})` on it, and the documents
+it returns can be edited in the grid, as can those of any `find` on one collection typed in a
+console. An `aggregate`'s documents, which may not be any collection's, can't.
+
+- **Changing a field** sends `updateOne({_id: …}, {$set: {"address.city": …}})`: the document is
+  found by its `_id`, which can't itself be typed over, and the field set by its path, an
+  expanded column's included. The value keeps the type the field had: `8` typed over
+  `NumberLong(7)` is stored as `NumberLong(8)`, over a string as the string `"8"`, and over a
+  date as that date. Text that can't be the field's type, such as `seven` over a number, is
+  refused before anything is sent. Text in the shell's syntax, `ObjectId("…")` or `{a: 1}`, is
+  stored as written, and a field a document didn't have takes the type its text reads as.
+- **Add row** adds a document of the fields typed into it, sent as `insertOne`; MongoDB gives it
+  an `_id` unless one is typed in. A field of an expanded object is typed into the object's own
+  column, as `{city: "Madrid"}`.
+- **Delete rows** sends `deleteOne({_id: …})` for each.
+
+**Submit** sends the commands one at a time, as for Redis: MongoDB has no transaction to undo a
+change outside a replica set's sessions, so if one fails, those before it stay made. The
+documents are then read again, so the grid and the tree show what the server stored. Each
+command is checked against the data source's safety level, written to the log and recorded in
+the history with the command that would undo it.

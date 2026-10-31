@@ -546,7 +546,7 @@ fn edit_status(ui: &mut Ui, statement: &mut StatementView, actions: &mut Vec<Con
     }
     if let Some(summary) = pending_summary(&edits.pending) {
         ui.colored_label(ui.visuals().warn_fg_color, summary);
-        let how = if edits.key_view().is_some() {
+        let how = if edits.key_view().is_some() || edits.documents().is_some() {
             "Write the changes, one command each: those before a failing one stay made"
         } else {
             "Write the changes, one statement per row, all or none"
@@ -960,6 +960,10 @@ fn new_row_defaults(columns: &[ColumnInfo], edits: &EditSession) -> Vec<NewCell>
             })
             .collect();
     }
+    if edits.documents().is_some() {
+        // A document has no defaults: what isn't typed in is left out of it.
+        return columns.iter().map(|_| NewCell::Absent).collect();
+    }
     let Some(target) = edits.target() else {
         return Vec::new();
     };
@@ -1086,8 +1090,11 @@ fn cell(ui: &mut Ui, pos: CellPos, context: &CellContext<'_>) -> Option<CellInpu
             .map(|_| context.palette.secondary)
             .filter(|_| pending.is_none()),
     };
-    let document_look = match (context.documents, row) {
-        (Some(results), RowRef::Loaded(loaded)) => documents::cell_look(results, loaded, column),
+    // A value typed over a field shows as typed, whatever the field held.
+    let document_look = match (context.documents, row, pending) {
+        (Some(results), RowRef::Loaded(loaded), None) => {
+            documents::cell_look(results, loaded, column)
+        }
         _ => CellLook::Text,
     };
     let mut response = match (value, document_look) {
