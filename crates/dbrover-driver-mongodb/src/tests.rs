@@ -113,7 +113,10 @@ async fn a_connection_reports_its_server_and_lists_the_databases() {
     assert_eq!(connection.server_info().product, "MongoDB");
     // CI's server is 7.0 (see docker-compose.yml); either reports its version.
     let version = &connection.server_info().version;
-    assert!(version.starts_with('7') || version.starts_with('8'), "{version}");
+    assert!(
+        version.starts_with('7') || version.starts_with('8'),
+        "{version}"
+    );
     let nodes = conformance::walk_catalog(&mut connection, 1).await;
     let databases: Vec<(&str, bool)> = nodes
         .iter()
