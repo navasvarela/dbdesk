@@ -159,6 +159,15 @@ impl Flattened {
             .any(|document| matches!(document, Document::Read(value) if field(value, path).is_some_and(is_plain_object)))
     }
 
+    /// The field the shown column `column` holds, from the document's top: what an edit of the
+    /// column changes. `None` for the column of rows that aren't documents.
+    pub fn field_of(&self, column: usize) -> Option<&Path> {
+        match self.columns[..self.shown()].get(column)? {
+            Column::Field(path) => Some(path),
+            Column::Unreadable => None,
+        }
+    }
+
     /// The field the shown column `column` was expanded from, which collapsing it puts back.
     pub fn expanded_from(&self, column: usize) -> Option<Path> {
         let Some(Column::Field(path)) = self.columns.get(column) else {

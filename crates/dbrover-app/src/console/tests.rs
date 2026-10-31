@@ -1052,3 +1052,167 @@ mod redis_keys {
         assert_eq!(console.text, "GET welcome");
     }
 }
+
+/// A `find`'s documents are edited a MongoDB command per change, each field keeping its type
+/// (`docs/nosql.md`, N2·6).
+mod mongo_documents {
+    use dbrover_core::ColumnInfo;
+
+    use super::*;
+
+    /// A console that ran `command`, whose result was `documents`, each canonical Extended JSON.
+    fn shown(command: &str, documents: &[&str]) -> QueryConsole {
+        let mut console = console_in(command, QueryLanguage::Mongo);
+        let statements = console.statements_to_run(RunScope::All);
+        let run = RunId(1);
+        console.begin_run(run, &statements);
+        console.apply(&Event::StatementStarted {
+            run,
+            statement: 0,
+            columns: vec![ColumnInfo {
+                name: "document".to_owned(),
+                type_name: None,
+            }],
+            shape: ResultShape::Documents,
+        });
+        console.apply(&Event::RowsFetched {
+            run,
+            statement: 0,
+            rows: documents
+                .iter()
+                .map(|document| vec![Some((*document).to_owned())])
+                .collect(),
+            more: false,
+        });
+        assert!(console.tables_to_describe().is_empty());
+        console
+    }
+
+    fn statement(console: &mut QueryConsole) -> &mut StatementView {
+        &mut console.run.as_mut().unwrap().statements[0]
+    }
+
+    fn column(console: &mut QueryConsole, name: &str) -> usize {
+        statement(console)
+            .columns
+            .iter()
+            .position(|column| column.name == name)
+            .unwrap()
+    }
+
+    #[test]
+    fn edits_fields_by_id_keeping_their_types() {
+        let mut console = shown(
+            "db.orders.find({})",
+            &[
+                r#"{"_id": {"$oid": "507f1f77bcf86cd799439011"}, "qty": {"$numberLong": "7"}, "city": "Paris"}"#,
+                r#"{"_id": {"$numberInt": "2"}, "qty": {"$numberLong": "1"}}"#,
+            ],
+        );
+        let (id, qty, city) = (
+            column(&mut console, "_id"),
+            column(&mut console, "qty"),
+            column(&mut console, "city"),
+        );
+        let shown = statement(&mut console);
+        assert!(matches!(shown.edits.editability, Editability::Documents(_)));
+        assert!(
+            !shown.edits.is_editable(edit::RowRef::Loaded(0), id),
+            "_id names the document"
+        );
+        assert!(shown.edits.is_editable(edit::RowRef::Loaded(0), qty));
+        let rows = shown.rows.clone();
+        shown
+            .edits
+            .pending
+            .set(&rows, edit::RowRef::Loaded(0), qty, Some("8".to_owned()));
+        // Row 1 has no city: setting one adds the field.
+        shown.edits.pending.set(
+            &rows,
+            edit::RowRef::Loaded(1),
+            city,
+            Some("Rome".to_owned()),
+        );
+        shown.edits.add_row();
+        shown
+            .edits
+            .pending
+            .set(&rows, edit::RowRef::New(0), qty, Some("3".to_owned()));
+        shown.edits.delete_rows(&[edit::RowRef::Loaded(1)]);
+
+        let Some(Command::ApplyEdits { statements, .. }) = console.submit_edits() else {
+            panic!(
+                "nothing submitted: {:?}",
+                statement(&mut console).edits.error
+            );
+        };
+        let commands: Vec<&str> = statements.iter().map(|edit| edit.sql.as_str()).collect();
+        assert_eq!(
+            commands,
+            [
+                r#"db.getCollection("orders").deleteOne({_id: 2})"#,
+                r#"db.getCollection("orders").updateOne({_id: ObjectId("507f1f77bcf86cd799439011")}, {$set: {"qty": NumberLong("8")}})"#,
+                r#"db.getCollection("orders").insertOne({qty: 3})"#,
+            ]
+        );
+        let revert = statements[1]
+            .change
+            .as_ref()
+            .and_then(|change| change.revert.as_deref());
+        assert_eq!(
+            revert,
+            Some(
+                r#"db.getCollection("orders").updateOne({_id: ObjectId("507f1f77bcf86cd799439011")}, {$set: {"qty": NumberLong(7)}})"#
+            )
+        );
+        for edit in &statements {
+            assert!(
+                QueryLanguage::Mongo.classify(&edit.sql).is_ok(),
+                "{}",
+                edit.sql
+            );
+        }
+
+        console.apply(&Event::EditsApplied {
+            console: ConsoleId(1),
+            result: Ok(()),
+        });
+        assert!(
+            console.take_reload().is_some(),
+            "the documents are read again"
+        );
+    }
+
+    #[test]
+    fn an_aggregations_documents_are_read_only() {
+        let mut console = shown("db.orders.aggregate([])", &[r#"{"_id": 1}"#]);
+        assert!(matches!(
+            statement(&mut console).edits.editability,
+            Editability::ReadOnly(_)
+        ));
+    }
+
+    #[test]
+    fn text_that_isnt_the_fields_type_is_refused_before_sending() {
+        let mut console = shown(
+            "db.orders.find()",
+            &[r#"{"_id": 1, "qty": {"$numberInt": "7"}}"#],
+        );
+        let qty = column(&mut console, "qty");
+        let shown = statement(&mut console);
+        let rows = shown.rows.clone();
+        shown.edits.pending.set(
+            &rows,
+            edit::RowRef::Loaded(0),
+            qty,
+            Some("seven".to_owned()),
+        );
+        assert!(console.submit_edits().is_none());
+        let error = statement(&mut console)
+            .edits
+            .error
+            .clone()
+            .unwrap_or_default();
+        assert!(error.contains("32-bit integer"), "{error}");
+    }
+}

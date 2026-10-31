@@ -11,6 +11,7 @@
 //! into BSON, and which classification and the warnings read too.
 
 mod classify;
+mod edit;
 mod lexer;
 mod methods;
 mod parser;
@@ -23,6 +24,7 @@ use std::ops::Range;
 
 use dbrover_sql::{StatementKind, Token, TokenKind, Unclassified};
 
+pub use edit::{CollectionView, document_id, shell_value, typed_value, update_path};
 pub use parser::{ParseError, parse};
 pub use syntax::{Call, Command, Constructor, MethodCall, Show, Value};
 

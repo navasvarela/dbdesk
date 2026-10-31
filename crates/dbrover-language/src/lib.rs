@@ -27,8 +27,8 @@ pub use dbrover_sql::{Analysis, NamedSchemas, StatementKind, Token, TokenKind, U
 pub enum EditsRun {
     /// In a transaction of the dialect's, all or none.
     Transaction(Dialect),
-    /// One command at a time, each taking effect as it runs: Redis has no transaction to undo
-    /// the ones before a command that fails.
+    /// One command at a time, each taking effect as it runs: Redis and MongoDB have no
+    /// transaction to undo the ones before a command that fails.
     OneByOne,
 }
 
@@ -85,8 +85,7 @@ impl QueryLanguage {
     pub fn edits_run(self) -> Option<EditsRun> {
         match self {
             Self::Sql(dialect) => Some(EditsRun::Transaction(dialect)),
-            Self::Redis => Some(EditsRun::OneByOne),
-            Self::Mongo => None,
+            Self::Redis | Self::Mongo => Some(EditsRun::OneByOne),
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,
         }
@@ -145,6 +144,18 @@ impl QueryLanguage {
             Self::Sql(_) => Some(ResultShape::Rows),
             Self::Mongo => mongo::returns_documents(command).then_some(ResultShape::Documents),
             Self::Redis => None,
+            #[cfg(any(test, feature = "test-language"))]
+            Self::Test => None,
+        }
+    }
+
+    /// The collection `command` reads, when its documents can be edited in the grid a command
+    /// at a time: a MongoDB `find` on one collection. `None` for any other command, and in
+    /// another language.
+    pub fn collection_view(self, command: &str) -> Option<mongo::CollectionView> {
+        match self {
+            Self::Mongo => mongo::CollectionView::of(command),
+            Self::Sql(_) | Self::Redis => None,
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,
         }

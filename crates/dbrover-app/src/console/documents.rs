@@ -2,7 +2,9 @@
 //! tree or as JSON, beside the grid.
 
 use dbrover_core::{ColumnInfo, Row};
-use dbrover_document::{ColumnsChange, Document, FieldCell, Flattened, Path, Syntax, ValueType};
+use dbrover_document::{
+    ColumnsChange, Document, FieldCell, Flattened, Path, Syntax, Value, ValueType,
+};
 use egui::{Id, Label, Response, RichText, ScrollArea, Sense, TextEdit, Ui};
 
 use crate::json_tree::JsonTree;
@@ -73,6 +75,27 @@ impl DocumentResult {
                 Document::Unreadable { text, .. } => vec![Some(text.clone())],
             })
             .collect()
+    }
+
+    /// The document at `row` among those loaded, when it could be read.
+    pub fn document(&self, row: usize) -> Option<&Value> {
+        match self.flattened.documents().get(row)? {
+            Document::Read(value) => Some(value),
+            Document::Unreadable { .. } => None,
+        }
+    }
+
+    /// The field `column` shows, from the document's top.
+    pub fn field_of(&self, column: usize) -> Option<&Path> {
+        self.flattened.field_of(column)
+    }
+
+    /// What the document at `row` holds in `column`; `None` for a missing field.
+    pub fn value(&self, row: usize, column: usize) -> Option<&Value> {
+        match self.flattened.cell(row, column) {
+            FieldCell::Value(value) => Some(value),
+            FieldCell::Missing | FieldCell::Unreadable(_) => None,
+        }
     }
 
     /// Expands or collapses a column, and lays out the grid's `columns` and `rows` again.

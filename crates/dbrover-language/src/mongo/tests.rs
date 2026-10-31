@@ -420,3 +420,126 @@ fn explains_finds_and_aggregations_only() {
     assert!(returns_documents("db.orders.find()"));
     assert!(!returns_documents("db.orders.countDocuments()"));
 }
+
+mod edits {
+    use dbrover_document::{Path, Step, Value as Document};
+
+    use super::super::*;
+
+    fn document(json: &str) -> Document {
+        Document::parse(json).unwrap()
+    }
+
+    /// Text typed over a field keeps the type the field had, read from its Extended JSON.
+    #[test]
+    fn typed_text_keeps_the_old_values_type() {
+        let cases: [(&str, Option<&str>, Result<&str, ()>); 14] = [
+            (
+                r#"{"$numberLong": "7"}"#,
+                Some("8"),
+                Ok(r#"NumberLong("8")"#),
+            ),
+            (r#"{"$numberInt": "7"}"#, Some("8"), Ok("NumberInt(8)")),
+            (r#"{"$numberInt": "7"}"#, Some("abc"), Err(())),
+            (r#"{"$numberDouble": "1.5"}"#, Some("2"), Ok("2.0")),
+            (
+                r#"{"$numberDecimal": "1.10"}"#,
+                Some("2.20"),
+                Ok(r#"NumberDecimal("2.20")"#),
+            ),
+            (r#""Madrid""#, Some("8"), Ok(r#""8""#)),
+            (r#""Madrid""#, Some("say \"hi\""), Ok(r#""say \"hi\"""#)),
+            ("true", Some("false"), Ok("false")),
+            (
+                r#"{"$date": {"$numberLong": "0"}}"#,
+                Some("2026-10-31T00:00:00Z"),
+                Ok(r#"ISODate("2026-10-31T00:00:00Z")"#),
+            ),
+            (
+                r#"{"$oid": "507f1f77bcf86cd799439011"}"#,
+                Some(r#"ObjectId("507f1f77bcf86cd799439012")"#),
+                Ok(r#"ObjectId("507f1f77bcf86cd799439012")"#),
+            ),
+            (r#"{"a": 1}"#, Some("{a: 2, b: [1]}"), Ok("{a: 2, b: [1]}")),
+            ("null", Some("42"), Ok("42")),
+            ("null", Some("hello"), Ok(r#""hello""#)),
+            (r#"{"$numberLong": "7"}"#, None, Ok("null")),
+        ];
+        for (old, typed, expected) in cases {
+            let old = document(old);
+            let written = typed_value(Some(&old), typed).map_err(|_| ());
+            assert_eq!(
+                written.as_deref(),
+                expected.as_deref(),
+                "{typed:?} over {old:?}"
+            );
+        }
+        assert_eq!(typed_value(None, Some("3")).as_deref(), Ok("3"));
+    }
+
+    /// A value written back in the shell's syntax reads as the same Extended JSON value.
+    #[test]
+    fn writes_each_value_in_the_shells_syntax() {
+        let value = document(concat!(
+            r#"{"_id": {"$oid": "507f1f77bcf86cd799439011"}, "n": {"$numberLong": "9007199254740993"}, "#,
+            r#""at": {"$date": {"$numberLong": "1793439000123"}}, "tags": ["a", {"$numberInt": "1"}], "#,
+            r#""first name": "Ada", "bin": {"$binary": {"base64": "AQID", "subType": "00"}}}"#
+        ));
+        assert_eq!(
+            shell_value(&value).as_deref(),
+            Ok(concat!(
+                r#"{_id: ObjectId("507f1f77bcf86cd799439011"), n: NumberLong(9007199254740993), "#,
+                r#"at: ISODate("2026-10-31T09:30:00.123Z"), tags: ["a", 1], "#,
+                r#""first name": "Ada", bin: BinData(0, "AQID")}"#
+            ))
+        );
+        assert_eq!(
+            document_id(&value).as_deref(),
+            Ok(r#"ObjectId("507f1f77bcf86cd799439011")"#)
+        );
+        assert!(document_id(&document(r#"{"a": 1}"#)).is_err());
+        assert!(shell_value(&document(r#"{"$code": "x"}"#)).is_err());
+    }
+
+    #[test]
+    fn edits_become_commands_on_the_collection_found() {
+        let view = CollectionView::of("db.getSiblingDB('logs').events.find({a: 1})").unwrap();
+        assert_eq!(view.collection(), "events");
+        assert_eq!(
+            view.update("1", "address.city", Some("\"Madrid\"")),
+            r#"db.getSiblingDB("logs").getCollection("events").updateOne({_id: 1}, {$set: {"address.city": "Madrid"}})"#
+        );
+        assert_eq!(
+            view.update("1", "gone", None),
+            r#"db.getSiblingDB("logs").getCollection("events").updateOne({_id: 1}, {$unset: {"gone": ""}})"#
+        );
+        let orders = CollectionView::of("db.orders.find()").unwrap();
+        assert_eq!(
+            orders.delete("2"),
+            r#"db.getCollection("orders").deleteOne({_id: 2})"#
+        );
+        assert_eq!(
+            orders.insert("{a: 1}"),
+            r#"db.getCollection("orders").insertOne({a: 1})"#
+        );
+        for command in [
+            orders.update("1", "a", Some("2")),
+            orders.delete("1"),
+            orders.insert("{a: 1}"),
+        ] {
+            assert!(parse(&command).is_ok(), "{command}");
+        }
+        assert_eq!(CollectionView::of("db.orders.aggregate([])"), None);
+        assert_eq!(CollectionView::of("db.orders.find().explain()"), None);
+        assert_eq!(
+            update_path(&Path::from(vec![
+                Step::Field("items".to_owned()),
+                Step::Index(2),
+                Step::Field("sku".to_owned()),
+            ]))
+            .as_deref(),
+            Ok("items.2.sku")
+        );
+        assert!(update_path(&Path::from(vec![Step::Field("a.b".to_owned())])).is_err());
+    }
+}
