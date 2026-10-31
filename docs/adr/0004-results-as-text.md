@@ -1,6 +1,7 @@
 # 0004. Query results as text
 
-- Status: Accepted
+- Status: Accepted; extended by [0006](0006-documents-as-extended-json-text.md) for results
+  that are documents
 - Date: 2026-10-22
 
 ## Context
