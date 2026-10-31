@@ -48,3 +48,7 @@ harness = false
 [[test]]
 name = "redis"
 harness = false
+
+[[test]]
+name = "mongodb"
+harness = false

@@ -53,8 +53,9 @@ Planned separately:
   their own, [NoSQL databases](nosql.md), which starts with the groundwork that makes them fit:
   query languages beside SQL, nested documents in the grid, and safety checks for each language.
   Redis, Valkey and Dragonfly (N1) are built: the explorer, a viewer per key type, the
-  console and MCP through a read-only ACL user. MongoDB (N2) is being built: its data source
-  and console come first.
+  console and MCP through a read-only ACL user. MongoDB (N2) is built: the shell's syntax in
+  the console, collections in the explorer, documents edited in the grid, and MCP through a
+  user with the `read` role.
 
 Left out on purpose:
 
