@@ -2,8 +2,9 @@
 
 Status: **N0a, N0b and N1 built** (2026-10-30), in the layers listed under
 [N0a](#n0a--groundwork-languages-safety-and-the-explorer),
-[N0b](#n0b--groundwork-documents) and [N1](#n1--redis-valkey-and-dragonfly); N2 is next. W7
-(exports) has landed.
+[N0b](#n0b--groundwork-documents) and [N1](#n1--redis-valkey-and-dragonfly); **N2 being
+built** (from 2026-10-31), in the layers listed under [N2](#n2--mongodb). W7 (exports) has
+landed.
 
 DbRover speaks seven SQL engines. Many of the teams that use them keep a Redis beside their
 PostgreSQL, documents in MongoDB, or logs in Elasticsearch, and today they open another tool for
@@ -579,6 +580,100 @@ them; expand a nested field into columns and open a document as a tree; edit a f
 keep its type; ⌘. a slow aggregation; a read-only data source refuses `deleteMany`; and an MCP
 client queries a collection through an MCP login.
 
+#### Layers
+
+Each layer is one pull request in a stack, useful and tested on its own, as N1's were. From
+N2·3 on, each runs against `mongo:8` in CI, a single server with a user and TLS on the same
+port.
+
+- **N2·1 — Plan:** this list, the decisions N2 takes (in [Decisions](#decisions)), and the
+  roadmap's status.
+- **N2·2 — The MongoDB language:** a `mongo` module of `dbrover-language`, with no driver yet:
+  - a lexer for the shell's syntax: names, `"…"` and `'…'` strings with JavaScript's escapes,
+    numbers, `/regular expressions/flags`, punctuation, and `//` and `/* */` comments;
+  - a script splits at `;`, and at a line break once every bracket is closed and the next
+    line doesn't go on with `.`, so a chain written over several lines stays one command;
+  - a parser into DbRover's own tree of a command: `use <database>`, `show dbs`,
+    `show collections`, and `db.<collection>.<method>(…)` or
+    `db.getCollection("…").<method>(…)` with cursor methods chained (`sort`, `limit`,
+    `skip`, `projection`, `hint`, `collation`, `batchSize`, `explain`), and `db.<method>(…)`
+    (`runCommand`, `createCollection`, `getCollectionNames`, …). Arguments are the shell's
+    relaxed JSON (unquoted keys, single quotes, trailing commas) with `ObjectId()`,
+    `ISODate()`, `new Date()`, `NumberLong()`, `NumberInt()`, `NumberDecimal()`, `UUID()`,
+    `BinData()`, `Timestamp()`, `MinKey`, `MaxKey` and regular expressions. Anything else, a
+    variable, a function, a loop, `printjson`, is an error that names it and points at it;
+  - classification from a table of the methods: reads (`find`, `findOne`, `aggregate`,
+    `countDocuments`, `estimatedDocumentCount`, `distinct`, `getIndexes`, `show …`), writes
+    (`insertOne`, `updateMany`, `bulkWrite`, `findOneAndUpdate`, …), schema changes
+    (`createCollection`, `drop`, `createIndex`, `dropIndex`, `renameCollection`), and
+    administration; an `aggregate` with `$out` or `$merge` writes; `$function`, `$where` and
+    `$accumulator` anywhere in the arguments, and the users and roles methods, are
+    administration; `db.runCommand` reads only for an allow-list (`ping`, `buildInfo`,
+    `listCollections`, `listIndexes`, `collStats`, `dbStats`, `count`, `find`, `aggregate`
+    without `$out` or `$merge`, …) and is administration otherwise; `use` is a read;
+  - warnings for `deleteMany({})`, `updateMany({}, …)`, `remove({})` and `drop()`;
+  - completion of the methods, the query and update operators and the pipeline stages, each
+    method with its arguments.
+
+  Tests: a classification corpus, as the other languages have; the splitter, the tokens and
+  the parser against snippets from MongoDB's documentation; errors that name what isn't
+  supported.
+- **N2·3 — The driver and the console:** a new crate, `dbrover-driver-mongodb`, on the
+  official `mongodb` driver:
+  - the **MongoDB** data source: the shared server form (port 27017) with the authentication
+    database, or a connection string pasted whole (`mongodb://` or `mongodb+srv://`, which
+    Atlas hands out), whose password moves to the keychain; TLS in the driver's own rustls on
+    ring, from the data source's mode; SSH tunnels with the server form. Test connection
+    reports MongoDB and its version, from `buildInfo`;
+  - each command runs as the parser read it, its arguments turned into BSON: a cursor's
+    documents (`find`, `aggregate`, `listCollections`) are read 500 at a time and reach the
+    grid as documents (N0b), in canonical Extended JSON; a count is one cell, `distinct` one
+    column, and a write's answer one document, as the shell prints it; `use` changes the
+    database the console's next commands run in;
+  - each command runs in a task of its own, tagged with a `comment` unique to the run, and ⌘.
+    finds it with `$currentOp` and stops it with `killOp`;
+  - `transaction_status` is always idle, and manual commit mode isn't offered;
+  - the explorer lists the databases.
+
+  Tests: the parts of the shared conformance suite that apply (lifecycle, connect failure,
+  catalog walk, invalid paths, a lost session, cancel), on the `mongo:8` server; results of
+  each kind, a `find` and an `aggregate` paged past 500 documents, each BSON type through to
+  canonical Extended JSON and back, a slow aggregation cancelled (`$function` sleeping, or a
+  `$where`), TLS and a tunnel, the connection string, and an engine test of a console and a
+  read-only data source refusing `deleteMany`. Manual: the data source and the console.
+- **N2·4 — The explorer:** under each database, its collections, views and time-series
+  collections, each with its estimated document count (`estimatedDocumentCount`, never a full
+  count), and under a collection its indexes. **Show definition** gives
+  `db.createCollection(…)` with the collection's options and validator, and a
+  `createIndex(…)` for each index. **Open data** on a collection opens a console with
+  `db.getCollection("…").find({})`, run at once. A database with many collections pages as
+  N0a's explorer does, by name, with the filter as a `listCollections` filter. Tests: the
+  catalog walk with each kind, the definitions, and paging 2,500 collections.
+- **N2·5 — Explain, validate and results to a file:** ⌥⌘E runs the command at the cursor
+  through `explain` with `executionStats` and shows the plan as a tree; `validate` plans a read
+  with `queryPlanner` verbosity without running it, and checks a write by parsing it alone;
+  **Run to file** and **All rows** for documents write every document of a `find` or an
+  `aggregate` to JSON or JSON Lines straight from the cursor, which N0b left to N2. Tests:
+  an explained `find` and `aggregate`, an unknown operator caught before running, and a run to
+  file of more than one page that reads back to the same documents.
+- **N2·6 — Editing:** a field changed in the grid becomes
+  `updateOne({_id: …}, {$set: {"address.city": …}})`, its value written with the type the
+  old value had, read from its canonical Extended JSON; a document without `_id` can't be
+  edited. **Insert document…** and **Delete document** on a collection's data. Each edit runs
+  as a typed command does, one at a time (`EditsRun::OneByOne`): checked against the safety
+  level, written to the log and recorded in the history. Tests: a field of each type edited
+  and read back with its type, an expanded field edited by its path, a document inserted and
+  deleted, and kittests of the console's edits fed results.
+- **N2·7 — Safety and MCP:** the read-only level's dialog suggests a user with the `read`
+  role; the MCP server serves a MongoDB data source only through its MCP login, its `query`
+  tool takes one shell command, and `list_objects` lists databases and collections, paged.
+  Tests: on the MongoDB test server, a user with only the `read` role serves as the MCP login,
+  reads a collection, and is refused a `deleteMany` by the server as well as by the check.
+
+The manual changes in the layer that changes what a user sees: N2·3 (the data source and the
+console), N2·4 (the explorer), N2·5 (explain and results to a file), N2·6 (editing) and N2·7
+(read-only data sources and MCP logins on MongoDB).
+
 ### N3 — Elasticsearch and OpenSearch
 
 - **Client: their REST API over HTTP, with the hyper client and `dbrover-tls`'s rustls
@@ -700,6 +795,11 @@ milestone starts.
 | Which `redis` release (N1) | **1.8.1**, the latest release; 2.0 was still in release candidates when N1 started. Without its TLS features: DbRover opens the TCP or TLS stream and hands it to the client. | TLS is `dbrover-tls`'s, as for PostgreSQL and ClickHouse, with ring and the same modes, and nothing else in the build picks a crypto provider. 2.0 is taken in a change of its own once released. |
 | Where classification comes from (N1) | **A table generated from Redis 8's and Valkey 9's command definitions,** shipped with DbRover, and checked in CI against each server's `COMMAND INFO`. | The check works before connecting, and the console completes from the same table. A module's command the table doesn't list is unclassified, so a read-only data source refuses it; the table is regenerated from a server with the module to add it. |
 | What a key viewer is (N1) | **A console with the key's read command,** opened and run by **Open data**, with a key bar above its result, and edits that become commands. | Paging, the cell viewer's tree, copying and exporting, the safety level, the log and the history work as for any command, with no second path to keep in step. |
+| Which `mongodb` release (N2) | **3.9.1**, the latest, with `bson` 3 (its `bson-3` feature, without the default `compat-3-0-0` that brings `bson` 2), `rustls-tls` on ring and `dns-resolver` for `mongodb+srv://`. | One `bson` in the build, and no second crypto provider. The driver opens its own sockets, so TLS is its rustls, not `dbrover-tls`'s: `require` allows any certificate, `verify-full` takes the CA file or Mozilla's authorities as `dbrover-tls` does, and `prefer` connects unencrypted, as on Redis, since a client can't try TLS and fall back on the same port. Through an SSH tunnel the driver checks the certificate against the tunnel's local end, so there it checks the authority but not the host name, and the dialog says so. |
+| A connection string or the form (N2) | **Either**: the shared server form, or a connection string pasted whole. The string is kept in the data source file without its password, which moves to the keychain when the data source is saved; `${NAME}` placeholders work in it. | Atlas's `mongodb+srv://` strings, replica sets and options such as `replicaSet` or `authMechanism` work as written. SSH tunnels only with the form: a string may name several hosts, or none (`+srv`). |
+| Where the shell's syntax is read (N2) | **In `dbrover-language`'s `mongo` module, into DbRover's own tree of a command,** with no `bson` in that crate; the driver turns the tree into BSON. | Classification, warnings, completion and the MCP server read the same tree the driver runs, and the app needs no MongoDB crate. |
+| Where a cancel comes from (N2) | **The console's own client**, a pool, which opens a second connection as the same user to send `$currentOp` (own operations only) and `killOp`. | Each console's cancel works without the explorer's session, as on the other engines, and any user may kill their own operations. |
+| What an edit is (N2) | **A command per changed field, from the grid,** `updateOne` by `_id` with `$set` on the field's path, run one at a time as Redis's are. | Each edit is checked, logged and recorded as a typed command is. Editing in the tree waits: the grid's flattened columns, an expanded field's included, reach every field but an array's items. |
 | One search driver or two | **One**, for Elasticsearch and OpenSearch, with their differences keyed off the server's answer to `GET /`. | One crate and data source type, "Elasticsearch / OpenSearch". |
 | Cassandra's language | **A `Dialect` of `dbrover-sql`**, since CQL lexes and splits like SQL, with its own small classifier, as `sqlparser` has no CQL dialect. | The SQL tooling (splitting, highlighting, completion) works for CQL with a new set of rules, not a new language. |
 | Where languages live (N0a) | **A crate of their own, `dbrover-language`,** on top of `dbrover-sql`. It owns `QueryLanguage`; Redis's and MongoDB's languages become modules of it. `StatementKind` and `Unclassified` stay in `dbrover-sql` and are re-exported, and highlighting keeps `dbrover-sql`'s token kinds. | `dbrover-sql` stays about SQL. Code outside the crate asks a language through its methods and never matches on its variants, so a variant added for a new engine, or the test language, changes no other crate. |
