@@ -588,7 +588,8 @@ port.
 
 - **N2·1 — Plan:** this list, the decisions N2 takes (in [Decisions](#decisions)), and the
   roadmap's status.
-- **N2·2 — The MongoDB language:** a `mongo` module of `dbrover-language`, with no driver yet:
+- **N2·2 — The MongoDB language** (built): a `mongo` module of `dbrover-language`, with no
+  driver yet:
   - a lexer for the shell's syntax: names, `"…"` and `'…'` strings with JavaScript's escapes,
     numbers, `/regular expressions/flags`, punctuation, and `//` and `/* */` comments;
   - a script splits at `;`, and at a line break once every bracket is closed and the next
@@ -617,7 +618,20 @@ port.
 
   Tests: a classification corpus, as the other languages have; the splitter, the tokens and
   the parser against snippets from MongoDB's documentation; errors that name what isn't
-  supported.
+  supported. How it came out:
+  - `runCommand`'s writes (`insert`, `update`, `delete`, `findAndModify`, `bulkWrite`) and
+    schema changes (`create`, `createIndexes`, `drop`, `dropIndexes`, `collMod`,
+    `renameCollection`) are classified as such; any other command outside the read list is
+    administration. `db.dropDatabase()`, `db.currentOp()` and `db.killOp()` are
+    administration;
+  - the users' and roles' helpers (`db.createUser(…)`) aren't read, and the error suggests
+    `db.runCommand({…})`, which sends them as administration. So are other methods DbRover
+    doesn't run, such as `mapReduce`;
+  - numbers are kept as written; the driver stores an integer that fits 32 bits as one and
+    any other number as a double, as the shell does;
+  - completion inserts the words as listed (`insertOne`, `$match`), since MongoDB's names are
+    case-sensitive, rather than in the case being typed as SQL's keywords and Redis's
+    commands are.
 - **N2·3 — The driver and the console:** a new crate, `dbrover-driver-mongodb`, on the
   official `mongodb` driver:
   - the **MongoDB** data source: the shared server form (port 27017) with the authentication

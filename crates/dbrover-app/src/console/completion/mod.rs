@@ -501,13 +501,19 @@ fn typed_in_upper_case(prefix: &str) -> bool {
 }
 
 /// The candidates for a language without a SQL dialect: its own words, best first, each with
-/// what the language says of it (a Redis command's arguments) or as a keyword.
+/// what the language says of it (a Redis command's or a MongoDB method's arguments) or as a
+/// keyword.
 pub fn word_candidates(
     prefix: &str,
     language: QueryLanguage,
     recent: &RecentCompletions,
 ) -> Vec<Candidate> {
-    let mut candidates = language_words(prefix, language.completion_words());
+    let words = language.completion_words();
+    let mut candidates = if language.completion_keeps_case() {
+        listed_words(prefix, words)
+    } else {
+        language_words(prefix, words)
+    };
     for candidate in &mut candidates {
         if let Some(detail) = language.completion_detail(&candidate.insert) {
             candidate.detail = Some(detail.to_owned());
@@ -543,6 +549,24 @@ fn language_words(prefix: &str, words: &[&str]) -> Vec<Candidate> {
                 insert,
                 cursor_back: 0,
             }
+        })
+        .collect()
+}
+
+/// `words` as listed, for a language whose words are case-sensitive. None for an empty
+/// prefix, as for keywords.
+fn listed_words(prefix: &str, words: &[&str]) -> Vec<Candidate> {
+    if prefix.is_empty() {
+        return Vec::new();
+    }
+    words
+        .iter()
+        .map(|word| Candidate {
+            kind: CandidateKind::Keyword,
+            label: (*word).to_owned(),
+            detail: Some("keyword".to_owned()),
+            insert: (*word).to_owned(),
+            cursor_back: 0,
         })
         .collect()
 }
