@@ -405,26 +405,37 @@ were. From N1·3 on, each runs against `redis:8-alpine` and `valkey/valkey:9-alp
   splitter and tokens against `redis-cli`'s quoting; the warnings. The table holds 477 commands
   and subcommands; until N1·3 checks it against live servers, it comes from the sources'
   definitions alone.
-- **N1·3 — The driver and the console:** a new crate, `dbrover-driver-redis`, on the `redis`
+- **N1·3 — The driver and the console** (built): a new crate, `dbrover-driver-redis`, on the `redis`
   crate over a TCP or TLS stream DbRover opens itself, so TLS is `dbrover-tls`'s rustls
   configuration on ring and an SSH tunnel works as for the others:
   - the **Redis / Valkey** data source: the shared server form, port 6379, the user optional,
     the database number in place of a database name, and TLS. Test connection reports Redis,
     Valkey or Dragonfly and its version, from `INFO server`;
   - the console shows a reply by its shape: an array as one column, a map as field and value,
-    a number or text as one cell, binary text as hex, and a nested value as JSON text, which
-    the cell viewer shows as a tree (N0b). `SCAN`, `HSCAN`, `SSCAN` and `ZSCAN` are followed to
+    pairs (`ZRANGE … WITHSCORES`) as two columns, a number or text as one cell, a stream's
+    entries as documents (`_id` first), binary text with hex escapes as `redis-cli` quotes it
+    (`"\xff\x00"`), and a nested value as JSON text, which the cell viewer shows as a tree
+    (N0b). `SCAN`, `HSCAN`, `SSCAN` and `ZSCAN` are followed to
     their end a page at a time, as `redis-cli --scan` does, so the grid's paging reads a
     large keyspace or value without one long command;
   - ⌘. as the plan says: `CLIENT UNBLOCK` for a blocking command, `SCRIPT KILL` or
     `FUNCTION KILL` for a script, otherwise a new connection;
-  - `validate` checks each command's argument count against the table; `transaction_status`
+  - `validate` checks each command's argument count against the table (the console only asks
+    a SQL dialect's statements to be validated, so it isn't called yet); `transaction_status`
     is always idle, and manual commit mode isn't offered;
   - the explorer lists the databases that hold keys, with their key counts.
 
-  Tests: the shared conformance suite (lifecycle, connect failure, catalog walk, invalid
-  paths, execution, cancel), replies of each shape, and a check that each server's own
-  `COMMAND INFO` classifies every command as the table does.
+  Tests: the parts of the shared conformance suite that apply (lifecycle, connect failure,
+  catalog walk, invalid paths, a lost session, cancel), on both servers; `check_execution`,
+  `check_transactions`, `check_describe_table` and `check_validate` are SQL's. Besides: replies
+  of each shape, a `SCAN` of 2,500 keys followed to its end, each way of cancelling (`BLPOP`,
+  a script, and `DEBUG SLEEP`, which nothing stops), TLS and a tunnel on the Redis server, an
+  engine test of a console and a read-only data source refusing `SET`, and a check that each
+  server's own `COMMAND INFO` classifies every command as the table does. Manual: the data
+  source, the console's commands, and the databases in the explorer. That check found every
+  core command as the table had it, and the 229 commands of the modules `redis:8-alpine`
+  ships (search, JSON, time series, probabilistic structures, vector sets), which joined the
+  table from that server's answers: 706 commands and subcommands in all.
 - **N1·4 — Keys in the explorer:** under each database, keys grouped by a separator (`:` by
   default, set per data source), read with `SCAN … COUNT 1000` and never `KEYS`; the filter
   box as `SCAN`'s `MATCH`; each key with its type's icon and its TTL. Tests: the conformance

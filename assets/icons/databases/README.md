@@ -11,6 +11,7 @@ the New data source menu and in the data source dialog.
 | `sqlserver.svg` | A neutral database glyph for SQL Server, drawn for DbRover (see below) | `#CC2927` |
 | `duckdb.svg` | DuckDB (its yellow is darkened to a gold on the light theme, where it wouldn't show) | `#FFF000` |
 | `clickhouse.svg` | ClickHouse (its yellow is darkened to an amber on the light theme) | `#FFCC01` |
+| `redis.svg` | Redis (also shown for Valkey and Dragonfly, which the same driver serves; its red is darkened on the light theme) | `#FF4438` |
 
 ## Source and licence
 

@@ -44,7 +44,7 @@ run = false
   - `grid.selection`, the grid's selected cells, acted on once;
   - `grid.row`, the grid's selected rows, acted on once each.
 - **`drivers`** limits it to some databases: `postgres`, `sqlite`, `mysql`, `sqlserver`,
-  `duckdb`, `clickhouse`. Leave it out for every one.
+  `duckdb`, `clickhouse`, `redis`. Leave it out for every one.
 - **`run = false`** opens the SQL in a new console for you to edit and run. Otherwise it runs at
   once.
 

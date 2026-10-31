@@ -444,6 +444,7 @@ fn data_source_settings(data_source: &DataSource, names: &ProjectNames) -> Setti
         ConnectionConfig::Mysql(config) => server_settings(&config.server, &mut settings),
         ConnectionConfig::SqlServer(config) => server_settings(&config.server, &mut settings),
         ConnectionConfig::ClickHouse(config) => server_settings(&config.server, &mut settings),
+        ConnectionConfig::Redis(config) => server_settings(&config.server, &mut settings),
         ConnectionConfig::Sqlite(config) => {
             settings.push(("File", config.path.display().to_string()));
             settings.push(("Read-only", yes_no(config.read_only)));
@@ -515,6 +516,7 @@ fn paths(config: &ConnectionConfig) -> Vec<(&'static str, &Path)> {
         ConnectionConfig::Mysql(config) => &config.server,
         ConnectionConfig::SqlServer(config) => &config.server,
         ConnectionConfig::ClickHouse(config) => &config.server,
+        ConnectionConfig::Redis(config) => &config.server,
     };
     let ca_file = match &server.tls {
         TlsMode::VerifyFull {

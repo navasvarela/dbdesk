@@ -7,7 +7,9 @@ mod common;
 
 use std::sync::Arc;
 
-use common::{TestEngine, postgres_test_server, sqlite_data_source, sqlite_database};
+use common::{
+    TestEngine, postgres_test_server, redis_test_servers, sqlite_data_source, sqlite_database,
+};
 use dbrover_core::{ConnectionConfig, DataSource, DataSourceId, SafetyLevel};
 use dbrover_engine::{
     Command, ConsoleId, EditFailure, Event, PasswordUpdate, RunId, RunOrigin, RunOutcome,
@@ -144,6 +146,59 @@ fn a_read_only_sqlite_data_source_refuses_changes_and_edits() {
         .query_row("SELECT count(*) FROM sqlite_master", [], |row| row.get(0))
         .unwrap();
     assert_eq!(tables, 1, "the database was changed");
+}
+
+/// N1's exit: a read-only Redis data source refuses `SET` before sending it, and still reads.
+/// Needs `DBROVER_TEST_REDIS_URL` or `DBROVER_TEST_VALKEY_URL`; skipped without them.
+#[test]
+fn a_read_only_redis_data_source_refuses_set() {
+    for (config, password) in redis_test_servers() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+        engine.expect_started(vec![]);
+        let cache = DataSource {
+            id: DataSourceId::generate(),
+            name: "cache".to_owned(),
+            color: None,
+            safety: SafetyLevel::Normal,
+            project: None,
+            mcp_login: None,
+            config: ConnectionConfig::Redis(config),
+        };
+        let production = read_only(&cache);
+        save(&mut engine, &production, PasswordUpdate::Set(password));
+        let key = format!("dbrover:safety:{}", std::process::id());
+        let cases = [
+            (format!("SET {key} 1"), Some(refused("changes data"))),
+            (
+                "FLUSHALL".to_owned(),
+                Some(refused("administers the database")),
+            ),
+            (format!("GET {key}"), None),
+        ];
+        for (number, (command, expected)) in cases.into_iter().enumerate() {
+            let failure = run(
+                &mut engine,
+                READ_ONLY_CONSOLE,
+                production.id,
+                number as u64 + 1,
+                &command,
+            );
+            assert_eq!(failure, expected, "{command}");
+        }
+        // A command the table doesn't know may do anything, so it is refused too.
+        let unknown = run(
+            &mut engine,
+            READ_ONLY_CONSOLE,
+            production.id,
+            9,
+            "NOSUCH key",
+        );
+        assert!(
+            unknown.is_some_and(|message| message.contains("unknown command `NOSUCH`")),
+            "an unknown command was sent"
+        );
+    }
 }
 
 /// The exit test of W2: an `INSERT`, a `CREATE TABLE`, and a write hidden in a function.

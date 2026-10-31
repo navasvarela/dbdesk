@@ -169,15 +169,15 @@ impl QueryLanguage {
 
 impl From<DriverKind> for QueryLanguage {
     fn from(driver: DriverKind) -> Self {
-        let dialect = match driver {
-            DriverKind::Postgres => Dialect::Postgres,
-            DriverKind::Sqlite => Dialect::Sqlite,
-            DriverKind::Mysql => Dialect::Mysql,
-            DriverKind::SqlServer => Dialect::SqlServer,
-            DriverKind::DuckDb => Dialect::DuckDb,
-            DriverKind::ClickHouse => Dialect::ClickHouse,
-        };
-        Self::Sql(dialect)
+        match driver {
+            DriverKind::Postgres => Self::Sql(Dialect::Postgres),
+            DriverKind::Sqlite => Self::Sql(Dialect::Sqlite),
+            DriverKind::Mysql => Self::Sql(Dialect::Mysql),
+            DriverKind::SqlServer => Self::Sql(Dialect::SqlServer),
+            DriverKind::DuckDb => Self::Sql(Dialect::DuckDb),
+            DriverKind::ClickHouse => Self::Sql(Dialect::ClickHouse),
+            DriverKind::Redis => Self::Redis,
+        }
     }
 }
 
@@ -193,7 +193,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_driver_speaks_its_own_sql_dialect() {
+    fn every_sql_driver_speaks_its_own_dialect() {
         let dialects: Vec<Option<Dialect>> = DriverKind::ALL
             .into_iter()
             .map(|driver| QueryLanguage::from(driver).dialect())
@@ -207,8 +207,10 @@ mod tests {
                 Some(Dialect::SqlServer),
                 Some(Dialect::DuckDb),
                 Some(Dialect::ClickHouse),
+                None,
             ]
         );
+        assert_eq!(QueryLanguage::from(DriverKind::Redis), QueryLanguage::Redis);
     }
 
     #[test]

@@ -2567,6 +2567,54 @@ mod tests {
         );
     }
 
+    /// A Redis data source starts on database 0 as the `default` user, and offers no `prefer`,
+    /// since Redis serves TLS on a port of its own.
+    #[test]
+    fn adds_a_redis_data_source_on_database_0() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "No data sources yet.");
+
+        harness
+            .get_all_by_label("New data source")
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness.get_by_label("Redis / Valkey").click();
+        harness.run();
+        harness.get_by_label_contains("New Redis / Valkey data source");
+        harness.get_by_label("Database number");
+        harness.get_by_label("TLS").click();
+        harness.run();
+        assert!(harness.query_by_label("prefer").is_none());
+        harness.get_by_label("disable").click();
+        harness.run();
+        harness.get_by_label("Save").click();
+
+        step_until_visible(&mut harness, "Expand db0@localhost");
+        let saved = DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .load()
+            .unwrap();
+        let [saved] = saved.as_slice() else {
+            panic!("expected one data source, got {saved:?}");
+        };
+        let dbrover_core::ConnectionConfig::Redis(config) = &saved.config else {
+            panic!("expected a Redis data source, got {saved:?}");
+        };
+        let server = &config.server;
+        assert_eq!(
+            (
+                server.port.clone(),
+                server.database.as_str(),
+                server.user.as_str(),
+                &server.tls
+            ),
+            (6379.into(), "0", "default", &dbrover_core::TlsMode::Disable)
+        );
+    }
+
     #[test]
     fn adds_a_clickhouse_data_source_whose_port_follows_its_tls_mode() {
         let dir = tempfile::tempdir().unwrap();

@@ -55,6 +55,10 @@ FCALL_RO myfunc 0
 # expect: read
 WAIT 1 1000
 # expect: read
+JSON.GET doc $.name
+# expect: read
+FT.SEARCH idx "@name:ada"
+# expect: read
 OBJECT HELP
 
 # Blocking commands keep their flags.
@@ -98,6 +102,8 @@ FCALL myfunc 1 counter
 MOVE user:42 1
 # expect: write
 SWAPDB 0 1
+# expect: write
+JSON.SET doc $ '{"a":1}'
 
 # Transaction control.
 # expect: transaction

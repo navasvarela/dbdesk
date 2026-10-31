@@ -178,6 +178,7 @@ impl DataSourceDialog {
                     DriverFields::Mysql(fields) => &mut fields.server,
                     DriverFields::SqlServer(fields) => &mut fields.server,
                     DriverFields::ClickHouse(fields) => &mut fields.server,
+                    DriverFields::Redis(fields) => &mut fields.server,
                     DriverFields::Sqlite(fields) => {
                         return file_rows(
                             ui,
@@ -323,7 +324,7 @@ fn server_rows(ui: &mut Ui, fields: &mut ServerFields, password_hint: &str) {
     setting_row(ui, "Port", &mut fields.port, &default_port, Resolve::Text);
     setting_row(
         ui,
-        "Database",
+        defaults.database_field.label(),
         &mut fields.database,
         defaults.database,
         Resolve::Text,

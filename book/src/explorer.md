@@ -123,6 +123,16 @@ A ClickHouse table's primary key is its sort order rather than an index, so it s
 table's definition, not under **indexes**. Functions aren't listed: a ClickHouse function belongs
 to the whole server, not to one database.
 
+**Redis / Valkey**, where the server's numbered databases hold keys:
+
+```text
+data source
+└─ db0                      each database that holds keys, with how many
+```
+
+The data source's own database is listed even when it is empty. Keys aren't listed in the tree
+yet; run `SCAN 0 MATCH pattern` in a console to find them.
+
 **DuckDB**, where the database opened (named after its file, or `memory`) is listed with any
 attached with `ATTACH`:
 

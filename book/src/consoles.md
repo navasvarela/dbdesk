@@ -200,6 +200,55 @@ ends the session. Names are case-sensitive (`toDate`, not `TODATE`), so **Format
 case of every word as you typed it and completion keeps ClickHouse's spelling of functions.
 `#` starts a comment, as `--` does. Results can't be edited: see [Editing data](#editing-data).
 
+### Redis commands
+
+A Redis, Valkey or Dragonfly console runs Redis's own commands, one per line, written as you
+would type them in `redis-cli`:
+
+```text
+# A line that starts with # is a comment.
+HSET user:42 name "Ada Lovelace" city London
+HGETALL user:42
+SET greeting 'it\'s me'
+SET binary "\xff\x00 bytes"
+```
+
+An argument is a word, or text in double quotes, where `\n`, `\"` and `\x41` mean a newline, a
+quote and the byte 0x41, or in single quotes, where only `\'` is an escape. ⌘↵ runs the command
+on the cursor's line, and completion offers command names, each with its arguments beside it
+(`HSET` · `key field value [field value ...]`).
+
+The result shows the reply by its shape:
+
+| Reply | Shown as |
+| --- | --- |
+| A string, a number, `OK` or nil | One cell, `NULL` for nil. A string that isn't text shows as `redis-cli` quotes it, `"\xff\x00"`. |
+| A list (`LRANGE`, `SMEMBERS`, `KEYS`) | One column, `value`, one row per item. |
+| A map (`HGETALL`, `CONFIG GET`) | Two columns, `field` and `value`. |
+| Pairs (`ZRANGE … WITHSCORES`) | One column for each, `member` and `score`. |
+| A stream's entries (`XRANGE`, `XREVRANGE`) | Documents: the entry's id as `_id`, then its fields as columns. |
+| Anything nested deeper (`XREAD`, `COMMAND INFO`) | One row per item, a nested value as JSON, which **View value** shows as a tree. |
+
+`SCAN`, `HSCAN`, `SSCAN` and `ZSCAN` are followed to their end, as `redis-cli --scan` does: the
+result holds every key or member, read a batch at a time as you scroll, rather than one batch and
+the cursor to ask again with. Each batch is one short command, so the server never stalls, but
+prefer `SCAN` to `KEYS`, which reads every key at once: DbRover asks before running `KEYS`,
+`FLUSHDB` or `FLUSHALL`.
+
+A console is one connection: a `SELECT` stays in force for the commands after it. Redis has no
+transactions to roll back (`MULTI` only queues commands for `EXEC`), so its consoles have no
+transaction mode.
+
+**Cancel** works as far as Redis allows. Redis runs one command at a time and can't stop most
+of them once they start:
+
+- a command that waits, such as `BLPOP` or `XREAD BLOCK`, is ended with `CLIENT UNBLOCK`;
+- a script (`EVAL`, `FCALL`) is stopped with `SCRIPT KILL` or `FUNCTION KILL`, unless it has
+  already written something;
+- anything else, such as a command over a very large key, can't be stopped: DbRover stops
+  waiting for it, opens a new connection on the same database, and says so. The server may still
+  be finishing the command, and other clients wait until it has.
+
 The toolbar shows how the last run went: **Done in 12 ms**, **Failed** or **Cancelled**. While a
 statement runs, Run, Run all and Explain are disabled.
 
@@ -213,7 +262,8 @@ Below the toolbar, each console has a transaction mode:
   pending until you click **Commit** or **Rollback**.
 
 ClickHouse consoles have no transaction mode: ClickHouse's transactions are experimental and
-off unless the server is set up for them, so every statement takes effect as it runs.
+off unless the server is set up for them, so every statement takes effect as it runs. Nor do
+Redis consoles: see [Redis commands](#redis-commands).
 
 While a transaction is open, the console says **● Transaction open**, in either mode, and you
 can't switch modes. On PostgreSQL, a statement that fails inside a transaction leaves it

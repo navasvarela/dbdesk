@@ -200,6 +200,8 @@ pub enum ConnectionConfig {
     DuckDb(DuckDbConfig),
     #[serde(rename = "clickhouse")]
     ClickHouse(ClickHouseConfig),
+    /// Redis, Valkey and Dragonfly: one driver serves all three.
+    Redis(RedisConfig),
 }
 
 impl ConnectionConfig {
@@ -218,6 +220,7 @@ impl ConnectionConfig {
             Self::Mysql(config) => Some(&config.server),
             Self::SqlServer(config) => Some(&config.server),
             Self::ClickHouse(config) => Some(&config.server),
+            Self::Redis(config) => Some(&config.server),
             Self::Sqlite(_) | Self::DuckDb(_) => None,
         }
     }
@@ -228,6 +231,7 @@ impl ConnectionConfig {
             Self::Mysql(config) => Some(&mut config.server),
             Self::SqlServer(config) => Some(&mut config.server),
             Self::ClickHouse(config) => Some(&mut config.server),
+            Self::Redis(config) => Some(&mut config.server),
             Self::Sqlite(_) | Self::DuckDb(_) => None,
         }
     }
@@ -240,18 +244,19 @@ impl ConnectionConfig {
             Self::SqlServer(_) => DriverKind::SqlServer,
             Self::DuckDb(_) => DriverKind::DuckDb,
             Self::ClickHouse(_) => DriverKind::ClickHouse,
+            Self::Redis(_) => DriverKind::Redis,
         }
     }
 
     /// The database a connection opens, on engines whose catalog has databases above its
     /// schemas; the explorer lists that database's schemas. MySQL's and ClickHouse's databases
-    /// are their schemas, so they have no such level.
+    /// are their schemas, so they have no such level, and Redis's numbered databases hold keys.
     pub fn database(&self) -> Option<&str> {
         match self {
             Self::Postgres(config) => Some(&config.server.database),
             Self::SqlServer(config) => Some(&config.server.database),
             Self::DuckDb(config) => config.database_name(),
-            Self::Sqlite(_) | Self::Mysql(_) | Self::ClickHouse(_) => None,
+            Self::Sqlite(_) | Self::Mysql(_) | Self::ClickHouse(_) | Self::Redis(_) => None,
         }
     }
 
@@ -268,6 +273,8 @@ impl ConnectionConfig {
             Self::ClickHouse(config) => &config.server.database,
             Self::Sqlite(_) => "main",
             Self::Mysql(config) => &config.server.database,
+            // The number of the database a connection selects, which keys belong to.
+            Self::Redis(config) => &config.server.database,
         }
     }
 
@@ -292,6 +299,9 @@ impl ConnectionConfig {
             Self::ClickHouse(config) => Self::ClickHouse(ClickHouseConfig {
                 server: config.server.resolve(variables)?,
             }),
+            Self::Redis(config) => Self::Redis(RedisConfig {
+                server: config.server.resolve(variables)?,
+            }),
             Self::Sqlite(config) => Self::Sqlite(SqliteConfig {
                 path: expand_path(&config.path, variables)
                     .map_err(PlaceholderError::in_setting(Setting::File))?,
@@ -310,13 +320,16 @@ impl ConnectionConfig {
         })
     }
 
-    /// A name for a data source the user didn't name: `database@host`, or the file name.
+    /// A name for a data source the user didn't name: `database@host` (`db0@host` on Redis), or
+    /// the file name.
     pub fn default_name(&self) -> String {
         match self {
             Self::Postgres(config) => config.server.default_name(),
             Self::Mysql(config) => config.server.default_name(),
             Self::SqlServer(config) => config.server.default_name(),
             Self::ClickHouse(config) => config.server.default_name(),
+            // `db0@localhost`, as the explorer labels a numbered database.
+            Self::Redis(config) => format!("db{}", config.server.default_name()),
             Self::Sqlite(config) => file_name(&config.path),
             Self::DuckDb(config) => match &config.database {
                 DuckDbDatabase::File { path, .. } => file_name(path),
@@ -331,7 +344,7 @@ impl DriverKind {
     /// Skipping the lookup for other drivers avoids pointless keychain prompts.
     pub fn uses_password(self) -> bool {
         match self {
-            Self::Postgres | Self::Mysql | Self::SqlServer | Self::ClickHouse => true,
+            Self::Postgres | Self::Mysql | Self::SqlServer | Self::ClickHouse | Self::Redis => true,
             Self::Sqlite | Self::DuckDb => false,
         }
     }
@@ -345,6 +358,7 @@ impl fmt::Display for ConnectionConfig {
             Self::Mysql(config) => config.server.fmt(f),
             Self::SqlServer(config) => config.server.fmt(f),
             Self::ClickHouse(config) => config.server.fmt(f),
+            Self::Redis(config) => config.server.fmt(f),
             Self::Sqlite(config) if config.read_only => {
                 write!(f, "{} (read-only)", config.path.display())
             }
@@ -675,6 +689,21 @@ impl ClickHouseConfig {
     pub const DEFAULT_TLS_PORT: u16 = 8443;
 }
 
+/// A Redis, Valkey or Dragonfly server. Its `database` is the number of the database a
+/// connection selects, `0` unless told otherwise; its user is optional, and an empty one signs in
+/// as the server's `default` user. The explorer lists every database that holds keys.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RedisConfig {
+    #[serde(flatten)]
+    pub server: ServerConfig,
+}
+
+impl RedisConfig {
+    pub const DEFAULT_PORT: u16 = 6379;
+    /// The database a new data source selects.
+    pub const DEFAULT_DATABASE: &str = "0";
+}
+
 /// A DuckDB database: a file, or one in memory that starts empty each time, for querying CSV,
 /// Parquet and JSON files with DuckDB's table functions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -723,16 +752,18 @@ pub enum DriverKind {
     SqlServer,
     DuckDb,
     ClickHouse,
+    Redis,
 }
 
 impl DriverKind {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Postgres,
         Self::Sqlite,
         Self::Mysql,
         Self::SqlServer,
         Self::DuckDb,
         Self::ClickHouse,
+        Self::Redis,
     ];
 
     pub fn display_name(self) -> &'static str {
@@ -743,6 +774,7 @@ impl DriverKind {
             Self::SqlServer => "SQL Server",
             Self::DuckDb => "DuckDB",
             Self::ClickHouse => "ClickHouse",
+            Self::Redis => "Redis / Valkey",
         }
     }
 }
@@ -801,6 +833,39 @@ mod tests {
         assert!(text.contains("driver = \"postgres\""), "{text}");
         assert!(text.contains("driver = \"sqlite\""), "{text}");
         assert_eq!(toml::from_str::<File>(&text).unwrap(), file);
+    }
+
+    #[test]
+    fn a_redis_data_source_round_trips_with_its_database_number() {
+        let file = File {
+            data_source: vec![DataSource {
+                id: DataSourceId::generate(),
+                name: "cache".to_owned(),
+                color: None,
+                safety: SafetyLevel::Normal,
+                project: None,
+                mcp_login: Some(McpLogin {
+                    user: "mcp".to_owned(),
+                }),
+                config: ConnectionConfig::Redis(RedisConfig {
+                    server: ServerConfig {
+                        host: "localhost".to_owned(),
+                        port: RedisConfig::DEFAULT_PORT.into(),
+                        database: "2".to_owned(),
+                        user: String::new(),
+                        tls: TlsMode::Require,
+                        ssh: None,
+                        password_command: None,
+                    },
+                }),
+            }],
+        };
+        let text = toml::to_string(&file).unwrap();
+        assert!(text.contains("driver = \"redis\""), "{text}");
+        assert_eq!(toml::from_str::<File>(&text).unwrap(), file);
+        assert_eq!(file.data_source[0].config.default_name(), "db2@localhost");
+        assert_eq!(file.data_source[0].config.driver(), DriverKind::Redis);
+        assert!(DriverKind::Redis.uses_password());
     }
 
     #[test]

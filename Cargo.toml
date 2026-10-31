@@ -16,6 +16,7 @@ dbrover-driver-mysql = { path = "crates/dbrover-driver-mysql" }
 dbrover-driver-clickhouse = { path = "crates/dbrover-driver-clickhouse" }
 dbrover-driver-duckdb = { path = "crates/dbrover-driver-duckdb" }
 dbrover-driver-postgres = { path = "crates/dbrover-driver-postgres" }
+dbrover-driver-redis = { path = "crates/dbrover-driver-redis" }
 dbrover-driver-sqlite = { path = "crates/dbrover-driver-sqlite" }
 dbrover-driver-sqlserver = { path = "crates/dbrover-driver-sqlserver" }
 dbrover-document = { path = "crates/dbrover-document" }
@@ -102,6 +103,13 @@ keyring = "4.2.0"
 mysql_async = { version = "0.37.1", default-features = false, features = ["minimal-rust", "rustls-tls", "ring", "tls12"] }
 # Find and replace's regular expressions; already built for mysql_common and arrow.
 regex = "1.13.1"
+# Redis, Valkey and Dragonfly (docs/nosql.md, N1): the community client Redis Inc lists, in
+# pure Rust, BSD-3-Clause, releasing every few weeks; `fred`, the alternative, has had no
+# release since February 2025. Only its async connection on tokio: none of its TLS features,
+# since dbrover-driver-redis opens the TCP or TLS stream itself with dbrover-tls's rustls, and
+# none of its typed command helpers, since commands are sent as typed. Pinned to 1.8 patches:
+# 2.0 was still in release candidates when N1 started and changes the API.
+redis = { version = "~1.8.1", default-features = false, features = ["tokio-comp"] }
 rfd = "0.17.2"
 # The official MCP SDK, for `dbrover mcp`. Only the server side and the stdio transport; the
 # tests add the client to drive it.
@@ -148,6 +156,10 @@ tokio-postgres = "0.7.18"
 # client (dbrover-sql): the version tokio-postgres pulls in, so nothing new is built.
 postgres-protocol = "0.6.12"
 tokio-postgres-rustls = { version = "0.14.0", features = ["ring"] }
+# TLS on a tokio stream, for the Redis driver, which hands the encrypted stream to its client.
+# The version hyper-rustls and tiberius already build. No default features: they would pick
+# aws-lc-rs, where dbrover-tls's configuration names ring.
+tokio-rustls = { version = "0.26.6", default-features = false }
 toml = "1.1.8"
 tracing = "0.1.44"
 tracing-appender = "0.2.5"

@@ -49,7 +49,10 @@ pub fn mode(driver: DriverKind) -> Option<ReadOnlyMode> {
         // data source, not of the connection MCP would open, and ClickHouse's (the `readonly`
         // setting) isn't wired into its driver yet. The plan (docs/mcp-server.md) has each
         // such engine name its equivalent, such as a read-only login, before MCP serves it.
-        DriverKind::SqlServer | DriverKind::DuckDb | DriverKind::ClickHouse => None,
+        // Redis has no read-only session at all; an ACL user is its guard (docs/nosql.md, N1).
+        DriverKind::SqlServer | DriverKind::DuckDb | DriverKind::ClickHouse | DriverKind::Redis => {
+            None
+        }
     }
 }
 
@@ -281,7 +284,9 @@ mod tests {
                 DriverKind::Postgres | DriverKind::Mysql | DriverKind::Sqlite => {
                     matches!(guard, Guard::Session(_))
                 }
-                DriverKind::SqlServer | DriverKind::ClickHouse => guard == Guard::Login,
+                DriverKind::SqlServer | DriverKind::ClickHouse | DriverKind::Redis => {
+                    guard == Guard::Login
+                }
                 DriverKind::DuckDb => guard == Guard::CheckOnly,
             };
             assert!(expected, "{driver:?}: {guard:?}");

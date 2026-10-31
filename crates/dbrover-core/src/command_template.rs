@@ -45,7 +45,8 @@ impl From<&ConnectionConfig> for DataSourceFields {
             ConnectionConfig::Postgres(_)
             | ConnectionConfig::Mysql(_)
             | ConnectionConfig::SqlServer(_)
-            | ConnectionConfig::ClickHouse(_) => None,
+            | ConnectionConfig::ClickHouse(_)
+            | ConnectionConfig::Redis(_) => None,
         };
         let server = config.server();
         Self {

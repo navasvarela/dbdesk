@@ -60,5 +60,14 @@ pub fn of(driver: DriverKind) -> DatabaseBrand {
             light: Color32::from_rgb(0x9A, 0x6A, 0x00),
             dark: Color32::from_rgb(0xFF, 0xCC, 0x01),
         },
+        // Redis's red on the dark theme, lightened to read there; on the light one, a darker
+        // red than the brand's #FF4438, which is too light on white. Valkey's data sources
+        // share it: one driver serves both.
+        DriverKind::Redis => DatabaseBrand {
+            logo_uri: "bytes://logos/redis.svg",
+            logo_svg: include_bytes!("../../../assets/icons/databases/redis.svg"),
+            light: Color32::from_rgb(0xD8, 0x2C, 0x20),
+            dark: Color32::from_rgb(0xFF, 0x6E, 0x63),
+        },
     }
 }

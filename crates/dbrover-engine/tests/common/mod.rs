@@ -14,8 +14,8 @@ use std::str::FromStr;
 
 use dbrover_core::{
     ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DriverKind, MysqlConfig,
-    Password, PostgresConfig, SafetyLevel, ServerConfig, SqlServerConfig, SqliteConfig, SshConfig,
-    SshLogin, TlsMode,
+    Password, PostgresConfig, RedisConfig, SafetyLevel, ServerConfig, SqlServerConfig,
+    SqliteConfig, SshConfig, SshLogin, TlsMode,
 };
 use dbrover_engine::{
     Command, EngineConfig, EngineHandle, Event, InstallError, InstallSupport, InstalledUpdate,
@@ -420,6 +420,25 @@ pub fn clickhouse_test_server() -> Option<(ClickHouseConfig, Password)> {
         .expect("clickhouse:// URL");
     let (server, password) = parse_server(rest, "8123");
     Some((ClickHouseConfig { server }, password))
+}
+
+/// The Redis and Valkey test servers that are set, from `DBROVER_TEST_REDIS_URL` and
+/// `DBROVER_TEST_VALKEY_URL` (`redis://user:password@host:port/database`).
+pub fn redis_test_servers() -> Vec<(RedisConfig, Password)> {
+    let servers: Vec<(RedisConfig, Password)> =
+        ["DBROVER_TEST_REDIS_URL", "DBROVER_TEST_VALKEY_URL"]
+            .into_iter()
+            .filter_map(|variable| std::env::var(variable).ok())
+            .map(|url| {
+                let rest = url.strip_prefix("redis://").expect("redis:// URL");
+                let (server, password) = parse_server(rest, "6379");
+                (RedisConfig { server }, password)
+            })
+            .collect();
+    if servers.is_empty() {
+        eprintln!("skipping: neither DBROVER_TEST_REDIS_URL nor DBROVER_TEST_VALKEY_URL is set");
+    }
+    servers
 }
 
 /// The `ssh` compose service and the PostgreSQL service as it reaches it, from
