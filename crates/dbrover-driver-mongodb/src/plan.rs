@@ -414,6 +414,17 @@ fn cursor_or_explain(command: Document, explain: Option<Option<Bson>>) -> Step {
     }
 }
 
+/// The command of a read the server can plan without running: a `find`, an `aggregate`, a
+/// `count` or a `distinct`. `None` for anything else, writes included.
+pub(crate) fn plannable_read(step: &Step) -> Option<&Document> {
+    let command = match step {
+        Step::Cursor { command, .. } | Step::Command { command, .. } => command,
+        Step::Bulk { .. } => return None,
+    };
+    let name = command.keys().next()?;
+    matches!(name.as_str(), "find" | "aggregate" | "count" | "distinct").then_some(command)
+}
+
 /// `{explain: command, verbosity}`, a verbosity of `true` or `false` read as the shell reads it.
 pub(crate) fn explain_command(command: Document, verbosity: Option<Bson>) -> Document {
     let verbosity = match verbosity {

@@ -407,3 +407,16 @@ fn open_data_finds_every_document_of_any_collection() {
     assert!(!is_plain_name("a.b"));
     assert!(!is_plain_name(""));
 }
+
+#[test]
+fn explains_finds_and_aggregations_only() {
+    assert_eq!(
+        explain("db.orders.find({a: 1}).sort({b: 1})").as_deref(),
+        Some("db.orders.find({a: 1}).sort({b: 1}).explain(\"executionStats\")")
+    );
+    assert!(explain("db.orders.aggregate([])").is_some());
+    assert_eq!(explain("db.orders.find().explain()"), None);
+    assert_eq!(explain("db.orders.deleteMany({})"), None);
+    assert!(returns_documents("db.orders.find()"));
+    assert!(!returns_documents("db.orders.countDocuments()"));
+}

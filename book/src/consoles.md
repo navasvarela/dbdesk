@@ -300,7 +300,15 @@ grid shows their fields as columns, and **Tree** and **JSON** show the selected 
 The rest show as the shell shows them: a count as a number, `distinct` as a column of values,
 and a write as what it changed (`{acknowledged: true, insertedId: …}`), with the documents it
 changed counted in the toolbar. `explain()` after `find` or `aggregate` shows the plan as a
-document.
+document; **Explain** (⌥⌘E) on a `find` or an `aggregate` runs it that way, with
+`executionStats`, so the plan says what each stage read and returned. Pick **Tree** above the
+result to browse it.
+
+**Run to file** (⌥⌘↵) on a `find` or an `aggregate` writes every document to a JSON or JSON
+Lines file as the server returns them, without loading the grid, and **Export…** of a result of
+documents offers **All documents** as well as the loaded ones. Documents read again from the
+database are written whole, as canonical Extended JSON, so those two take only the JSON formats;
+the loaded documents can also go to CSV, Excel and the others, as the grid's columns.
 
 A console's commands run in its database until `use` chooses another. MongoDB's transactions
 need a replica set and a session, which DbRover doesn't open, so each command commits on its own

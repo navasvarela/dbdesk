@@ -1650,21 +1650,20 @@ impl QueryConsole {
             }
             RunScope::All => submit(0, self.language.split(&self.text), &self.text),
             RunScope::Explain => {
-                let Some(dialect) = self.dialect() else {
-                    return Vec::new();
-                };
                 let server = match &self.session {
                     SessionState::Connected(server) => Some(server),
                     _ => None,
                 };
-                let prefix = dialect.explain_prefix(server);
                 self.statements_to_run(RunScope::Current)
                     .into_iter()
                     .take(1)
-                    .map(|statement| SubmittedStatement {
-                        sql: format!("{prefix}{}", statement.sql),
-                        prefix_len: prefix.len(),
-                        ..statement
+                    .filter_map(|statement| {
+                        let explained = self.language.explain(&statement.sql, server)?;
+                        Some(SubmittedStatement {
+                            sql: explained.text,
+                            prefix_len: explained.prefix_len,
+                            ..statement
+                        })
                     })
                     .collect()
             }

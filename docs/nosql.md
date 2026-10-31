@@ -697,13 +697,27 @@ port.
     `ISODate("…")`), by a writer N2·6's edits use too;
   - the paging test uses 1,100 collections, enough for two pages, rather than 2,500, since each
     collection is files of its own on the server and CI time is a budget.
-- **N2·5 — Explain, validate and results to a file:** ⌥⌘E runs the command at the cursor
+- **N2·5 — Explain, validate and results to a file** (built): ⌥⌘E runs the command at the cursor
   through `explain` with `executionStats` and shows the plan as a tree; `validate` plans a read
   with `queryPlanner` verbosity without running it, and checks a write by parsing it alone;
   **Run to file** and **All rows** for documents write every document of a `find` or an
   `aggregate` to JSON or JSON Lines straight from the cursor, which N0b left to N2. Tests:
   an explained `find` and `aggregate`, an unknown operator caught before running, and a run to
-  file of more than one page that reads back to the same documents.
+  file of more than one page that reads back to the same documents. How it came out:
+  - each language says how it explains (`QueryLanguage::explain`): SQL with its dialect's
+    prefix, as before, and MongoDB by putting `.explain("executionStats")` after a `find` or an
+    `aggregate`. Explain is offered in a MongoDB console, and does nothing on a command with no
+    plan to show. The plan is a document, browsed with the result's **Tree**, not a view of its
+    own;
+  - `validate` plans a `find`, `aggregate`, `count` or `distinct` with `queryPlanner`, and only
+    reads a write. The console still asks only a SQL dialect's statements to be validated, as
+    for Redis: its checker of problems is written around SQL's, and making it a language's is a
+    change of its own. A command DbRover can't read is still shown as an error when it runs;
+  - Run to file knows a command's result before it runs through `QueryLanguage::result_shape`:
+    documents for a `find` or an `aggregate`, and nothing to write for MongoDB's other commands.
+    Documents read again from the database, by Run to file or **All documents**, aren't
+    flattened, so they are written as JSON or JSON Lines only, and the dialog says why the
+    other formats are greyed out.
 - **N2·6 — Editing:** a field changed in the grid becomes
   `updateOne({_id: …}, {$set: {"address.city": …}})`, its value written with the type the
   old value had, read from its canonical Extended JSON; a document without `_id` can't be
@@ -854,7 +868,7 @@ milestone starts.
 | The test language (N0a) | **A variant behind a `test-language` feature,** turned on only in dev-dependencies. | It is compiled into tests only, yet it runs through the same console, check and warnings as a real language. |
 | How a document travels (N0b) | **As canonical Extended JSON text, one row of one cell per document,** with the result's shape (rows or documents) from the cursor. See [ADR 0006](adr/0006-documents-as-extended-json-text.md). | Paging, cancelling, the history and the engine's events stay as they are. The console flattens documents, so no driver repeats it. |
 | Where documents are read (N0b) | **A crate of their own, `dbrover-document`,** with DbRover's own JSON reader, which keeps fields in order and numbers as written, rather than `serde_json::Value`. | One tree for documents, SQL JSON columns and Redis's JSON. `serde_json` reads numbers into `f64` or 64-bit integers, which would change `1.10` to `1.1`, and its `arbitrary_precision` would change every crate's JSON numbers. |
-| Run to file and table exports of documents (N0b) | **Left to N2:** they write rows as the cursor gives them, before any column of a document is known. | N0b exports documents from the grid: what is loaded. N2 adds writing every document to JSON and JSON Lines straight from the cursor. |
+| Run to file and table exports of documents (N0b) | **Left to N2,** which built them as JSON and JSON Lines only: they write rows as the cursor gives them, before any column of a document is known. | N0b exports documents from the grid: what is loaded. N2 adds writing every document to JSON and JSON Lines straight from the cursor. |
 | Engines without a read-only session (N0a) | **The login is the guard:** SQL Server and ClickHouse data sources are served to MCP clients, for reading, only with an MCP login. Changes through `execute` wait for a transaction DbRover can open on them. | W11's plan for SQL Server, here for every such engine with logins. W11 still gives ClickHouse its `readonly` setting and DuckDB its read-only file, which are stronger. |
 
 ## Risks

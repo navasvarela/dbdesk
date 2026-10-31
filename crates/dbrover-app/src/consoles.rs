@@ -489,10 +489,9 @@ impl Consoles {
         }
     }
 
-    /// The SQL dialect of the console's data source, if the console is open and its
-    /// language has one.
-    pub fn dialect(&self, key: &ConsoleKey) -> Option<dbrover_sql::Dialect> {
-        self.open.get(key)?.dialect()
+    /// The language of the console's data source, if the console is open.
+    pub fn language(&self, key: &ConsoleKey) -> Option<QueryLanguage> {
+        self.open.get(key).map(QueryConsole::language)
     }
 
     /// A new run's id, for a run the app starts itself: a table's export.

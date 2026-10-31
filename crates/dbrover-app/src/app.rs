@@ -1773,7 +1773,14 @@ impl DbRoverApp {
         let Some(run) = self.consoles.statement_to_file(&console) else {
             return;
         };
-        let Some(dialect) = self.consoles.dialect(&console) else {
+        let Some(language) = self.consoles.language(&console) else {
+            return;
+        };
+        let Some(shape) = run
+            .statements
+            .first()
+            .and_then(|statement| language.result_shape(&statement.sql))
+        else {
             return;
         };
         let preview = ExportPreview {
@@ -1781,7 +1788,11 @@ impl DbRoverApp {
             sample: Vec::new(),
             document_sample: Vec::new(),
             loaded: 0,
-            source: dbrover_export::RowSource::untabled(dialect),
+            source: dbrover_export::RowSource {
+                dialect: language.dialect(),
+                table: None,
+                shape,
+            },
         };
         let subject = ExportSubject::Statement { console, run };
         self.export_dialog = Some(ExportDialog::new(subject, preview, &self.export_choices));

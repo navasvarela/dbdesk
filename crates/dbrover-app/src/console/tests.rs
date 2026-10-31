@@ -509,6 +509,28 @@ mod test_language {
         );
     }
 
+    /// ⌥⌘E on a MongoDB `find` runs it with `.explain("executionStats")`; a command with no
+    /// plan to show, such as a count, is left alone.
+    #[test]
+    fn explains_a_mongodb_find_at_the_cursor() {
+        let mut console = console_in(
+            "db.orders.countDocuments()\ndb.orders.find({a: 1})",
+            QueryLanguage::Mongo,
+        );
+        console.selection = 40..40;
+        let explained: Vec<String> = console
+            .statements_to_run(RunScope::Explain)
+            .into_iter()
+            .map(|statement| statement.sql)
+            .collect();
+        assert_eq!(
+            explained,
+            ["db.orders.find({a: 1}).explain(\"executionStats\")"]
+        );
+        console.selection = 3..3;
+        assert!(console.statements_to_run(RunScope::Explain).is_empty());
+    }
+
     #[test]
     fn completes_mongodb_methods_as_written_whatever_the_case_typed() {
         let mut console = console_in("db.orders.insertO", QueryLanguage::Mongo);

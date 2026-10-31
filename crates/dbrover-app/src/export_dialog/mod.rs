@@ -33,6 +33,10 @@ const DIALOG_WIDTH: f32 = 560.0;
 const PREVIEW_HEIGHT: f32 = 180.0;
 const FORMAT_LIST_HEIGHT: f32 = 400.0;
 
+/// Why a table format can't write documents read straight from the database.
+const DOCUMENTS_AS_JSON: &str =
+    "Documents read from the database are written whole: choose JSON or JSON Lines";
+
 /// The format and every format's options used last: conveniences rather than configuration,
 /// so they live with the window layout rather than in `settings.toml`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -247,12 +251,18 @@ impl ExportDialog {
             return;
         }
         if self.preview.source.shape == ResultShape::Documents {
-            // Every document would come from the cursor as rows of one cell; N2 writes them.
-            self.rows = ExportedRows::Loaded;
-            ui.label(format!(
-                "Loaded documents: {}, as sorted and filtered here",
-                self.preview.loaded
-            ));
+            ui.vertical(|ui| {
+                let loaded = format!(
+                    "Loaded documents: {}, as sorted and filtered here",
+                    self.preview.loaded
+                );
+                ui.radio_value(&mut self.rows, ExportedRows::Loaded, loaded);
+                ui.radio_value(&mut self.rows, ExportedRows::All, "All documents")
+                    .on_hover_text(
+                        "Runs the command again and writes every document it returns, as JSON \
+                         or JSON Lines",
+                    );
+            });
             return;
         }
         ui.vertical(|ui| {
@@ -266,6 +276,22 @@ impl ExportDialog {
                     "Runs the statement again and writes every row it returns, a page at a time",
                 );
         });
+    }
+
+    /// Whether the documents come straight from the database rather than from the grid: Run to
+    /// file, or All documents. They aren't flattened into columns then, so only the JSON
+    /// formats, which write documents whole, can write them.
+    fn documents_from_database(&self) -> bool {
+        self.preview.source.shape == ResultShape::Documents
+            && (matches!(self.subject, ExportSubject::Statement { .. })
+                || self.rows == ExportedRows::All)
+    }
+
+    /// Why `format` can't write these rows when it otherwise could.
+    fn refusal(&self, format: ExportFormat) -> Option<&'static str> {
+        (self.documents_from_database()
+            && !matches!(format, ExportFormat::Json | ExportFormat::JsonLines))
+        .then_some(DOCUMENTS_AS_JSON)
     }
 
     /// Whether a table can be named for `INSERT`s of rows from no known table: only rows from a
@@ -287,16 +313,18 @@ impl ExportDialog {
             .height(FORMAT_LIST_HEIGHT)
             .show_ui(ui, |ui| {
                 for choice in export_choices(&self.preview.source) {
-                    let available = choice.spec.is_ok()
-                        || (choice.format == ExportFormat::SqlInsert && self.can_name_table());
+                    let refusal = self.refusal(choice.format);
+                    let available = refusal.is_none()
+                        && (choice.spec.is_ok()
+                            || (choice.format == ExportFormat::SqlInsert && self.can_name_table()));
                     let mut item = ui
                         .add_enabled(
                             available,
                             egui::Button::selectable(current == choice.name, choice.name),
                         )
                         .on_hover_text(choice.description);
-                    if let Err(reason) = &choice.spec {
-                        item = item.on_disabled_hover_text(*reason);
+                    if let Some(reason) = refusal.or(choice.spec.as_ref().err().copied()) {
+                        item = item.on_disabled_hover_text(reason);
                     }
                     if item.clicked() {
                         self.choose(choice.name, choice.format);
@@ -367,6 +395,9 @@ impl ExportDialog {
     /// The format and options chosen, or what is wrong with them.
     fn spec(&self) -> Result<ExportSpec, String> {
         self.texts.problem(self.choices.format)?;
+        if let Some(refusal) = self.refusal(self.choices.format) {
+            return Err(refusal.to_owned());
+        }
         let source = self.source();
         self.choices
             .options
