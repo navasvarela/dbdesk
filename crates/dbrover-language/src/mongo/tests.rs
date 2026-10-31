@@ -386,3 +386,24 @@ fn completes_methods_operators_and_stages_with_what_each_is() {
     assert!(!is_keyword("FIND"));
     assert!(!is_keyword("orders"));
 }
+
+#[test]
+fn open_data_finds_every_document_of_any_collection() {
+    assert_eq!(
+        find_all("shop", "orders", "shop"),
+        "db.getCollection(\"orders\").find({})"
+    );
+    let elsewhere = find_all("logs", "web \"2026\".v1", "shop");
+    assert_eq!(
+        elsewhere,
+        "db.getSiblingDB(\"logs\").getCollection(\"web \\\"2026\\\".v1\").find({})"
+    );
+    let Ok(Command::Call(call)) = parse(&elsewhere) else {
+        panic!("{elsewhere} doesn't parse");
+    };
+    assert_eq!(call.database.as_deref(), Some("logs"));
+    assert_eq!(call.collection.as_deref(), Some("web \"2026\".v1"));
+    assert!(is_plain_name("$match"));
+    assert!(!is_plain_name("a.b"));
+    assert!(!is_plain_name(""));
+}

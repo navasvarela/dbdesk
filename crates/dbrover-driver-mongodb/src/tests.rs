@@ -1,7 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use dbrover_core::conformance;
-use dbrover_core::{MongoUri, Port, ResultShape, Row, ServerConfig, TlsMode};
+use dbrover_core::{
+    ChildrenQuery, MongoUri, NodeKind, Port, ResultShape, Row, ServerConfig, TlsMode,
+};
 
 use super::*;
 
@@ -407,5 +409,172 @@ async fn points_at_what_it_cannot_read() {
     assert_eq!(
         connection.validate("db.orders.find({a: 1})").await.ok(),
         Some(None)
+    );
+}
+
+/// The explorer: each database's collections, views and time-series collections, a
+/// collection's indexes, and the commands that make each again.
+#[tokio::test]
+async fn browses_collections_views_and_indexes() {
+    let Some(server) = test_server() else {
+        return;
+    };
+    let mut connection = server.connect_to("dbrover_explorer").await;
+    run(
+        &mut connection,
+        "db.createCollection('orders', {validator: {$jsonSchema: {required: ['status']}}})",
+    )
+    .await;
+    run(
+        &mut connection,
+        "db.orders.insertMany([{status: 'open', created: 1}, {status: 'paid', created: 2}, {status: 'open', created: 3}])",
+    )
+    .await;
+    run(
+        &mut connection,
+        "db.orders.createIndex({status: 1, created: -1}, {unique: true, name: 'status_created'})",
+    )
+    .await;
+    run(
+        &mut connection,
+        "db.createView('open_orders', 'orders', [{$match: {status: 'open'}}])",
+    )
+    .await;
+    run(
+        &mut connection,
+        "db.createCollection('readings', {timeseries: {timeField: 'at'}})",
+    )
+    .await;
+
+    let database = CatalogPath::root().child(NodeKind::Database, "dbrover_explorer");
+    let collections = connection.children(&database).await.expect("collections");
+    let shown: Vec<(&str, Option<&str>, bool)> = collections
+        .iter()
+        .filter(|node| !node.system)
+        .map(|node| {
+            (
+                node.label.as_str(),
+                node.detail.as_deref(),
+                node.has_children,
+            )
+        })
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            ("open_orders", Some("view"), false),
+            ("orders", Some("~3 documents"), true),
+            ("readings", Some("time series"), true),
+        ]
+    );
+    let orders = database.child(NodeKind::Collection, "orders");
+    let indexes = connection.children(&orders).await.expect("indexes");
+    let shown: Vec<(&str, Option<&str>)> = indexes
+        .iter()
+        .map(|node| (node.label.as_str(), node.detail.as_deref()))
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            ("_id_", Some("{_id: 1}")),
+            ("status_created", Some("{status: 1, created: -1} · unique")),
+        ]
+    );
+    let definition = connection.definition(&orders).await.expect("definition");
+    assert_eq!(
+        definition,
+        concat!(
+            "db.createCollection(\"orders\", {validator: {$jsonSchema: {required: [\"status\"]}}});\n",
+            "db.getCollection(\"orders\").createIndex({status: 1, created: -1}, ",
+            "{name: \"status_created\", unique: true});\n",
+        )
+    );
+    let view = connection
+        .definition(&database.child(NodeKind::Collection, "open_orders"))
+        .await
+        .expect("the view's definition");
+    assert_eq!(
+        view,
+        "db.createView(\"open_orders\", \"orders\", [{$match: {status: \"open\"}}]);\n"
+    );
+    // What Show definition gives runs again as written.
+    run(&mut connection, "db.dropDatabase()").await;
+    for command in definition.lines().chain(view.lines()) {
+        run(&mut connection, command.trim_end_matches(';')).await;
+    }
+    assert_eq!(
+        connection.definition(&orders).await.expect("made again"),
+        definition
+    );
+    let nodes = conformance::walk_catalog(&mut connection, 3).await;
+    assert!(
+        nodes
+            .iter()
+            .any(|node| node.path.last().map(|last| last.kind) == Some(NodeKind::Index)),
+        "the walk reaches the indexes"
+    );
+}
+
+/// A database of 1,100 collections lists 1,000 at a time, by name, with the filter applied by
+/// the server.
+#[tokio::test]
+async fn pages_through_a_database_of_many_collections() {
+    let Some(server) = test_server() else {
+        return;
+    };
+    let connection = server.connect_to("dbrover_many").await;
+    let database = connection.client.database("dbrover_many");
+    let mut creating = tokio::task::JoinSet::new();
+    for number in 0..1_100 {
+        let database = database.clone();
+        creating.spawn(async move {
+            database
+                .run_command(doc! { "create": format!("Collection_{number:04}") })
+                .await
+        });
+        if creating.len() >= 16 {
+            creating
+                .join_next()
+                .await
+                .expect("a task")
+                .expect("joined")
+                .expect("created");
+        }
+    }
+    while let Some(created) = creating.join_next().await {
+        created.expect("joined").expect("created");
+    }
+    let mut connection: Box<dyn Connection> = Box::new(connection);
+    let path = CatalogPath::root().child(NodeKind::Database, "dbrover_many");
+    let first = connection
+        .children_page(&path, &ChildrenQuery::first_page(None))
+        .await
+        .expect("the first page");
+    assert_eq!(first.nodes.len(), 1_000);
+    assert_eq!(first.nodes[999].label, "Collection_0999");
+    let next = first.next.expect("a second page");
+    let second = connection
+        .children_page(&path, &ChildrenQuery::first_page(None).after(next))
+        .await
+        .expect("the second page");
+    assert_eq!(second.nodes.len(), 100);
+    assert_eq!(second.next, None);
+    let filtered = connection
+        .children_page(
+            &path,
+            &ChildrenQuery::first_page(Some("collection_105".to_owned())),
+        )
+        .await
+        .expect("filtered");
+    let labels: Vec<&str> = filtered
+        .nodes
+        .iter()
+        .map(|node| node.label.as_str())
+        .collect();
+    assert_eq!(
+        labels,
+        (1050..1060)
+            .map(|n| format!("Collection_{n}"))
+            .collect::<Vec<_>>()
     );
 }

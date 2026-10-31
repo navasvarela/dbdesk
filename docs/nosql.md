@@ -674,14 +674,29 @@ port.
     tests run on 8 locally (8.3.13 when this was built) and on 7.0 in CI;
   - the engine's cursor wrapper didn't pass a result's shape on, so every result of documents
     reached the console as rows, Redis's stream entries included; it does now.
-- **N2·4 — The explorer:** under each database, its collections, views and time-series
+- **N2·4 — The explorer** (built): under each database, its collections, views and time-series
   collections, each with its estimated document count (`estimatedDocumentCount`, never a full
   count), and under a collection its indexes. **Show definition** gives
   `db.createCollection(…)` with the collection's options and validator, and a
   `createIndex(…)` for each index. **Open data** on a collection opens a console with
   `db.getCollection("…").find({})`, run at once. A database with many collections pages as
   N0a's explorer does, by name, with the filter as a `listCollections` filter. Tests: the
-  catalog walk with each kind, the definitions, and paging 2,500 collections.
+  catalog walk with each kind, the definitions, and paging 2,500 collections. How it came out:
+  - a view and a time-series collection are collections in the tree too (`NodeKind::Collection`,
+    as `listCollections` calls them all), told apart by their detail: one node kind with one
+    set of actions, **Open data** and **Show definition** among them. A view has no indexes;
+  - views and time-series collections show no count: each is a pipeline over another
+    collection, so counting one reads every document. Plain collections are counted with
+    `count` and no filter, which reads the collection's metadata, all of a page's at once over
+    the client's pool;
+  - a page lists every name the user may see with `listCollections` and `nameOnly` (cheap even
+    for thousands), sorts them, and reads only the page's own collections' options and counts.
+    The filter is a case-insensitive regular expression on the name, sent to the server;
+  - what **Show definition** gives runs again as written, and the test checks that it does: the
+    shell's syntax is written back from BSON with each value's type (`NumberLong("7")`,
+    `ISODate("…")`), by a writer N2·6's edits use too;
+  - the paging test uses 1,100 collections, enough for two pages, rather than 2,500, since each
+    collection is files of its own on the server and CI time is a budget.
 - **N2·5 — Explain, validate and results to a file:** ⌥⌘E runs the command at the cursor
   through `explain` with `executionStats` and shows the plan as a tree; `validate` plans a read
   with `queryPlanner` verbosity without running it, and checks a write by parsing it alone;

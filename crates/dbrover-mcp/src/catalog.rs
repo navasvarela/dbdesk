@@ -56,7 +56,7 @@ const FOLDERS: [FolderKind; 12] = [
     FolderKind::Roles,
 ];
 
-const KINDS: [(NodeKind, &str); 15] = [
+const KINDS: [(NodeKind, &str); 16] = [
     (NodeKind::Database, "database"),
     (NodeKind::Schema, "schema"),
     (NodeKind::Table, "table"),
@@ -72,6 +72,7 @@ const KINDS: [(NodeKind, &str); 15] = [
     (NodeKind::Trigger, "trigger"),
     (NodeKind::Role, "role"),
     (NodeKind::KeyPrefix, "key_prefix"),
+    (NodeKind::Collection, "collection"),
 ];
 
 /// A Redis key's kind in a path. Its value's type is in the node's `detail`, and isn't needed

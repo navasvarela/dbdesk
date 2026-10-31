@@ -123,15 +123,29 @@ A ClickHouse table's primary key is its sort order rather than an index, so it s
 table's definition, not under **indexes**. Functions aren't listed: a ClickHouse function belongs
 to the whole server, not to one database.
 
-**MongoDB**, where the explorer lists the databases the user may see, `admin`, `config` and
-`local` among the system ones:
+**MongoDB**, where the explorer lists the databases the user may see (`admin`, `config` and
+`local` are system ones), and in each its collections:
 
 ```text
 data source
 └─ shop                     a database
+   ├─ open_orders           a view
+   ├─ orders                a collection, with its estimated number of documents
+   │  ├─ _id_               its indexes, each with its keys
+   │  └─ status_created     {status: 1, created: -1} · unique
+   └─ readings              a time-series collection
 ```
 
-Collections aren't listed in the tree yet; run `show collections` in a console.
+The number of documents is the server's estimate, from the collection's metadata: DbRover never
+counts a collection by reading it. Views and time-series collections show none, since counting
+them would read every document. Collections are listed by name, 1,000 at a time, with **Load
+more…** after them; in a database with more, the filter box searches every collection's name on
+the server. `system.` collections are system ones.
+
+**Open data** on a collection or a view opens a console with
+`db.getCollection("orders").find({})` and runs it, in the collection's database. **Show
+definition** gives the commands that make it again: `db.createCollection(…)` with its options and
+validator, or `db.createView(…)`, then a `createIndex(…)` for each index but `_id`'s.
 
 **Redis / Valkey**, where the server's numbered databases hold keys, grouped by the data
 source's **Key separator** (`:` unless you set another):

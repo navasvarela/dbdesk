@@ -78,6 +78,44 @@ pub(crate) fn split(script: &str) -> Vec<Range<usize>> {
     commands
 }
 
+/// Whether `name` is written bare in the shell, as a field's name in an object or a collection's
+/// after `db.`: a JavaScript name, such as `orders` or `$match`.
+pub fn is_plain_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(lexer::is_name_start) && chars.all(lexer::is_name_part)
+}
+
+/// `text` as a string the shell reads back the same, in double quotes.
+pub fn quote(text: &str) -> String {
+    let mut quoted = String::with_capacity(text.len() + 2);
+    quoted.push('"');
+    for c in text.chars() {
+        match c {
+            '"' => quoted.push_str("\\\""),
+            '\\' => quoted.push_str("\\\\"),
+            '\n' => quoted.push_str("\\n"),
+            '\r' => quoted.push_str("\\r"),
+            '\t' => quoted.push_str("\\t"),
+            c if c.is_control() => quoted.push_str(&format!("\\u{:04x}", u32::from(c))),
+            c => quoted.push(c),
+        }
+    }
+    quoted.push('"');
+    quoted
+}
+
+/// What **Open data** runs on a collection: a `find` of every document of `collection` in
+/// `database`, for a console whose database is `own`. Names are always passed as strings, so
+/// one with a dot, a dash or a space reads the same.
+pub fn find_all(database: &str, collection: &str, own: &str) -> String {
+    let target = if database == own {
+        "db".to_owned()
+    } else {
+        format!("db.getSiblingDB({})", quote(database))
+    };
+    format!("{target}.getCollection({}).find({{}})", quote(collection))
+}
+
 /// The one command `text` holds, read.
 fn single(text: &str) -> Result<Command, Unclassified> {
     match split(text).as_slice() {

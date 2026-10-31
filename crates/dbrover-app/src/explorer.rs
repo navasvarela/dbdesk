@@ -908,8 +908,8 @@ fn node_menu(
     if holds_rows && widgets::menu_item(ui, icons::TABLE, "Open data").clicked() {
         actions.push(ExplorerAction::OpenData(id, node.path.clone()));
     }
-    let is_key = matches!(node.kind(), Some(NodeKind::Key(_)));
-    if is_key && widgets::menu_item(ui, icons::TABLE, "Open data").clicked() {
+    let is_read_whole = matches!(node.kind(), Some(NodeKind::Key(_) | NodeKind::Collection));
+    if is_read_whole && widgets::menu_item(ui, icons::TABLE, "Open data").clicked() {
         actions.push(ExplorerAction::OpenData(id, node.path.clone()));
     }
     if holds_rows && widgets::menu_item(ui, icons::EXPORT, "Export data…").clicked() {

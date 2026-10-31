@@ -48,6 +48,9 @@ pub enum NodeKind {
     /// Redis keys that share a prefix up to a separator (`user:` for `user:42` and `user:43`),
     /// grouped as a folder is. Its path segment's name is the whole prefix, separator included.
     KeyPrefix,
+    /// A MongoDB collection of documents: a plain one, a view or a time-series collection, as
+    /// the node's detail says.
+    Collection,
 }
 
 /// The type of a Redis key's value, as `TYPE` answers.
@@ -245,8 +248,8 @@ impl CatalogPath {
             NodeKind::Column | NodeKind::Constraint | NodeKind::Trigger | NodeKind::Role => {
                 Some(quote(&object.name))
             }
-            // A key's name as a command takes it: it belongs to no schema.
-            NodeKind::Key(_) => Some(object.name.clone()),
+            // A key's or a collection's name as a command takes it: it belongs to no schema.
+            NodeKind::Key(_) | NodeKind::Collection => Some(object.name.clone()),
             NodeKind::Database | NodeKind::Schema | NodeKind::Folder(_) | NodeKind::KeyPrefix => {
                 None
             }
