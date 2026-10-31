@@ -218,8 +218,11 @@ services:
   # and an authority to trust, though it asks clients for no certificate.
   # The health check connects to the container's own address, which the image's first-start
   # server (bound to 127.0.0.1 while it creates the user) doesn't answer on.
+  # The image's tag comes from DBROVER_MONGO_TAG, 8 unless set: CI sets 7.0, since every
+  # MongoDB 8 refuses to start on Linux kernels 6.19 to 7.0.13 (its TCMalloc breaks on their
+  # rseq; SERVER-121912), which GitHub's Ubuntu runners have in October 2026.
   mongo:
-    image: mongo:8
+    image: mongo:${DBROVER_MONGO_TAG:-8}
     ports:
       - "57017:27017"
     environment:

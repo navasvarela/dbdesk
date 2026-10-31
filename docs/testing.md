@@ -76,7 +76,7 @@ Each driver crate runs the suite against its own backend:
   nothing stops. A test also checks that the command table `dbrover-language` ships classifies
   every command as each server's `COMMAND INFO` flags it, and prints the table's lines for any
   that differ. Dragonfly isn't in CI: it is tried by hand before a release.
-- **MongoDB**: the `mongo` container (MongoDB 8, port 57017, with access control on and TLS on
+- **MongoDB**: the `mongo` container (MongoDB 8 locally and 7.0 in CI, port 57017, with access control on and TLS on
   the same port, `preferTLS`, with the `postgres-tls` certificate), skipped when
   `DBROVER_TEST_MONGODB_URL` is unset. Each test works in a database of its own, dropped first.
   It runs `check_lifecycle`, `check_connect_failure`, `walk_catalog`, `check_invalid_path` and
@@ -84,7 +84,10 @@ Each driver crate runs the suite against its own backend:
   JavaScript, ended by `killOp`. `check_lost` doesn't apply: the driver's pool opens new
   connections by itself, so a connection is never left lost. Besides: paging through 1,200
   documents, each method's result, every BSON type read back as written, TLS, a tunnel and a
-  connection string.
+  connection string. CI runs MongoDB 7.0 (`DBROVER_MONGO_TAG`): every MongoDB 8 refuses to
+  start on Linux kernels 6.19 to 7.0.13, which GitHub's Ubuntu runners have in October 2026
+  ([SERVER-121912](https://jira.mongodb.org/browse/SERVER-121912)). Move CI back to 8 once
+  the runners' kernel is 7.0.14 or later.
 - **SQL Server**: the `sqlserver` container (2022, port 51433), skipped when
   `DBROVER_TEST_SQLSERVER_URL` is unset. Its image is x86-64 only: native on CI's Linux runner,
   emulated (slowly, and it can crash) by Docker on an Apple-silicon Mac. The image can't

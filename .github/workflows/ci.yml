@@ -148,6 +148,10 @@ jobs:
       # end of every container's log, which is otherwise lost with the runner.
       - if: env.CODE != 'false' && runner.os == 'Linux'
         name: Start the database servers
+        # MongoDB 8 won't start on the runners' kernel; see the mongo service in
+        # docker-compose.yml.
+        env:
+          DBROVER_MONGO_TAG: "7.0"
         run: |
           docker compose up -d --wait || { docker compose logs --tail 40; exit 1; }
           grep -E '^[A-Z_]+=' test-servers.env >> "$GITHUB_ENV"

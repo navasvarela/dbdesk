@@ -668,6 +668,10 @@ port.
     server shows as a failed command, or as a lost connection when no server can be reached;
   - `verify-full` through an SSH tunnel is refused (see [Decisions](#decisions)); the driver
     waits 15 seconds for a server rather than its own 30;
+  - CI runs MongoDB 7.0, not 8: every MongoDB 8 refuses to start on Linux kernels 6.19 to
+    7.0.13, the GitHub Ubuntu runners' in October 2026 (its TCMalloc breaks on their `rseq`,
+    SERVER-121912). The compose file takes the tag from `DBROVER_MONGO_TAG`, 8 unless set, so
+    tests run on 8 locally (8.3.13 when this was built) and on 7.0 in CI;
   - the engine's cursor wrapper didn't pass a result's shape on, so every result of documents
     reached the console as rows, Redis's stream entries included; it does now.
 - **N2·4 — The explorer:** under each database, its collections, views and time-series
