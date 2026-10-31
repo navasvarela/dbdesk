@@ -1101,6 +1101,62 @@ fn runs_mongodb_commands_and_shows_documents() {
     finish_run(&mut engine, 1);
 }
 
+/// Run to file of a `find`: every document, past the first page, written as JSON Lines as the
+/// cursor reads them, each line the document as the grid would have it. Needs
+/// `DBROVER_TEST_MONGODB_URL`; skipped without it.
+#[test]
+fn runs_a_mongodb_find_straight_to_a_file() {
+    let Some((config, password)) = mongo_test_server("dbrover_engine_file") else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    engine.expect_started(vec![]);
+    let data_source = DataSource {
+        id: DataSourceId::generate(),
+        name: "shop".to_owned(),
+        color: None,
+        safety: dbrover_core::SafetyLevel::Normal,
+        project: None,
+        mcp_login: None,
+        config: ConnectionConfig::Mongo(config),
+    };
+    let id = data_source.id;
+    engine.send(Command::SaveDataSource {
+        data_source,
+        password: PasswordUpdate::Set(password),
+        ssh_secret: PasswordUpdate::Keep,
+    });
+    assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
+    let documents: Vec<String> = (0..1_200).map(|n| format!("{{n: {n}}}")).collect();
+    let insert = format!("db.docs.insertMany([{}])", documents.join(", "));
+    execute(&engine, id, 1, &["db.docs.drop()", &insert]);
+    finish_run(&mut engine, 1);
+
+    let path = dir.path().join("docs.jsonl");
+    engine.send(Command::RunToFile {
+        console: CONSOLE,
+        data_source: id,
+        export: dbrover_engine::ExportAll {
+            run: RunId(2),
+            sql: "db.docs.find({}, {_id: 0}).sort({n: 1})".to_owned(),
+            parameters: dbrover_sql::ParameterValues::default(),
+            path: path.clone(),
+            spec: dbrover_export::ExportSpec::JsonLinesDocuments,
+        },
+    });
+    let result = loop {
+        if let Event::ExportFinished { result, .. } = next_run_event(&mut engine) {
+            break result;
+        }
+    };
+    assert_eq!(result, Ok(1_200));
+    let written = std::fs::read_to_string(&path).unwrap();
+    let lines: Vec<&str> = written.lines().collect();
+    assert_eq!(lines.len(), 1_200);
+    assert_eq!(lines[700], r#"{"n":{"$numberInt":"700"}}"#);
+}
+
 /// Grid edits on DuckDB: standard quoting, and, since DuckDB has no savepoints, a refusal
 /// inside a transaction the console opened rather than a failed edit only `ROLLBACK` could
 /// undo.

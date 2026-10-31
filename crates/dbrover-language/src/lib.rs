@@ -18,7 +18,7 @@ mod test_language;
 
 use std::ops::Range;
 
-use dbrover_core::{DriverKind, Quoting};
+use dbrover_core::{DriverKind, Quoting, ResultShape, ServerInfo};
 use dbrover_sql::Dialect;
 pub use dbrover_sql::{Analysis, NamedSchemas, StatementKind, Token, TokenKind, Unclassified};
 
@@ -30,6 +30,15 @@ pub enum EditsRun {
     /// One command at a time, each taking effect as it runs: Redis has no transaction to undo
     /// the ones before a command that fails.
     OneByOne,
+}
+
+/// A command made to show its plan rather than run it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Explained {
+    pub text: String,
+    /// Where the original command starts in `text`, so an error's position can be moved back
+    /// onto it.
+    pub prefix_len: usize,
 }
 
 /// The language of a data source's console, of the MCP server's statements, and of the
@@ -89,6 +98,53 @@ impl QueryLanguage {
         match self {
             Self::Redis => redis::KeyView::of(command),
             Self::Sql(_) | Self::Mongo => None,
+            #[cfg(any(test, feature = "test-language"))]
+            Self::Test => None,
+        }
+    }
+
+    /// Whether the language has a way to show a command's plan.
+    pub fn can_explain(self) -> bool {
+        self.explain_style().is_some()
+    }
+
+    /// `command` made to show its plan rather than run, on `server`: SQL's `EXPLAIN` prefix,
+    /// or a MongoDB `find` or `aggregate` with `.explain("executionStats")` after it. `None`
+    /// for a command, or a language, that has no plan to show.
+    pub fn explain(self, command: &str, server: Option<&ServerInfo>) -> Option<Explained> {
+        match self.explain_style()? {
+            ExplainStyle::Prefix(dialect) => {
+                let prefix = dialect.explain_prefix(server);
+                Some(Explained {
+                    text: format!("{prefix}{command}"),
+                    prefix_len: prefix.len(),
+                })
+            }
+            ExplainStyle::MongoShell => mongo::explain(command).map(|text| Explained {
+                text,
+                prefix_len: 0,
+            }),
+        }
+    }
+
+    fn explain_style(self) -> Option<ExplainStyle> {
+        match self {
+            Self::Sql(dialect) => Some(ExplainStyle::Prefix(dialect)),
+            Self::Mongo => Some(ExplainStyle::MongoShell),
+            Self::Redis => None,
+            #[cfg(any(test, feature = "test-language"))]
+            Self::Test => None,
+        }
+    }
+
+    /// What `command` returns, as Run to file must know before it runs: rows for SQL, and
+    /// documents for a MongoDB `find` or `aggregate`. `None` for a command whose result DbRover
+    /// doesn't write straight to a file.
+    pub fn result_shape(self, command: &str) -> Option<ResultShape> {
+        match self {
+            Self::Sql(_) => Some(ResultShape::Rows),
+            Self::Mongo => mongo::returns_documents(command).then_some(ResultShape::Documents),
+            Self::Redis => None,
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,
         }
@@ -220,6 +276,15 @@ impl QueryLanguage {
             }),
         }
     }
+}
+
+/// How a language shows a command's plan.
+#[derive(Debug, Clone, Copy)]
+enum ExplainStyle {
+    /// A prefix before the statement, the dialect's own.
+    Prefix(Dialect),
+    /// `.explain("executionStats")` after a `find` or `aggregate`.
+    MongoShell,
 }
 
 impl From<DriverKind> for QueryLanguage {

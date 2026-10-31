@@ -289,13 +289,46 @@ impl Connection for MongoConnection {
         Ok(TableConstraints::default())
     }
 
-    /// Reads the command without sending it.
+    /// Reads the command, and has the server plan a read without running it: `explain` with
+    /// `queryPlanner` verbosity catches an unknown operator or a malformed pipeline. A write
+    /// is only read, since DbRover doesn't send it until it runs.
     async fn validate(&mut self, text: &str) -> Result<Option<Rejection>, DriverError> {
-        Ok(mongo::parse(text).err().map(|error| Rejection {
-            position: Some(error.range.start),
-            message: error.message,
-            kind: RejectionKind::Syntax,
-        }))
+        let call = match mongo::parse(text) {
+            Ok(Command::Call(call)) => call,
+            Ok(Command::Use(_) | Command::Show(_)) => return Ok(None),
+            Err(error) => {
+                return Ok(Some(Rejection {
+                    position: Some(error.range.start),
+                    message: error.message,
+                    kind: RejectionKind::Syntax,
+                }));
+            }
+        };
+        let position = Some(call.method.range.start);
+        let plan = match plan::call(&call, &self.database) {
+            Ok(plan) => plan,
+            Err(error) => {
+                return Ok(Some(Rejection {
+                    position,
+                    message: error.to_string(),
+                    kind: RejectionKind::Other,
+                }));
+            }
+        };
+        let Some(read) = plan::plannable_read(&plan.step) else {
+            return Ok(None);
+        };
+        let explain =
+            plan::explain_command(read.clone(), Some(Bson::String("queryPlanner".to_owned())));
+        match run_command(self.client.database(&plan.database), explain).await {
+            Ok(_) => Ok(None),
+            Err(DriverError::Statement { source, .. }) => Ok(Some(Rejection {
+                position,
+                message: source.to_string(),
+                kind: RejectionKind::Other,
+            })),
+            Err(error) => Err(error),
+        }
     }
 
     async fn transaction_status(&mut self) -> Result<TransactionStatus, DriverError> {

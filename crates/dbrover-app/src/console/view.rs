@@ -302,11 +302,20 @@ fn perform(console: &QueryConsole, action: Action, actions: &mut Vec<ConsoleActi
 /// Actions with no meaning outside SQL: hidden and disabled in a console whose language has no
 /// SQL dialect.
 fn needs_sql(action: Action) -> bool {
-    matches!(action, Action::Explain | Action::Format | Action::FormatAll)
+    matches!(action, Action::Format | Action::FormatAll)
+}
+
+/// Whether the console's language has `action` at all: SQL's formatting, and a plan to explain
+/// in SQL and MongoDB. Hidden and disabled where it doesn't.
+fn offered(console: &QueryConsole, action: Action) -> bool {
+    match action {
+        Action::Explain => console.language().can_explain(),
+        action => !needs_sql(action) || console.dialect().is_some(),
+    }
 }
 
 fn is_enabled(console: &QueryConsole, action: Action) -> bool {
-    if needs_sql(action) && console.dialect().is_none() {
+    if !offered(console, action) {
         return false;
     }
     match action {
@@ -412,7 +421,7 @@ fn toolbar(
             ("History", Action::ShowHistory),
             ("Format", Action::Format),
         ] {
-            if needs_sql(button.1) && console.dialect().is_none() {
+            if !offered(console, button.1) {
                 continue;
             }
             action_button(ui, console, keymap, button, actions);

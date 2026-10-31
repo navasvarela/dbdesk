@@ -116,6 +116,27 @@ pub fn find_all(database: &str, collection: &str, own: &str) -> String {
     format!("{target}.getCollection({}).find({{}})", quote(collection))
 }
 
+/// The cursor a `find` or an `aggregate` reads, rather than its plan: what `command` must be
+/// for its result to be explained, or written straight to a file.
+fn reads_a_cursor(command: &Command) -> bool {
+    let Command::Call(call) = command else {
+        return false;
+    };
+    matches!(call.method.name.as_str(), "find" | "aggregate") && call.chained("explain").is_none()
+}
+
+/// `command`, a `find` or an `aggregate`, with `.explain("executionStats")` after it, which
+/// runs it and shows its plan with what each stage did; `None` for any other command.
+pub fn explain(command: &str) -> Option<String> {
+    let parsed = parse(command).ok()?;
+    reads_a_cursor(&parsed).then(|| format!("{}.explain(\"executionStats\")", command.trim_end()))
+}
+
+/// Whether `command` returns documents a cursor reads: a `find` or an `aggregate`.
+pub fn returns_documents(command: &str) -> bool {
+    parse(command).is_ok_and(|parsed| reads_a_cursor(&parsed))
+}
+
 /// The one command `text` holds, read.
 fn single(text: &str) -> Result<Command, Unclassified> {
     match split(text).as_slice() {

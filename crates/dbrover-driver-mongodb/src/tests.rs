@@ -578,3 +578,58 @@ async fn pages_through_a_database_of_many_collections() {
             .collect::<Vec<_>>()
     );
 }
+
+/// ⌥⌘E's command shows the plan with what each stage did, and a read's mistakes are caught by
+/// planning it, before it runs.
+#[tokio::test]
+async fn explains_and_validates_reads_on_the_server() {
+    let Some(server) = test_server() else {
+        return;
+    };
+    let mut connection = server.connect_to("dbrover_explain").await;
+    fill(&mut connection, "numbers", 10).await;
+    for command in [
+        "db.numbers.find({n: {$gt: 4}}).sort({n: 1})",
+        "db.numbers.aggregate([{$match: {n: {$gt: 4}}}, {$group: {_id: null, total: {$sum: '$n'}}}])",
+    ] {
+        let explained = dbrover_language::QueryLanguage::Mongo
+            .explain(command, None)
+            .expect("an explained command");
+        let plan = value(&mut connection, &explained.text)
+            .await
+            .expect("a plan");
+        assert!(plan.contains("executionStats"), "{command}: {plan}");
+    }
+    let unknown = connection
+        .validate("db.numbers.find({n: {$gtx: 1}})")
+        .await
+        .expect("validated");
+    assert!(
+        unknown.is_some_and(|rejection| rejection.message.contains("$gtx")),
+        "an unknown operator is caught"
+    );
+    let pipeline = connection
+        .validate("db.numbers.aggregate([{$nosuchstage: {}}])")
+        .await
+        .expect("validated");
+    assert!(pipeline.is_some(), "an unknown stage is caught");
+    assert_eq!(
+        connection
+            .validate("db.numbers.find({n: {$gt: 1}})")
+            .await
+            .expect("validated"),
+        None
+    );
+    // A write is only read: nothing is sent, so nothing is deleted.
+    assert_eq!(
+        connection
+            .validate("db.numbers.deleteMany({})")
+            .await
+            .expect("validated"),
+        None
+    );
+    assert_eq!(
+        value(&mut connection, "db.numbers.countDocuments()").await,
+        Some("10".to_owned())
+    );
+}
