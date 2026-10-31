@@ -2,10 +2,10 @@
 
 # DbRover
 
-**Eight databases, one native app.**
+**Nine databases, one native app.**
 
 DbRover is a desktop database tool written in Rust. It connects to PostgreSQL, SQLite, MySQL,
-MariaDB, SQL Server, DuckDB, ClickHouse and Redis (with Valkey and Dragonfly) today, and
+MariaDB, SQL Server, DuckDB, ClickHouse, Redis (with Valkey and Dragonfly) and MongoDB today, and
 support for Oracle is planned. It is a
 learning project first and a personal daily driver second: the goal is a tool small enough to
 understand end to end and easy to bend to my own workflow.
@@ -67,7 +67,7 @@ shows them.
 
 The tests of server engines need a server and are skipped without one. To run them, start the
 bundled containers (PostgreSQL, again with TLS required, MySQL, MariaDB, SQL Server, ClickHouse,
-Redis, Valkey, and an SSH server for the tunnel tests) and
+Redis, Valkey, MongoDB, and an SSH server for the tunnel tests) and
 load their URLs from `test-servers.env`:
 
 ```bash
@@ -91,7 +91,7 @@ Passwords are in the macOS Keychain under the service `dbrover`.
 - **Log console**: one place for connection lifecycle events, query timings, server notices and errors.
 
 Engines: **PostgreSQL**, **SQLite**, **MySQL and MariaDB**, **SQL Server**, **DuckDB**,
-**ClickHouse** and **Redis, Valkey and Dragonfly**, with Oracle and others planned.
+**ClickHouse**, **Redis, Valkey and Dragonfly** and **MongoDB**, with Oracle and others planned.
 UI: **egui** (via `eframe`) with **egui_dock** for dockable panels.
 
 ## Documents

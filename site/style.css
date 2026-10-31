@@ -38,6 +38,7 @@
   --duckdb: #fff000;
   --clickhouse: #ffcc01;
   --redis: #ff6e63;
+  --mongodb: #6cc66d;
   --glow-strength: 0.22;
   --shadow: 0 24px 60px rgb(0 0 0 / 0.4);
   --radius: 12px;
@@ -66,6 +67,7 @@
     --duckdb: #8a7800;
     --clickhouse: #9a6a00;
     --redis: #d82c20;
+    --mongodb: #3b8a3c;
     --glow-strength: 0.16;
     --shadow: 0 24px 60px rgb(29 31 38 / 0.18);
     color-scheme: light;
@@ -363,6 +365,7 @@ h3 { margin: 0 0 8px; font-size: 1.05rem; font-weight: 600; }
 .engine-logo.duckdb { --logo: url("assets/databases/duckdb.svg"); background: var(--duckdb); }
 .engine-logo.clickhouse { --logo: url("assets/databases/clickhouse.svg"); background: var(--clickhouse); }
 .engine-logo.redis { --logo: url("assets/databases/redis.svg"); background: var(--redis); }
+.engine-logo.mongodb { --logo: url("assets/databases/mongodb.svg"); background: var(--mongodb); }
 .planned { color: var(--text-weak); margin: 16px 0 0; }
 
 /* Downloads for every platform, then how updates and checksums work. */

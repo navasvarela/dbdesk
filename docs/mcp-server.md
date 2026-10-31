@@ -119,9 +119,10 @@ goes through up to three layers, and the strongest layer the engine offers decid
      does.
    - **SQL Server and later engines:** each engine's plan states its equivalent before its MCP
      support is switched on. For an engine without a read-only mode, the equivalent is the MCP
-     login itself (N0a, [nosql.md](nosql.md)): SQL Server, ClickHouse and Redis data sources are
+     login itself (N0a, [nosql.md](nosql.md)): SQL Server, ClickHouse, Redis and MongoDB data sources are
      served for reading only, and only through an MCP login whose grants allow nothing but
-     reading; on Redis, an ACL user with `+@read` (N1). `list_objects` pages a level too large
+     reading; on Redis, an ACL user with `+@read` (N1); on MongoDB, a user with the `read`
+     role (N2), and `list_objects` lists its databases and collections. `list_objects` pages a level too large
      to list at once, 1,000 objects at a time, with a filter the database applies.
 3. **The database's own grants: the recommended setup for anything beyond reading.**
    - A data source can carry a **separate MCP login**: another user name and password, used only

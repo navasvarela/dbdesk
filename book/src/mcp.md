@@ -86,7 +86,7 @@ Each statement it runs shows up in the data source's **History**, marked **MCP**
 | `list_objects` | One level of a data source's catalog, as the explorer shows it. Each object comes with the `path` that lists its children. A large level, such as a Redis database's keys or a schema of thousands of tables, comes 1,000 objects at a time, with a `next` to ask for the rest; a `filter` keeps the objects whose name contains it, searched by the database. |
 | `describe_table` | A table's columns with their types, its primary key, indexes and constraints. |
 | `get_definition` | The source of a view, function, trigger or index. |
-| `query` | Runs one statement that only reads (on Redis, one command, such as `HGETALL`), and returns its rows as text: as JSON, or with `format` set to `csv`, `markdown` or `jsonl`, as that text, ready to save or paste. |
+| `query` | Runs one statement that only reads (on Redis, one command, such as `HGETALL`; on MongoDB, one shell command, such as `db.orders.find({status: "open"})`, whose documents come as canonical Extended JSON), and returns its rows as text: as JSON, or with `format` set to `csv`, `markdown` or `jsonl`, as that text, ready to save or paste. |
 | `explain` | Shows how the database would run one read statement, without running it. |
 | `execute` | Runs statements that change something, in one transaction. Only offered when the project allows `write`, `schema` or `admin`. |
 
@@ -146,7 +146,7 @@ Project settings warns when a project allows changes and one of its data sources
 login.
 
 SQL Server has no read-only transaction, DbRover doesn't use ClickHouse's read-only setting
-yet, and Redis has no read-only session at all, so their data sources are served to MCP clients
+yet, and Redis and MongoDB have no read-only session at all, so their data sources are served to MCP clients
 only through an [MCP login](#the-mcp-login) whose grants allow nothing but reading. Without one, a data source
 isn't served, and the server's log says why when it starts; Project settings lists it too. They
 are served for reading only: `execute` is refused on them, whatever the project allows, since
@@ -199,6 +199,18 @@ without it, they show the data source's own. DbRover classifies each command by 
 server gives it, so a command that writes is refused before it is sent, and the ACL refuses
 it again. Scripts (`EVAL`, `FCALL`) count as writes, so only their read-only forms (`EVAL_RO`,
 `FCALL_RO`) run.
+
+On MongoDB, a user with only the `read` role on the data source's database:
+
+```text
+db.adminCommand({createUser: "assistant", pwd: "…", roles: [{role: "read", db: "shop"}]})
+```
+
+Leave **Auth database** empty when the user is made in `admin`, as here. DbRover classifies each
+command by its method, so `insertOne` or `deleteMany` is refused before it is sent, and the
+server refuses it again; `$where`, `$function` and `$accumulator`, which run JavaScript, and any
+`db.runCommand` outside a short list of reads count as administration, which an MCP project
+never allows.
 
 The MCP password is kept in the keychain under its own entry, separate from the data source's
 password. If it is missing, the server refuses to connect; it never falls back to the data

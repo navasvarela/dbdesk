@@ -1,10 +1,9 @@
 # NoSQL databases
 
-Status: **N0a, N0b and N1 built** (2026-10-30), in the layers listed under
-[N0a](#n0a--groundwork-languages-safety-and-the-explorer),
-[N0b](#n0b--groundwork-documents) and [N1](#n1--redis-valkey-and-dragonfly); **N2 being
-built** (from 2026-10-31), in the layers listed under [N2](#n2--mongodb). W7 (exports) has
-landed.
+Status: **N0a, N0b and N1 built** (2026-10-30) and **N2 built** (2026-10-31), in the layers
+listed under [N0a](#n0a--groundwork-languages-safety-and-the-explorer),
+[N0b](#n0b--groundwork-documents), [N1](#n1--redis-valkey-and-dragonfly) and
+[N2](#n2--mongodb); N3 is next. W7 (exports) has landed.
 
 DbRover speaks seven SQL engines. Many of the teams that use them keep a Redis beside their
 PostgreSQL, documents in MongoDB, or logs in Elasticsearch, and today they open another tool for
@@ -741,11 +740,22 @@ port.
   - documents are read again after every submit, so each field shows with the type the server
     stored; an array's items aren't columns of the grid, so they are edited by setting the
     whole array, or with `$set` in a console.
-- **N2·7 — Safety and MCP:** the read-only level's dialog suggests a user with the `read`
+- **N2·7 — Safety and MCP** (built): the read-only level's dialog suggests a user with the `read`
   role; the MCP server serves a MongoDB data source only through its MCP login, its `query`
   tool takes one shell command, and `list_objects` lists databases and collections, paged.
   Tests: on the MongoDB test server, a user with only the `read` role serves as the MCP login,
-  reads a collection, and is refused a `deleteMany` by the server as well as by the check.
+  reads a collection, and is refused a `deleteMany` by the server as well as by the check. How
+  it came out: the guard, the advice and `list_objects`' paging were already every engine's
+  (N0a and N1), so MongoDB took them as they were; this layer is the test binary `mongodb` of
+  `dbrover-mcp`, the tools' descriptions, the manual's `read` user, and the website. The MCP
+  login signs in against the data source's **Auth database**, `admin` when it is empty.
+
+N2 is built. What the exit needs by hand, before release: an Atlas cluster through its
+`mongodb+srv://` connection string (the tests use a `mongodb://` string to the compose server,
+so the DNS lookup of `+srv` isn't run in CI), and TLS against a managed server with a publicly
+signed certificate (the tests use the compose server's own authority). CI runs MongoDB 7.0
+rather than 8, which won't start on the runners' kernel (see N2·3); every test ran on 8.3.13
+locally too.
 
 The manual changes in the layer that changes what a user sees: N2·3 (the data source and the
 console), N2·4 (the explorer), N2·5 (explain and results to a file), N2·6 (editing) and N2·7
