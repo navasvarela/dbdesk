@@ -432,7 +432,8 @@ pub fn redis_test_servers() -> Vec<(RedisConfig, Password)> {
             .map(|url| {
                 let rest = url.strip_prefix("redis://").expect("redis:// URL");
                 let (server, password) = parse_server(rest, "6379");
-                (RedisConfig { server }, password)
+                let separator = RedisConfig::DEFAULT_SEPARATOR.to_owned();
+                (RedisConfig { server, separator }, password)
             })
             .collect();
     if servers.is_empty() {

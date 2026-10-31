@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use dbrover_core::conformance;
-use dbrover_core::{ResultShape, Row, TlsMode, describe_error};
+use dbrover_core::{ChildrenQuery, KeyType, NodeKind, ResultShape, Row, TlsMode, describe_error};
 
 use super::*;
 
@@ -62,6 +62,7 @@ fn parse_url(variable: &'static str, url: &str) -> TestServer {
                 ssh: None,
                 password_command: None,
             },
+            separator: RedisConfig::DEFAULT_SEPARATOR.to_owned(),
         },
         password: Some(Password::new(password)),
     }
@@ -162,6 +163,7 @@ async fn unreachable_server_is_a_connect_error() {
             ssh: None,
             password_command: None,
         },
+        separator: RedisConfig::DEFAULT_SEPARATOR.to_owned(),
     };
     conformance::check_connect_failure(connect(&config, None, Route::Direct).await);
     config.server.port = 6379.into();
@@ -468,6 +470,155 @@ async fn lists_the_databases_with_their_key_counts() {
         assert!(labels.contains(&("db5", Some("1 key"))), "{labels:?}");
         conformance::check_invalid_path(&mut connection).await;
         run(&mut connection, &format!("DEL {}one", prefix("databases"))).await;
+    }
+}
+
+/// Selects `database`, empties it, and fills it with `keys`, each a string set to `x`.
+async fn fill_database(connection: &mut RedisConnection, database: u8, keys: &[String]) {
+    run(connection, &format!("SELECT {database}")).await;
+    run(connection, "FLUSHDB").await;
+    for chunk in keys.chunks(500) {
+        let pairs: Vec<String> = chunk.iter().map(|key| format!("{key} x")).collect();
+        run(connection, &format!("MSET {}", pairs.join(" "))).await;
+    }
+}
+
+/// The level at `path`, whole, as label, kind and detail, sorted by label.
+async fn key_level(
+    connection: &mut RedisConnection,
+    path: CatalogPath,
+) -> Vec<(String, Option<NodeKind>, Option<String>)> {
+    let mut nodes: Vec<(String, Option<NodeKind>, Option<String>)> = connection
+        .children(&path)
+        .await
+        .expect("a level of keys")
+        .into_iter()
+        .map(|node| (node.label.clone(), node.kind(), node.detail))
+        .collect();
+    nodes.sort_by(|a, b| a.0.cmp(&b.0));
+    nodes
+}
+
+fn database(number: u8) -> CatalogPath {
+    CatalogPath::root().child(NodeKind::Database, number.to_string())
+}
+
+/// 2,500 keys come in three pages of at most 1,000, which hold every key once, and the filter,
+/// as `SCAN`'s `MATCH`, finds the same keys the explorer's own filter would. The keys have no
+/// separator, so grouping leaves them as they are. Database 9 is this test's alone.
+///
+/// Not `conformance::check_children_pages`, which compares the pages' order with a second
+/// listing's: `SCAN` promises every key, not the same order twice, and a server still
+/// rehashing a freshly filled table answers two passes in different orders.
+#[tokio::test]
+async fn pages_keys_with_scan_and_filters_with_match() {
+    let _server = SERVER.read().await;
+    for server in test_servers() {
+        let mut connection = server.connect().await;
+        let keys: Vec<String> = (1..=2_500).map(|index| format!("page{index:04}")).collect();
+        fill_database(&mut connection, 9, &keys).await;
+        let mut query = ChildrenQuery::first_page(None);
+        let mut labels = Vec::new();
+        let mut pages = 0;
+        loop {
+            let page = connection
+                .children_page(&database(9), &query)
+                .await
+                .expect("a page of keys");
+            pages += 1;
+            assert!(page.nodes.len() <= 1_000, "page {pages} is over the limit");
+            labels.extend(page.nodes.into_iter().map(|node| node.label));
+            match page.next {
+                Some(next) => query = query.after(next),
+                None => break,
+            }
+        }
+        assert_eq!(pages, 3, "{}", server.variable);
+        labels.sort();
+        assert_eq!(labels, keys, "every key once, on {}", server.variable);
+
+        let filtered = connection
+            .children_page(
+                &database(9),
+                &ChildrenQuery::first_page(Some("PAGE24".to_owned())),
+            )
+            .await
+            .expect("the filtered level");
+        let mut found: Vec<String> = filtered.nodes.into_iter().map(|node| node.label).collect();
+        found.sort();
+        let expected: Vec<String> = keys
+            .iter()
+            .filter(|key| key.contains("page24"))
+            .cloned()
+            .collect();
+        assert_eq!(found, expected, "{}", server.variable);
+        run(&mut connection, "SELECT 9").await;
+        run(&mut connection, "FLUSHDB").await;
+    }
+}
+
+/// Keys group by `:` level by level, each key with its type and time to live; a filter lists
+/// the matching keys themselves, however deep. Database 8 is this test's alone.
+#[tokio::test]
+async fn groups_keys_by_their_separator() {
+    let _server = SERVER.read().await;
+    for server in test_servers() {
+        let mut connection = server.connect().await;
+        let keys = [
+            "user:1:cart",
+            "user:1:name",
+            "user:2:name",
+            "session:abc",
+            "plain",
+        ]
+        .map(str::to_owned);
+        fill_database(&mut connection, 8, &keys).await;
+        run(&mut connection, "DEL user:1:cart").await;
+        run(&mut connection, "HSET user:1:cart sku 42").await;
+        run(&mut connection, "EXPIRE session:abc 7200").await;
+
+        let string = Some(NodeKind::Key(KeyType::String));
+        let group = Some(NodeKind::KeyPrefix);
+        assert_eq!(
+            key_level(&mut connection, database(8)).await,
+            [
+                ("plain".to_owned(), string, Some("string".to_owned())),
+                ("session".to_owned(), group, None),
+                ("user".to_owned(), group, None),
+            ]
+        );
+        let user = database(8).child(NodeKind::KeyPrefix, "user:");
+        let ones = key_level(&mut connection, user.child(NodeKind::KeyPrefix, "user:1:")).await;
+        assert_eq!(
+            ones,
+            [
+                (
+                    "cart".to_owned(),
+                    Some(NodeKind::Key(KeyType::Hash)),
+                    Some("hash".to_owned())
+                ),
+                ("name".to_owned(), string, Some("string".to_owned())),
+            ]
+        );
+        let session = key_level(
+            &mut connection,
+            database(8).child(NodeKind::KeyPrefix, "session:"),
+        )
+        .await;
+        assert_eq!(session[0].2.as_deref(), Some("string · TTL 2 h"));
+
+        let filtered = connection
+            .children_page(
+                &database(8),
+                &ChildrenQuery::first_page(Some("NAME".to_owned())),
+            )
+            .await
+            .expect("a filtered level");
+        let mut labels: Vec<String> = filtered.nodes.into_iter().map(|node| node.label).collect();
+        labels.sort();
+        assert_eq!(labels, ["user:1:name", "user:2:name"]);
+        run(&mut connection, "SELECT 8").await;
+        run(&mut connection, "FLUSHDB").await;
     }
 }
 

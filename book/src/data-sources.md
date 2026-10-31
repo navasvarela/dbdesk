@@ -131,6 +131,7 @@ same fields, with these defaults:
 | Password | none | The ACL user's password, or the server's `requirepass`. Stored in the keychain when you save. |
 | MCP login | none | Required for AI assistants, since Redis has no read-only mode: an ACL user that may only read; see [The MCP login](mcp.md#the-mcp-login). |
 | MCP password | none | Shown once there is an MCP login. Stored in the keychain apart from the password. |
+| Key separator | `:` | What the explorer groups keys by: `user:42:cart` sits under `user` › `42`. Empty lists keys ungrouped. See [the explorer](explorer.md). |
 
 **Test connection** says which server it reached and its version ("Connected to Valkey 9.1.3").
 DbRover connects to one server; Redis Cluster and Sentinel aren't supported yet.

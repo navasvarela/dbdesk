@@ -10,6 +10,7 @@
 mod catalog;
 mod errors;
 mod execution;
+mod keys;
 mod reply;
 mod stream;
 #[cfg(test)]
@@ -19,9 +20,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use dbrover_core::{
-    BoxError, CancelHandle, CatalogNode, CatalogPath, Connection, DriverError, Password,
-    RedisConfig, Rejection, RejectionKind, RelationName, ResultCursor, Route, ServerConfig,
-    ServerInfo, TableConstraints, TableDescription, TableName, TransactionStatus,
+    BoxError, CancelHandle, CatalogNode, CatalogPath, ChildrenPage, ChildrenQuery, Connection,
+    DriverError, Password, RedisConfig, Rejection, RejectionKind, RelationName, ResultCursor,
+    Route, ServerConfig, ServerInfo, TableConstraints, TableDescription, TableName,
+    TransactionStatus,
 };
 use dbrover_language::redis as language;
 use redis::aio::{ConnectionLike, MultiplexedConnection};
@@ -29,6 +31,7 @@ use redis::{AsyncConnectionConfig, Cmd, ProtocolVersion, RedisConnectionInfo, Va
 use tokio::task::JoinHandle;
 
 use crate::execution::{RedisCancel, ReplyCursor, Scan, ScanCursor, Shared, Stopping};
+use crate::keys::{Level, Listings};
 
 /// Opens a session with the server in `config`, through `route`.
 ///
@@ -47,6 +50,7 @@ pub async fn connect(
         server: config.server.clone(),
         password: password.cloned(),
         route,
+        separator: config.separator.clone(),
     };
     let mut session = Session::open(&login, database)
         .await
@@ -59,6 +63,7 @@ pub async fn connect(
         session,
         shared: Arc::new(Shared::new(login)),
         database,
+        listings: Listings::default(),
         server_info: server_info(&reply::text(&info).unwrap_or_default()),
     })
 }
@@ -104,6 +109,8 @@ pub(crate) struct Login {
     server: ServerConfig,
     password: Option<Password>,
     route: Route,
+    /// What the explorer groups keys by.
+    separator: String,
 }
 
 /// One connection to the server.
@@ -172,6 +179,7 @@ pub struct RedisConnection {
     /// The database the session uses: the data source's, or the last one `SELECT` chose,
     /// which a new session selects again.
     database: i64,
+    listings: Listings,
     server_info: ServerInfo,
 }
 
@@ -226,21 +234,30 @@ impl Connection for RedisConnection {
     }
 
     async fn children(&mut self, path: &CatalogPath) -> Result<Vec<CatalogNode>, DriverError> {
-        if !path.is_root() {
-            return Err(DriverError::InvalidPath(path.clone()));
+        let whole = ChildrenQuery {
+            filter: None,
+            after: None,
+            limit: None,
+        };
+        Ok(self.children_page(path, &whole).await?.nodes)
+    }
+
+    /// The databases whole, and the keys of a database or a group a page at a time.
+    async fn children_page(
+        &mut self,
+        path: &CatalogPath,
+        query: &ChildrenQuery,
+    ) -> Result<ChildrenPage, DriverError> {
+        if path.is_root() {
+            let mut command = Cmd::new();
+            command.arg("INFO").arg("keyspace");
+            let info = self.catalog_query(&command).await?;
+            let own = database_number(&self.shared.login().server.database).unwrap_or_default();
+            let databases = catalog::databases(&reply::text(&info).unwrap_or_default(), own);
+            return Ok(ChildrenPage::whole(databases, query));
         }
-        let info = self
-            .run(&[b"INFO".to_vec(), b"keyspace".to_vec()])
-            .await
-            .map_err(|error| match error {
-                DriverError::Statement { source, .. } => DriverError::Connection(source),
-                other => other,
-            })?;
-        let own = database_number(&self.shared.login().server.database).unwrap_or_default();
-        Ok(catalog::databases(
-            &reply::text(&info).unwrap_or_default(),
-            own,
-        ))
+        let level = Level::of(path).ok_or_else(|| DriverError::InvalidPath(path.clone()))?;
+        self.key_page(path, &level, query).await
     }
 
     /// Keys and databases have no source to show.

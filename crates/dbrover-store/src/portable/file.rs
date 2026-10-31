@@ -161,7 +161,7 @@ enum PortableConfig {
     DuckDb(PortableDuckDb),
     #[serde(rename = "clickhouse")]
     ClickHouse(PortableServer),
-    Redis(PortableServer),
+    Redis(PortableRedis),
 }
 
 impl PortableConfig {
@@ -179,8 +179,11 @@ impl PortableConfig {
             ConnectionConfig::ClickHouse(ClickHouseConfig { server }) => {
                 Self::ClickHouse(PortableServer::export(server, path))
             }
-            ConnectionConfig::Redis(RedisConfig { server }) => {
-                Self::Redis(PortableServer::export(server, path))
+            ConnectionConfig::Redis(RedisConfig { server, separator }) => {
+                Self::Redis(PortableRedis {
+                    server: PortableServer::export(server, path),
+                    separator: separator.clone(),
+                })
             }
             ConnectionConfig::Sqlite(SqliteConfig {
                 path: file,
@@ -218,9 +221,12 @@ impl PortableConfig {
             Self::ClickHouse(server) => ConnectionConfig::ClickHouse(ClickHouseConfig {
                 server: server.import(path),
             }),
-            Self::Redis(server) => ConnectionConfig::Redis(RedisConfig {
-                server: server.import(path),
-            }),
+            Self::Redis(PortableRedis { server, separator }) => {
+                ConnectionConfig::Redis(RedisConfig {
+                    server: server.import(path),
+                    separator,
+                })
+            }
             Self::Sqlite(PortableSqlite {
                 path: file,
                 read_only,
@@ -242,6 +248,27 @@ impl PortableConfig {
             }),
         }
     }
+}
+
+/// A Redis server, and the separator its keys are grouped by, written only when it isn't `:`
+/// as in `data_sources.toml`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct PortableRedis {
+    #[serde(flatten)]
+    server: PortableServer,
+    #[serde(
+        default = "default_separator",
+        skip_serializing_if = "is_default_separator"
+    )]
+    separator: String,
+}
+
+fn default_separator() -> String {
+    RedisConfig::DEFAULT_SEPARATOR.to_owned()
+}
+
+fn is_default_separator(separator: &str) -> bool {
+    separator == RedisConfig::DEFAULT_SEPARATOR
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
