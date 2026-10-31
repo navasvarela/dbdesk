@@ -1,12 +1,14 @@
 //! Editing result rows: which results can be edited, the changes waiting to be submitted
 //! (cells typed over, rows added, rows marked for deletion), and the statements that submit
-//! them. Pure; the grid draws it and the engine runs the SQL.
+//! them: SQL for a table's rows, one Redis command per change for a key's value. Pure; the grid
+//! draws it and the engine runs the statements.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use dbrover_core::{Cell, ColumnInfo, Identifier, RelationName, Row, TableDescription};
 use dbrover_engine::RowEdit;
 use dbrover_export::{SourceTable, SqlTable};
+use dbrover_language::redis::KeyView;
 use dbrover_sql::{ColumnValue, Dialect, RowSql, Token, TokenKind, first_word, tokenize};
 use dbrover_store::{NamedCell, ReplacedCell, RowChange, RowChangeKind};
 
@@ -31,6 +33,8 @@ pub enum Editability {
     /// The table is being described; editing waits for the answer.
     Describing(RelationName),
     Editable(EditTarget),
+    /// A Redis key's value, as the command that read it whole shows it.
+    Key(KeyView),
     ReadOnly(String),
 }
 
@@ -220,16 +224,33 @@ impl Default for EditSession {
 }
 
 impl EditSession {
+    /// The table the rows can be edited in; `None` for a key's value, which isn't a table.
     pub fn target(&self) -> Option<&EditTarget> {
         match &self.editability {
             Editability::Editable(target) => Some(target),
-            Editability::Unknown | Editability::Describing(_) | Editability::ReadOnly(_) => None,
+            Editability::Unknown
+            | Editability::Describing(_)
+            | Editability::Key(_)
+            | Editability::ReadOnly(_) => None,
         }
     }
 
-    /// Whether rows can be added and deleted right now.
+    /// The key whose value the rows are, when they can be edited.
+    pub fn key_view(&self) -> Option<&KeyView> {
+        match &self.editability {
+            Editability::Key(view) => Some(view),
+            Editability::Unknown
+            | Editability::Describing(_)
+            | Editability::Editable(_)
+            | Editability::ReadOnly(_) => None,
+        }
+    }
+
+    /// Whether rows can be added and deleted right now: a table's always, a key's when its
+    /// value is a collection.
     pub fn can_change_rows(&self) -> bool {
-        !self.submitting && self.target().is_some()
+        !self.submitting
+            && (self.target().is_some() || self.key_view().is_some_and(KeyView::changes_rows))
     }
 
     /// Drops every pending change.
@@ -241,11 +262,15 @@ impl EditSession {
 
     /// Whether `column` of `row` can be typed into: never in a row marked for deletion.
     pub fn is_editable(&self, row: RowRef, column: usize) -> bool {
-        self.can_change_rows()
-            && !self.pending.is_deleted(row)
-            && self
-                .target()
-                .is_some_and(|target| target.is_editable(column))
+        if self.submitting || self.pending.is_deleted(row) {
+            return false;
+        }
+        match (self.target(), self.key_view(), row) {
+            (Some(target), _, _) => target.is_editable(column),
+            (None, Some(view), RowRef::Loaded(_)) => view.edits_loaded(column),
+            (None, Some(view), RowRef::New(_)) => view.edits_new(column),
+            (None, None, _) => false,
+        }
     }
 
     /// Adds an empty row, every column at its default.
@@ -481,6 +506,61 @@ impl PendingEdits {
         deletes.chain(updates).chain(inserts).collect()
     }
 
+    /// One Redis command per change to `view`'s value, with the row it is for and, for the
+    /// history, what it does, in the order [`Self::statements`] gives SQL's: removals, changes,
+    /// then additions.
+    ///
+    /// # Errors
+    ///
+    /// Which row lacks what its command needs: an added hash field, set member or sorted set
+    /// member and score must be typed in.
+    pub fn key_commands(
+        &self,
+        view: &KeyView,
+        columns: &[ColumnInfo],
+        rows: &[Row],
+    ) -> Result<Vec<(RowRef, RowEdit)>, String> {
+        let commands = KeyCommands {
+            view,
+            key: String::from_utf8_lossy(view.key()).into_owned(),
+            columns,
+        };
+        let missing = |row: RowRef| {
+            format!(
+                "{}: type {} first",
+                row.describe(),
+                commands.named_columns()
+            )
+        };
+        let mut edits = Vec::new();
+        for &row in &self.deleted {
+            let loaded = rows.get(row).map(Vec::as_slice).unwrap_or_default();
+            let edit = commands
+                .delete(loaded)
+                .ok_or_else(|| missing(RowRef::Loaded(row)))?;
+            edits.push((RowRef::Loaded(row), edit));
+        }
+        for (&row, changed) in &self.changes {
+            let loaded = rows.get(row).map(Vec::as_slice).unwrap_or_default();
+            for (&column, value) in changed {
+                let edit = commands
+                    .update(loaded, column, value)
+                    .ok_or_else(|| missing(RowRef::Loaded(row)))?;
+                edits.push((RowRef::Loaded(row), edit));
+            }
+        }
+        for (index, values) in self.inserted.iter().enumerate() {
+            let values: Vec<Cell> = (0..columns.len())
+                .map(|column| values.get(&column).cloned().flatten())
+                .collect();
+            let edit = commands
+                .insert(&values)
+                .ok_or_else(|| missing(RowRef::New(index)))?;
+            edits.push((RowRef::New(index), edit));
+        }
+        Ok(edits)
+    }
+
     /// Brings the loaded rows up to date once the database has the changes: edited values
     /// written in, deleted rows removed. Added rows aren't loaded rows yet; the statement runs
     /// again to show them as the database has them.
@@ -613,6 +693,108 @@ impl RowChanges<'_> {
             sql,
             change: Some(RowChange {
                 table: self.table.clone(),
+                kind,
+                revert,
+            }),
+        }
+    }
+}
+
+/// Writes each change to a key's value as its command, and the change it makes, with the
+/// command that would undo it, for the history.
+struct KeyCommands<'a> {
+    view: &'a KeyView,
+    /// As the history shows it, in the place of a table.
+    key: String,
+    columns: &'a [ColumnInfo],
+}
+
+impl KeyCommands<'_> {
+    /// The columns that name a row, which an added row must have typed in.
+    fn named_columns(&self) -> String {
+        let names: Vec<&str> = self
+            .columns
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| self.view.edits_new(*index))
+            .map(|(_, column)| column.name.as_str())
+            .collect();
+        names.join(" and ")
+    }
+
+    fn delete(&self, row: &[Cell]) -> Option<RowEdit> {
+        let command = self.view.delete(row)?;
+        let values = self.named_all(row);
+        Some(self.edit(
+            command,
+            RowChangeKind::Deleted {
+                key: self.naming(row),
+                row: values,
+            },
+            self.view.insert(row),
+        ))
+    }
+
+    fn update(&self, row: &[Cell], column: usize, value: &Cell) -> Option<RowEdit> {
+        let command = self.view.update(row, column, value)?;
+        let old = row.get(column)?.clone();
+        let revert = self.view.update(row, column, &old);
+        Some(self.edit(
+            command,
+            RowChangeKind::Updated {
+                key: self.naming(row),
+                cells: vec![ReplacedCell {
+                    column: self.columns.get(column)?.name.clone(),
+                    old,
+                    new: value.clone(),
+                }],
+            },
+            revert,
+        ))
+    }
+
+    fn insert(&self, values: &[Cell]) -> Option<RowEdit> {
+        let command = self.view.insert(values)?;
+        let revert = self.view.delete(values);
+        Some(self.edit(
+            command,
+            RowChangeKind::Inserted {
+                values: self.named_all(values),
+            },
+            revert,
+        ))
+    }
+
+    /// The cells that tell a loaded row apart: those that can't be typed over.
+    fn naming(&self, row: &[Cell]) -> Vec<NamedCell> {
+        self.columns
+            .iter()
+            .zip(row)
+            .enumerate()
+            .filter(|(index, _)| !self.view.edits_loaded(*index))
+            .map(|(_, (column, value))| NamedCell {
+                column: column.name.clone(),
+                value: value.clone(),
+            })
+            .collect()
+    }
+
+    fn named_all(&self, row: &[Cell]) -> Vec<NamedCell> {
+        self.columns
+            .iter()
+            .zip(row)
+            .map(|(column, value)| NamedCell {
+                column: column.name.clone(),
+                value: value.clone(),
+            })
+            .collect()
+    }
+
+    fn edit(&self, command: String, kind: RowChangeKind, revert: Option<String>) -> RowEdit {
+        RowEdit {
+            sql: command,
+            change: Some(RowChange {
+                table: self.key.clone(),
                 kind,
                 revert,
             }),

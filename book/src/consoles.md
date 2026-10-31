@@ -223,7 +223,8 @@ The result shows the reply by its shape:
 | Reply | Shown as |
 | --- | --- |
 | A string, a number, `OK` or nil | One cell, `NULL` for nil. A string that isn't text shows as `redis-cli` quotes it, `"\xff\x00"`. |
-| A list (`LRANGE`, `SMEMBERS`, `KEYS`) | One column, `value`, one row per item. |
+| A list of values (`SMEMBERS`, `KEYS`, `MGET`) | One column, `value`, one row per item. |
+| `LRANGE` | Two columns, `index` and `value`: each item with its index in the list. |
 | A map (`HGETALL`, `CONFIG GET`) | Two columns, `field` and `value`. |
 | Pairs (`ZRANGE … WITHSCORES`) | One column for each, `member` and `score`. |
 | A stream's entries (`XRANGE`, `XREVRANGE`) | Documents: the entry's id as `_id`, then its fields as columns. |
@@ -231,7 +232,9 @@ The result shows the reply by its shape:
 
 `SCAN`, `HSCAN`, `SSCAN` and `ZSCAN` are followed to their end, as `redis-cli --scan` does: the
 result holds every key or member, read a batch at a time as you scroll, rather than one batch and
-the cursor to ask again with. Each batch is one short command, so the server never stalls, but
+the cursor to ask again with. In the same way, `LRANGE`, `ZRANGE … WITHSCORES` by index, and
+`XRANGE` and `XREVRANGE` without `COUNT` read their range a page at a time, so a list or a
+stream of a million items shows at once. Each batch is one short command, so the server never stalls, but
 prefer `SCAN` to `KEYS`, which reads every key at once: DbRover asks before running `KEYS`,
 `FLUSHDB` or `FLUSHALL`.
 

@@ -5,12 +5,13 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use dbrover_core::{CatalogPath, DataSource, DataSourceId, SafetyLevel};
+use dbrover_core::{CatalogPath, DataSource, DataSourceId, NodeKind, SafetyLevel};
 use dbrover_engine::{
     Command, ConsoleId, Event, RunId, RunOrigin, RunPurpose, TransactionMode, WatchedFile,
 };
 use dbrover_export::ExportSpec;
 use dbrover_language::QueryLanguage;
+use dbrover_language::redis::KeyView;
 use dbrover_sql::{FormatOptions, ParameterValues};
 use dbrover_store::{ConsoleKey, ConsoleName, SqlFileContents};
 
@@ -229,12 +230,16 @@ impl Consoles {
         QueryConsole::new(ConsoleId(self.next_console), key, title, language, text).on(data_source)
     }
 
-    /// Opens a console that selects everything from the table or view at `path`, and runs it.
+    /// Opens a console that selects everything from the table or view at `path`, or reads the
+    /// Redis key there whole, and runs it.
     pub fn open_data(
         &mut self,
         data_source: &DataSource,
         path: &CatalogPath,
     ) -> Option<(ConsoleKey, Command)> {
+        if let Some(text) = key_viewer(data_source, path) {
+            return self.open_query(data_source, text);
+        }
         let dialect = QueryLanguage::from(data_source.config.driver()).dialect()?;
         let name = path.qualified_name(dialect.quoting())?;
         self.open_query(data_source, format!("SELECT * FROM {name};\n"))
@@ -455,6 +460,10 @@ impl Consoles {
                 table,
             }),
             ConsoleAction::SubmitEdits => self.submit_edits(key),
+            ConsoleAction::KeyCommand { command, then } => {
+                let run = self.open.get_mut(key)?.key_command_run(command, &then)?;
+                self.review(key, run)
+            }
             ConsoleAction::Validate(statements) => Some(Command::ValidateStatements {
                 console: id,
                 statements,
@@ -613,6 +622,33 @@ impl Consoles {
     }
 }
 
+/// The commands that read the Redis key at `path` whole: its type's read command, after a
+/// `SELECT` when the key is in another database than the data source's. `None` for a path
+/// that isn't a key's.
+fn key_viewer(data_source: &DataSource, path: &CatalogPath) -> Option<String> {
+    let key = path.last()?;
+    let NodeKind::Key(key_type) = key.kind else {
+        return None;
+    };
+    let [name] = dbrover_language::redis::arguments(&key.name)
+        .ok()?
+        .try_into()
+        .ok()?;
+    let read = KeyView::new(name, key_type).read();
+    let database = path.name_of(NodeKind::Database)?;
+    let own = data_source
+        .config
+        .server()
+        .map(|server| server.database.trim())
+        .filter(|own| !own.is_empty())
+        .unwrap_or("0");
+    Some(if database == own {
+        format!("{read}\n")
+    } else {
+        format!("SELECT {database}\n{read}\n")
+    })
+}
+
 /// A console's tab title: the data source's name, numbered from the second console on, as
 /// `shop`, `shop (2)`; or with the file's name if the user named it.
 fn title(data_source: &str, name: &ConsoleName) -> String {
@@ -743,6 +779,57 @@ mod tests {
             command,
             Command::Execute { statements, .. } if statements == ["SELECT * FROM main.\"Order Items\""]
         ));
+    }
+
+    fn redis(name: &str, database: &str) -> DataSource {
+        DataSource {
+            config: ConnectionConfig::Redis(dbrover_core::RedisConfig {
+                server: dbrover_core::ServerConfig {
+                    host: "localhost".to_owned(),
+                    port: 6379.into(),
+                    database: database.to_owned(),
+                    user: String::new(),
+                    tls: dbrover_core::TlsMode::Disable,
+                    ssh: None,
+                    password_command: None,
+                },
+                separator: ":".to_owned(),
+            }),
+            ..data_source(name)
+        }
+    }
+
+    /// Open data on a key reads its value whole with its type's command, after selecting its
+    /// database when it isn't the data source's.
+    #[test]
+    fn opens_a_redis_key_with_its_types_read_command() {
+        let mut consoles = Consoles::default();
+        let database = |number: &str| CatalogPath::root().child(NodeKind::Database, number);
+        let key = |number: &str, name: &str, key_type| {
+            database(number).child(NodeKind::Key(key_type), name)
+        };
+        let cases = [
+            (
+                key("0", "user:42", dbrover_core::KeyType::Hash),
+                vec!["HSCAN user:42 0 COUNT 1000"],
+            ),
+            (
+                key("3", "\"a b\"", dbrover_core::KeyType::List),
+                vec!["SELECT 3", "LRANGE \"a b\" 0 -1"],
+            ),
+        ];
+        for (path, expected) in cases {
+            let (_, command) = consoles.open_data(&redis("cache", "0"), &path).unwrap();
+            let Command::Execute { statements, .. } = command else {
+                panic!("expected a run, got {command:?}");
+            };
+            assert_eq!(statements, expected, "{path}");
+        }
+        assert!(
+            consoles
+                .open_data(&redis("cache", "0"), &database("0"))
+                .is_none()
+        );
     }
 
     #[test]

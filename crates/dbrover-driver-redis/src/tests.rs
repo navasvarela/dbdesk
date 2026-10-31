@@ -278,7 +278,7 @@ async fn shows_each_reply_by_its_shape() {
         run(&mut connection, &format!("RPUSH {keys}queue a b c")).await;
         assert_eq!(
             texts(&mut connection, &format!("LRANGE {keys}queue 0 -1")).await,
-            [["a"], ["b"], ["c"]]
+            [["0", "a"], ["1", "b"], ["2", "c"]]
         );
 
         run(
@@ -368,6 +368,93 @@ async fn follows_a_scan_to_its_end() {
         let mut fields = texts(&mut connection, &format!("HSCAN {keys}hash 0")).await;
         fields.sort();
         assert_eq!(fields, [["a", "1"], ["b", "2"], ["c", "3"]]);
+        delete_keys(&mut connection, &keys).await;
+    }
+}
+
+/// Reads every row of `command` in pages of 500, and returns them and how many pages it took.
+async fn paged(connection: &mut RedisConnection, command: &str) -> (Vec<Row>, usize) {
+    let mut cursor = connection.execute(command).await.expect(command);
+    let mut rows = Vec::new();
+    let mut pages = 0;
+    while !cursor.is_exhausted() {
+        rows.extend(cursor.next_page(500).await.expect("a page"));
+        pages += 1;
+    }
+    (rows, pages)
+}
+
+/// A list, a sorted set and a stream of 1,200 items each are read a page at a time, the list's
+/// items with their index, the stream's entries newest first from `XREVRANGE`.
+#[tokio::test]
+async fn reads_large_values_a_page_at_a_time() {
+    let _server = SERVER.read().await;
+    for server in test_servers() {
+        let mut connection = server.connect().await;
+        let keys = prefix("ranges");
+        delete_keys(&mut connection, &keys).await;
+        for batch in 0..3 {
+            let numbers: Vec<String> = (0..400)
+                .map(|index| (batch * 400 + index).to_string())
+                .collect();
+            run(
+                &mut connection,
+                &format!("RPUSH {keys}list {}", numbers.join(" ")),
+            )
+            .await;
+            let pairs: Vec<String> = numbers.iter().map(|n| format!("{n} m{n}")).collect();
+            run(
+                &mut connection,
+                &format!("ZADD {keys}scores {}", pairs.join(" ")),
+            )
+            .await;
+        }
+        for index in 1..=1_200 {
+            run(
+                &mut connection,
+                &format!("XADD {keys}events {index}-0 n {index}"),
+            )
+            .await;
+        }
+
+        let (rows, pages) = paged(&mut connection, &format!("LRANGE {keys}list 0 -1")).await;
+        assert_eq!(rows.len(), 1_200);
+        assert!(pages >= 3, "{pages} pages");
+        assert_eq!(
+            rows[1_199],
+            vec![Some("1199".to_owned()), Some("1199".to_owned())]
+        );
+        let (tail, _) = paged(&mut connection, &format!("LRANGE {keys}list -2 -1")).await;
+        assert_eq!(tail[0][0].as_deref(), Some("1198"));
+
+        let (rows, _) = paged(
+            &mut connection,
+            &format!("ZRANGE {keys}scores 0 -1 WITHSCORES REV"),
+        )
+        .await;
+        assert_eq!(rows.len(), 1_200);
+        assert_eq!(
+            rows[0],
+            vec![Some("m1199".to_owned()), Some("1199".to_owned())]
+        );
+
+        let cursor = connection
+            .execute(&format!("XREVRANGE {keys}events + -"))
+            .await
+            .expect("xrevrange");
+        assert_eq!(cursor.shape(), ResultShape::Documents);
+        drop(cursor);
+        let (rows, pages) = paged(&mut connection, &format!("XREVRANGE {keys}events + -")).await;
+        assert_eq!(rows.len(), 1_200);
+        assert!(pages >= 3, "{pages} pages");
+        assert_eq!(
+            rows[0],
+            vec![Some(r#"{"_id":"1200-0","n":"1200"}"#.to_owned())]
+        );
+        assert_eq!(
+            rows[1_199],
+            vec![Some(r#"{"_id":"1-0","n":"1"}"#.to_owned())]
+        );
         delete_keys(&mut connection, &keys).await;
     }
 }

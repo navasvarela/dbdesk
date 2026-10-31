@@ -958,6 +958,80 @@ fn runs_redis_commands_and_shows_their_replies() {
     }
 }
 
+/// Grid edits on Redis run one command at a time: those before a failing one stay, and the
+/// failure says so. Needs `DBROVER_TEST_REDIS_URL` or `DBROVER_TEST_VALKEY_URL`.
+#[test]
+fn applies_redis_edits_one_command_at_a_time() {
+    for (config, password) in redis_test_servers() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+        engine.expect_started(vec![]);
+        let data_source = DataSource {
+            id: DataSourceId::generate(),
+            name: "cache".to_owned(),
+            color: None,
+            safety: dbrover_core::SafetyLevel::Normal,
+            project: None,
+            mcp_login: None,
+            config: ConnectionConfig::Redis(config),
+        };
+        let id = data_source.id;
+        engine.send(Command::SaveDataSource {
+            data_source,
+            password: PasswordUpdate::Set(password),
+            ssh_secret: PasswordUpdate::Keep,
+        });
+        assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
+
+        let key = format!("dbrover:edits:{}", std::process::id());
+        execute(&engine, id, 1, &[&format!("DEL {key}")]);
+        finish_run(&mut engine, 1);
+
+        edits(
+            &engine,
+            &[&format!("HSET {key} a 1"), &format!("HSET {key} b 2")],
+        );
+        assert_eq!(expect_edits(&mut engine), Ok(()));
+
+        edits(
+            &engine,
+            &[
+                &format!("HSET {key} c 3"),
+                &format!("LPUSH {key} wrong"),
+                &format!("HSET {key} d 4"),
+            ],
+        );
+        let failure = expect_edits(&mut engine).unwrap_err();
+        assert_eq!(failure.statement, Some(1));
+        assert!(
+            failure.message.starts_with("WRONGTYPE")
+                && failure.message.ends_with("the change before it was made"),
+            "{}",
+            failure.message
+        );
+
+        execute(&engine, id, 2, &[&format!("HGETALL {key}")]);
+        let mut fields = loop {
+            if let Event::RowsFetched { rows, .. } = next_run_event(&mut engine) {
+                break rows;
+            }
+        };
+        fields.sort();
+        let names: Vec<Option<String>> = fields.into_iter().map(|row| row[0].clone()).collect();
+        assert_eq!(
+            names,
+            [
+                Some("a".to_owned()),
+                Some("b".to_owned()),
+                Some("c".to_owned())
+            ]
+        );
+        finish_run(&mut engine, 2);
+        execute(&engine, id, 3, &[&format!("DEL {key}")]);
+        finish_run(&mut engine, 3);
+    }
+}
+
 /// Grid edits on DuckDB: standard quoting, and, since DuckDB has no savepoints, a refusal
 /// inside a transaction the console opened rather than a failed edit only `ROLLBACK` could
 /// undo.

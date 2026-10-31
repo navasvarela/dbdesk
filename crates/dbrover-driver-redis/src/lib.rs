@@ -11,6 +11,7 @@ mod catalog;
 mod errors;
 mod execution;
 mod keys;
+mod ranges;
 mod reply;
 mod stream;
 #[cfg(test)]
@@ -32,6 +33,7 @@ use tokio::task::JoinHandle;
 
 use crate::execution::{RedisCancel, ReplyCursor, Scan, ScanCursor, Shared, Stopping};
 use crate::keys::{Level, Listings};
+use crate::ranges::{Range, RangeCursor};
 
 /// Opens a session with the server in `config`, through `route`.
 ///
@@ -275,6 +277,12 @@ impl Connection for RedisConnection {
             let shared = Arc::clone(&self.shared);
             let session = self.session().await?;
             let cursor = ScanCursor::start(scan, arguments, session, shared).await?;
+            return Ok(Box::new(cursor));
+        }
+        if let Some((key, range)) = Range::of(&arguments) {
+            let shared = Arc::clone(&self.shared);
+            let session = self.session().await?;
+            let cursor = RangeCursor::start(key, range, session, shared).await?;
             return Ok(Box::new(cursor));
         }
         let reply = self.run(&arguments).await?;

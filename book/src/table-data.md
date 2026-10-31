@@ -124,3 +124,53 @@ for the database to convert to the column's type, as when you type into a cell.
 A **careful** data source asks before importing. A **read-only** one can't be imported into,
 and nor can a ClickHouse table, since ClickHouse has no transaction to undo a failed import
 with; the dialog says so.
+
+## Redis keys
+
+On a Redis, Valkey or Dragonfly data source, right-click a key in the explorer and choose **Open
+data**. A console opens with the command that reads the key's value whole, and runs it:
+
+| Type | Command | Shown as |
+| --- | --- | --- |
+| String | `GET` | One cell: text, a tree in **View value** when it is JSON, `redis-cli`'s quoting when it isn't text |
+| Hash | `HSCAN … COUNT 1000` | `field` and `value` |
+| List | `LRANGE key 0 -1` | `index` and `value` |
+| Set | `SSCAN … COUNT 1000` | `member` |
+| Sorted set | `ZRANGE key 0 -1 WITHSCORES` | `member` and `score`, lowest first |
+| Stream | `XREVRANGE key + -` | each entry as a document, newest first: `_id` and then its fields as columns |
+| JSON (the JSON module) | `JSON.GET` | One cell, a tree in **View value** |
+| Anything else | `TYPE` | Its type's name |
+
+A large value is read a page at a time as you scroll, a short command each, so a list or hash of
+a million items neither stalls the server nor fills memory. A key in another database than the
+data source's opens with a `SELECT` before it.
+
+Above the result, a bar names the key and its type, with:
+
+- **Set TTL…**: makes the key expire in the number of seconds you type (`EXPIRE`);
+- **Persist**: keeps it from expiring (`PERSIST`);
+- **Rename…**: gives it a new name, unless a key of that name exists (`RENAMENX`); the console then
+  reads the key under its new name;
+- **Delete…**: asks first, then deletes it (`DEL`).
+
+Each runs as a command you typed would, then reads the key again: it is checked against the
+data source's safety level, written to the log and recorded in the history. A read-only data
+source's key bar only names the key.
+
+The grid edits a value as a table's rows, with **Add row**, **Delete rows**, **Submit** and
+**Revert**, and each change becomes one command:
+
+| Type | Change a value | Add a row | Delete a row |
+| --- | --- | --- | --- |
+| String | `SET … KEEPTTL` (the key keeps its time to live) | — | — |
+| Hash | `HSET` | `HSET`, with the field you type | `HDEL` |
+| List | `LSET`, by the item's index | `RPUSH`, at the end | `LREM`, the first item with that value |
+| Set | — | `SADD` | `SREM` |
+| Sorted set | its score, `ZADD … XX` | `ZADD` | `ZREM` |
+| JSON | the whole document, `JSON.SET key $` | — | — |
+
+Redis has no transaction to undo a change, so **Submit** sends the commands one at a time. If one
+fails, those before it stay made: the grid says how many, and reads the key again so it shows
+what the server has. A hash field, a set member or a sorted set's member and score can't be typed
+over, since they name their row: delete the row and add another. A stream's entries aren't
+edited in the grid; add and delete them with `XADD` and `XDEL` in the console.

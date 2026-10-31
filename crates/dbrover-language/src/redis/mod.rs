@@ -14,6 +14,7 @@
 mod commands;
 #[cfg(test)]
 mod tests;
+mod view;
 
 use std::fmt;
 use std::ops::Range;
@@ -21,6 +22,7 @@ use std::ops::Range;
 use dbrover_sql::{StatementKind, Token, TokenKind, Unclassified};
 
 pub use commands::{CommandSpec, Flag};
+pub use view::{KeyView, ViewShape};
 
 /// Why a command's arguments can't be read, as `redis-cli` would refuse them.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

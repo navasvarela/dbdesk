@@ -31,14 +31,15 @@ use dbrover_core::{
     TableDescription, TransactionStatus,
 };
 use dbrover_engine::{
-    Command, ConsoleId, EditFailure, Event, Export, ExportAll, Exporter, RunId, RunOrigin,
+    Command, ConsoleId, EditFailure, Event, Export, ExportAll, Exporter, RowEdit, RunId, RunOrigin,
     RunOutcome, RunPurpose, SessionState, StatementFailure, StatementSummary, TransactionEnd,
     TransactionMode, WatchedFile,
 };
 use dbrover_export::{ExportColumn, ExportOptions, ExportSpec, RowSource};
 
 use crate::export_dialog::{ExportPreview, PREVIEW_ROWS};
-use dbrover_language::{QueryLanguage, command_at};
+use dbrover_language::redis::{KeyView, ViewShape};
+use dbrover_language::{EditsRun, QueryLanguage, command_at};
 use dbrover_sql::{Dialect, FormatOptions, ParameterValues, format_ranges};
 use dbrover_store::{ConsoleKey, Snippet, SnippetBody, SqlFileContents};
 
@@ -251,6 +252,8 @@ pub struct StatementView {
     wrapped: bool,
     /// The result is documents, which `columns` and `rows` show flattened.
     documents: Option<documents::DocumentResult>,
+    /// The bar above a Redis key's value, and what it is asking.
+    key_bar: results::KeyBar,
 }
 
 /// The selected cells of loaded rows, for a custom action: added rows have no values yet.
@@ -280,7 +283,42 @@ fn selected_cells(
     })
 }
 
+/// Whether a key's value, read by `view`'s command into `columns`, can be edited in the grid.
+fn key_editability(view: KeyView, columns: &[ColumnInfo], read_only: Option<&str>) -> Editability {
+    let names: Vec<&str> = columns.iter().map(|column| column.name.as_str()).collect();
+    if let Some(reason) = read_only {
+        Editability::ReadOnly(reason.to_owned())
+    } else if !view.fits(&names) {
+        Editability::ReadOnly("Only a key's whole value can be edited".to_owned())
+    } else if matches!(view.shape(), ViewShape::Stream | ViewShape::Other) {
+        Editability::ReadOnly(format!(
+            "A {} can't be edited in the grid; change it with commands",
+            view.shape().label()
+        ))
+    } else {
+        Editability::Key(view)
+    }
+}
+
 impl StatementView {
+    /// The statements that submit the pending changes, each with its row: SQL for a table's
+    /// rows, a Redis command per change for a key's value.
+    fn edit_statements(
+        &self,
+        dialect: Option<Dialect>,
+    ) -> Result<Vec<(edit::RowRef, RowEdit)>, String> {
+        let pending = &self.edits.pending;
+        if let Some(view) = self.edits.key_view() {
+            return pending.key_commands(view, &self.columns, &self.rows);
+        }
+        match (self.edits.target(), dialect) {
+            (Some(target), Some(dialect)) => {
+                Ok(pending.statements(target, &self.columns, &self.rows, dialect))
+            }
+            _ => Err("These rows can't be edited".to_owned()),
+        }
+    }
+
     /// Whether the statement returns rows or documents, rather than only running.
     fn returns_rows(&self) -> bool {
         !self.columns.is_empty() || self.documents.is_some()
@@ -612,6 +650,11 @@ impl QueryConsole {
                     Editability::ReadOnly("Documents can't be edited in the grid yet".to_owned());
                 continue;
             }
+            if let Some(view) = language.key_view(&statement.sql) {
+                statement.edits.editability =
+                    key_editability(view, &statement.columns, read_only.as_deref());
+                continue;
+            }
             let Some(dialect) = language.dialect() else {
                 statement.edits.editability = Editability::ReadOnly(format!(
                     "Results in {} can't be edited",
@@ -669,22 +712,23 @@ impl QueryConsole {
     }
 
     /// The statements for the shown statement's pending changes, marking them as submitted.
-    /// `None` if there is nothing to submit.
+    /// `None` if there is nothing to submit, or a change can't be written yet, which the grid
+    /// then says.
     pub fn submit_edits(&mut self) -> Option<Command> {
-        let dialect = self.dialect()?;
+        let dialect = self.dialect();
         let run = self.run.as_mut()?;
         let statement = run.statements.get_mut(run.selected)?;
-        let target = statement.edits.target()?;
         if statement.edits.pending.is_empty() || statement.edits.submitting {
             return None;
         }
-        let statements = statement
-            .edits
-            .pending
-            .statements(target, &statement.columns, &statement.rows, dialect)
-            .into_iter()
-            .map(|(_, edit)| edit)
-            .collect();
+        let statements = match statement.edit_statements(dialect) {
+            Ok(statements) => statements,
+            Err(reason) => {
+                statement.edits.error = Some(reason);
+                return None;
+            }
+        };
+        let statements = statements.into_iter().map(|(_, edit)| edit).collect();
         statement.edits.submitting = true;
         statement.edits.error = None;
         statement.edits.editing = None;
@@ -696,6 +740,7 @@ impl QueryConsole {
 
     fn edits_applied(&mut self, result: &Result<(), EditFailure>) {
         let dialect = self.dialect();
+        let one_by_one = self.language.edits_run() == Some(EditsRun::OneByOne);
         let Some(run) = self.run.as_mut() else {
             return;
         };
@@ -706,27 +751,32 @@ impl QueryConsole {
         else {
             return;
         };
+        // The same statements, in the same order, as were submitted.
+        let submitted = statement.edit_statements(dialect).unwrap_or_default();
         let edits = &mut statement.edits;
         edits.submitting = false;
         match result {
             Ok(()) => {
-                edits.reload = edits.pending.new_rows() > 0;
+                // A key's value is read again when rows came or went: a list item is removed by
+                // value, so the server may have removed another item equal to it.
+                let rows_changed = edits.pending.count().deleted > 0;
+                edits.reload =
+                    edits.pending.new_rows() > 0 || (rows_changed && edits.key_view().is_some());
                 edits.pending.apply_to(&mut statement.rows);
                 edits.error = None;
             }
+            // Changes made one by one stay made up to the one that failed, so what is pending
+            // no longer says what is left to do: the value is read again instead.
+            Err(failure) if one_by_one && failure.statement.is_some_and(|index| index > 0) => {
+                edits.pending.clear();
+                edits.reload = true;
+                edits.error = Some(failure.message.clone());
+            }
             Err(failure) => {
-                // The same statements, in the same order, as were submitted.
-                let row = edits.target().and_then(|target| {
-                    let index = failure.statement?;
-                    let dialect = dialect?;
-                    let statements = edits.pending.statements(
-                        target,
-                        &statement.columns,
-                        &statement.rows,
-                        dialect,
-                    );
-                    statements.get(index).map(|(row, _)| *row)
-                });
+                let row = failure
+                    .statement
+                    .and_then(|index| submitted.get(index))
+                    .map(|(row, _)| *row);
                 edits.error = Some(match row {
                     Some(row) => format!("{}: {}", row.describe(), failure.message),
                     None => failure.message.clone(),
@@ -1444,6 +1494,35 @@ impl QueryConsole {
         }
     }
 
+    /// The run a key bar action makes: `command`, then `then`'s command reading the key again, in
+    /// place of the shown statement. When the key was renamed, the console's text reads the new
+    /// key too, so running it again shows the key as it now is.
+    pub fn key_command_run(&mut self, command: String, then: &KeyView) -> Option<SubmittedRun> {
+        let run = self.run.as_ref()?;
+        let shown = run.statements.get(run.selected)?;
+        let read = then.read();
+        let mut range = shown.range.clone();
+        if shown.sql != read && self.text.get(range.clone()) == Some(shown.sql.as_str()) {
+            let mut text = self.text.clone();
+            text.replace_range(range.clone(), &read);
+            range = range.start..range.start + read.len();
+            self.replace_text(text);
+        }
+        let statement = |sql: String| SubmittedStatement {
+            sql,
+            range: range.clone(),
+            prefix_len: 0,
+            in_database: None,
+        };
+        Some(SubmittedRun {
+            statements: vec![statement(command), statement(read)],
+            purpose: RunPurpose::Run,
+            parameters: self.parameters.clone(),
+            origin: RunOrigin::Console,
+            destination: RunDestination::Grid,
+        })
+    }
+
     /// Replaces the whole text from outside the editor, as one undo step, keeping the cursor
     /// where it was if the new text is long enough.
     fn replace_text(&mut self, text: String) {
@@ -1619,6 +1698,7 @@ impl QueryConsole {
                         result: None,
                         grid,
                         edits: edit::EditSession::default(),
+                        key_bar: results::KeyBar::default(),
                         describing: None,
                         links: keys::KeyLinks::default(),
                         wrapped: statement.in_database.is_some(),
