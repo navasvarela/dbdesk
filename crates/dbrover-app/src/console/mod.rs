@@ -393,6 +393,22 @@ struct Completion {
 pub struct ViewedCell {
     column: String,
     value: Cell,
+    /// The value read as JSON, when it is an object or an array, for the tree.
+    tree: Option<dbrover_document::Value>,
+    /// Whether the tree or the text is shown, for a value with a tree.
+    shown_as: cell_viewer::ShownAs,
+}
+
+impl ViewedCell {
+    fn new(column: String, value: Cell) -> Self {
+        let tree = value.as_deref().and_then(cell_viewer::json_tree);
+        Self {
+            column,
+            value,
+            tree,
+            shown_as: cell_viewer::ShownAs::Tree,
+        }
+    }
 }
 
 impl QueryConsole {

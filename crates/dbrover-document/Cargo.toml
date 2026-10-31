@@ -1,0 +1,17 @@
+[package]
+name = "dbrover-document"
+description = "Documents and JSON values as DbRover reads, shows and flattens them, with no engine in it."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Decodes `$binary` values, to show a UUID's hex digits.
+data-encoding.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

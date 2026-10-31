@@ -18,6 +18,7 @@ dbrover-driver-duckdb = { path = "crates/dbrover-driver-duckdb" }
 dbrover-driver-postgres = { path = "crates/dbrover-driver-postgres" }
 dbrover-driver-sqlite = { path = "crates/dbrover-driver-sqlite" }
 dbrover-driver-sqlserver = { path = "crates/dbrover-driver-sqlserver" }
+dbrover-document = { path = "crates/dbrover-document" }
 dbrover-engine = { path = "crates/dbrover-engine" }
 dbrover-export = { path = "crates/dbrover-export" }
 dbrover-language = { path = "crates/dbrover-language" }

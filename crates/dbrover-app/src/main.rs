@@ -28,6 +28,7 @@ mod history_window;
 mod host_key_prompt;
 mod icons;
 mod import_dialog;
+mod json_tree;
 mod keymap;
 mod keymap_window;
 mod log_console;

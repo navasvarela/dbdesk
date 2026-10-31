@@ -4106,6 +4106,9 @@ mod tests {
         harness.key_press(egui::Key::Space);
         harness.run();
         harness.get_by_label("Value of note");
+        harness.get_by_label("gift");
+        harness.get_by_label("Text").click();
+        harness.run();
         harness.get_by_value("{\n  \"gift\": true\n}");
 
         open_export_dialog(&mut harness, "Loaded rows", None);
