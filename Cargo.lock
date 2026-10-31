@@ -1803,6 +1803,7 @@ version = "0.16.0"
 dependencies = [
  "calamine",
  "dbrover-core",
+ "dbrover-document",
  "dbrover-sql",
  "rusqlite",
  "rust_xlsxwriter",

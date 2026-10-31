@@ -4,7 +4,7 @@
 
 use std::io::{self, Write};
 
-use dbrover_core::{Cell, ValueKind};
+use dbrover_core::{Cell, ResultShape, ValueKind};
 use dbrover_sql::{ColumnValue, Dialect, RowSql, Table, TypedColumn};
 use serde::{Deserialize, Serialize};
 
@@ -15,12 +15,21 @@ use crate::ExportColumn;
 /// the other databases.
 pub const MAX_ROWS_PER_INSERT: u16 = 1_000;
 
-/// Where exported rows came from, as far as the SQL formats need to know.
+/// Why the SQL formats aren't offered for rows from a language without a SQL dialect.
+const NO_DIALECT: &str = "Only for rows from a SQL database";
+/// Why they aren't offered for documents, which come from no one table.
+const DOCUMENTS: &str = "Not for documents, which have no table";
+
+/// Where exported rows came from, as far as the formats need to know: the SQL formats, their
+/// dialect and table; JSON and JSON Lines, whether they are documents.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RowSource {
-    pub dialect: Dialect,
+    /// `None` for a language without a SQL dialect, whose rows the SQL formats can't write.
+    pub dialect: Option<Dialect>,
     /// The table the rows were selected from, when they come from exactly one.
     pub table: Option<SourceTable>,
+    /// Rows, or documents flattened into rows (ADR 0006).
+    pub shape: ResultShape,
 }
 
 impl RowSource {
@@ -30,6 +39,7 @@ impl RowSource {
         let position = |column: &usize| selected.iter().position(|chosen| chosen == column);
         Self {
             dialect: self.dialect,
+            shape: self.shape,
             table: self.table.as_ref().map(|table| SourceTable {
                 name: table.name.clone(),
                 columns: table
@@ -47,8 +57,26 @@ impl RowSource {
     /// Rows DbRover doesn't know the table of.
     pub fn untabled(dialect: Dialect) -> Self {
         Self {
-            dialect,
+            dialect: Some(dialect),
             table: None,
+            shape: ResultShape::Rows,
+        }
+    }
+
+    /// Rows or documents from a language without a SQL dialect.
+    pub fn without_dialect(shape: ResultShape) -> Self {
+        Self {
+            dialect: None,
+            table: None,
+            shape,
+        }
+    }
+
+    /// The dialect, for the SQL formats, or why they can't write these rows.
+    fn sql_dialect(&self) -> Result<Dialect, &'static str> {
+        match self.shape {
+            ResultShape::Documents => Err(DOCUMENTS),
+            ResultShape::Rows => self.dialect.ok_or(NO_DIALECT),
         }
     }
 }
@@ -155,6 +183,7 @@ impl UpdateSpec {
     /// Why the rows can't be updated: they don't come from one table, the result lacks its
     /// primary key, or every column it has is part of the key.
     pub fn for_rows(source: &RowSource) -> Result<Self, &'static str> {
+        let dialect = source.sql_dialect()?;
         let table = source
             .table
             .as_ref()
@@ -176,7 +205,7 @@ impl UpdateSpec {
             return Err("Every column selected is part of the primary key: nothing to update");
         }
         Ok(Self {
-            dialect: source.dialect,
+            dialect,
             table: table.name.clone(),
             set,
             key,
@@ -191,12 +220,13 @@ impl InsertSpec {
     ///
     /// Why not: the rows don't come from one table.
     pub fn for_rows(source: &RowSource, options: InsertOptions) -> Result<Self, &'static str> {
+        let dialect = source.sql_dialect()?;
         let table = source
             .table
             .clone()
             .ok_or("Only for rows selected from one table, whose name DbRover knows")?;
         Ok(Self {
-            dialect: source.dialect,
+            dialect,
             table,
             options,
         })

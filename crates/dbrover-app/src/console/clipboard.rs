@@ -88,6 +88,9 @@ pub enum ClipboardCopy {
 pub struct Selection {
     pub columns: Vec<ExportColumn>,
     pub rows: Vec<Row>,
+    /// The selected rows' documents whole, one a row, for a result of documents: what JSON and
+    /// JSON Lines copy.
+    pub documents: Vec<Row>,
     /// Where the rows come from, narrowed to the selected columns.
     pub source: RowSource,
 }
@@ -107,7 +110,12 @@ impl ClipboardCopy {
                 options.spec(format.format(), &selection.source)?
             }
         };
-        render(&spec, &selection.columns, &selection.rows).ok_or("This format writes only files")
+        let rows = if spec.writes_documents() {
+            &selection.documents
+        } else {
+            &selection.rows
+        };
+        render(&spec, &selection.columns, rows).ok_or("This format writes only files")
     }
 }
 

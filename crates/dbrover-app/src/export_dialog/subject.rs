@@ -4,7 +4,8 @@
 use std::path::{Path, PathBuf};
 
 use dbrover_core::{
-    CatalogPath, DataSource, DataSourceId, Identifier, NodeKind, RelationName, TableDescription,
+    CatalogPath, DataSource, DataSourceId, Identifier, NodeKind, RelationName, ResultShape,
+    TableDescription,
 };
 use dbrover_engine::{Command, RunId};
 use dbrover_export::{ExportColumn, RowSource, SourceTable, SqlTable};
@@ -94,9 +95,11 @@ impl TableTarget {
         ExportPreview {
             columns: Vec::new(),
             sample: Vec::new(),
+            document_sample: Vec::new(),
             loaded: 0,
             source: RowSource {
-                dialect: self.dialect,
+                dialect: Some(self.dialect),
+                shape: ResultShape::Rows,
                 table: Some(SourceTable {
                     name: self.sql_table(),
                     columns: None,
@@ -132,7 +135,8 @@ impl TableTarget {
         ExportPreview {
             columns,
             source: RowSource {
-                dialect: self.dialect,
+                dialect: Some(self.dialect),
+                shape: ResultShape::Rows,
                 table: Some(SourceTable {
                     name: self.sql_table(),
                     columns: Some((0..description.columns.len()).collect()),

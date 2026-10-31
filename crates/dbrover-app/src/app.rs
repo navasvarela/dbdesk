@@ -1779,6 +1779,7 @@ impl DbRoverApp {
         let preview = ExportPreview {
             columns: Vec::new(),
             sample: Vec::new(),
+            document_sample: Vec::new(),
             loaded: 0,
             source: dbrover_export::RowSource::untabled(dialect),
         };

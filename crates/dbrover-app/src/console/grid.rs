@@ -224,10 +224,15 @@ impl GridView {
 
     /// The rows as shown, in display order, for exporting.
     pub fn shown_rows(&self, rows: &[Row]) -> Vec<Row> {
-        self.arranged(rows)
+        self.shown_indices(rows)
             .into_iter()
             .filter_map(|index| rows.get(index).cloned())
             .collect()
+    }
+
+    /// The indices of the rows [`Self::shown_rows`] gives, in the same order.
+    pub fn shown_indices(&self, rows: &[Row]) -> Vec<usize> {
+        self.arranged(rows)
     }
 
     /// The selected columns, left to right.

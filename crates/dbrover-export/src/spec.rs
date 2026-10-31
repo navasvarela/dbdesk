@@ -9,8 +9,9 @@ use crate::ExportColumn;
 use crate::options::ExportOptions;
 use crate::parquet::ParquetOptions;
 use crate::text::{
-    Csv, CsvOptions, Html, HtmlOptions, Insert, InsertSpec, Json, JsonLines, Markdown,
-    MarkdownOptions, RowSource, TextFormat, Tsv, TsvOptions, Update, UpdateSpec,
+    Csv, CsvOptions, Html, HtmlOptions, Insert, InsertSpec, Json, JsonDocuments, JsonLines,
+    JsonLinesDocuments, Markdown, MarkdownOptions, RowSource, TextFormat, Tsv, TsvOptions, Update,
+    UpdateSpec,
 };
 use crate::writer::{FileFormat, TextFile};
 use crate::xlsx::{XlsxFile, XlsxOptions, xlsx_sheets};
@@ -143,6 +144,11 @@ pub enum ExportSpec {
     /// An array of objects, values as strings: what DbRover has always written.
     Json,
     JsonLines,
+    /// An array of documents (ADR 0006), each as it came rather than flattened: each row is
+    /// one cell holding a document's JSON.
+    JsonDocuments,
+    /// One document a line, as it came.
+    JsonLinesDocuments,
     Parquet(ParquetOptions),
     Html(HtmlOptions),
     SqlUpdate(Box<UpdateSpec>),
@@ -156,12 +162,18 @@ impl ExportSpec {
             Self::Tsv(_) => ExportFormat::Tsv,
             Self::Markdown(_) => ExportFormat::Markdown,
             Self::SqlInsert(_) => ExportFormat::SqlInsert,
-            Self::Json => ExportFormat::Json,
-            Self::JsonLines => ExportFormat::JsonLines,
+            Self::Json | Self::JsonDocuments => ExportFormat::Json,
+            Self::JsonLines | Self::JsonLinesDocuments => ExportFormat::JsonLines,
             Self::Parquet(_) => ExportFormat::Parquet,
             Self::Html(_) => ExportFormat::Html,
             Self::SqlUpdate(_) => ExportFormat::SqlUpdate,
         }
+    }
+
+    /// Whether the format writes documents whole, so its rows must be the documents, one cell
+    /// each, rather than their flattened columns.
+    pub fn writes_documents(&self) -> bool {
+        matches!(self, Self::JsonDocuments | Self::JsonLinesDocuments)
     }
 
     /// How many sheets `rows` rows fill, for a format that has sheets.
@@ -183,6 +195,8 @@ impl ExportSpec {
             Self::SqlInsert(spec) => Box::new(Insert::new(spec.as_ref().clone())),
             Self::Json => Box::<Json>::default(),
             Self::JsonLines => Box::<JsonLines>::default(),
+            Self::JsonDocuments => Box::<JsonDocuments>::default(),
+            Self::JsonLinesDocuments => Box::new(JsonLinesDocuments),
             Self::Html(options) => Box::new(Html::new(options.clone())),
             Self::SqlUpdate(spec) => Box::new(Update::new(spec.as_ref().clone())),
         })

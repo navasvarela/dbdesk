@@ -1,9 +1,8 @@
 # NoSQL databases
 
-Status: **N0a built** (2026-10-30), in the layers listed under
-[N0a](#n0a--groundwork-languages-safety-and-the-explorer); **N0b being built** (since
-2026-10-30), in the layers listed under [N0b](#n0b--groundwork-documents); N1 is next. W7
-(exports) has landed.
+Status: **N0a and N0b built** (2026-10-30), in the layers listed under
+[N0a](#n0a--groundwork-languages-safety-and-the-explorer) and
+[N0b](#n0b--groundwork-documents); N1 is next. W7 (exports) has landed.
 
 DbRover speaks seven SQL engines. Many of the teams that use them keep a Redis beside their
 PostgreSQL, documents in MongoDB, or logs in Elasticsearch, and today they open another tool for
@@ -284,10 +283,13 @@ exercise each.
   selected row's document whole. Tests: the flattening (order, later pages, missing and `null`,
   expanding, the cap) in `dbrover-document`, and a console fed a result of documents in two
   pages, as the engine sends a cursor's, in the test language.
-- **N0b·4 — Copying and exporting documents and other languages:** what N0a left hidden for a
+- **N0b·4 — Copying and exporting documents and other languages** (built): what N0a left hidden for a
   language without a SQL dialect: **Copy as** and **Export…** of its rows, in every format but
   the SQL ones. For documents, JSON and JSON Lines write the documents themselves, as they came;
-  CSV, TSV, Excel, Markdown, HTML and Parquet write the flattened columns. Tests: a JSON Lines
+  CSV, TSV, Excel, Markdown, HTML and Parquet write the flattened columns. Copying JSON or JSON
+  Lines from a selection copies its rows' documents whole. A result of documents exports what
+  is loaded; **All rows** and **Run to file** wait for N2 (see [Decisions](#decisions)), and
+  Run to file stays SQL's until a language without SQL has a driver. Tests: a JSON Lines
   export of documents that reads back to the same documents, a CSV of the flattened columns,
   and the test language's rows copied and exported without the SQL formats.
 

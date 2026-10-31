@@ -145,7 +145,12 @@ In priority order. Each has the options listed and nothing more; every option ha
   Values are string literals, as the grid's edits send them, except in columns whose declared
   type is numeric, where a number is written bare.
 - **JSON** is today's: an array of objects, values as strings. **JSON Lines** is one object a
-  line, the same objects, and the format a pipeline or `jq -c` reads best.
+  line, the same objects, and the format a pipeline or `jq -c` reads best. For a result of
+  documents (N0b, [ADR 0006](adr/0006-documents-as-extended-json-text.md)), both write the
+  documents whole, as they came, rather than their flattened columns (`ExportSpec::JsonDocuments`
+  and `JsonLinesDocuments`, chosen by `RowSource::shape`); the other formats write the
+  flattened columns, and the SQL formats aren't offered, nor for rows of a language without a
+  SQL dialect (`RowSource::dialect` is `None`).
 - **HTML** is a `<table>` with a `<thead>`, every value escaped, as a fragment to paste into an
   email or a page, or a whole UTF-8 page with a little CSS that prints well. Copying it puts the
   markup on the clipboard as text: egui's clipboard holds only text (see Later).

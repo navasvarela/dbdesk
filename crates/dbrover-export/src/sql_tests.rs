@@ -1,6 +1,6 @@
 //! Golden tests of the SQL formats in every dialect, and a round trip through SQLite.
 
-use dbrover_core::{Cell, ColumnInfo};
+use dbrover_core::{Cell, ColumnInfo, ResultShape};
 use dbrover_sql::Dialect;
 
 use super::*;
@@ -36,7 +36,8 @@ fn rows() -> Vec<Vec<Cell>> {
 
 fn source(dialect: Dialect) -> RowSource {
     RowSource {
-        dialect,
+        dialect: Some(dialect),
+        shape: ResultShape::Rows,
         table: Some(SourceTable {
             name: SqlTable {
                 schema: Some("shop".to_owned()),
@@ -204,7 +205,8 @@ break', -1e3, 'x'),
 
     for rows_per_statement in [1, 3] {
         let source = RowSource {
-            dialect: Dialect::Sqlite,
+            dialect: Some(Dialect::Sqlite),
+            shape: ResultShape::Rows,
             table: Some(SourceTable {
                 name: SqlTable {
                     schema: Some("main".to_owned()),
@@ -289,7 +291,7 @@ fn narrows_the_source_to_the_selected_columns() {
 
 /// `rows()` as `INSERT`s of only the columns at `selected`.
 fn insert_of(source: &RowSource, selected: &[usize]) -> String {
-    let all = columns(source.dialect);
+    let all = columns(source.dialect.unwrap());
     let columns: Vec<ExportColumn> = selected.iter().map(|&index| all[index].clone()).collect();
     let rows: Vec<Vec<Cell>> = rows()
         .into_iter()

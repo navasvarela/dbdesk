@@ -500,12 +500,98 @@ mod test_language {
         assert_eq!(outcome, problems::CheckOutcome::default());
     }
 
+    /// Rows from a language without a SQL dialect copy and export in every format but the SQL
+    /// ones, which N0a left hidden.
+    #[test]
+    fn copies_and_exports_rows_without_a_sql_dialect() {
+        let mut console = console_in("hgetall h", QueryLanguage::Test);
+        let statements = console.statements_to_run(RunScope::All);
+        let run = RunId(1);
+        console.begin_run(run, &statements);
+        let column = |name: &str| ColumnInfo {
+            name: name.to_owned(),
+            type_name: None,
+        };
+        console.apply(&Event::StatementStarted {
+            run,
+            statement: 0,
+            columns: vec![column("field"), column("value")],
+            shape: ResultShape::Rows,
+        });
+        console.apply(&Event::RowsFetched {
+            run,
+            statement: 0,
+            rows: vec![
+                vec![Some("a".to_owned()), Some("1".to_owned())],
+                vec![Some("b".to_owned()), None],
+            ],
+            more: false,
+        });
+
+        let preview = console.export_preview().unwrap();
+        assert_eq!(preview.loaded, 2);
+        assert_eq!(preview.source.dialect, None);
+        let offered: Vec<&str> = dbrover_export::export_choices(&preview.source)
+            .into_iter()
+            .filter(|choice| choice.spec.is_ok())
+            .map(|choice| choice.name)
+            .collect();
+        assert_eq!(
+            offered,
+            [
+                "CSV",
+                "CSV for Excel",
+                "Excel",
+                "TSV",
+                "Markdown",
+                "JSON",
+                "JSON Lines",
+                "Parquet",
+                "HTML"
+            ]
+        );
+
+        let statement = &mut console.run.as_mut().unwrap().statements[0];
+        statement.grid.refresh(&statement.rows);
+        statement.grid.select(grid::CellPos { row: 0, column: 0 });
+        statement
+            .grid
+            .extend_selection(grid::CellPos { row: 1, column: 1 });
+        assert_eq!(
+            console
+                .copy(
+                    clipboard::ClipboardCopy::As(clipboard::ClipboardFormat::Markdown),
+                    &ExportOptions::default()
+                )
+                .as_deref(),
+            Some("| field | value |\n| --- | --- |\n| a | 1 |\n| b | NULL |\n")
+        );
+
+        let spec = dbrover_export::ExportFormat::Csv
+            .default_spec(&preview.source)
+            .unwrap();
+        let Some(Command::ExportRows { export, .. }) = console.export(spec, "rows.csv".into())
+        else {
+            panic!("no export");
+        };
+        assert_eq!(export.rows.len(), 2);
+        assert!(
+            export
+                .columns
+                .iter()
+                .all(|column| column.kind == dbrover_core::ValueKind::Undeclared)
+        );
+    }
+
     /// A result of documents, as the engine sends a documents cursor's: one document a row,
     /// a page at a time (ADR 0006).
     mod document_results {
         use egui_kittest::kittest::Queryable;
 
         use super::*;
+        use dbrover_export::ExportFormat;
+
+        use crate::console::clipboard::{ClipboardCopy, ClipboardFormat};
         use crate::console::documents::{self, ColumnFold, ShownAs};
         use crate::test_support::ui_harness;
 
@@ -643,6 +729,77 @@ mod test_language {
                 Editability::ReadOnly(_)
             ));
             assert!(statement.can_arrange(Dialect::Postgres).is_err());
+        }
+
+        /// The export command's file written, as the engine writes it.
+        fn exported(console: &mut QueryConsole, format: ExportFormat) -> String {
+            let source = statement(console).row_source(None);
+            let spec = format.default_spec(&source).unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("export");
+            let Some(Command::ExportRows { export, .. }) = console.export(spec, path) else {
+                panic!("no export");
+            };
+            dbrover_export::export_rows(&export.path, &export.spec, &export.columns, &export.rows)
+                .unwrap();
+            std::fs::read_to_string(&export.path).unwrap()
+        }
+
+        #[test]
+        fn exports_documents_to_json_lines_that_read_back_the_same() {
+            let mut console = console_with_documents(true);
+            let written = exported(&mut console, ExportFormat::JsonLines);
+            let read_back: Vec<dbrover_document::Value> = written
+                .lines()
+                .map(|line| dbrover_document::Value::parse(line).unwrap())
+                .collect();
+            let sent: Vec<dbrover_document::Value> = FIRST_PAGE
+                .iter()
+                .chain(&SECOND_PAGE)
+                .map(|document| dbrover_document::Value::parse(document).unwrap())
+                .collect();
+            assert_eq!(read_back, sent);
+        }
+
+        #[test]
+        fn exports_and_copies_the_flattened_columns_in_the_other_formats() {
+            let mut console = console_with_documents(true);
+            assert_eq!(
+                exported(&mut console, ExportFormat::Csv),
+                "_id,name,address,note,total,tags\r\n\
+                 \"ObjectId(\"\"5f1d7f0e2b5c3a0001a1b2c3\"\")\",Ada,\"{\"\"city\"\":\"\"Leeds\"\",\"\"zip\"\":\"\"LS1\"\"}\",,,\r\n\
+                 \"ObjectId(\"\"5f1d7f0e2b5c3a0001a1b2c4\"\")\",Bo,,,NumberLong(7),\r\n\
+                 \"ObjectId(\"\"5f1d7f0e2b5c3a0001a1b2c5\"\")\",,,,,\"[\"\"a\"\",\"\"b\"\"]\"\r\n"
+            );
+
+            let statement = &mut console.run.as_mut().unwrap().statements[0];
+            statement.grid.refresh(&statement.rows);
+            statement.grid.select(grid::CellPos { row: 0, column: 1 });
+            statement
+                .grid
+                .extend_selection(grid::CellPos { row: 1, column: 1 });
+            let options = ExportOptions::default();
+            let copy_as = |console: &mut QueryConsole, format| {
+                console.copy(ClipboardCopy::As(format), &options)
+            };
+            assert_eq!(
+                copy_as(&mut console, ClipboardFormat::Csv).as_deref(),
+                Some("name\r\nAda\r\nBo\r\n")
+            );
+            let lines = copy_as(&mut console, ClipboardFormat::JsonLines).unwrap();
+            assert_eq!(
+                lines.lines().next(),
+                Some(
+                    r#"{"_id":{"$oid":"5f1d7f0e2b5c3a0001a1b2c3"},"name":"Ada","address":{"city":"Leeds","zip":"LS1"},"note":null}"#
+                ),
+                "JSON Lines copies the selected rows' documents whole"
+            );
+            assert_eq!(lines.lines().count(), 2);
+            assert!(copy_as(&mut console, ClipboardFormat::SqlInsert).is_none());
+            assert_eq!(
+                console.export_status,
+                Some(Err("Not for documents, which have no table".to_owned()))
+            );
         }
 
         #[test]

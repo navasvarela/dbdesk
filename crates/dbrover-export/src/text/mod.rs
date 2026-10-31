@@ -15,7 +15,7 @@ pub(crate) use self::csv::Csv;
 pub use self::csv::{CsvOptions, FieldSeparator, InvalidSeparator, LineEnding, Quoting};
 pub(crate) use self::html::Html;
 pub use self::html::{HtmlDocument, HtmlOptions};
-pub(crate) use self::json::{Json, JsonLines};
+pub(crate) use self::json::{Json, JsonDocuments, JsonLines, JsonLinesDocuments};
 pub(crate) use self::markdown::Markdown;
 pub use self::markdown::MarkdownOptions;
 pub(crate) use self::sql::{Insert, Update};
