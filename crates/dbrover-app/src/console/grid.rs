@@ -122,6 +122,15 @@ impl GridView {
         };
     }
 
+    /// Forgets the sort and the selection after the columns moved, as expanding a column of
+    /// documents moves those after it: their indices would now point at other columns. The
+    /// filter, which matches any column, stays.
+    pub fn columns_moved(&mut self) {
+        self.sort = None;
+        self.selection = None;
+        self.computed_for = None;
+    }
+
     /// Recomputes the display order if the rows, sort or filter changed.
     pub fn refresh(&mut self, rows: &[Row]) {
         let key = (rows.len(), self.sort, self.filter.clone());

@@ -9,6 +9,7 @@ pub(crate) mod cell_viewer;
 mod clipboard;
 mod completion;
 mod completion_popup;
+mod documents;
 mod edit;
 mod file;
 mod find;
@@ -26,8 +27,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 use dbrover_core::{
-    Cell, ColumnInfo, DataSource, DataSourceId, RelationName, Row, SafetyLevel, TableDescription,
-    TransactionStatus,
+    Cell, ColumnInfo, DataSource, DataSourceId, RelationName, ResultShape, Row, SafetyLevel,
+    TableDescription, TransactionStatus,
 };
 use dbrover_engine::{
     Command, ConsoleId, EditFailure, Event, Export, ExportAll, Exporter, RunId, RunOrigin,
@@ -248,6 +249,8 @@ pub struct StatementView {
     links: keys::KeyLinks,
     /// The rows came from the statement wrapped to sort and filter them in the database.
     wrapped: bool,
+    /// The result is documents, which `columns` and `rows` show flattened.
+    documents: Option<documents::DocumentResult>,
 }
 
 /// The selected cells of loaded rows, for a custom action: added rows have no values yet.
@@ -278,6 +281,32 @@ fn selected_cells(
 }
 
 impl StatementView {
+    /// Whether the statement returns rows or documents, rather than only running.
+    fn returns_rows(&self) -> bool {
+        !self.columns.is_empty() || self.documents.is_some()
+    }
+
+    /// Reads a page of rows into the grid: as they are, or flattened when they are documents.
+    fn add_rows(&mut self, page: &[Row]) {
+        let Some(documents) = &mut self.documents else {
+            self.rows.extend(page.iter().cloned());
+            return;
+        };
+        if documents.add_page(page, &mut self.columns, &mut self.rows)
+            == documents::ColumnsMoved::Yes
+        {
+            self.grid.columns_moved();
+        }
+    }
+
+    /// Expands or collapses a column of documents.
+    fn fold_column(&mut self, fold: &documents::ColumnFold) {
+        if let Some(documents) = &mut self.documents {
+            documents.fold(fold, &mut self.columns, &mut self.rows);
+            self.grid.columns_moved();
+        }
+    }
+
     /// Where the rows come from, for the export formats that write SQL: the table, when the
     /// grid can edit it.
     pub fn row_source(&self, dialect: Dialect) -> RowSource {
@@ -363,6 +392,9 @@ impl StatementView {
 
     /// Whether the database can sort and filter these rows; `Err` says why not.
     fn can_arrange(&self, dialect: Dialect) -> Result<(), String> {
+        if self.documents.is_some() {
+            return Err("Documents are sorted and filtered here, among those loaded".to_owned());
+        }
         let columns: Vec<String> = self
             .columns
             .iter()
@@ -395,17 +427,20 @@ pub struct ViewedCell {
     value: Cell,
     /// The value read as JSON, when it is an object or an array, for the tree.
     tree: Option<dbrover_document::Value>,
+    /// How the tree reads it: Extended JSON from a document, plain JSON otherwise.
+    syntax: dbrover_document::Syntax,
     /// Whether the tree or the text is shown, for a value with a tree.
     shown_as: cell_viewer::ShownAs,
 }
 
 impl ViewedCell {
-    fn new(column: String, value: Cell) -> Self {
+    fn new(column: String, value: Cell, syntax: dbrover_document::Syntax) -> Self {
         let tree = value.as_deref().and_then(cell_viewer::json_tree);
         Self {
             column,
             value,
             tree,
+            syntax,
             shown_as: cell_viewer::ShownAs::Tree,
         }
     }
@@ -545,7 +580,12 @@ impl QueryConsole {
         };
         let mut tables = Vec::new();
         for statement in &mut run.statements {
-            if statement.columns.is_empty() || statement.edits.editability != Editability::Unknown {
+            if !statement.returns_rows() || statement.edits.editability != Editability::Unknown {
+                continue;
+            }
+            if statement.documents.is_some() {
+                statement.edits.editability =
+                    Editability::ReadOnly("Documents can't be edited in the grid yet".to_owned());
                 continue;
             }
             let Some(dialect) = language.dialect() else {
@@ -1547,6 +1587,7 @@ impl QueryConsole {
                         describing: None,
                         links: keys::KeyLinks::default(),
                         wrapped: statement.in_database.is_some(),
+                        documents: None,
                     }
                 })
                 .collect(),
@@ -1634,11 +1675,18 @@ impl QueryConsole {
                 run,
                 statement,
                 columns,
+                shape,
             } => {
                 if let Some(view) = self.current_run_mut(*run)
                     && let Some(statement_view) = view.statements.get_mut(*statement)
                 {
-                    statement_view.columns = columns.clone();
+                    match shape {
+                        ResultShape::Rows => statement_view.columns = columns.clone(),
+                        // The documents' own fields are the columns, as they arrive.
+                        ResultShape::Documents => {
+                            statement_view.documents = Some(documents::DocumentResult::default());
+                        }
+                    }
                     view.selected = *statement;
                 }
             }
@@ -1651,7 +1699,7 @@ impl QueryConsole {
                 if let Some(view) = self.current_run_mut(*run)
                     && let Some(statement_view) = view.statements.get_mut(*statement)
                 {
-                    statement_view.rows.extend(rows.iter().cloned());
+                    statement_view.add_rows(rows);
                     statement_view.more = *more;
                     statement_view.fetching = false;
                 }

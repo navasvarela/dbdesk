@@ -32,7 +32,7 @@ pub use data_source::{
 };
 pub use error::{BoxError, DriverError, describe_error};
 pub use execution::{
-    CancelHandle, Cell, ColumnInfo, ResultCursor, Row, TransactionStatus, ValueKind,
+    CancelHandle, Cell, ColumnInfo, ResultCursor, ResultShape, Row, TransactionStatus, ValueKind,
 };
 pub use password::Password;
 pub use password_command::PasswordCommand;

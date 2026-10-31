@@ -199,6 +199,7 @@ pub trait Connection: Send {
 #[async_trait]
 pub trait ResultCursor: Send {
     fn columns(&self) -> &[ColumnInfo];
+    fn shape(&self) -> ResultShape { ResultShape::Rows } // or Documents (ADR 0006)
     async fn next_page(&mut self, max_rows: usize) -> Result<Vec<Row>, DriverError>;
     fn is_exhausted(&self) -> bool;
     async fn finish(self: Box<Self>) -> Result<Option<u64>, DriverError>;
@@ -216,6 +217,10 @@ amendment.
   `Vec<Cell>`.
 - `ColumnInfo`: name, plus the declared type when the driver knows it cheaply (SQLite does;
   PostgreSQL's simple protocol doesn't).
+- `ResultShape`: whether a cursor's rows are rows or documents. A document is a row of one
+  cell, holding it as canonical Extended JSON text; the console flattens documents into columns
+  with `dbrover-document`'s `Flattened`. See
+  [ADR-0006](adr/0006-documents-as-extended-json-text.md).
 - Rows travel in pages of 500 as `RowsFetched` events, within the range other tools default
   to (DBeaver fetches 200 rows, DataGrip 500, pgAdmin 1,000).
 - `CatalogNode`: `{ path, label, detail, has_children, has_definition, system }`. Its kind is the

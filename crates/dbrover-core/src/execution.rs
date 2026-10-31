@@ -48,6 +48,18 @@ pub enum ValueKind {
     Undeclared,
 }
 
+/// What a statement's result holds (ADR 0006).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ResultShape {
+    /// Rows of the cursor's columns, each value text (ADR 0004).
+    #[default]
+    Rows,
+    /// Documents, which have no fixed columns. The cursor reports one column, and each row is
+    /// one cell: a document as canonical Extended JSON text. The console flattens them into
+    /// columns of their own.
+    Documents,
+}
+
 /// The rows of one running statement, read a page at a time.
 ///
 /// While a cursor is open its connection is busy: finish the cursor before using the
@@ -56,6 +68,11 @@ pub enum ValueKind {
 pub trait ResultCursor: Send {
     /// The result's columns; empty for statements that return no rows.
     fn columns(&self) -> &[ColumnInfo];
+
+    /// Whether the rows are rows or documents. Rows, unless the engine returns documents.
+    fn shape(&self) -> ResultShape {
+        ResultShape::Rows
+    }
 
     /// Reads up to `max_rows` more rows. Returns fewer, possibly none, once the result is
     /// exhausted.

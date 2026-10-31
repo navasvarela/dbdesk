@@ -8,6 +8,7 @@ use dbrover_store::{ActionId, CustomAction};
 use egui::{Align, Label, Layout, RichText, Sense, TextEdit, Ui};
 use egui_extras::{Column, TableBuilder};
 
+use super::documents::{self, CellLook, ColumnFold, DocumentResult, ShownAs};
 use super::edit::{CellEditor, EditSession, Editability, PendingEdits, RowRef};
 use super::grid::{CellPos, GridView, SortKey, tsv_field};
 use super::keys::{KeyLinks, RowsToOpen};
@@ -71,15 +72,26 @@ pub fn show(
     };
     let load_clicked = summary(ui, statement, running, dialect);
     let mut grid_output = GridOutput::default();
-    if !statement.columns.is_empty() {
+    if statement.returns_rows() {
         let toolbar = Toolbar {
             dialect,
             export_status: console.export_status.as_ref(),
             exporting: console.exporting,
         };
         let rearrange = grid_toolbar(ui, statement, &toolbar, actions);
-        grid_output = grid(ui, run_id, statement, keymap, cell_actions);
-        grid_output.rearrange |= rearrange;
+        match &statement.documents {
+            Some(results) if results.shown_as != ShownAs::Grid => {
+                let shown = shown_document(statement);
+                documents::document_view(ui, results, shown, egui::Id::new(("document", run_id.0)));
+            }
+            _ => {
+                grid_output = grid(ui, run_id, statement, keymap, cell_actions);
+                grid_output.rearrange |= rearrange;
+            }
+        }
+    }
+    if let Some(fold) = grid_output.fold.take() {
+        statement.fold_column(&fold);
     }
     if let Some(viewed) = grid_output.viewed {
         console.viewed_cell = Some(viewed);
@@ -102,6 +114,15 @@ pub fn show(
     {
         actions.push(ConsoleAction::FetchMore(run));
     }
+}
+
+/// The document the tree and JSON views show: the selected row's, or the first.
+fn shown_document(statement: &StatementView) -> usize {
+    statement
+        .grid
+        .selected_cell()
+        .and_then(|cell| statement.grid.order().get(cell.row).copied())
+        .unwrap_or(0)
 }
 
 fn statement_tabs(ui: &mut Ui, selected: &mut usize, statements: &[StatementView]) {
@@ -149,7 +170,7 @@ fn status(
                     .wrap(),
             );
         }
-        Some(Ok(summary)) if statement.columns.is_empty() => {
+        Some(Ok(summary)) if !statement.returns_rows() => {
             let changes_data = dialect
                 .and_then(|dialect| first_word(&statement.sql, dialect))
                 .is_some_and(|word| DATA_CHANGING.contains(&word.as_str()));
@@ -162,7 +183,7 @@ fn status(
         Some(Ok(summary)) => {
             ui.label(row_count(statement, Some(summary)));
         }
-        None if !statement.columns.is_empty() => {
+        None if statement.returns_rows() => {
             ui.label(row_count(statement, None));
             if statement.fetching {
                 ui.spinner();
@@ -180,6 +201,11 @@ fn status(
 
 fn row_count(statement: &StatementView, summary: Option<&StatementSummary>) -> String {
     let rows = statement.rows.len();
+    let noun = if statement.documents.is_some() {
+        "documents"
+    } else {
+        "rows"
+    };
     let note = if statement.more {
         ", more available"
     } else if summary.is_some_and(|summary| summary.truncated) {
@@ -190,7 +216,7 @@ fn row_count(statement: &StatementView, summary: Option<&StatementSummary>) -> S
     let elapsed = summary.map_or(String::new(), |summary| {
         format!(" · {} ms", summary.elapsed.as_millis())
     });
-    format!("{rows} rows{note}{elapsed}")
+    format!("{rows} {noun}{note}{elapsed}")
 }
 
 /// What the toolbar shows besides the statement's own state.
@@ -215,6 +241,10 @@ fn grid_toolbar(
 ) -> bool {
     // Wrapped: with editing's buttons and counts, it outgrows a narrow console.
     ui.horizontal_wrapped(|ui| {
+        if let Some(results) = &mut statement.documents {
+            documents::view_switch(ui, results);
+            ui.separator();
+        }
         let in_database = statement.grid.is_in_database();
         let hint = if in_database {
             "Filter every row, then Enter"
@@ -455,6 +485,8 @@ struct GridOutput {
     action: Option<(ActionId, GridCells)>,
     /// The selected cells to copy, in a format.
     copy: Option<ClipboardCopy>,
+    /// A column of documents to expand or collapse.
+    fold: Option<ColumnFold>,
 }
 
 /// What the user did to a cell this frame, applied once the table is drawn.
@@ -498,14 +530,17 @@ fn grid(
         range,
         edits,
         links,
+        documents: results,
         ..
     } = statement;
+    let results = results.as_ref();
     let row_height = ui.spacing().interact_size.y;
     let palette = &Palette::for_visuals(ui.visuals());
     let header_fill = palette.tint(palette.primary, GRID_HEADER_TINT);
     let mut output = GridOutput::default();
     let mut inputs = Vec::new();
     let mut sort_clicked = None;
+    let mut fold = None;
     let mut table = TableBuilder::new(ui)
         .id_salt(("results_grid", run.0, range.start))
         .striped(true)
@@ -532,8 +567,14 @@ fn grid(
                 header.col(|ui| {
                     fill_header_cell(ui, header_fill);
                     let arrow = sort_arrow(grid_view.sort(), index);
-                    if column_header(ui, column, arrow, grid_view.is_in_database()) {
+                    let response = column_header(ui, column, arrow, grid_view.is_in_database());
+                    if response.clicked() {
                         sort_clicked = Some(index);
+                    }
+                    if let Some(results) = results {
+                        fold = fold
+                            .take()
+                            .or(documents::header_menu(&response, results, index));
                     }
                 });
             }
@@ -567,6 +608,7 @@ fn grid(
                                     links,
                                     palette,
                                     cell_actions,
+                                    documents: results,
                                 };
                                 cell(ui, cell_pos, &context)
                             }
@@ -580,6 +622,7 @@ fn grid(
             });
         });
 
+    output.fold = fold;
     // In the database, sorting runs the statement again, which would drop pending changes.
     if let Some(column) = sort_clicked
         && !(grid.is_in_database() && !edits.pending.is_empty())
@@ -599,7 +642,7 @@ fn grid(
             CellInput::StartDrag(cell) => grid.start_drag(cell),
             CellInput::View(cell) => {
                 grid.select(cell);
-                output.viewed = viewed_cell(columns, rows, grid, cell);
+                output.viewed = viewed_cell(columns, rows, grid, cell, results);
             }
             CellInput::Edit { row, column } => start_editing(edits, rows, row, column),
             CellInput::SetNull { row, column } => edits.pending.set(rows, row, column, None),
@@ -653,7 +696,7 @@ fn grid(
             .input_mut(|input| keymap.consume(input, &[Action::ViewCell]))
             .is_empty()
     {
-        output.viewed = viewed_cell(columns, rows, grid, cell);
+        output.viewed = viewed_cell(columns, rows, grid, cell, results);
     }
     output
 }
@@ -676,7 +719,12 @@ fn no_text_field_focused(ui: &Ui) -> bool {
     ui.memory(|memory| memory.focused().is_none())
 }
 
-fn column_header(ui: &mut Ui, column: &ColumnInfo, arrow: &str, in_database: bool) -> bool {
+fn column_header(
+    ui: &mut Ui,
+    column: &ColumnInfo,
+    arrow: &str,
+    in_database: bool,
+) -> egui::Response {
     let action = if in_database {
         "Click to sort every row in the database"
     } else {
@@ -692,7 +740,6 @@ fn column_header(ui: &mut Ui, column: &ColumnInfo, arrow: &str, in_database: boo
             .sense(Sense::click()),
     )
     .on_hover_text(hover)
-    .clicked()
 }
 
 fn sort_arrow(sort: Option<SortKey>, column: usize) -> &'static str {
@@ -816,6 +863,8 @@ struct CellContext<'a> {
     links: &'a KeyLinks,
     palette: &'a Palette,
     cell_actions: &'a [&'a CustomAction],
+    /// The documents the rows were flattened from, for a result of documents.
+    documents: Option<&'a DocumentResult>,
 }
 
 impl CellContext<'_> {
@@ -892,9 +941,15 @@ fn cell(ui: &mut Ui, pos: CellPos, context: &CellContext<'_>) -> Option<CellInpu
             .map(|_| context.palette.secondary)
             .filter(|_| pending.is_none()),
     };
-    let mut response = match value {
-        Some(value) => value_label(ui, value, look),
-        None => new_cell_label(ui, context.defaults.get(column)),
+    let document_look = match (context.documents, row) {
+        (Some(results), RowRef::Loaded(loaded)) => documents::cell_look(results, loaded, column),
+        _ => CellLook::Text,
+    };
+    let mut response = match (value, document_look) {
+        (_, CellLook::Missing) => documents::missing_label(ui, context.grid.is_selected(pos)),
+        (_, CellLook::Container(summary)) => documents::container_label(ui, &summary),
+        (Some(value), CellLook::Text) => value_label(ui, value, look),
+        (None, _) => new_cell_label(ui, context.defaults.get(column)),
     };
     if let Some(rows) = &referenced {
         response = response.on_hover_text(format!(
@@ -1160,11 +1215,13 @@ fn viewed_cell(
     rows: &[Row],
     grid: &GridView,
     cell: CellPos,
+    results: Option<&DocumentResult>,
 ) -> Option<ViewedCell> {
     let row = rows.get(*grid.order().get(cell.row)?)?;
     Some(ViewedCell::new(
         columns.get(cell.column)?.name.clone(),
         row.get(cell.column)?.clone(),
+        documents::cell_syntax(results),
     ))
 }
 
