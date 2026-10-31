@@ -73,6 +73,9 @@ jobs:
       - run: site/build.sh _site
         env:
           DBROVER_SITE_VERSION: ${{ steps.release.outputs.version }}
+          # Cloudflare Web Analytics' site token for dbrover.org. It isn't a secret: every page
+          # carries it. Pull requests build without it, so their builds aren't counted.
+          DBROVER_ANALYTICS_TOKEN: ${{ github.event_name != 'pull_request' && '6ffdc78e93054aa2a6e89f5a0187c729' || '' }}
       # The manual's links are checked by its own build; this checks the landing page's links
       # to its assets and into the manual. Web links aren't followed, as in the manual.
       - uses: lycheeverse/lychee-action@v2
