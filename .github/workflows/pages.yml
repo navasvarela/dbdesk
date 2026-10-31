@@ -17,6 +17,10 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Release the page links to (empty means GitHub's latest)
+        required: false
 
 permissions:
   contents: read
@@ -30,25 +34,39 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # A release event runs on the release's tag, and a Pages deployment from a tag succeeds but is
+  # never served: v0.15.0's and v0.16.0's both stayed unserved until a run from main went live
+  # for the same commit. So a release only starts a run on main, passing the tag along.
+  # GITHUB_TOKEN can start a workflow_dispatch run, unlike most events it causes.
+  redeploy:
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PUBLISHED_TAG: ${{ !github.event.release.prerelease && github.event.release.tag_name || '' }}
+        run: gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref "$DEFAULT_BRANCH" -f tag="$PUBLISHED_TAG"
+
   build:
+    if: github.event_name != 'release'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-        with:
-          # A release event checks out its tag, but the page is always built from main.
-          ref: ${{ github.event_name == 'release' && github.event.repository.default_branch || '' }}
       - uses: taiki-e/install-action@v2
         with:
           tool: mdbook@0.5.4,mdbook-linkcheck2@0.13.0
       # GitHub's latest release is never a draft, so the page only links to files that exist.
       # Publishing a release is the exception: for a few seconds afterwards GitHub can still
       # report the previous release as the latest, and v0.15.0's page went out naming v0.14.0.
-      # So a release event takes the version from the release it was published for. A
+      # So the run a release starts takes the version from the release it was published for. A
       # prerelease is never the latest, so it falls back to asking GitHub.
       - id: release
         env:
           GH_TOKEN: ${{ github.token }}
-          PUBLISHED_TAG: ${{ github.event_name == 'release' && !github.event.release.prerelease && github.event.release.tag_name || '' }}
+          PUBLISHED_TAG: ${{ inputs.tag }}
         run: |
           tag=${PUBLISHED_TAG:-$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)}
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
