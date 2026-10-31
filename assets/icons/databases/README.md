@@ -12,6 +12,7 @@ the New data source menu and in the data source dialog.
 | `duckdb.svg` | DuckDB (its yellow is darkened to a gold on the light theme, where it wouldn't show) | `#FFF000` |
 | `clickhouse.svg` | ClickHouse (its yellow is darkened to an amber on the light theme) | `#FFCC01` |
 | `redis.svg` | Redis (also shown for Valkey and Dragonfly, which the same driver serves; its red is darkened on the light theme) | `#FF4438` |
+| `mongodb.svg` | MongoDB (its green is darkened a little on the light theme) | `#47A248` |
 
 ## Source and licence
 

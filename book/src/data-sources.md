@@ -7,8 +7,8 @@ keychain, never in that file.
 ## Adding one
 
 Click **+** at the top of the explorer (or **New data source** on the Welcome tab) and choose
-**PostgreSQL**, **SQLite**, **MySQL / MariaDB**, **SQL Server**, **DuckDB**, **ClickHouse** or
-**Redis / Valkey**.
+**PostgreSQL**, **SQLite**, **MySQL / MariaDB**, **SQL Server**, **DuckDB**, **ClickHouse**,
+**Redis / Valkey** or **MongoDB**.
 
 ![The New PostgreSQL data source dialog](images/data-source-dialog.png)
 
@@ -136,6 +136,25 @@ same fields, with these defaults:
 **Test connection** says which server it reached and its version ("Connected to Valkey 9.1.3").
 DbRover connects to one server; Redis Cluster and Sentinel aren't supported yet.
 
+**MongoDB** connects to a server with the same fields, or to a server or cluster through a
+connection string. Choose which under **Connect with**:
+
+| Field | Default | Notes |
+| --- | --- | --- |
+| Host | `localhost` | With **Server**: the name or IP address of one server. DbRover talks to that server alone, even if it belongs to a replica set; use a connection string to reach the whole set. |
+| Port | `27017` | |
+| Connection string | none | With **Connection string**: `mongodb://…` or `mongodb+srv://…`, as MongoDB Atlas hands it out. Its options, such as `replicaSet`, `tls` or `authMechanism`, apply as written. Paste it whole: its user and password move to their own fields, and the password to the keychain, so the string is kept without them. |
+| Database | `test` | The database the console's commands run in until `use` changes it, as the shell starts in `test`. The explorer lists every database the user may see. |
+| User | none | Leave it empty for a server without access control. |
+| Password | none | Stored in the keychain when you save. |
+| Auth database | `admin` | Where the user is defined, the shell's `--authenticationDatabase`. |
+| TLS | `disable` | With **Server**: `disable`, `require` or `verify-full`. MongoDB serves TLS or not on a port, so there is no `prefer`. Through an SSH tunnel, `verify-full` isn't offered: the driver would check the certificate against the tunnel's end rather than the server's name. A connection string sets TLS itself (`tls=true`, or `mongodb+srv://`, which turns it on). |
+| MCP login | none | Required for AI assistants, since MongoDB has no read-only mode: a user with only the `read` role; see [The MCP login](mcp.md#the-mcp-login). |
+| MCP password | none | Shown once there is an MCP login. Stored in the keychain apart from the password. |
+
+**Test connection** says which server it reached and its version ("Connected to MongoDB 8.2.1").
+Passwords (SCRAM) work today; X.509 certificates and AWS sign-in are planned.
+
 **SQLite** adds:
 
 ![The New SQLite data source dialog](images/sqlite-data-source-dialog.png)
@@ -174,7 +193,8 @@ version it is ("Connected to DuckDB 1.5.6").
 Many databases only accept connections from inside their own network, through a *jump host*
 (or *bastion*) you reach with SSH. Tick **Connect through an SSH server** and DbRover opens an
 SSH tunnel for you before connecting: no `ssh -L` to run first, and nothing to install. Every
-server engine has it: PostgreSQL, MySQL and MariaDB, SQL Server, ClickHouse and Redis.
+server engine has it: PostgreSQL, MySQL and MariaDB, SQL Server, ClickHouse, Redis, and
+MongoDB with the **Server** form (a connection string may name several servers, or none).
 
 ![A PostgreSQL data source behind a bastion, signing in with a key file](images/ssh-data-source-dialog.png)
 

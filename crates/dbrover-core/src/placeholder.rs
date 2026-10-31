@@ -44,6 +44,8 @@ pub enum Setting {
     SshPort,
     SshUser,
     SshKeyFile,
+    AuthDatabase,
+    ConnectionString,
 }
 
 impl fmt::Display for Setting {
@@ -59,6 +61,8 @@ impl fmt::Display for Setting {
             Self::SshPort => "the SSH port",
             Self::SshUser => "the SSH user",
             Self::SshKeyFile => "the SSH key file",
+            Self::AuthDatabase => "the authentication database",
+            Self::ConnectionString => "the connection string",
         })
     }
 }

@@ -13,8 +13,8 @@ use std::time::Duration;
 use std::str::FromStr;
 
 use dbrover_core::{
-    ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DriverKind, MysqlConfig,
-    Password, PostgresConfig, RedisConfig, SafetyLevel, ServerConfig, SqlServerConfig,
+    ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DriverKind, MongoConfig,
+    MysqlConfig, Password, PostgresConfig, RedisConfig, SafetyLevel, ServerConfig, SqlServerConfig,
     SqliteConfig, SshConfig, SshLogin, TlsMode,
 };
 use dbrover_engine::{
@@ -440,6 +440,25 @@ pub fn redis_test_servers() -> Vec<(RedisConfig, Password)> {
         eprintln!("skipping: neither DBROVER_TEST_REDIS_URL nor DBROVER_TEST_VALKEY_URL is set");
     }
     servers
+}
+
+/// The MongoDB test server, from `DBROVER_TEST_MONGODB_URL`
+/// (`mongodb://user:password@host:port/database`), with `database` as the console's.
+pub fn mongo_test_server(database: &str) -> Option<(MongoConfig, Password)> {
+    let Ok(url) = std::env::var("DBROVER_TEST_MONGODB_URL") else {
+        eprintln!("skipping: DBROVER_TEST_MONGODB_URL is not set");
+        return None;
+    };
+    let rest = url.strip_prefix("mongodb://").expect("mongodb:// URL");
+    let (mut server, password) = parse_server(rest, "27017");
+    database.clone_into(&mut server.database);
+    server.tls = TlsMode::Disable;
+    let config = MongoConfig {
+        server,
+        auth_database: String::new(),
+        connection_string: None,
+    };
+    Some((config, password))
 }
 
 /// The `ssh` compose service and the PostgreSQL service as it reaches it, from

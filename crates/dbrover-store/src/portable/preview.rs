@@ -445,6 +445,15 @@ fn data_source_settings(data_source: &DataSource, names: &ProjectNames) -> Setti
         ConnectionConfig::SqlServer(config) => server_settings(&config.server, &mut settings),
         ConnectionConfig::ClickHouse(config) => server_settings(&config.server, &mut settings),
         ConnectionConfig::Redis(config) => server_settings(&config.server, &mut settings),
+        ConnectionConfig::Mongo(config) => {
+            server_settings(&config.server, &mut settings);
+            if !config.auth_database.is_empty() {
+                settings.push(("Authentication database", config.auth_database.clone()));
+            }
+            if let Some(string) = &config.connection_string {
+                settings.push(("Connection string", string.clone()));
+            }
+        }
         ConnectionConfig::Sqlite(config) => {
             settings.push(("File", config.path.display().to_string()));
             settings.push(("Read-only", yes_no(config.read_only)));
@@ -517,6 +526,7 @@ fn paths(config: &ConnectionConfig) -> Vec<(&'static str, &Path)> {
         ConnectionConfig::SqlServer(config) => &config.server,
         ConnectionConfig::ClickHouse(config) => &config.server,
         ConnectionConfig::Redis(config) => &config.server,
+        ConnectionConfig::Mongo(config) => &config.server,
     };
     let ca_file = match &server.tls {
         TlsMode::VerifyFull {

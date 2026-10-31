@@ -39,9 +39,11 @@ pub fn mode(driver: DriverKind) -> Option<WriteMode> {
             sets_timeout: false,
         }),
         // Not served to MCP clients at all; see `read_only::mode`.
-        DriverKind::SqlServer | DriverKind::DuckDb | DriverKind::ClickHouse | DriverKind::Redis => {
-            None
-        }
+        DriverKind::SqlServer
+        | DriverKind::DuckDb
+        | DriverKind::ClickHouse
+        | DriverKind::Redis
+        | DriverKind::Mongo => None,
     }
 }
 

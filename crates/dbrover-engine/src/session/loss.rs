@@ -6,8 +6,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use async_trait::async_trait;
 use dbrover_core::{
     CancelHandle, CatalogNode, CatalogPath, Cell, ChildrenPage, ChildrenQuery, ColumnInfo,
-    Connection, DriverError, Rejection, RelationName, ResultCursor, RoleDescription, Row,
-    ServerInfo, TableConstraints, TableDescription, TableName, TransactionStatus, describe_error,
+    Connection, DriverError, Rejection, RelationName, ResultCursor, ResultShape, RoleDescription,
+    Row, ServerInfo, TableConstraints, TableDescription, TableName, TransactionStatus,
+    describe_error,
 };
 
 use super::{SessionContext, SessionOwner, SessionRequest};
@@ -149,6 +150,10 @@ struct WatchedCursor {
 impl ResultCursor for WatchedCursor {
     fn columns(&self) -> &[ColumnInfo] {
         self.cursor.columns()
+    }
+
+    fn shape(&self) -> ResultShape {
+        self.cursor.shape()
     }
 
     async fn next_page(&mut self, max_rows: usize) -> Result<Vec<Row>, DriverError> {

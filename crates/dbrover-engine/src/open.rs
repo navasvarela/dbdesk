@@ -321,6 +321,9 @@ async fn connect(
         ConnectionConfig::Redis(config) => {
             Box::new(dbrover_driver_redis::connect(config, password, route).await?)
         }
+        ConnectionConfig::Mongo(config) => {
+            Box::new(dbrover_driver_mongodb::connect(config, password, route).await?)
+        }
     })
 }
 

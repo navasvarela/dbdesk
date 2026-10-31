@@ -12,6 +12,7 @@ publish = false
 
 [workspace.dependencies]
 dbrover-core = { path = "crates/dbrover-core" }
+dbrover-driver-mongodb = { path = "crates/dbrover-driver-mongodb" }
 dbrover-driver-mysql = { path = "crates/dbrover-driver-mysql" }
 dbrover-driver-clickhouse = { path = "crates/dbrover-driver-clickhouse" }
 dbrover-driver-duckdb = { path = "crates/dbrover-driver-duckdb" }
@@ -100,6 +101,12 @@ keyring = "4.2.0"
 # `minimal-rust` compresses in pure Rust, and TLS is rustls with ring. Its rustls connector
 # takes rustls's process-wide provider, so ring must stay the only provider compiled in
 # (dbrover-driver-mysql's tests check it).
+# MongoDB (docs/nosql.md, N2): the official driver, Apache-2.0. Without its default features,
+# which would build `bson` 2 beside 3 (`compat-3-0-0`): `bson-3` and `compat-3-3-0` take bson 3
+# alone, `rustls-tls` is rustls on ring, and `dns-resolver` reads `mongodb+srv://` addresses.
+mongodb = { version = "3.9.1", default-features = false, features = ["bson-3", "compat-3-3-0", "rustls-tls", "dns-resolver"] }
+# The driver's documents, written as canonical Extended JSON (ADR 0006) through serde_json.
+bson = { version = "3.1.0", features = ["serde_json-1"] }
 mysql_async = { version = "0.37.1", default-features = false, features = ["minimal-rust", "rustls-tls", "ring", "tls12"] }
 # Find and replace's regular expressions; already built for mysql_common and arrow.
 regex = "1.13.1"

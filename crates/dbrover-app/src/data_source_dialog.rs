@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use dbrover_core::{
-    DataSource, DataSourceId, DriverKind, SafetyLevel, ServerInfo, SourceColor, expand,
-    expand_path, has_placeholder,
+    DataSource, DataSourceId, DriverKind, MongoConfig, SafetyLevel, ServerInfo, SourceColor,
+    expand, expand_path, has_placeholder,
 };
 use dbrover_engine::read_only::{self, Guard};
 use dbrover_engine::{DatabaseFile, Event, PasswordUpdate, ProcessEnvironment};
@@ -15,7 +15,8 @@ use egui::{
 
 use crate::data_source_form::{
     DataSourceForm, DriverFields, DuckDbFields, DuckDbLocation, FormError, McpLoginFields,
-    McpPasswordChange, ServerFields, SshFields, SshLoginChoice, TlsChoice,
+    McpPasswordChange, MongoFields, MongoTarget, ServerFields, SshFields, SshLoginChoice,
+    TlsChoice,
 };
 use crate::file_picker::{self, FileEngine};
 use crate::icons;
@@ -174,11 +175,15 @@ impl DataSourceDialog {
                 ui.end_row();
                 safety_rows(ui, &mut self.form);
                 let server = match &mut self.form.fields {
-                    DriverFields::Postgres(fields) => &mut fields.server,
-                    DriverFields::Mysql(fields) => &mut fields.server,
-                    DriverFields::SqlServer(fields) => &mut fields.server,
-                    DriverFields::ClickHouse(fields) => &mut fields.server,
-                    DriverFields::Redis(fields) => &mut fields.server,
+                    DriverFields::Postgres(fields) => Some(&mut fields.server),
+                    DriverFields::Mysql(fields) => Some(&mut fields.server),
+                    DriverFields::SqlServer(fields) => Some(&mut fields.server),
+                    DriverFields::ClickHouse(fields) => Some(&mut fields.server),
+                    DriverFields::Redis(fields) => Some(&mut fields.server),
+                    DriverFields::Mongo(fields) => {
+                        mongo_rows(ui, fields, password_hint);
+                        None
+                    }
                     DriverFields::Sqlite(fields) => {
                         return file_rows(
                             ui,
@@ -189,7 +194,9 @@ impl DataSourceDialog {
                     }
                     DriverFields::DuckDb(fields) => return duckdb_rows(ui, fields),
                 };
-                server_rows(ui, server, password_hint);
+                if let Some(server) = server {
+                    server_rows(ui, server, password_hint);
+                }
                 if let DriverFields::Redis(fields) = &mut self.form.fields {
                     text_row(ui, "Key separator", &mut fields.separator, "none");
                 }
@@ -589,6 +596,55 @@ fn file_rows(
 }
 
 /// A file, as for SQLite, or a database in memory, for querying CSV, Parquet and JSON files.
+/// MongoDB's rows: the shared server rows, or a connection string with the database, user and
+/// password beside it, and the database the user signs in against.
+fn mongo_rows(ui: &mut Ui, fields: &mut MongoFields, password_hint: &str) {
+    ui.label("Connect with");
+    ui.horizontal(|ui| {
+        ui.radio_value(&mut fields.target, MongoTarget::Server, "Server");
+        ui.radio_value(
+            &mut fields.target,
+            MongoTarget::ConnectionString,
+            "Connection string",
+        );
+    });
+    ui.end_row();
+    match fields.target {
+        MongoTarget::Server => server_rows(ui, &mut fields.server, password_hint),
+        MongoTarget::ConnectionString => {
+            setting_row(
+                ui,
+                "Connection string",
+                &mut fields.connection_string,
+                "mongodb+srv://cluster0.example.mongodb.net/",
+                Resolve::Text,
+            );
+            fields.take_credentials();
+            ui.label("");
+            ui.weak("Its user and password move to their own fields; the password is kept in the keychain.");
+            ui.end_row();
+            let server = &mut fields.server;
+            let database_hint = server.defaults.database;
+            setting_row(
+                ui,
+                "Database",
+                &mut server.database,
+                database_hint,
+                Resolve::Text,
+            );
+            setting_row(ui, "User", &mut server.user, "none", Resolve::Text);
+            password_rows(ui, server, password_hint);
+        }
+    }
+    setting_row(
+        ui,
+        "Auth database",
+        &mut fields.auth_database,
+        MongoConfig::DEFAULT_AUTH_DATABASE,
+        Resolve::Text,
+    );
+}
+
 fn duckdb_rows(ui: &mut Ui, fields: &mut DuckDbFields) -> Option<DatabaseFile> {
     ui.label("Database");
     ui.horizontal(|ui| {

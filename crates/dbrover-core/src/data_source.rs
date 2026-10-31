@@ -202,6 +202,8 @@ pub enum ConnectionConfig {
     ClickHouse(ClickHouseConfig),
     /// Redis, Valkey and Dragonfly: one driver serves all three.
     Redis(RedisConfig),
+    #[serde(rename = "mongodb")]
+    Mongo(MongoConfig),
 }
 
 impl ConnectionConfig {
@@ -221,6 +223,7 @@ impl ConnectionConfig {
             Self::SqlServer(config) => Some(&config.server),
             Self::ClickHouse(config) => Some(&config.server),
             Self::Redis(config) => Some(&config.server),
+            Self::Mongo(config) => Some(&config.server),
             Self::Sqlite(_) | Self::DuckDb(_) => None,
         }
     }
@@ -232,6 +235,7 @@ impl ConnectionConfig {
             Self::SqlServer(config) => Some(&mut config.server),
             Self::ClickHouse(config) => Some(&mut config.server),
             Self::Redis(config) => Some(&mut config.server),
+            Self::Mongo(config) => Some(&mut config.server),
             Self::Sqlite(_) | Self::DuckDb(_) => None,
         }
     }
@@ -245,18 +249,24 @@ impl ConnectionConfig {
             Self::DuckDb(_) => DriverKind::DuckDb,
             Self::ClickHouse(_) => DriverKind::ClickHouse,
             Self::Redis(_) => DriverKind::Redis,
+            Self::Mongo(_) => DriverKind::Mongo,
         }
     }
 
     /// The database a connection opens, on engines whose catalog has databases above its
     /// schemas; the explorer lists that database's schemas. MySQL's and ClickHouse's databases
-    /// are their schemas, so they have no such level, and Redis's numbered databases hold keys.
+    /// are their schemas, so they have no such level, Redis's numbered databases hold keys, and
+    /// MongoDB's hold collections.
     pub fn database(&self) -> Option<&str> {
         match self {
             Self::Postgres(config) => Some(&config.server.database),
             Self::SqlServer(config) => Some(&config.server.database),
             Self::DuckDb(config) => config.database_name(),
-            Self::Sqlite(_) | Self::Mysql(_) | Self::ClickHouse(_) | Self::Redis(_) => None,
+            Self::Sqlite(_)
+            | Self::Mysql(_)
+            | Self::ClickHouse(_)
+            | Self::Redis(_)
+            | Self::Mongo(_) => None,
         }
     }
 
@@ -275,6 +285,8 @@ impl ConnectionConfig {
             Self::Mysql(config) => &config.server.database,
             // The number of the database a connection selects, which keys belong to.
             Self::Redis(config) => &config.server.database,
+            // The database a console's commands run in until `use` changes it.
+            Self::Mongo(config) => &config.server.database,
         }
     }
 
@@ -302,6 +314,19 @@ impl ConnectionConfig {
             Self::Redis(config) => Self::Redis(RedisConfig {
                 server: config.server.resolve(variables)?,
                 separator: config.separator.clone(),
+            }),
+            Self::Mongo(config) => Self::Mongo(MongoConfig {
+                server: config.server.resolve(variables)?,
+                auth_database: expand(&config.auth_database, variables)
+                    .map_err(PlaceholderError::in_setting(Setting::AuthDatabase))?,
+                connection_string: config
+                    .connection_string
+                    .as_deref()
+                    .map(|text| {
+                        expand(text, variables)
+                            .map_err(PlaceholderError::in_setting(Setting::ConnectionString))
+                    })
+                    .transpose()?,
             }),
             Self::Sqlite(config) => Self::Sqlite(SqliteConfig {
                 path: expand_path(&config.path, variables)
@@ -331,6 +356,7 @@ impl ConnectionConfig {
             Self::ClickHouse(config) => config.server.default_name(),
             // `db0@localhost`, as the explorer labels a numbered database.
             Self::Redis(config) => format!("db{}", config.server.default_name()),
+            Self::Mongo(config) => config.server.default_name(),
             Self::Sqlite(config) => file_name(&config.path),
             Self::DuckDb(config) => match &config.database {
                 DuckDbDatabase::File { path, .. } => file_name(path),
@@ -345,7 +371,12 @@ impl DriverKind {
     /// Skipping the lookup for other drivers avoids pointless keychain prompts.
     pub fn uses_password(self) -> bool {
         match self {
-            Self::Postgres | Self::Mysql | Self::SqlServer | Self::ClickHouse | Self::Redis => true,
+            Self::Postgres
+            | Self::Mysql
+            | Self::SqlServer
+            | Self::ClickHouse
+            | Self::Redis
+            | Self::Mongo => true,
             Self::Sqlite | Self::DuckDb => false,
         }
     }
@@ -360,6 +391,10 @@ impl fmt::Display for ConnectionConfig {
             Self::SqlServer(config) => config.server.fmt(f),
             Self::ClickHouse(config) => config.server.fmt(f),
             Self::Redis(config) => config.server.fmt(f),
+            Self::Mongo(config) => match &config.connection_string {
+                Some(_) => write!(f, "{} (connection string)", config.server.host),
+                None => config.server.fmt(f),
+            },
             Self::Sqlite(config) if config.read_only => {
                 write!(f, "{} (read-only)", config.path.display())
             }
@@ -722,6 +757,35 @@ impl RedisConfig {
     }
 }
 
+/// A MongoDB server: the shared server form, or a connection string pasted whole.
+///
+/// The server's `database` is the one a console's commands run in until `use` changes it; the
+/// explorer lists every database the user may see. Its user is optional, for a server without
+/// access control, and signs in against `auth_database` (`admin` when empty).
+///
+/// With a connection string, the host, port, TLS and SSH tunnel are the string's, and `host` only
+/// names the data source: the string may name several hosts, or a DNS record (`mongodb+srv://`).
+/// The user and password are kept out of the string, the password in the keychain.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MongoConfig {
+    #[serde(flatten)]
+    pub server: ServerConfig,
+    /// Written only when set.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub auth_database: String,
+    /// `mongodb://…` or `mongodb+srv://…`, without its user and password. Written only when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_string: Option<String>,
+}
+
+impl MongoConfig {
+    pub const DEFAULT_PORT: u16 = 27017;
+    /// The database a new data source's consoles start in, as the shell's do.
+    pub const DEFAULT_DATABASE: &str = "test";
+    /// Where a user's credentials are kept unless the data source says otherwise.
+    pub const DEFAULT_AUTH_DATABASE: &str = "admin";
+}
+
 /// A DuckDB database: a file, or one in memory that starts empty each time, for querying CSV,
 /// Parquet and JSON files with DuckDB's table functions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -771,10 +835,11 @@ pub enum DriverKind {
     DuckDb,
     ClickHouse,
     Redis,
+    Mongo,
 }
 
 impl DriverKind {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Postgres,
         Self::Sqlite,
         Self::Mysql,
@@ -782,6 +847,7 @@ impl DriverKind {
         Self::DuckDb,
         Self::ClickHouse,
         Self::Redis,
+        Self::Mongo,
     ];
 
     pub fn display_name(self) -> &'static str {
@@ -793,6 +859,7 @@ impl DriverKind {
             Self::DuckDb => "DuckDB",
             Self::ClickHouse => "ClickHouse",
             Self::Redis => "Redis / Valkey",
+            Self::Mongo => "MongoDB",
         }
     }
 }
@@ -896,6 +963,47 @@ mod tests {
             panic!("expected a Redis data source");
         };
         assert_eq!(config.separator, ".");
+    }
+
+    #[test]
+    fn a_mongodb_data_source_round_trips_with_its_connection_string() {
+        let file = File {
+            data_source: vec![DataSource {
+                id: DataSourceId::generate(),
+                name: "atlas".to_owned(),
+                color: None,
+                safety: SafetyLevel::Normal,
+                project: None,
+                mcp_login: None,
+                config: ConnectionConfig::Mongo(MongoConfig {
+                    server: ServerConfig {
+                        host: "cluster0.example.mongodb.net".to_owned(),
+                        port: MongoConfig::DEFAULT_PORT.into(),
+                        database: "shop".to_owned(),
+                        user: "app".to_owned(),
+                        tls: TlsMode::Disable,
+                        ssh: None,
+                        password_command: None,
+                    },
+                    auth_database: String::new(),
+                    connection_string: Some(
+                        "mongodb+srv://cluster0.example.mongodb.net/shop".to_owned(),
+                    ),
+                }),
+            }],
+        };
+        let text = toml::to_string(&file).unwrap();
+        assert!(text.contains("driver = \"mongodb\""), "{text}");
+        assert!(!text.contains("auth_database"), "{text}");
+        assert_eq!(toml::from_str::<File>(&text).unwrap(), file);
+        assert_eq!(
+            file.data_source[0].config.default_name(),
+            "shop@cluster0.example.mongodb.net"
+        );
+        assert_eq!(
+            file.data_source[0].config.to_string(),
+            "cluster0.example.mongodb.net (connection string)"
+        );
     }
 
     #[test]

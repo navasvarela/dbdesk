@@ -632,8 +632,8 @@ port.
   - completion inserts the words as listed (`insertOne`, `$match`), since MongoDB's names are
     case-sensitive, rather than in the case being typed as SQL's keywords and Redis's
     commands are.
-- **N2·3 — The driver and the console:** a new crate, `dbrover-driver-mongodb`, on the
-  official `mongodb` driver:
+- **N2·3 — The driver and the console** (built): a new crate, `dbrover-driver-mongodb`, on
+  the official `mongodb` driver:
   - the **MongoDB** data source: the shared server form (port 27017) with the authentication
     database, or a connection string pasted whole (`mongodb://` or `mongodb+srv://`, which
     Atlas hands out), whose password moves to the keychain; TLS in the driver's own rustls on
@@ -654,7 +654,22 @@ port.
   each kind, a `find` and an `aggregate` paged past 500 documents, each BSON type through to
   canonical Extended JSON and back, a slow aggregation cancelled (`$function` sleeping, or a
   `$where`), TLS and a tunnel, the connection string, and an engine test of a console and a
-  read-only data source refusing `deleteMany`. Manual: the data source and the console.
+  read-only data source refusing `deleteMany`. Manual: the data source and the console. How it
+  came out:
+  - every method is sent as the server command it stands for (`find`, `aggregate`, `count`,
+    `distinct`, `insert`, `update`, `delete`, `findAndModify`, `createIndexes`, …), built by
+    DbRover, rather than through the driver's typed helpers: one path carries the run's
+    `comment`, and `explain()` wraps the very command the method sends. `insertOne` and
+    `insertMany` give a document without `_id` a new `ObjectId` first, as the shell does, so
+    the answer names it; `bulkWrite` sends each operation as its own command, in order;
+  - a cursor is read in a task that owns it, and one document past each page is read ahead,
+    so the grid knows exactly when a result ends;
+  - `check_lost` doesn't apply: the client is a pool that reconnects by itself, so a lost
+    server shows as a failed command, or as a lost connection when no server can be reached;
+  - `verify-full` through an SSH tunnel is refused (see [Decisions](#decisions)); the driver
+    waits 15 seconds for a server rather than its own 30;
+  - the engine's cursor wrapper didn't pass a result's shape on, so every result of documents
+    reached the console as rows, Redis's stream entries included; it does now.
 - **N2·4 — The explorer:** under each database, its collections, views and time-series
   collections, each with its estimated document count (`estimatedDocumentCount`, never a full
   count), and under a collection its indexes. **Show definition** gives
@@ -809,7 +824,7 @@ milestone starts.
 | Which `redis` release (N1) | **1.8.1**, the latest release; 2.0 was still in release candidates when N1 started. Without its TLS features: DbRover opens the TCP or TLS stream and hands it to the client. | TLS is `dbrover-tls`'s, as for PostgreSQL and ClickHouse, with ring and the same modes, and nothing else in the build picks a crypto provider. 2.0 is taken in a change of its own once released. |
 | Where classification comes from (N1) | **A table generated from Redis 8's and Valkey 9's command definitions,** shipped with DbRover, and checked in CI against each server's `COMMAND INFO`. | The check works before connecting, and the console completes from the same table. A module's command the table doesn't list is unclassified, so a read-only data source refuses it; the table is regenerated from a server with the module to add it. |
 | What a key viewer is (N1) | **A console with the key's read command,** opened and run by **Open data**, with a key bar above its result, and edits that become commands. | Paging, the cell viewer's tree, copying and exporting, the safety level, the log and the history work as for any command, with no second path to keep in step. |
-| Which `mongodb` release (N2) | **3.9.1**, the latest, with `bson` 3 (its `bson-3` feature, without the default `compat-3-0-0` that brings `bson` 2), `rustls-tls` on ring and `dns-resolver` for `mongodb+srv://`. | One `bson` in the build, and no second crypto provider. The driver opens its own sockets, so TLS is its rustls, not `dbrover-tls`'s: `require` allows any certificate, `verify-full` takes the CA file or Mozilla's authorities as `dbrover-tls` does, and `prefer` connects unencrypted, as on Redis, since a client can't try TLS and fall back on the same port. Through an SSH tunnel the driver checks the certificate against the tunnel's local end, so there it checks the authority but not the host name, and the dialog says so. |
+| Which `mongodb` release (N2) | **3.9.1**, the latest, with `bson` 3 (its `bson-3` feature, without the default `compat-3-0-0` that brings `bson` 2), `rustls-tls` on ring and `dns-resolver` for `mongodb+srv://`. | One `bson` in the build, and no second crypto provider. The driver opens its own sockets, so TLS is its rustls, not `dbrover-tls`'s: `require` allows any certificate, `verify-full` takes the CA file or Mozilla's authorities as `dbrover-tls` does, and `prefer` connects unencrypted, as on Redis, since a client can't try TLS and fall back on the same port. Through an SSH tunnel the driver would check the certificate's name against the tunnel's local end, and its rustls build can't skip that check, so `verify-full` is refused there with a message suggesting `require`. |
 | A connection string or the form (N2) | **Either**: the shared server form, or a connection string pasted whole. The string is kept in the data source file without its password, which moves to the keychain when the data source is saved; `${NAME}` placeholders work in it. | Atlas's `mongodb+srv://` strings, replica sets and options such as `replicaSet` or `authMechanism` work as written. SSH tunnels only with the form: a string may name several hosts, or none (`+srv`). |
 | Where the shell's syntax is read (N2) | **In `dbrover-language`'s `mongo` module, into DbRover's own tree of a command,** with no `bson` in that crate; the driver turns the tree into BSON. | Classification, warnings, completion and the MCP server read the same tree the driver runs, and the app needs no MongoDB crate. |
 | Where a cancel comes from (N2) | **The console's own client**, a pool, which opens a second connection as the same user to send `$currentOp` (own operations only) and `killOp`. | Each console's cancel works without the explorer's session, as on the other engines, and any user may kill their own operations. |

@@ -1,6 +1,7 @@
 //! The editable fields behind the data source dialog, and their validation. No egui here, so
 //! the rules are testable without a UI.
 
+mod mongo;
 mod server;
 mod ssh;
 
@@ -11,6 +12,7 @@ use dbrover_core::{
 };
 use dbrover_engine::PasswordUpdate;
 
+pub use mongo::{MongoFields, MongoTarget};
 pub use server::{DatabaseField, ServerDefaults, ServerFields, TlsChoice, TlsOffer, UserField};
 pub use ssh::{SshFields, SshLoginChoice};
 
@@ -83,6 +85,8 @@ pub enum FormError {
     DatabaseMissing,
     #[error("Database number must be a number such as 0, or a ${{VARIABLE}}.")]
     InvalidDatabaseNumber,
+    #[error("Connection string must start with mongodb:// or mongodb+srv://.")]
+    InvalidConnectionString,
     #[error("User is required.")]
     UserMissing,
     #[error("File is required.")]
@@ -144,6 +148,7 @@ pub enum DriverFields {
     DuckDb(DuckDbFields),
     ClickHouse(ClickHouseFields),
     Redis(RedisFields),
+    Mongo(MongoFields),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -223,6 +228,7 @@ impl DriverFields {
                 server: ServerFields::new(REDIS_DEFAULTS),
                 separator: RedisConfig::DEFAULT_SEPARATOR.to_owned(),
             }),
+            DriverKind::Mongo => Self::Mongo(MongoFields::new()),
         }
     }
 
@@ -260,6 +266,7 @@ impl DriverFields {
                 server: ServerFields::from_config(&config.server, REDIS_DEFAULTS),
                 separator: config.separator.clone(),
             }),
+            ConnectionConfig::Mongo(config) => Self::Mongo(MongoFields::from_config(config)),
         }
     }
 
@@ -272,6 +279,7 @@ impl DriverFields {
             Self::DuckDb(_) => DriverKind::DuckDb,
             Self::ClickHouse(_) => DriverKind::ClickHouse,
             Self::Redis(_) => DriverKind::Redis,
+            Self::Mongo(_) => DriverKind::Mongo,
         }
     }
 
@@ -283,6 +291,7 @@ impl DriverFields {
             Self::SqlServer(fields) => Some(&fields.server),
             Self::ClickHouse(fields) => Some(&fields.server),
             Self::Redis(fields) => Some(&fields.server),
+            Self::Mongo(fields) => Some(&fields.server),
             Self::Sqlite(_) | Self::DuckDb(_) => None,
         }
     }
@@ -307,6 +316,7 @@ impl DriverFields {
                 server: fields.server.to_config()?,
                 separator: fields.separator.clone(),
             }),
+            Self::Mongo(fields) => ConnectionConfig::Mongo(fields.to_config()?),
         })
     }
 }

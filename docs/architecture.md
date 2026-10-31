@@ -20,6 +20,8 @@ flowchart LR
         Engine --> MS[driver-sqlserver]
         Engine --> DK[driver-duckdb]
         Engine --> CH[driver-clickhouse]
+        Engine --> RD[driver-redis]
+        Engine --> MG[driver-mongodb]
         Engine -->|Event + request_repaint| EvRx
     end
     Engine --> Store[dbrover-store<br/>config, keychain, history]
@@ -32,7 +34,7 @@ flowchart LR
 | --- | --- | --- |
 | `dbrover-core` | Domain types (`DataSource`, `ConnectionConfig`, `Password`, …) and the `Connection` trait. No I/O. | — |
 | `dbrover-sql` | A forgiving SQL lexer: statement splitting, statement at the cursor, highlighting tokens, the UPDATE/DELETE-without-WHERE check, the formatter, and the syntax checker (`sqlparser`) and lint rules. What differs between dialects lives in its `dialect` module. | core, sqlparser |
-| `dbrover-language` | `QueryLanguage`, what a driver speaks: `Sql(Dialect)` for the SQL engines and `Redis` for Redis, Valkey and Dragonfly, with more languages beside SQL as NoSQL engines arrive ([nosql.md](nosql.md)). Redis's commands are read as `redis-cli` reads them and classified from a table of the servers' command flags. Each language splits a script into commands, yields tokens to highlight, lists completion words and classifies a command; SQL-only features ask it for its `Dialect`. A `Test` language, behind the `test-language` feature, exists only for tests. | core, sql |
+| `dbrover-language` | `QueryLanguage`, what a driver speaks: `Sql(Dialect)` for the SQL engines, `Redis` for Redis, Valkey and Dragonfly, and `Mongo` for MongoDB, with more languages beside SQL as NoSQL engines arrive ([nosql.md](nosql.md)). Redis's commands are read as `redis-cli` reads them and classified from a table of the servers' command flags; MongoDB's are a subset of the shell's syntax, read into DbRover's own tree and classified from a table of its methods. Each language splits a script into commands, yields tokens to highlight, lists completion words and classifies a command; SQL-only features ask it for its `Dialect`. A `Test` language, behind the `test-language` feature, exists only for tests. | core, sql |
 | `dbrover-document` | JSON and documents with no engine in them ([ADR 0006](adr/0006-documents-as-extended-json-text.md)): a reader that keeps fields in order and numbers as written, MongoDB's Extended JSON types shown as the shell writes them, and paths (`items[2].sku`). What the app's JSON tree draws, for documents, SQL engines' JSON columns and Redis's JSON. | — |
 | `dbrover-driver-postgres` | `tokio-postgres` implementation of `Connection`. | core, tls |
 | `dbrover-driver-sqlite` | `rusqlite` implementation, run on `spawn_blocking`. | core |
@@ -41,6 +43,7 @@ flowchart LR
 | `dbrover-driver-duckdb` | `duckdb` implementation, with DuckDB 1.5 inside (compiled, or DuckDB's prebuilt library in CI and releases; see [duckdb-prebuilt.md](duckdb-prebuilt.md)), run on `spawn_blocking` like SQLite; results are read as DuckDB streams them, in Arrow chunks, and formatted by Arrow. Uses `dbrover-sql` only to tell a change's row count from a result. | core, sql |
 | `dbrover-driver-clickhouse` | The official `clickhouse` client over HTTP(S); a connection is a server session (`session_id`), so `USE`, `SET` and temporary tables last between statements. Results are read a line at a time in `JSONCompactEachRowWithNamesAndTypes`, values kept as ClickHouse writes them; cancel is `KILL QUERY` by `query_id` from a client outside the session. | core, tls |
 | `dbrover-driver-redis` | The community `redis` client for Redis, Valkey and Dragonfly, in RESP3 on a stream the driver opens itself (TCP, a tunnel, TLS from `dbrover-tls`). A reply reaches the grid by its shape; `SCAN` and its kin are followed to their end a page at a time. Cancel is `CLIENT UNBLOCK` or `SCRIPT KILL` from a second session, or else a new session, since Redis can't stop most commands. | core, language, tls |
+| `dbrover-driver-mongodb` | The official `mongodb` driver, with `bson` 3. Each shell command, read by `dbrover-language`, is sent as the server command its method sends (`find`, `aggregate`, `insert`, `update`, `findAndModify`, …), tagged with a comment unique to the run; documents reach the grid as canonical Extended JSON. A cursor is read in a task of its own, since the driver warns against dropping its futures part-way. Cancel finds the run's operations with `$currentOp` and ends them with `killOp`. TLS is the driver's own rustls on ring. | core, language |
 | `dbrover-tls` | The rustls client configuration for each TLS mode, shared by the PostgreSQL, ClickHouse and Redis drivers. | core |
 | `dbrover-ssh` | SSH tunnels on `russh` (ring, no OpenSSL): signs in with the agent, a key file or a password, checks the host key against `known_hosts`, and forwards a local port to the database server. | core |
 | `dbrover-engine` | Session lifecycle, command handling, cancellation, transactions, event emission. | core, sql, language, store, export, drivers |

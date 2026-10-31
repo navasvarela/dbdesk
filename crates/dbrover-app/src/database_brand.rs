@@ -69,5 +69,13 @@ pub fn of(driver: DriverKind) -> DatabaseBrand {
             light: Color32::from_rgb(0xD8, 0x2C, 0x20),
             dark: Color32::from_rgb(0xFF, 0x6E, 0x63),
         },
+        // MongoDB's green on the light theme, darkened a little to read on white; a lighter
+        // green on the dark one.
+        DriverKind::Mongo => DatabaseBrand {
+            logo_uri: "bytes://logos/mongodb.svg",
+            logo_svg: include_bytes!("../../../assets/icons/databases/mongodb.svg"),
+            light: Color32::from_rgb(0x3B, 0x8A, 0x3C),
+            dark: Color32::from_rgb(0x6C, 0xC6, 0x6D),
+        },
     }
 }
