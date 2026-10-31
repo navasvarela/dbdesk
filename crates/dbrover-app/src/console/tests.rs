@@ -487,6 +487,29 @@ mod test_language {
     }
 
     #[test]
+    fn completes_redis_commands_with_their_arguments() {
+        let mut console = console_in("HSE", QueryLanguage::Redis);
+        console.selection = 3..3;
+        let recent = RecentCompletions::default();
+        console.open_completion(false);
+        let _ = console.refresh_completion(None, &recent, &[]);
+        let hset = console
+            .completion
+            .as_ref()
+            .and_then(|completion| {
+                completion
+                    .candidates
+                    .iter()
+                    .find(|candidate| candidate.label == "HSET")
+            })
+            .map(|candidate| candidate.detail.clone());
+        assert_eq!(
+            hset,
+            Some(Some("key field value [field value ...]".to_owned()))
+        );
+    }
+
+    #[test]
     fn leaves_out_what_only_sql_has() {
         let mut console = console_in("get a", QueryLanguage::Test);
         assert_eq!(console.dialect(), None);

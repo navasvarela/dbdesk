@@ -11,6 +11,7 @@
 //! variants, so a language added for a new engine changes no other crate (see
 //! `docs/nosql.md`, N0a).
 
+pub mod redis;
 #[cfg(any(test, feature = "test-language"))]
 mod test_language;
 
@@ -27,6 +28,8 @@ pub use dbrover_sql::{Analysis, NamedSchemas, StatementKind, Token, TokenKind, U
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueryLanguage {
     Sql(Dialect),
+    /// Redis's commands, for Redis, Valkey and Dragonfly.
+    Redis,
     /// A language of one command per line, built only for tests: it has no dialect, so it runs
     /// through the paths a non-SQL engine will take.
     #[cfg(any(test, feature = "test-language"))]
@@ -38,6 +41,7 @@ impl QueryLanguage {
     pub fn display_name(self) -> &'static str {
         match self {
             Self::Sql(dialect) => dialect.display_name(),
+            Self::Redis => "Redis",
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => "the test language",
         }
@@ -47,6 +51,7 @@ impl QueryLanguage {
     pub fn dialect(self) -> Option<Dialect> {
         match self {
             Self::Sql(dialect) => Some(dialect),
+            Self::Redis => None,
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => None,
         }
@@ -66,6 +71,7 @@ impl QueryLanguage {
     pub fn split(self, script: &str) -> Vec<Range<usize>> {
         match self {
             Self::Sql(dialect) => dbrover_sql::split_statements(script, dialect),
+            Self::Redis => redis::split(script),
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => test_language::split(script),
         }
@@ -76,6 +82,7 @@ impl QueryLanguage {
     pub fn tokens(self, text: &str) -> Vec<Token> {
         match self {
             Self::Sql(dialect) => dbrover_sql::tokenize(text, dialect),
+            Self::Redis => redis::tokenize(text),
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => test_language::tokenize(text),
         }
@@ -86,6 +93,7 @@ impl QueryLanguage {
     pub fn is_keyword(self, word: &str) -> bool {
         match self {
             Self::Sql(_) => dbrover_sql::is_keyword(word),
+            Self::Redis => redis::is_command(word),
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => test_language::is_keyword(word),
         }
@@ -95,8 +103,20 @@ impl QueryLanguage {
     pub fn completion_words(self) -> &'static [&'static str] {
         match self {
             Self::Sql(_) => dbrover_sql::keywords(),
+            Self::Redis => redis::completion_words(),
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => test_language::KEYWORDS,
+        }
+    }
+
+    /// What completion shows beside `word`, one of [`Self::completion_words`]: the arguments
+    /// a Redis command takes. `None` where the language has nothing to add.
+    pub fn completion_detail(self, word: &str) -> Option<&'static str> {
+        match self {
+            Self::Redis => redis::syntax(word),
+            Self::Sql(_) => None,
+            #[cfg(any(test, feature = "test-language"))]
+            Self::Test => None,
         }
     }
 
@@ -108,6 +128,7 @@ impl QueryLanguage {
             Self::Sql(dialect) => {
                 dbrover_sql::hazard(command, dialect).map(dbrover_sql::Hazard::description)
             }
+            Self::Redis => redis::hazard(command),
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => test_language::hazard(command),
         }
@@ -133,6 +154,10 @@ impl QueryLanguage {
     pub fn analyze(self, command: &str) -> Result<Analysis, Unclassified> {
         match self {
             Self::Sql(dialect) => dbrover_sql::analyze(command, dialect),
+            Self::Redis => redis::classify(command).map(|kind| Analysis {
+                kind,
+                schemas: NamedSchemas::Unknown,
+            }),
             #[cfg(any(test, feature = "test-language"))]
             Self::Test => test_language::classify(command).map(|kind| Analysis {
                 kind,
