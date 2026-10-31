@@ -232,6 +232,7 @@ impl From<DriverKind> for QueryLanguage {
             DriverKind::DuckDb => Self::Sql(Dialect::DuckDb),
             DriverKind::ClickHouse => Self::Sql(Dialect::ClickHouse),
             DriverKind::Redis => Self::Redis,
+            DriverKind::Mongo => Self::Mongo,
         }
     }
 }
@@ -263,9 +264,11 @@ mod tests {
                 Some(Dialect::DuckDb),
                 Some(Dialect::ClickHouse),
                 None,
+                None,
             ]
         );
         assert_eq!(QueryLanguage::from(DriverKind::Redis), QueryLanguage::Redis);
+        assert_eq!(QueryLanguage::from(DriverKind::Mongo), QueryLanguage::Mongo);
     }
 
     #[test]

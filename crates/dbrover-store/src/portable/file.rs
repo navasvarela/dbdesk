@@ -11,9 +11,9 @@ use std::path::{Path, PathBuf};
 
 use dbrover_core::{
     ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase,
-    McpLogin, MysqlConfig, PasswordCommand, Port, PostgresConfig, ProjectId, RedisConfig,
-    SafetyLevel, ServerConfig, SourceColor, SqlServerConfig, SqliteConfig, SshConfig, SshLogin,
-    TlsMode,
+    McpLogin, MongoConfig, MysqlConfig, PasswordCommand, Port, PostgresConfig, ProjectId,
+    RedisConfig, SafetyLevel, ServerConfig, SourceColor, SqlServerConfig, SqliteConfig, SshConfig,
+    SshLogin, TlsMode,
 };
 use serde::{Deserialize, Serialize};
 
@@ -162,6 +162,8 @@ enum PortableConfig {
     #[serde(rename = "clickhouse")]
     ClickHouse(PortableServer),
     Redis(PortableRedis),
+    #[serde(rename = "mongodb")]
+    Mongo(PortableMongo),
 }
 
 impl PortableConfig {
@@ -185,6 +187,15 @@ impl PortableConfig {
                     separator: separator.clone(),
                 })
             }
+            ConnectionConfig::Mongo(MongoConfig {
+                server,
+                auth_database,
+                connection_string,
+            }) => Self::Mongo(PortableMongo {
+                server: PortableServer::export(server, path),
+                auth_database: auth_database.clone(),
+                connection_string: connection_string.clone(),
+            }),
             ConnectionConfig::Sqlite(SqliteConfig {
                 path: file,
                 read_only,
@@ -227,6 +238,15 @@ impl PortableConfig {
                     separator,
                 })
             }
+            Self::Mongo(PortableMongo {
+                server,
+                auth_database,
+                connection_string,
+            }) => ConnectionConfig::Mongo(MongoConfig {
+                server: server.import(path),
+                auth_database,
+                connection_string,
+            }),
             Self::Sqlite(PortableSqlite {
                 path: file,
                 read_only,
@@ -261,6 +281,18 @@ struct PortableRedis {
         skip_serializing_if = "is_default_separator"
     )]
     separator: String,
+}
+
+/// A MongoDB server, with its authentication database and connection string written only when
+/// set, as in `data_sources.toml`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct PortableMongo {
+    #[serde(flatten)]
+    server: PortableServer,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    auth_database: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    connection_string: Option<String>,
 }
 
 fn default_separator() -> String {

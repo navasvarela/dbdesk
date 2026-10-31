@@ -212,6 +212,42 @@ services:
       timeout: 5s
       retries: 30
 
+  # MongoDB 8 as a single server, with access control on (the `dbrover` user, in `admin`) and
+  # TLS on the same port as plain connections (`preferTLS`), so one container tests both. mongod
+  # wants the certificate and its key in one file, made from the PostgreSQL test pair at start,
+  # and an authority to trust, though it asks clients for no certificate.
+  # The health check connects to the container's own address, which the image's first-start
+  # server (bound to 127.0.0.1 while it creates the user) doesn't answer on.
+  # The image's tag comes from DBROVER_MONGO_TAG, 8 unless set: CI sets 7.0, since every
+  # MongoDB 8 refuses to start on Linux kernels 6.19 to 7.0.13 (its TCMalloc breaks on their
+  # rseq; SERVER-121912), which GitHub's Ubuntu runners have in October 2026.
+  mongo:
+    image: mongo:${DBROVER_MONGO_TAG:-8}
+    ports:
+      - "57017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: dbrover
+      MONGO_INITDB_ROOT_PASSWORD: dbrover
+    volumes:
+      - ./docker/postgres-tls:/tls:ro
+    entrypoint:
+      - bash
+      - -c
+      - >-
+        cat /tls/server.crt /tls/server.key > /tmp/server.pem &&
+        exec docker-entrypoint.sh mongod --tlsMode preferTLS
+        --tlsCertificateKeyFile /tmp/server.pem --tlsCAFile /tls/ca.crt
+        --tlsAllowConnectionsWithoutCertificates
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          mongosh --quiet --host "$$(hostname -i)" -u dbrover -p dbrover
+          --eval 'db.adminCommand("ping").ok' | grep -q 1
+      interval: 2s
+      timeout: 10s
+      retries: 30
+
   # OpenSSH on Alpine (docker/ssh), for the SSH tunnel tests: signs in `dbrover` with the test
   # keys there or its password, and forwards only to the postgres service. Built from a few
   # lines rather than pulled, so it stays a 10 MB image with fixed host and client keys.

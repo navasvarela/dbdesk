@@ -252,6 +252,61 @@ of them once they start:
   waiting for it, opens a new connection on the same database, and says so. The server may still
   be finishing the command, and other clients wait until it has.
 
+### MongoDB commands
+
+A MongoDB console runs the shell's commands, as you would type them in `mongosh`:
+
+```text
+use shop
+db.orders.find({status: "open"}).sort({_id: -1}).limit(50)
+db.orders.aggregate([
+  {$match: {created: {$gte: ISODate("2026-01-01")}}},
+  {$group: {_id: "$customer", total: {$sum: "$amount"}}},
+])
+db.getCollection("order-lines").countDocuments({qty: {$gt: 4}})
+db.orders.updateOne({_id: ObjectId("507f1f77bcf86cd799439011")}, {$set: {"address.city": "Madrid"}})
+```
+
+DbRover reads these commands itself rather than running JavaScript, so it knows what each one
+does before sending it. What it runs:
+
+- `use <database>`, `show dbs` and `show collections`;
+- a collection's methods: `find`, `findOne`, `aggregate`, `countDocuments`,
+  `estimatedDocumentCount`, `distinct`, `getIndexes`, `insertOne`, `insertMany`, `updateOne`,
+  `updateMany`, `replaceOne`, `deleteOne`, `deleteMany`, `findOneAndUpdate`,
+  `findOneAndReplace`, `findOneAndDelete`, `bulkWrite`, `createIndex`, `dropIndex`, `drop` and
+  `renameCollection`, with `sort`, `limit`, `skip`, `projection`, `hint`, `collation` and
+  `explain()` after `find` and `aggregate`;
+- the database's: `runCommand`, `adminCommand`, `aggregate`, `createCollection`, `createView`,
+  `getCollectionNames`, `getCollectionInfos`, `stats` and `dropDatabase`;
+- `db.getCollection("…")` for a name that isn't a plain word, and `db.getSiblingDB("…")` for
+  another database.
+
+Arguments are the shell's relaxed JSON: keys without quotes, single or double quotes, trailing
+commas and comments, with `ObjectId()`, `ISODate()`, `new Date()`, `NumberLong()`,
+`NumberInt()`, `NumberDecimal()`, `UUID()`, `BinData()`, `Timestamp()`, `MinKey`, `MaxKey` and
+`/regular expressions/`. A whole number that fits 32 bits is stored as an `int` and any other
+number as a `double`, as in the shell. Variables, functions and loops don't run: the error says
+what isn't supported and points at it, and `db.runCommand({…})` sends any command DbRover has no
+method for, such as `createUser`.
+
+Commands are separated by `;`, or by a line break once every bracket is closed, so a chain
+written over several lines, each starting with `.`, is one command. Completion offers the
+methods, each with its arguments, and the operators and pipeline stages, written as MongoDB
+writes them (`insertOne`, `$match`).
+
+The result of `find` and `aggregate` is the documents, read 500 at a time as you scroll: the
+grid shows their fields as columns, and **Tree** and **JSON** show the selected document whole.
+The rest show as the shell shows them: a count as a number, `distinct` as a column of values,
+and a write as what it changed (`{acknowledged: true, insertedId: …}`), with the documents it
+changed counted in the toolbar. `explain()` after `find` or `aggregate` shows the plan as a
+document.
+
+A console's commands run in its database until `use` chooses another. MongoDB's transactions
+need a replica set and a session, which DbRover doesn't open, so each command commits on its own
+and there is no transaction mode. **Cancel** finds the command on the server by a comment
+DbRover tags it with and stops it with `killOp`, so a slow `find` or aggregation ends at once.
+
 The toolbar shows how the last run went: **Done in 12 ms**, **Failed** or **Cancelled**. While a
 statement runs, Run, Run all and Explain are disabled.
 

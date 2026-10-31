@@ -8,7 +8,8 @@ mod common;
 use std::sync::Arc;
 
 use common::{
-    TestEngine, postgres_test_server, redis_test_servers, sqlite_data_source, sqlite_database,
+    TestEngine, mongo_test_server, postgres_test_server, redis_test_servers, sqlite_data_source,
+    sqlite_database,
 };
 use dbrover_core::{ConnectionConfig, DataSource, DataSourceId, SafetyLevel};
 use dbrover_engine::{
@@ -340,4 +341,46 @@ fn page_through(engine: &mut TestEngine, data_source: DataSourceId, run: u64) ->
         }
     }
     pages
+}
+
+/// N2's exit: a read-only MongoDB data source refuses `deleteMany` before sending it, and still
+/// reads. Needs `DBROVER_TEST_MONGODB_URL`; skipped without it.
+#[test]
+fn a_read_only_mongodb_data_source_refuses_delete_many() {
+    let Some((config, password)) = mongo_test_server("dbrover_engine_safety") else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    engine.expect_started(vec![]);
+    let shop = DataSource {
+        id: DataSourceId::generate(),
+        name: "shop".to_owned(),
+        color: None,
+        safety: SafetyLevel::Normal,
+        project: None,
+        mcp_login: None,
+        config: ConnectionConfig::Mongo(config),
+    };
+    let production = read_only(&shop);
+    save(&mut engine, &production, PasswordUpdate::Set(password));
+    let cases = [
+        ("db.orders.deleteMany({})", Some(refused("changes data"))),
+        ("db.orders.drop()", Some(refused("changes the schema"))),
+        (
+            "db.runCommand({createUser: 'x', pwd: 'y', roles: []})",
+            Some(refused("administers the database")),
+        ),
+        ("db.orders.find({status: 'open'})", None),
+    ];
+    for (number, (command, expected)) in cases.into_iter().enumerate() {
+        let failure = run(
+            &mut engine,
+            READ_ONLY_CONSOLE,
+            production.id,
+            number as u64 + 1,
+            command,
+        );
+        assert_eq!(failure, expected, "{command}");
+    }
 }

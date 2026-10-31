@@ -10,6 +10,7 @@ mod connection;
 mod data_source;
 mod error;
 mod execution;
+mod mongo_uri;
 mod password;
 mod password_command;
 mod placeholder;
@@ -27,14 +28,15 @@ pub use command_template::{CommandTemplate, DataSourceFields};
 pub use connection::{Connection, Rejection, RejectionKind, ServerInfo};
 pub use data_source::{
     ClickHouseConfig, ConnectionConfig, DataSource, DataSourceId, DriverKind, DuckDbConfig,
-    DuckDbDatabase, McpLogin, MysqlConfig, Port, PostgresConfig, ProjectId, RedisConfig, Route,
-    SafetyLevel, ServerConfig, SourceColor, SqlServerConfig, SqliteConfig, SshConfig, SshLogin,
-    TlsMode,
+    DuckDbDatabase, McpLogin, MongoConfig, MysqlConfig, Port, PostgresConfig, ProjectId,
+    RedisConfig, Route, SafetyLevel, ServerConfig, SourceColor, SqlServerConfig, SqliteConfig,
+    SshConfig, SshLogin, TlsMode,
 };
 pub use error::{BoxError, DriverError, describe_error};
 pub use execution::{
     CancelHandle, Cell, ColumnInfo, ResultCursor, ResultShape, Row, TransactionStatus, ValueKind,
 };
+pub use mongo_uri::MongoUri;
 pub use password::Password;
 pub use password_command::PasswordCommand;
 pub use placeholder::{

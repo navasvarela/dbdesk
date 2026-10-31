@@ -2615,6 +2615,61 @@ mod tests {
         );
     }
 
+    /// A MongoDB data source starts on the server form, in `test` with no user; pasting a
+    /// connection string moves its password into the password field, out of the string.
+    #[test]
+    fn adds_a_mongodb_data_source_from_a_connection_string() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_layer, feed) = log_console::pipeline();
+        let mut harness = start_app(dir.path(), feed);
+        step_until_visible(&mut harness, "No data sources yet.");
+
+        harness
+            .get_all_by_label("New data source")
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness.get_by_label("MongoDB").click();
+        harness.run();
+        harness.get_by_label_contains("New MongoDB data source");
+        harness.get_by_label("Auth database");
+        harness.get_by_label("Connection string").click();
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::TextInput, "Connection string")
+            .focus();
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::TextInput, "Connection string")
+            .type_text("mongodb+srv://app:secret@cluster0.example.mongodb.net/shop");
+        harness.run();
+        harness.get_by_label("Save").click();
+
+        step_until_visible(&mut harness, "Expand shop@cluster0.example.mongodb.net");
+        let saved = DataSourceFile::new(dir.path().join("data_sources.toml"))
+            .load()
+            .unwrap();
+        let [saved] = saved.as_slice() else {
+            panic!("expected one data source, got {saved:?}");
+        };
+        let dbrover_core::ConnectionConfig::Mongo(config) = &saved.config else {
+            panic!("expected a MongoDB data source, got {saved:?}");
+        };
+        assert_eq!(
+            (
+                config.server.database.as_str(),
+                config.server.user.as_str(),
+                config.connection_string.as_deref(),
+            ),
+            (
+                "shop",
+                "app",
+                Some("mongodb+srv://cluster0.example.mongodb.net/shop")
+            )
+        );
+    }
+
     #[test]
     fn adds_a_clickhouse_data_source_whose_port_follows_its_tls_mode() {
         let dir = tempfile::tempdir().unwrap();

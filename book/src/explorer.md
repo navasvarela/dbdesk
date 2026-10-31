@@ -123,6 +123,16 @@ A ClickHouse table's primary key is its sort order rather than an index, so it s
 table's definition, not under **indexes**. Functions aren't listed: a ClickHouse function belongs
 to the whole server, not to one database.
 
+**MongoDB**, where the explorer lists the databases the user may see, `admin`, `config` and
+`local` among the system ones:
+
+```text
+data source
+└─ shop                     a database
+```
+
+Collections aren't listed in the tree yet; run `show collections` in a console.
+
 **Redis / Valkey**, where the server's numbered databases hold keys, grouped by the data
 source's **Key separator** (`:` unless you set another):
 

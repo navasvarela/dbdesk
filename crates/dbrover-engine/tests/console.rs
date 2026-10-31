@@ -10,8 +10,9 @@ mod parameters;
 use std::sync::Arc;
 
 use common::{
-    TestEngine, clickhouse_test_server, mysql_test_servers, postgres_test_server,
-    redis_test_servers, sqlite_data_source, sqlite_database, sqlserver_test_server,
+    TestEngine, clickhouse_test_server, mongo_test_server, mysql_test_servers,
+    postgres_test_server, redis_test_servers, sqlite_data_source, sqlite_database,
+    sqlserver_test_server,
 };
 use dbrover_core::{
     ConnectionConfig, DataSource, DataSourceId, DuckDbConfig, DuckDbDatabase, Identifier,
@@ -1030,6 +1031,74 @@ fn applies_redis_edits_one_command_at_a_time() {
         execute(&engine, id, 3, &[&format!("DEL {key}")]);
         finish_run(&mut engine, 3);
     }
+}
+
+/// A MongoDB console runs the shell's commands as typed: a `find` reaches the console as
+/// documents, a write as what it changed, and `use` moves the console to another database.
+/// Needs `DBROVER_TEST_MONGODB_URL`; skipped without it.
+#[test]
+fn runs_mongodb_commands_and_shows_documents() {
+    let Some((config, password)) = mongo_test_server("dbrover_engine_console") else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = TestEngine::start(&dir.path().join("data_sources.toml"), Arc::default());
+    engine.expect_started(vec![]);
+    let data_source = DataSource {
+        id: DataSourceId::generate(),
+        name: "shop".to_owned(),
+        color: None,
+        safety: dbrover_core::SafetyLevel::Normal,
+        project: None,
+        mcp_login: None,
+        config: ConnectionConfig::Mongo(config),
+    };
+    let id = data_source.id;
+    engine.send(Command::SaveDataSource {
+        data_source,
+        password: PasswordUpdate::Set(password),
+        ssh_secret: PasswordUpdate::Keep,
+    });
+    assert!(matches!(engine.next_event(), Event::DataSourceSaved(_)));
+
+    execute(
+        &engine,
+        id,
+        1,
+        &[
+            "db.orders.drop()",
+            "db.orders.insertOne({_id: 1, address: {city: 'Madrid'}})",
+            "db.orders.find({}, {address: 1})",
+        ],
+    );
+    let (shape, rows) = loop {
+        match next_run_event(&mut engine) {
+            Event::StatementStarted {
+                statement: 2,
+                shape,
+                ..
+            } => {
+                let Event::RowsFetched { rows, .. } = next_run_event(&mut engine) else {
+                    panic!("expected the documents");
+                };
+                break (shape, rows);
+            }
+            Event::StatementFinished {
+                statement,
+                result: Err(error),
+                ..
+            } if statement > 0 => panic!("{}", error.message),
+            _ => {}
+        }
+    };
+    assert_eq!(shape, dbrover_core::ResultShape::Documents, "{rows:?}");
+    assert_eq!(
+        rows,
+        [[Some(
+            r#"{"_id":{"$numberInt":"1"},"address":{"city":"Madrid"}}"#.to_owned()
+        )]]
+    );
+    finish_run(&mut engine, 1);
 }
 
 /// Grid edits on DuckDB: standard quoting, and, since DuckDB has no savepoints, a refusal
