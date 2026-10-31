@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 
 use dbrover_core::{
     ConnectionConfig, DataSource, DataSourceId, MysqlConfig, Password, PostgresConfig, ProjectId,
-    ServerConfig, SqliteConfig, TlsMode,
+    ServerConfig, SqliteConfig, TlsMode, describe_error,
 };
 use dbrover_engine::{PasswordCommands, ProcessRunner, Tunnels, open_data_source};
 use dbrover_mcp::{McpConfig, serve_stdio};
@@ -232,6 +232,32 @@ pub async fn run_directly(engine: &Engine, statements: &[String]) -> Vec<Vec<Opt
     }
     connection.close().await.unwrap();
     last
+}
+
+/// Runs one statement as `engine`'s login, expecting the database to refuse it, and returns
+/// why: for checking what a login's grants allow, beside DbRover's own checks.
+pub async fn refused_directly(engine: &Engine, statement: &str) -> String {
+    let secrets: Arc<dyn SecretStore> = Arc::new(FileSecrets(
+        engine
+            .password
+            .iter()
+            .map(|password| (engine.data_source.id.to_string(), password.clone()))
+            .collect(),
+    ));
+    let tunnels = Tunnels::new(std::path::PathBuf::from("known_hosts"));
+    let commands = PasswordCommands::new(TrustedCommands::default(), Arc::new(ProcessRunner));
+    let mut connection = open_data_source(&engine.data_source, &secrets, &tunnels, &commands)
+        .await
+        .unwrap();
+    let error = match connection.execute(statement).await {
+        Ok(cursor) => match cursor.finish().await {
+            Ok(_) => panic!("{statement} ran"),
+            Err(error) => error,
+        },
+        Err(error) => error,
+    };
+    connection.close().await.unwrap();
+    describe_error(&error)
 }
 
 /// The account a password is kept under, as the keychain names it.

@@ -467,7 +467,7 @@ shared groundwork and the open decisions, is in [Cloud and big data](cloud-data.
 
 Redis, MongoDB and the other most used non-SQL stores, in the same explorer, console and grid,
 each in its own query language. Planned on 2026-10-29; N0a was built on 2026-10-30, after W7
-landed, and N0b the same day; N1 is being built, in six layers. The full plan, with the order,
+landed, and N0b and N1 the same day. The full plan, with the order,
 the groundwork, each milestone's layers and the decisions, is in [NoSQL databases](nosql.md).
 
 - **N0a — Groundwork: languages, safety and the explorer** (built, in four layers):
@@ -481,7 +481,7 @@ the groundwork, each milestone's layers and the decisions, is in [NoSQL database
   - a tree for any JSON value in the cell viewer, SQL engines' JSON columns first;
   - documents flattened into the grid's columns, with the whole document as a tree or JSON;
   - copying and exporting results of a language without SQL, documents included.
-- **N1 — Redis, Valkey and Dragonfly** (being built, in six layers): keys by pattern with
+- **N1 — Redis, Valkey and Dragonfly** (built, in six layers): keys by pattern with
   `SCAN`, grouped by `:`; a viewer per type with TTL; a command console classified by the
   server's own command flags.
 - **N2 — MongoDB:** databases and collections, `find` and `aggregate` in a subset of the shell's

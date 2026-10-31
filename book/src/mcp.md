@@ -83,10 +83,10 @@ Each statement it runs shows up in the data source's **History**, marked **MCP**
 | Tool | What it does |
 | --- | --- |
 | `list_data_sources` | The project's data sources: name, engine, colour, and the server version once connected. Also the limits and what the project allows. |
-| `list_objects` | One level of a data source's catalog, as the explorer shows it. Each object comes with the `path` that lists its children. |
+| `list_objects` | One level of a data source's catalog, as the explorer shows it. Each object comes with the `path` that lists its children. A large level, such as a Redis database's keys or a schema of thousands of tables, comes 1,000 objects at a time, with a `next` to ask for the rest; a `filter` keeps the objects whose name contains it, searched by the database. |
 | `describe_table` | A table's columns with their types, its primary key, indexes and constraints. |
 | `get_definition` | The source of a view, function, trigger or index. |
-| `query` | Runs one statement that only reads, and returns its rows as text: as JSON, or with `format` set to `csv`, `markdown` or `jsonl`, as that text, ready to save or paste. |
+| `query` | Runs one statement that only reads (on Redis, one command, such as `HGETALL`), and returns its rows as text: as JSON, or with `format` set to `csv`, `markdown` or `jsonl`, as that text, ready to save or paste. |
 | `explain` | Shows how the database would run one read statement, without running it. |
 | `execute` | Runs statements that change something, in one transaction. Only offered when the project allows `write`, `schema` or `admin`. |
 
@@ -145,9 +145,9 @@ or a procedure can do anything, whatever the statement that calls it looks like.
 Project settings warns when a project allows changes and one of its data sources has no MCP
 login.
 
-SQL Server has no read-only transaction, and DbRover doesn't use ClickHouse's read-only setting
-yet, so their data sources are served to MCP clients only through an
-[MCP login](#the-mcp-login) whose grants allow nothing but reading. Without one, a data source
+SQL Server has no read-only transaction, DbRover doesn't use ClickHouse's read-only setting
+yet, and Redis has no read-only session at all, so their data sources are served to MCP clients
+only through an [MCP login](#the-mcp-login) whose grants allow nothing but reading. Without one, a data source
 isn't served, and the server's log says why when it starts; Project settings lists it too. They
 are served for reading only: `execute` is refused on them, whatever the project allows, since
 DbRover has no transaction to run changes in there. DuckDB files have no logins, so they aren't
@@ -186,6 +186,19 @@ On ClickHouse, a user with the `readonly` setting can read and nothing else:
 CREATE USER assistant IDENTIFIED BY '…' SETTINGS readonly = 1;
 GRANT SELECT ON shop.* TO assistant;
 ```
+
+On Redis, Valkey and Dragonfly, an ACL user that may only read:
+
+```text
+ACL SETUSER assistant on >… ~* +@read
+```
+
+Add `+select` when the data source's database isn't 0, so the user may choose it, and `+info`
+if you want **Test connection** and `list_objects` to name every database that holds keys;
+without it, they show the data source's own. DbRover classifies each command by the flags the
+server gives it, so a command that writes is refused before it is sent, and the ACL refuses
+it again. Scripts (`EVAL`, `FCALL`) count as writes, so only their read-only forms (`EVAL_RO`,
+`FCALL_RO`) run.
 
 The MCP password is kept in the keychain under its own entry, separate from the data source's
 password. If it is missing, the server refuses to connect; it never falls back to the data

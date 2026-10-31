@@ -44,3 +44,7 @@ harness = false
 [[test]]
 name = "login"
 harness = false
+
+[[test]]
+name = "redis"
+harness = false

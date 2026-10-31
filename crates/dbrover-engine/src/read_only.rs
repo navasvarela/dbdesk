@@ -78,6 +78,20 @@ pub fn guard(driver: DriverKind) -> Guard {
     }
 }
 
+/// The login that makes a [`Guard::Login`] engine refuse writes, as the read-only level's
+/// advice names it.
+pub fn read_only_login(driver: DriverKind) -> &'static str {
+    match driver {
+        DriverKind::Redis => "an ACL user with only +@read",
+        DriverKind::Postgres
+        | DriverKind::Sqlite
+        | DriverKind::Mysql
+        | DriverKind::SqlServer
+        | DriverKind::DuckDb
+        | DriverKind::ClickHouse => "a user with read-only grants",
+    }
+}
+
 /// Whether the MCP server serves a data source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum McpServing {
@@ -291,5 +305,9 @@ mod tests {
             };
             assert!(expected, "{driver:?}: {guard:?}");
         }
+        assert_eq!(
+            read_only_login(DriverKind::Redis),
+            "an ACL user with only +@read"
+        );
     }
 }

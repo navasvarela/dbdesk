@@ -57,10 +57,13 @@ pub async fn connect(
     let mut session = Session::open(&login, database)
         .await
         .map_err(errors::connect)?;
-    let info = session
-        .query(Cmd::new().arg("INFO").arg("server"))
-        .await
-        .map_err(errors::connect)?;
+    // `INFO` is in the `dangerous` category, which a user with only `+@read`, as an MCP login
+    // should be, may not run: the server is then named without its version.
+    let info = match session.query(Cmd::new().arg("INFO").arg("server")).await {
+        Ok(info) => info,
+        Err(error) if error.is::<errors::ServerFailure>() => Value::Nil,
+        Err(error) => return Err(errors::connect(error)),
+    };
     Ok(RedisConnection {
         session,
         shared: Arc::new(Shared::new(login)),
@@ -186,6 +189,29 @@ pub struct RedisConnection {
 }
 
 impl RedisConnection {
+    /// The databases that hold keys, from `INFO keyspace`; for a user who may not run `INFO`,
+    /// as one with only `+@read` may not, the data source's own, counted with `DBSIZE`.
+    async fn databases(&mut self) -> Result<Vec<CatalogNode>, DriverError> {
+        let own = database_number(&self.shared.login().server.database).unwrap_or_default();
+        let mut command = Cmd::new();
+        command.arg("INFO").arg("keyspace");
+        let info = match self.catalog_query(&command).await {
+            Ok(info) => reply::text(&info).unwrap_or_default(),
+            Err(DriverError::Connection(error)) if error.is::<errors::ServerFailure>() => {
+                self.select(own).await?;
+                let mut command = Cmd::new();
+                command.arg("DBSIZE");
+                let keys = match self.catalog_query(&command).await? {
+                    Value::Int(keys) => keys,
+                    _ => 0,
+                };
+                format!("db{own}:keys={keys}")
+            }
+            Err(error) => return Err(error),
+        };
+        Ok(catalog::databases(&info, own))
+    }
+
     /// The session, replaced first if a cancel left it waiting for a reply nobody reads.
     async fn session(&mut self) -> Result<&mut Session, DriverError> {
         if self.shared.take_stale() {
@@ -231,8 +257,13 @@ impl Connection for RedisConnection {
         &self.server_info
     }
 
+    /// Any answer proves the connection works, a refusal included: a user with only `+@read`
+    /// may not run `PING`.
     async fn ping(&mut self) -> Result<(), DriverError> {
-        self.run(&[b"PING".to_vec()]).await.map(drop)
+        match self.run(&[b"PING".to_vec()]).await {
+            Ok(_) | Err(DriverError::Statement { .. }) => Ok(()),
+            Err(error) => Err(error),
+        }
     }
 
     async fn children(&mut self, path: &CatalogPath) -> Result<Vec<CatalogNode>, DriverError> {
@@ -251,12 +282,7 @@ impl Connection for RedisConnection {
         query: &ChildrenQuery,
     ) -> Result<ChildrenPage, DriverError> {
         if path.is_root() {
-            let mut command = Cmd::new();
-            command.arg("INFO").arg("keyspace");
-            let info = self.catalog_query(&command).await?;
-            let own = database_number(&self.shared.login().server.database).unwrap_or_default();
-            let databases = catalog::databases(&reply::text(&info).unwrap_or_default(), own);
-            return Ok(ChildrenPage::whole(databases, query));
+            return Ok(ChildrenPage::whole(self.databases().await?, query));
         }
         let level = Level::of(path).ok_or_else(|| DriverError::InvalidPath(path.clone()))?;
         self.key_page(path, &level, query).await

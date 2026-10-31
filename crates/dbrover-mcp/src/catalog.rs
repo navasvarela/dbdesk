@@ -1,7 +1,7 @@
 //! Catalog paths and nodes as JSON. A node's `path` is what the next `list_objects` or
 //! `get_definition` call takes back, so a client walks the tree without knowing its shape.
 
-use dbrover_core::{CatalogNode, CatalogPath, FolderKind, NodeKind};
+use dbrover_core::{CatalogNode, CatalogPath, FolderKind, KeyType, NodeKind};
 use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 
@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 #[schemars(crate = "rmcp::schemars")]
 pub(crate) struct PathStep {
     /// `database`, `schema`, `folder`, `table`, `view`, `materialized_view`, `function`,
-    /// `procedure`, `sequence`, `event`, `column`, `index`, `constraint`, `trigger` or `role`.
+    /// `procedure`, `sequence`, `event`, `column`, `index`, `constraint`, `trigger`, `role`,
+    /// `key_prefix` (Redis keys sharing a prefix) or `key` (a Redis key).
     pub(crate) kind: String,
     /// The object's name; for a folder, what it holds (`tables`, `views`, `columns`…).
     pub(crate) name: String,
@@ -55,7 +56,7 @@ const FOLDERS: [FolderKind; 12] = [
     FolderKind::Roles,
 ];
 
-const KINDS: [(NodeKind, &str); 14] = [
+const KINDS: [(NodeKind, &str); 15] = [
     (NodeKind::Database, "database"),
     (NodeKind::Schema, "schema"),
     (NodeKind::Table, "table"),
@@ -70,11 +71,17 @@ const KINDS: [(NodeKind, &str); 14] = [
     (NodeKind::Constraint, "constraint"),
     (NodeKind::Trigger, "trigger"),
     (NodeKind::Role, "role"),
+    (NodeKind::KeyPrefix, "key_prefix"),
 ];
+
+/// A Redis key's kind in a path. Its value's type is in the node's `detail`, and isn't needed
+/// to find the key again, so a key read back from a path is of type `Other`.
+const KEY: &str = "key";
 
 fn kind_name(kind: NodeKind) -> &'static str {
     match kind {
         NodeKind::Folder(_) => "folder",
+        NodeKind::Key(_) => KEY,
         other => KINDS
             .iter()
             .find(|(known, _)| *known == other)
@@ -104,6 +111,7 @@ pub(crate) fn path(steps: &[PathStep]) -> Result<CatalogPath, UnknownStep> {
                 .into_iter()
                 .find(|folder| folder.label() == step.name)
                 .map(NodeKind::Folder),
+            KEY => Some(NodeKind::Key(KeyType::Other)),
             name => KINDS
                 .iter()
                 .find(|(_, known)| *known == name)
@@ -141,5 +149,17 @@ mod tests {
             }])
             .is_err()
         );
+    }
+
+    #[test]
+    fn redis_groups_round_trip_and_keys_keep_their_names() {
+        let group = CatalogPath::root()
+            .child(NodeKind::Database, "0")
+            .child(NodeKind::KeyPrefix, "user:");
+        assert_eq!(super::path(&steps(&group)), Ok(group.clone()));
+        let key = group.child(NodeKind::Key(KeyType::Hash), "user:42");
+        let read = super::path(&steps(&key)).unwrap();
+        assert_eq!(read.last().map(|step| step.name.as_str()), Some("user:42"));
+        assert_eq!(steps(&key)[2].kind, "key");
     }
 }
